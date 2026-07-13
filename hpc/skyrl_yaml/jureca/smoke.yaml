@@ -1,0 +1,213 @@
+# JURECA agentic RL SMOKE — Qwen3-0.6B, 1 node (4x A100-40GB), cloud Daytona sandboxes.
+#
+# PURPOSE: prove the agentic loop end-to-end on JURECA (Harbor -> Daytona sandbox ->
+# agent acts -> verifier reward -> SkyRL GRPO/RLOO update) BEFORE scaling. NOT a result.
+# Ported from hpc/skyrl_yaml/jupiter/56GPU_qwen3_8b.yaml and shrunk to a single colocated
+# node. Many knobs are deliberately minimal; the GPU smoke (not this file) validates them.
+#
+# LAUNCH (from JURECA login node, after egress + snapshot de-risk):
+#   python -m hpc.launch --job_type rl \
+#     --rl_config hpc/skyrl_yaml/jureca/smoke.yaml \
+#     --model_path Qwen/Qwen3-0.6B \
+#     --train_data <tiny-harbor-task-hf-repo>   # few unique envs -> <=10 Daytona snapshots
+#     --num_nodes 1
+#
+# Requires: DAYTONA_API_KEY in env; proxychains egress (jureca HPC entry, 10.14.0.53:1080);
+# jureca partition = dc-gpu-devel (2h). n_concurrent_trials=16 -> 16 concurrent sandboxes.
+entrypoint: examples.terminal_bench.entrypoints.main_tbench
+
+# Hydra config groups (+ prefix in CLI)
+config_groups:
+  terminal_bench_config: terminal_bench
+
+# Terminal bench / agentic environment settings
+terminal_bench:
+  trials_dir: null
+
+  harbor:
+    name: terminus-2
+    max_episodes: 999999
+    enable_summarize: false
+    store_all_messages: true
+    trajectory_config:
+      raw_content: true
+    enable_episode_logging: false
+    record_terminal_session: false
+    enable_pane_logging: false
+
+    strict_json_parser: true
+
+    # Smoke: no thinking template (keeps the loop simple; flip on for real Qwen3 runs).
+    interleaved_thinking: false
+
+    # Short tasks for the smoke.
+    override_timeout_sec: 300
+    override_cpus: 1
+    override_memory_mb: 2048
+    override_storage_mb: 2048
+
+    # Hash-based Daytona snapshot caching (one snapshot per unique task env).
+    auto_snapshot: true
+
+    verifier_override_timeout_sec: 120
+
+    max_retries: 3
+    min_wait_sec: 60.0
+    max_wait_sec: 600.0
+    wait_multiplier: 2.0
+
+    exclude_exceptions:
+      - VerifierTimeoutError
+      - VerifierRuntimeError
+      - RewardFileNotFoundError
+      - RewardFileEmptyError
+      - VerifierOutputParseError
+
+    # 16 concurrent Daytona sandboxes (smoke). RUNNING-RL job cap (<=6/cluster) is separate.
+    n_concurrent_trials: 16
+
+    log_level: INFO
+    enable_reward_shaping: false
+
+    # TIS off for the smoke -> rollout logprobs not required.
+    collect_rollout_details: false
+
+    enable_error_classification: true
+    mask_exceptions:
+      - DaytonaError
+      - EnvironmentStartTimeoutError
+      - NetworkError
+      - ConnectionError
+      - RewardFileNotFoundError
+      - RewardFileEmptyError
+      - AgentEnvironmentTimeoutError
+      - ContextLengthExceededError
+    default_error_treatment: zero
+    passthrough_exceptions:
+      - AgentTimeoutError
+    zero_exceptions: []
+
+  model_info:
+    max_input_tokens: 8000
+    max_output_tokens: 1024
+
+  archiving:
+    enabled: false
+
+  # No HF trace upload for the smoke.
+  trace_upload:
+    enabled: false
+
+# Trainer configuration
+trainer:
+  strategy: fsdp2
+  algorithm:
+    advantage_estimator: rloo_n     # OTA agentic default (matches the gsm8k A/B's rloo family)
+    use_kl_loss: false
+    kl_loss_coef: 0.0
+    eps_clip_low: 0.2
+    eps_clip_high: 0.2
+    loss_reduction: sequence_mean
+    use_tis: false                  # off for the smoke (pairs with collect_rollout_details:false)
+
+  epochs: 1
+  max_steps: 3                      # SMOKE: 3 outer steps to prove the loop
+  update_epochs_per_batch: 1
+
+  train_batch_size: 8
+  policy_mini_batch_size: 8
+  eval_batch_size: 8
+
+  micro_forward_batch_size_per_gpu: 4
+  micro_train_batch_size_per_gpu: 1
+
+  max_prompt_length: 999999         # engine max_model_len enforces the real cap
+
+  eval_interval: 999999
+  eval_before_train: false
+  ckpt_interval: 999999             # no checkpoint in a 3-step smoke
+  resume_mode: null
+  hf_save_interval: 999999
+  hf_hub_repo_id: null
+  hf_hub_private: false
+  hf_hub_revision: main
+
+  # Supabase auto-registration OFF (standing guardrail).
+  enable_db_registration: false
+
+  project_name: OpenThoughts-Agent
+  log_level: INFO
+  tracker_commit_each_step: true
+  logger: console                   # offline; no W&B for the smoke
+
+  run_name: null
+  ckpt_path: null
+  export_path: null
+
+  policy:
+    optimizer_config:
+      lr: 1.0e-6
+      weight_decay: 0.0
+      adam_betas: [0.9, 0.999]
+      max_grad_norm: 0.9
+    fsdp_config:
+      cpu_offload: false
+      reshard_after_forward: true
+      fsdp_size: 4
+  ref:
+    fsdp_config:
+      cpu_offload: false
+      reshard_after_forward: true
+      fsdp_size: 4
+
+  # 1 node: colocate policy/ref/engines on the 4 GPUs (like the gsm8k smoke).
+  placement:
+    colocate_all: true
+    policy_num_nodes: 1
+    ref_num_nodes: 1
+    policy_num_gpus_per_node: 4
+    ref_num_gpus_per_node: 4
+
+# Generator configuration
+generator:
+  backend: vllm
+  timeout_multiplier: 1.0
+  model_dtype: bfloat16
+
+  inference_engine_tensor_parallel_size: 1
+  num_inference_engines: 4          # 4 engines x TP=1, colocated on the 4 GPUs
+
+  n_samples_per_prompt: 2
+  eval_n_samples_per_prompt: 2
+
+  gpu_memory_utilization: 0.7
+
+  max_num_seqs: 16
+  max_num_batched_tokens: 16384
+
+  enable_prefix_caching: true
+  enable_chunked_prefill: true
+
+  run_engines_locally: true
+  weight_sync_backend: nccl
+  async_engine: true
+  batched: false
+  enable_http_endpoint: true
+  enable_ray_prometheus_stats: false
+  vllm_stats_interval: 1
+  append_eos_token_after_stop_str_in_multi_turn: true
+  max_turns: 8                      # cap agent turns for the smoke
+
+  sampling_params:
+    max_generate_length: 1024
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 20
+
+  engine_init_kwargs:
+    max_model_len: 8192
+
+# Data paths (filled at launch via --train_data / --val_data)
+data:
+  train_data: []
+  val_data: []

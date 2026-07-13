@@ -796,13 +796,13 @@ jureca = HPC(
     name="jureca",
     hostname_pattern=r"jr.*?.jureca",
     dotenv_filename="jureca.env",
-    account="westai0007",  # synthlaion (24 nodes per job)
-    partition="dc-hwai",  # dc-gpu
+    account="synthlaion",  # lee27 A100 allocation (was westai0007/DC-HWAI-H100)
+    partition="dc-gpu-devel",  # bring-up/smoke: instant sched, 2h cap. PROD: switch to "dc-gpu" (24h)
     gpus_per_node=4,
-    cpus_per_node=48,
+    cpus_per_node=128,  # JURECA-DC GPU node = 2x AMD EPYC 7742 (128 cores)
     internet_node=False,
-    gpus_type="H100 94GB",
-    total_partition_nodes=16,
+    gpus_type="A100 40GB",
+    total_partition_nodes=180,  # dc-gpu prod (dc-gpu-devel has 12)
     gpu_directive_format="--gres=gpu:{n}",
     # Runtime configuration for Ray/vLLM
     modules=["CUDA/12.3"],
@@ -829,7 +829,7 @@ jureca = HPC(
     # Ray tmpdir on scratch (JSC /tmp is limited on compute nodes)
     #ray_tmpdir_base="$SCRATCH/ray",
     # Job scaling (from jureca.env)
-    default_time_limit="24:00:00",
+    default_time_limit="02:00:00",  # dc-gpu-devel cap; raise to 24:00:00 for prod dc-gpu
     num_nodes_default=1,
     num_nodes_fast=4,
 )
