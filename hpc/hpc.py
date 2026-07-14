@@ -725,9 +725,9 @@ echo "[proxy]   - Internal traffic (10.x.x.x) → DIRECT (no proxy)"
 echo "[proxy]   - External traffic (internet) → PROXY"
 
 # Save a copy to the experiments directory for debugging
-EXPERIMENTS_DIR="${DCFT:-$PWD}/experiments"
+EXPERIMENTS_DIR="${{DCFT:-$PWD}}/experiments"
 if [ -d "$EXPERIMENTS_DIR" ]; then
-    PERSISTENT_CONF="$EXPERIMENTS_DIR/proxychains_${SLURM_JOB_ID}.conf"
+    PERSISTENT_CONF="$EXPERIMENTS_DIR/proxychains_${{SLURM_JOB_ID}}.conf"
     cp "$PROXYCHAINS_CONF" "$PERSISTENT_CONF" 2>/dev/null && \
         echo "[proxy] ✓ Saved config copy to $PERSISTENT_CONF"
 fi
