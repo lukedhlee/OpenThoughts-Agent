@@ -804,8 +804,10 @@ jureca = HPC(
     gpus_type="A100 40GB",
     total_partition_nodes=180,  # dc-gpu prod (dc-gpu-devel has 12)
     gpu_directive_format="--gres=gpu:{n}",
-    # Runtime configuration for Ray/vLLM
-    modules=["CUDA/12.3"],
+    # Runtime configuration for Ray/vLLM. The borrowed JURECA Python runtime
+    # carries torch+cu128 and works against the system driver without a CUDA
+    # module; current JURECA exposes CUDA/13, which is the wrong ABI to inject.
+    modules=[],
     env_vars={
         "PYTHONFAULTHANDLER": "1",
         "WANDB_MODE": "offline",  # Keep smoke logging local even though Daytona/HF egress works.
