@@ -727,6 +727,7 @@ echo "Activating conda environment: {conda_env}"
 # Disable unbound variable check during conda operations (conda scripts reference unset vars)
 set +u
 # Initialize conda for non-interactive shell (required before conda activate)
+RL_CONDA_DIRECT_PREFIX=0
 if [[ -n "${{CONDA_EXE:-}}" ]]; then
   # Use CONDA_EXE to find conda.sh
   CONDA_BASE=$(dirname $(dirname "$CONDA_EXE"))
@@ -737,12 +738,24 @@ elif [[ -f "${{HOME}}/anaconda3/etc/profile.d/conda.sh" ]]; then
   source "${{HOME}}/anaconda3/etc/profile.d/conda.sh"
 elif command -v conda &>/dev/null; then
   eval "$(conda shell.bash hook)"
+elif [[ "{conda_env}" = /* && -x "{conda_env}/bin/python" ]]; then
+  echo "Conda command not found; using absolute env prefix directly: {conda_env}"
+  RL_CONDA_DIRECT_PREFIX=1
+  export CONDA_PREFIX="{conda_env}"
+  export CONDA_DEFAULT_ENV="$(basename "{conda_env}")"
+  export PATH="{conda_env}/bin:$PATH"
+  export LD_LIBRARY_PATH="{conda_env}/lib:${{LD_LIBRARY_PATH:-}}"
+  unset PYTHONHOME
 else
   echo "ERROR: Could not find conda installation for initialization"
   set -u
   exit 1
 fi
-conda activate {conda_env}
+if [[ "$RL_CONDA_DIRECT_PREFIX" != "1" ]]; then
+  conda activate {conda_env}
+fi
+python -c 'import sys; print("Python executable:", sys.executable)'
+python -c 'import sys; print("Python prefix:", sys.prefix)'
 # Re-enable unbound variable check
 set -u'''
     else:
