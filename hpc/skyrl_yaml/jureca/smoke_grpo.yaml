@@ -14,8 +14,8 @@
 #     --rl_use_conda \
 #     --rl_conda_env /p/project1/ccstdl/envs/marianna/py3.12
 #
-# Requires: DAYTONA_API_KEY in env; proxychains egress (jureca HPC entry, 10.14.0.53:1080);
-# jureca partition = dc-gpu-devel (2h). n_concurrent_trials=8 -> 8 concurrent sandboxes.
+# Requires: DAYTONA_API_KEY in env; direct Daytona/HF egress from dc-gpu-devel was verified
+# on 2026-07-14. jureca partition = dc-gpu-devel (2h). n_concurrent_trials=8 -> 8 concurrent sandboxes.
 entrypoint: examples.terminal_bench.entrypoints.main_tbench
 
 # Hydra config groups (+ prefix in CLI)

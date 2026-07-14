@@ -800,7 +800,7 @@ jureca = HPC(
     partition="dc-gpu-devel",  # bring-up/smoke: instant sched, 2h cap. PROD: switch to "dc-gpu" (24h)
     gpus_per_node=4,
     cpus_per_node=128,  # JURECA-DC GPU node = 2x AMD EPYC 7742 (128 cores)
-    internet_node=False,
+    internet_node=True,
     gpus_type="A100 40GB",
     total_partition_nodes=180,  # dc-gpu prod (dc-gpu-devel has 12)
     gpu_directive_format="--gres=gpu:{n}",
@@ -808,22 +808,24 @@ jureca = HPC(
     modules=["CUDA/12.3"],
     env_vars={
         "PYTHONFAULTHANDLER": "1",
-        "WANDB_MODE": "offline",  # No internet on compute nodes
+        "WANDB_MODE": "offline",  # Keep smoke logging local even though Daytona/HF egress works.
         # Disable symmetric memory allreduce — send_fd fails in Singularity containers
         "VLLM_ALLREDUCE_USE_SYMM_MEM": "0",
     },
-    # NCCL/networking settings for SFT training (InfiniBand, no internet)
+    # NCCL/networking settings for SFT/RL training (InfiniBand).
     nccl_settings={
         "NCCL_NET_GDR_LEVEL": "0",
         "NCCL_SOCKET_IFNAME": "ib0",
         "NCCL_IB_TIMEOUT": "60",
     },
     training_launcher="accelerate",
-    # JSC shared SOCKS5 proxy (more reliable than SSH tunnels)
+    # JURECA dc-gpu-devel compute nodes can reach Daytona/HF directly in lee27
+    # probes (2026-07-14). The historical shared SOCKS endpoint refused
+    # connections, so do not inject proxychains for this cluster entry.
     needs_ssh_tunnel=False,
-    proxy_host="10.14.0.53",
-    proxy_port=1080,
-    proxychains_preload="/p/scratch/laionize/raj3/proxychains-ng/libproxychains4.so",
+    proxy_host="",
+    proxy_port=0,
+    proxychains_preload="",
     # JSC-specific setup (disable core dumps to save disk space)
     pre_run_commands=["ulimit -c 0"],
     # Ray tmpdir on scratch (JSC /tmp is limited on compute nodes)
