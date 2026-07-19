@@ -32,26 +32,36 @@ set -euo pipefail
 
 export SCRATCH DCFT
 export CONDA_EXE="${CONDA_EXE:-$CONDA_BASE/bin/conda}"
-# Prefer Luke caches (tacc.env defaults HF_HUB_CACHE=$SCRATCH/hub — also OK if populated).
+# Prefer the complete HF cache (TPS download). $SCRATCH/hub may be a stub (config+merges only).
 export HF_HOME="${HF_HOME:-$SCRATCH/cache/hf}"
-export HF_HUB_CACHE="${HF_HUB_CACHE:-$SCRATCH/hub}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-$SCRATCH/cache/hf/hub}"
 export FLASHINFER_WORKSPACE_BASE="${FLASHINFER_WORKSPACE_BASE:-$SCRATCH/flashinfer_ws}"
 # Don't spam penfever's mailbox from Luke launches (tacc.env defaults bf996@nyu.edu).
 export EMAIL_ADDRESS="${EMAIL_ADDRESS:-}"
 
-# Resolve model to a LOCAL snapshot dir so login-node snapshot_download cannot OOM.
+# Resolve model to a LOCAL *complete* snapshot (tokenizer + weights). Stub hubs break
+# Qwen2Tokenizer with: vocab/merges must both be filenames.
+_snapshot_complete() {
+  local d="$1"
+  [[ -d "$d" && -f "$d/config.json" ]] || return 1
+  [[ -e "$d/tokenizer.json" || -e "$d/vocab.json" ]] || return 1
+  compgen -G "$d/model-*.safetensors" >/dev/null || [[ -e "$d/model.safetensors" ]] || return 1
+  return 0
+}
 if [[ -z "$MODEL_PATH" ]]; then
   for cand in \
+      "$SCRATCH/cache/hf/hub/models--Qwen--Qwen3-30B-A3B/snapshots"/* \
       "$HF_HUB_CACHE/models--Qwen--Qwen3-30B-A3B/snapshots"/* \
-      "$SCRATCH/cache/hf/hub/models--Qwen--Qwen3-30B-A3B/snapshots"/*; do
-    if [[ -d "$cand" && -f "$cand/config.json" ]]; then
+      "$SCRATCH/hub/models--Qwen--Qwen3-30B-A3B/snapshots"/*; do
+    if _snapshot_complete "$cand"; then
       MODEL_PATH="$cand"
       break
     fi
   done
 fi
 if [[ -z "$MODEL_PATH" ]]; then
-  echo "ERROR: no local Qwen3-30B-A3B snapshot under $HF_HUB_CACHE (refusing HF download on login)"
+  echo "ERROR: no complete local Qwen3-30B-A3B snapshot (need tokenizer + safetensors)"
+  echo "  checked under $SCRATCH/cache/hf/hub and $HF_HUB_CACHE (refusing HF download on login)"
   exit 1
 fi
 # Prefer Luke-owned MarinSkyRL (penfever's tree is often mode 700 / unreadable).
