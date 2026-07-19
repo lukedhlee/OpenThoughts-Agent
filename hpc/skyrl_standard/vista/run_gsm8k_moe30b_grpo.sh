@@ -106,7 +106,11 @@ if [[ ! -f "$DATA_DIR/train.parquet" || ! -f "$DATA_DIR/validation.parquet" ]]; 
   exit 1
 fi
 
-LAUNCH_PY="${CONDA_BASE}/envs/${RL_CONDA_ENV}/bin/python"
+if [[ "$RL_CONDA_ENV" == /* ]]; then
+  LAUNCH_PY="${RL_CONDA_ENV}/bin/python"
+else
+  LAUNCH_PY="${CONDA_BASE}/envs/${RL_CONDA_ENV}/bin/python"
+fi
 if [[ ! -x "$LAUNCH_PY" ]]; then
   echo "ERROR: missing $LAUNCH_PY"
   exit 1
