@@ -85,12 +85,17 @@ trainer:
 
   placement:
     # 16 policy (+ref colocated; no KL) + 8 inference = 24 Vista nodes.
+    # critic_num_gpus_per_node MUST be 1 on Vista (1 GPU/node). Base default is 4,
+    # which makes peer_access_supported() request a 2-GPU PACK bundle and times out
+    # when the driver has no CUDA (seen on gg; gh-dev often has CUDA and skips).
     colocate_all: false
     colocate_policy_ref: true
     policy_num_nodes: 16
     ref_num_nodes: 16
     policy_num_gpus_per_node: 1
     ref_num_gpus_per_node: 1
+    critic_num_nodes: 1
+    critic_num_gpus_per_node: 1
 
 generator:
   backend: vllm

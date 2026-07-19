@@ -90,6 +90,9 @@ trainer:
     ref_num_nodes: 2
     policy_num_gpus_per_node: 1
     ref_num_gpus_per_node: 1
+    # Vista = 1 GPU/node; base critic default 4 breaks peer_access on non-CUDA drivers.
+    critic_num_nodes: 1
+    critic_num_gpus_per_node: 1
 
 generator:
   backend: vllm
