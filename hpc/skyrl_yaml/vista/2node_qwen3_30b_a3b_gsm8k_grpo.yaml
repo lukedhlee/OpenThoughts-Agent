@@ -99,8 +99,9 @@ generator:
   n_samples_per_prompt: 2
   eval_n_samples_per_prompt: 1
 
-  # 30B-A3B weights ~57G on disk; 0.55×96GB leaves no KV after load (842984).
-  gpu_memory_utilization: 0.90
+  # 30B-A3B weights ~57G; colocate needs headroom for FSDP gather (843025 OOM at 0.90).
+  # Weights still fit; KV pool stays small with max_model_len=1536.
+  gpu_memory_utilization: 0.70
 
   max_num_seqs: 4
   max_num_batched_tokens: 4096
