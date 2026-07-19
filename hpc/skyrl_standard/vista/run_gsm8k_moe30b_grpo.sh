@@ -154,4 +154,5 @@ echo "  python=$LAUNCH_PY"
   --skyrl_override trainer.enable_db_registration=false \
   --skyrl_override trainer.logger=wandb \
   --skyrl_override trainer.project_name=vista-moe-gsm8k-grpo \
-  --skyrl_override trainer.run_name="$JOB_NAME"
+  --skyrl_override trainer.run_name="$JOB_NAME" \
+  --skyrl_override "trainer.ref.model.path=${MODEL_PATH}"
