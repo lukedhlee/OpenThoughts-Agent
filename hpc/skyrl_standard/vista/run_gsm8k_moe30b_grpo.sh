@@ -29,11 +29,11 @@ set -euo pipefail
 export SCRATCH DCFT
 export HF_HOME="${HF_HOME:-$SCRATCH/cache/hf}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
-export FLASHINFER_WORKSPACE_BASE="${FLASHINFER_WORKSPACE_BASE:-$SCRATCH/cache/flashinfer}"
-# Point SKYRL_HOME at penfever MarinSkyRL/SkyRL if Luke's scratch has none.
+export FLASHINFER_WORKSPACE_BASE="${FLASHINFER_WORKSPACE_BASE:-$SCRATCH/flashinfer_ws}"
+# Prefer Luke-owned MarinSkyRL (penfever's tree is often mode 700 / unreadable).
 if [[ -z "${RL_REPO_DIR:-}" ]]; then
-  for cand in "$PENFEVER_SCRATCH/MarinSkyRL" "$PENFEVER_SCRATCH/SkyRL" \
-              "$SCRATCH/MarinSkyRL" "$SCRATCH/SkyRL"; do
+  for cand in "$SCRATCH/MarinSkyRL" "$SCRATCH/SkyRL" \
+              "$PENFEVER_SCRATCH/MarinSkyRL" "$PENFEVER_SCRATCH/SkyRL"; do
     if [[ -d "$cand/skyrl-train" ]]; then
       export RL_REPO_DIR="$cand"
       break
@@ -66,6 +66,12 @@ if [[ -z "${WANDB_API_KEY:-}" ]]; then
 fi
 export WANDB_MODE="${WANDB_MODE:-online}"
 export WANDB_PROJECT="${WANDB_PROJECT:-vista-moe-gsm8k-grpo}"
+export DC_AGENT_SECRET_ENV="${DC_AGENT_SECRET_ENV:-$SCRATCH/keys.env}"
+# Ensure HF hub sees a token if secrets use either common name.
+if [[ -z "${HF_TOKEN:-}" && -n "${HUGGING_FACE_HUB_TOKEN:-}" ]]; then
+  export HF_TOKEN="$HUGGING_FACE_HUB_TOKEN"
+fi
+echo "WandB: mode=$WANDB_MODE project=$WANDB_PROJECT entity=${WANDB_ENTITY:-unset}"
 
 if [[ ! -f "$DATA_DIR/train.parquet" || ! -f "$DATA_DIR/validation.parquet" ]]; then
   echo "ERROR: gsm8k parquet missing under $DATA_DIR"
