@@ -8,7 +8,8 @@ trainer:
   # otagent has flash_attn 2.8.3; base use_sample_packing=true requires FA2.
   flash_attn: true
   gradient_checkpointing: true
-  gradient_checkpointing_use_reentrant: false
+  # true: MarinSkyRL warns false+cpu_offload can assert; also safer HBM on Vista.
+  gradient_checkpointing_use_reentrant: true
   algorithm:
     advantage_estimator: grpo
     use_kl_loss: false

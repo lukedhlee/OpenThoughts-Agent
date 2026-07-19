@@ -9,7 +9,7 @@ trainer:
   strategy: fsdp2
   flash_attn: true
   gradient_checkpointing: true
-  gradient_checkpointing_use_reentrant: false
+  gradient_checkpointing_use_reentrant: true
   algorithm:
     advantage_estimator: grpo
     use_kl_loss: false
