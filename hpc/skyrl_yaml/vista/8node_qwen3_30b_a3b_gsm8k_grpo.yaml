@@ -130,6 +130,7 @@ container:
     VLLM_ATTENTION_BACKEND: FLASH_ATTN
     FLASHINFER_WORKSPACE_BASE: /scratch/11584/lukedhlee/flashinfer_ws
     CONDA_EXE: /scratch/10635/penfever/miniconda3/bin/conda
+    RL_PYTHON: /scratch/10635/penfever/miniconda3/envs/otagent/bin/python
     RL_REPO_DIR: /scratch/11584/lukedhlee/MarinSkyRL
     SKYRL_HOME: /scratch/11584/lukedhlee/MarinSkyRL
     PYTHONPATH: /scratch/11584/lukedhlee/harbor/src:/scratch/11584/lukedhlee/MarinSkyRL/skyrl-train:/scratch/11584/lukedhlee/OpenThoughts-Agent

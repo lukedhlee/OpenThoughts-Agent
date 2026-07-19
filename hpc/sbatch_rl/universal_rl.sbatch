@@ -248,11 +248,28 @@ setup_container_runtime "{harbor_env}" "$WORKDIR" || exit $?
 
 # --- Run the RL training job via Python runner ---
 # Ray cluster management is handled by hpc/ray_utils.py using proper srun calls
+# Prefer an absolute conda python: on TACC, bare `python` can resolve to
+# /bin/python (system 3.9) even after a successful conda activate (job 842745).
+if [[ -n "${RL_PYTHON:-}" && -x "${RL_PYTHON}" ]]; then
+  :
+elif [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
+  RL_PYTHON="${CONDA_PREFIX}/bin/python"
+else
+  RL_PYTHON="$(command -v python)"
+fi
+if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
+  export PATH="${CONDA_PREFIX}/bin:${PATH}"
+  hash -r 2>/dev/null || true
+fi
+if [[ ! -x "${RL_PYTHON}" ]]; then
+  echo "FATAL: RL_PYTHON='${RL_PYTHON}' is not executable" >&2
+  exit 1
+fi
 echo "=== Universal RL Training Runner ==="
 echo "Config: {config_path}"
 echo "Working directory: $WORKDIR"
-echo "Python: $(which python)"
-echo "Python version: $(python --version)"
+echo "Python: $RL_PYTHON (which=$(command -v python || true))"
+echo "Python version: $($RL_PYTHON --version)"
 echo "UV_USE_IO_URING: ${UV_USE_IO_URING:-<unset>}"  # libuv io_uring epoll-abort fix; must be 0
 
 # --- Proxy setup for no-internet clusters ---
@@ -270,4 +287,4 @@ else
 fi
 echo "========================================"
 
-python -m hpc.rl_launch_utils --config "{config_path}"
+"$RL_PYTHON" -m hpc.rl_launch_utils --config "{config_path}"

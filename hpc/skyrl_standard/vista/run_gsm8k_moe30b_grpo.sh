@@ -21,10 +21,11 @@ set -euo pipefail
 : "${PARTITION:=gh-dev}"
 : "${TIME_LIMIT:=02:00:00}"
 : "${NUM_NODES:=8}"
-: "${JOB_NAME:=vista_moe30b_gsm8k_grpo10}"
+: "${JOB_NAME:=vista_moe30b_gsm8k_grpo10_v3}"
 : "${MODEL_PATH:=}"
 : "${CONDA_BASE:=$PENFEVER_SCRATCH/miniconda3}"
-: "${RL_CONDA_ENV:=otagent}"
+# Absolute path — name-only `otagent` can lose PATH on Vista compute (→ /bin/python).
+: "${RL_CONDA_ENV:=$CONDA_BASE/envs/otagent}"
 
 export SCRATCH DCFT
 export CONDA_EXE="${CONDA_EXE:-$CONDA_BASE/bin/conda}"

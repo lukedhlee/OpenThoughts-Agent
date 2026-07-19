@@ -476,8 +476,13 @@ def get_daytona_api_key_override(exp_args: Dict[str, Any]) -> str:
 
     Priority: --daytona_api_key CLI arg > DAYTONA_API_KEY env var at launch time.
     Returns empty string when no override is specified (secrets.env wins).
+    Strips inline ``# ...`` comments so secrets.env lines like
+    ``KEY=value  # note`` do not pollute the sbatch string.
     """
-    return exp_args.get("daytona_api_key") or os.environ.get("DAYTONA_API_KEY", "")
+    raw = exp_args.get("daytona_api_key") or os.environ.get("DAYTONA_API_KEY", "")
+    if not raw:
+        return ""
+    return str(raw).split("#", 1)[0].strip()
 
 
 def maybe_prebuild_daytona_snapshots(
