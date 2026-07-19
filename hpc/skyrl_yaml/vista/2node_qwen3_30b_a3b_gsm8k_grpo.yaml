@@ -4,7 +4,8 @@ entrypoint: skyrl_train.entrypoints.main_base
 
 trainer:
   strategy: fsdp2
-  flash_attn: false
+  # otagent has flash_attn 2.8.3; base use_sample_packing=true requires FA2.
+  flash_attn: true
   gradient_checkpointing: true
   gradient_checkpointing_use_reentrant: false
   algorithm:

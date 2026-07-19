@@ -2,7 +2,7 @@ entrypoint: skyrl_train.entrypoints.main_base
 
 trainer:
   strategy: fsdp2
-  flash_attn: false
+  flash_attn: true
   gradient_checkpointing: true
   gradient_checkpointing_use_reentrant: false
   algorithm:
