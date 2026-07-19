@@ -1,3 +1,8 @@
+# Vista 8-node MoE gsm8k GRPO — disagg (4 policy EP=4 + 4 vLLM).
+# Colocate OOMs on 30B-A3B (843025/843198); keep exclusive inference GPUs.
+# Launch after 4node smoke is green:
+#   NUM_NODES=8 RL_CONFIG=./hpc/skyrl_yaml/vista/8node_qwen3_30b_a3b_gsm8k_grpo.yaml \
+#   JOB_NAME=vista_moe30b_gsm8k_grpo_8n bash hpc/skyrl_standard/vista/run_gsm8k_moe30b_grpo.sh
 entrypoint: skyrl_train.entrypoints.main_base
 
 trainer:
@@ -27,8 +32,9 @@ trainer:
 
   max_prompt_length: 512
 
-  eval_interval: 5
-  eval_before_train: true
+  # Match 4n smoke until eval path is re-enabled.
+  eval_interval: 999999
+  eval_before_train: false
   ckpt_interval: 10
   resume_mode: null
   hf_save_interval: 999999
@@ -58,7 +64,7 @@ trainer:
     fsdp_config:
       cpu_offload: true
       reshard_after_forward: true
-      fsdp_size: 2
+      fsdp_size: 1
       expert_model_parallel_size: 4
       moe_router_replay: false
       moe_grouped_gemm: true
@@ -69,16 +75,18 @@ trainer:
     fsdp_config:
       cpu_offload: true
       reshard_after_forward: true
-      fsdp_size: 2
+      fsdp_size: 1
       expert_model_parallel_size: 4
       moe_router_replay: false
       moe_grouped_gemm: true
       ep_comm_backend: torch
 
   placement:
-    colocate_all: true
-    policy_num_nodes: 8
-    ref_num_nodes: 8
+    # 4 policy (+ref colocated; no KL) + 4 inference = 8 Vista nodes.
+    colocate_all: false
+    colocate_policy_ref: true
+    policy_num_nodes: 4
+    ref_num_nodes: 4
     policy_num_gpus_per_node: 1
     ref_num_gpus_per_node: 1
 
@@ -89,7 +97,7 @@ generator:
   enforce_eager: true
 
   inference_engine_tensor_parallel_size: 1
-  num_inference_engines: 8
+  num_inference_engines: 4
   inference_engine_expert_parallel_size: 1
 
   n_samples_per_prompt: 4

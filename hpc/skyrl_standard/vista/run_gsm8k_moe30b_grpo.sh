@@ -1,9 +1,10 @@
 #!/bin/bash
 # Vista STANDARD (non-agentic) GRPO on Qwen/Qwen3-30B-A3B + gsm8k.
+# Ladder: 4n disagg smoke (default) → 8n disagg → full (gh/gg, ~24n).
 # Default: 4 GH200 nodes disagg (2 policy EP=2 + 2 vLLM, max_steps=5).
-# Colocate-on-2 OOMs (gather/wake); do not default back to 2node without headroom.
-# Scale up: NUM_NODES=8 RL_CONFIG=./hpc/skyrl_yaml/vista/8node_qwen3_30b_a3b_gsm8k_grpo.yaml \
-#           JOB_NAME=vista_moe30b_gsm8k_grpo10_8n bash ...
+# Colocate OOMs on 30B (gather/wake); keep disagg.
+# 8n: NUM_NODES=8 RL_CONFIG=./hpc/skyrl_yaml/vista/8node_qwen3_30b_a3b_gsm8k_grpo.yaml \
+#      JOB_NAME=vista_moe30b_gsm8k_grpo_8n bash ...
 #
 # Prerequisites (login node OK for git/light; prep data may download):
 #   1. Branch lukedhlee/vista-moe-grpo-30b pulled into $DCFT
