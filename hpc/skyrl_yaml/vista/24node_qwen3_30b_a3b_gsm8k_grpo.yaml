@@ -96,6 +96,8 @@ trainer:
     ref_num_gpus_per_node: 1
     critic_num_nodes: 1
     critic_num_gpus_per_node: 1
+    # Exactly-full 24-node cluster: pin policy nodes before PACK inference (Jupiter parity).
+    policy_strict_spread_pg: true
 
 generator:
   backend: vllm
@@ -110,7 +112,9 @@ generator:
   n_samples_per_prompt: 4
   eval_n_samples_per_prompt: 1
 
-  gpu_memory_utilization: 0.90
+  # 0.90 OOMs after sync_weights (843411): weights~57GiB + KV~28GiB leaves no sync peak.
+  # Jupiter 30B MoE uses 0.85; keep a bit more headroom on Vista 96GB.
+  gpu_memory_utilization: 0.80
 
   max_num_seqs: 8
   max_num_batched_tokens: 4096
