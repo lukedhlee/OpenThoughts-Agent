@@ -99,9 +99,11 @@ fi
 # Prefer Luke-owned harbor + MarinSkyRL over penfever editable installs (mode 700).
 export SKYRL_HOME="${RL_REPO_DIR:-$SCRATCH/MarinSkyRL}"
 export RL_REPO_DIR="${RL_REPO_DIR:-$SKYRL_HOME}"
-export PYTHONPATH="$SCRATCH/harbor/src:${SKYRL_HOME}/skyrl-train:${DCFT}${PYTHONPATH:+:$PYTHONPATH}"
+# penfever otagent site-packages is not writable; keep Luke user-site for missing deps.
+export PYTHONUSERBASE="${PYTHONUSERBASE:-$SCRATCH/python_user}"
+export PYTHONPATH="${PYTHONUSERBASE}/lib/python3.12/site-packages:$SCRATCH/harbor/src:${SKYRL_HOME}/skyrl-train:${SKYRL_HOME}/skyrl-gym:${DCFT}${PYTHONPATH:+:$PYTHONPATH}"
 echo "WandB: mode=$WANDB_MODE project=$WANDB_PROJECT entity=${WANDB_ENTITY:-unset}"
-echo "PYTHONPATH head: harbor + MarinSkyRL + DCFT"
+echo "PYTHONPATH head: user-site + harbor + MarinSkyRL(train+gym) + DCFT"
 
 if [[ ! -f "$DATA_DIR/train.parquet" || ! -f "$DATA_DIR/validation.parquet" ]]; then
   echo "ERROR: gsm8k parquet missing under $DATA_DIR"

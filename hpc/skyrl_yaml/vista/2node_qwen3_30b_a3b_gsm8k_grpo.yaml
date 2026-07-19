@@ -135,7 +135,9 @@ container:
     RL_PYTHON: /scratch/10635/penfever/miniconda3/envs/otagent/bin/python
     RL_REPO_DIR: /scratch/11584/lukedhlee/MarinSkyRL
     SKYRL_HOME: /scratch/11584/lukedhlee/MarinSkyRL
-    PYTHONPATH: /scratch/11584/lukedhlee/harbor/src:/scratch/11584/lukedhlee/MarinSkyRL/skyrl-train:/scratch/11584/lukedhlee/OpenThoughts-Agent
+    # penfever otagent is not writable; Luke user-site holds missing deps (jaxtyping, …)
+    PYTHONUSERBASE: /scratch/11584/lukedhlee/python_user
+    PYTHONPATH: /scratch/11584/lukedhlee/python_user/lib/python3.12/site-packages:/scratch/11584/lukedhlee/harbor/src:/scratch/11584/lukedhlee/MarinSkyRL/skyrl-train:/scratch/11584/lukedhlee/MarinSkyRL/skyrl-gym:/scratch/11584/lukedhlee/OpenThoughts-Agent
     WANDB_PROJECT: vista-moe-gsm8k-grpo
     WANDB_MODE: online
     DC_AGENT_SECRET_ENV: /scratch/11584/lukedhlee/keys.env
