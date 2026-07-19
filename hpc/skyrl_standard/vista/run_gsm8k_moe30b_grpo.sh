@@ -1,12 +1,14 @@
 #!/bin/bash
 # Vista STANDARD (non-agentic) GRPO on Qwen/Qwen3-30B-A3B + gsm8k.
-# 8 GH200 nodes, colocate EP=4 x FSDP=2, max_steps=10, verifier reward only.
+# Default: 2 GH200 nodes (EP=2×FSDP=1, max_steps=5) for fast bring-up.
+# Scale up: NUM_NODES=8 RL_CONFIG=./hpc/skyrl_yaml/vista/8node_qwen3_30b_a3b_gsm8k_grpo.yaml \
+#           JOB_NAME=vista_moe30b_gsm8k_grpo10_8n bash ...
 #
 # Prerequisites (login node OK for git/light; prep data may download):
 #   1. Branch lukedhlee/vista-moe-grpo-30b pulled into $DCFT
 #   2. gsm8k parquet at $DATA_DIR/{train,validation}.parquet
 #   3. Model weights cached (or let compute download with HF_TOKEN)
-#   4. secrets: source $SCRATCH/keys.env or penfever keys.env for WANDB/HF
+#   4. secrets: source $SCRATCH/keys.env for WANDB/HF
 #
 # Usage (from OpenThoughts-Agent repo root on Vista):
 #   bash hpc/skyrl_standard/vista/run_gsm8k_moe30b_grpo.sh
@@ -20,8 +22,9 @@ set -euo pipefail
 : "${EXPERIMENTS_DIR:=$SCRATCH/experiments}"
 : "${PARTITION:=gh-dev}"
 : "${TIME_LIMIT:=02:00:00}"
-: "${NUM_NODES:=8}"
-: "${JOB_NAME:=vista_moe30b_gsm8k_grpo10_v3}"
+: "${NUM_NODES:=2}"
+: "${JOB_NAME:=vista_moe30b_gsm8k_grpo_2n}"
+: "${RL_CONFIG:=./hpc/skyrl_yaml/vista/2node_qwen3_30b_a3b_gsm8k_grpo.yaml}"
 : "${MODEL_PATH:=}"
 : "${CONDA_BASE:=$PENFEVER_SCRATCH/miniconda3}"
 # Absolute path — name-only `otagent` can lose PATH on Vista compute (→ /bin/python).
@@ -124,7 +127,7 @@ echo "  python=$LAUNCH_PY"
 
 "$LAUNCH_PY" -m hpc.launch \
   --job_type rl \
-  --rl_config ./hpc/skyrl_yaml/vista/8node_qwen3_30b_a3b_gsm8k_grpo.yaml \
+  --rl_config "$RL_CONFIG" \
   --rl_use_conda \
   --rl_conda_env "$RL_CONDA_ENV" \
   --model_path "$MODEL_PATH" \

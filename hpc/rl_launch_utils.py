@@ -1772,6 +1772,8 @@ class RLJobRunner:
             object_store_memory=int(self.config.ray_object_store_gb * 1024 * 1024 * 1024),
             disable_cpu_bind=getattr(hpc, "disable_cpu_bind", False),
             gpu_bind=getattr(hpc, "gpu_bind", "none"),
+            # Vista/TACC: empty gpu_directive_format → no --gres on Ray srun.
+            gpu_gres=bool(getattr(hpc, "gpu_directive_format", "")),
             proxychains_binary=getattr(hpc, "proxychains_binary", None),
             # Apptainer RL runtime mode (OPT-IN): wrap ray start / ray.init()
             # wait scripts in `apptainer exec --nv` when a SIF is configured.
