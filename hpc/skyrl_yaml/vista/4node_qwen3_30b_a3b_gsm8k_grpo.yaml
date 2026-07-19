@@ -1,5 +1,6 @@
-# Vista 2-node MoE gsm8k GRPO — COLOCATE (EP=2 × FSDP=1).
-# Prefer 4node_*.yaml (disagg): colocate OOMs on weight sync/wake (843025/843198).
+# Vista 4-node MoE gsm8k GRPO smoke — disagg (2 policy EP=2 + 2 vLLM).
+# Colocate on 2×96GB OOMs (843025 gather / 843198 wake_up); keep vLLM exclusive.
+# Scale to 8node_*.yaml once green.
 entrypoint: skyrl_train.entrypoints.main_base
 
 trainer:
@@ -80,7 +81,9 @@ trainer:
       ep_comm_backend: torch
 
   placement:
-    colocate_all: true
+    # 2 policy (+ref colocated; no KL) + 2 inference = 4 Vista nodes.
+    colocate_all: false
+    colocate_policy_ref: true
     policy_num_nodes: 2
     ref_num_nodes: 2
     policy_num_gpus_per_node: 1
@@ -99,9 +102,8 @@ generator:
   n_samples_per_prompt: 2
   eval_n_samples_per_prompt: 1
 
-  # 30B-A3B weights ~57G; colocate needs headroom for FSDP gather (843025 OOM at 0.90).
-  # Weights still fit; KV pool stays small with max_model_len=1536.
-  gpu_memory_utilization: 0.70
+  # Exclusive inference GPUs — full util OK (weights ~57G).
+  gpu_memory_utilization: 0.90
 
   max_num_seqs: 4
   max_num_batched_tokens: 4096

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Vista STANDARD (non-agentic) GRPO on Qwen/Qwen3-30B-A3B + gsm8k.
-# Default: 2 GH200 nodes (EP=2×FSDP=1, max_steps=5) for fast bring-up.
+# Default: 4 GH200 nodes disagg (2 policy EP=2 + 2 vLLM, max_steps=5).
+# Colocate-on-2 OOMs (gather/wake); do not default back to 2node without headroom.
 # Scale up: NUM_NODES=8 RL_CONFIG=./hpc/skyrl_yaml/vista/8node_qwen3_30b_a3b_gsm8k_grpo.yaml \
 #           JOB_NAME=vista_moe30b_gsm8k_grpo10_8n bash ...
 #
@@ -22,9 +23,9 @@ set -euo pipefail
 : "${EXPERIMENTS_DIR:=$SCRATCH/experiments}"
 : "${PARTITION:=gh-dev}"
 : "${TIME_LIMIT:=02:00:00}"
-: "${NUM_NODES:=2}"
-: "${JOB_NAME:=vista_moe30b_gsm8k_grpo_2n}"
-: "${RL_CONFIG:=./hpc/skyrl_yaml/vista/2node_qwen3_30b_a3b_gsm8k_grpo.yaml}"
+: "${NUM_NODES:=4}"
+: "${JOB_NAME:=vista_moe30b_gsm8k_grpo_4n}"
+: "${RL_CONFIG:=./hpc/skyrl_yaml/vista/4node_qwen3_30b_a3b_gsm8k_grpo.yaml}"
 : "${MODEL_PATH:=}"
 : "${CONDA_BASE:=$PENFEVER_SCRATCH/miniconda3}"
 # Absolute path — name-only `otagent` can lose PATH on Vista compute (→ /bin/python).
