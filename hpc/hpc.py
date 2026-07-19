@@ -1325,7 +1325,10 @@ vista = HPC(
     needs_cuda_detection=True,
     # Runtime configuration for Ray/vLLM
     modules=["gcc/15.1.0", "cuda/12.8", "tacc-apptainer"],
-    conda_activate="source $SCRATCH/miniconda3/etc/profile.d/conda.sh && conda activate $SCRATCH/miniconda3/envs/vllm_sandboxes",
+    # Shared lab otagent (penfever). Luke and other non-penfever SCRATCH trees do not
+    # ship $SCRATCH/miniconda3 — job 842670 died in 10s on EnvironmentLocationNotFound
+    # for vllm_sandboxes. Eval view already hard-codes this same path.
+    conda_activate="source /scratch/10635/penfever/miniconda3/etc/profile.d/conda.sh && conda activate /scratch/10635/penfever/miniconda3/envs/otagent",
     env_vars={
         "HF_HOME": "/tmp/hf_home",
         "PYTHONFAULTHANDLER": "1",

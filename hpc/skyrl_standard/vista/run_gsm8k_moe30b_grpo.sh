@@ -27,10 +27,13 @@ set -euo pipefail
 : "${RL_CONDA_ENV:=otagent}"
 
 export SCRATCH DCFT
+export CONDA_EXE="${CONDA_EXE:-$CONDA_BASE/bin/conda}"
 # Prefer Luke caches (tacc.env defaults HF_HUB_CACHE=$SCRATCH/hub — also OK if populated).
 export HF_HOME="${HF_HOME:-$SCRATCH/cache/hf}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$SCRATCH/hub}"
 export FLASHINFER_WORKSPACE_BASE="${FLASHINFER_WORKSPACE_BASE:-$SCRATCH/flashinfer_ws}"
+# Don't spam penfever's mailbox from Luke launches (tacc.env defaults bf996@nyu.edu).
+export EMAIL_ADDRESS="${EMAIL_ADDRESS:-}"
 
 # Resolve model to a LOCAL snapshot dir so login-node snapshot_download cannot OOM.
 if [[ -z "$MODEL_PATH" ]]; then
