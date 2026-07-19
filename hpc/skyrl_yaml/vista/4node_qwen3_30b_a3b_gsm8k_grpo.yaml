@@ -31,8 +31,9 @@ trainer:
 
   max_prompt_length: 512
 
-  eval_interval: 5
-  eval_before_train: true
+  # Skip eval for smoke: disagg+batched returns prompt_token_ids len≠responses (843220).
+  eval_interval: 999999
+  eval_before_train: false
   ckpt_interval: 5
   resume_mode: null
   hf_save_interval: 999999
