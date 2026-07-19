@@ -5,6 +5,9 @@
 # Colocate OOMs on 30B (gather/wake); keep disagg.
 # 8n: NUM_NODES=8 RL_CONFIG=./hpc/skyrl_yaml/vista/8node_qwen3_30b_a3b_gsm8k_grpo.yaml \
 #      JOB_NAME=vista_moe30b_gsm8k_grpo_8n bash ...
+# 24n (gh/gg): NUM_NODES=24 PARTITION=gh TIME_LIMIT=12:00:00 \
+#      RL_CONFIG=./hpc/skyrl_yaml/vista/24node_qwen3_30b_a3b_gsm8k_grpo.yaml \
+#      JOB_NAME=vista_moe30b_gsm8k_grpo_24n bash ...
 #
 # Prerequisites (login node OK for git/light; prep data may download):
 #   1. Branch lukedhlee/vista-moe-grpo-30b pulled into $DCFT
