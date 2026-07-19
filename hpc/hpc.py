@@ -363,6 +363,12 @@ class HPC(BaseModel):
         """
         env_parts = []
         for key, value in {**self.env_vars, **self.library_paths}.items():
+            # Prefer job-level overrides already exported in the sbatch shell
+            # (e.g. Vista MoE gsm8k yaml sets CC/CXX/TRITON_CC=gcc/14.2.0 so
+            # FlashInfer CUTLASS MoE JIT is not pinned to hpc.library_paths gcc/15).
+            override = os.environ.get(key)
+            if override:
+                value = override
             env_parts.append(f"{key}={shlex.quote(str(value))}")
         env_parts.append("PATH=$PATH")
         env_parts.append("LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}")
@@ -371,6 +377,9 @@ class HPC(BaseModel):
         # Propagate CUDA_HOME so Triton can find ptxas on worker nodes
         # (set by 'module load CUDA/...' but not always inherited by Ray workers)
         env_parts.append("CUDA_HOME=${CUDA_HOME:-}")
+        # Prebuilt FlashInfer MoE workspace (must reach Ray workers; --export=ALL
+        # alone is not enough once ray_env_vars rebuilds a fresh `env ...` prefix).
+        env_parts.append("FLASHINFER_WORKSPACE_BASE=${FLASHINFER_WORKSPACE_BASE:-}")
         return " ".join(env_parts)
 
     def get_nccl_exports(self) -> str:

@@ -32,15 +32,24 @@ setup_triton_cache() {
     mkdir -p "$inductor_base" 2>/dev/null || true
     export TORCHINDUCTOR_CACHE_DIR="$inductor_base"
 
-    # flashinfer JIT cache → node-local too. Default is $HOME/.cache/flashinfer on shared
-    # GPFS; concurrent multi-cell vLLM launches race to JIT-build the SAME sampling.so into
-    # the SAME path, and a worker that dlopen()s a half-built .so dies with
+    # flashinfer JIT cache → node-local by default. Default is $HOME/.cache/flashinfer on
+    # shared GPFS; concurrent multi-cell vLLM launches race to JIT-build the SAME sampling.so
+    # into the SAME path, and a worker that dlopen()s a half-built .so dies with
     # "symbol lookup error: ... undefined symbol: _Z..top_p_sampling_from_probs...", crashing
     # the whole engine at CUDA-graph profiling (~40min healthcheck timeout). Node-local
     # isolation eliminates the cross-job/cross-worker race. (Diagnosed 2026-06-17, Lever-2 pilot.)
-    local flashinfer_base="/tmp/flashinfer_${user}_${job_id}"
-    mkdir -p "$flashinfer_base" 2>/dev/null || true
-    export FLASHINFER_WORKSPACE_BASE="$flashinfer_base"
+    #
+    # Exception: if FLASHINFER_WORKSPACE_BASE is already set (e.g. RL yaml extra_env pointing
+    # at a prebuilt fused_moe_90.so on Vista) and FLASHINFER_FORCE_NODE_LOCAL!=1, keep it.
+    # universal_rl.sbatch sources this AFTER {rl_container_env_late}, so without this guard
+    # the prebuilt path is clobbered to /tmp and MoE re-JITs under gcc/15 → nvcc fails.
+    if [[ "${FLASHINFER_FORCE_NODE_LOCAL:-0}" != "1" && -n "${FLASHINFER_WORKSPACE_BASE:-}" ]]; then
+        mkdir -p "$FLASHINFER_WORKSPACE_BASE" 2>/dev/null || true
+    else
+        local flashinfer_base="/tmp/flashinfer_${user}_${job_id}"
+        mkdir -p "$flashinfer_base" 2>/dev/null || true
+        export FLASHINFER_WORKSPACE_BASE="$flashinfer_base"
+    fi
 
     # Print status if verbose
     if [[ "${TRITON_CACHE_VERBOSE:-0}" == "1" ]]; then

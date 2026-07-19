@@ -130,7 +130,13 @@ container:
     NCCL_DEBUG: WARN
     SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
     VLLM_ATTENTION_BACKEND: FLASH_ATTN
+    # Prebuilt fused_moe_90.so from TPS smoke — must win over triton_cache /tmp (see triton_cache.sh).
     FLASHINFER_WORKSPACE_BASE: /scratch/11584/lukedhlee/flashinfer_ws
+    # nvcc rejects gcc>14; vista hpc.py defaults gcc/15 for DeepSpeed SFT — override for MoE JIT.
+    CC: /home1/apps/gcc/14.2.0/bin/gcc
+    CXX: /home1/apps/gcc/14.2.0/bin/g++
+    TRITON_CC: /home1/apps/gcc/14.2.0/bin/gcc
+    LD_PRELOAD: /home1/apps/gcc/14.2.0/lib64/libstdc++.so.6
     CONDA_EXE: /scratch/10635/penfever/miniconda3/bin/conda
     RL_PYTHON: /scratch/10635/penfever/miniconda3/envs/otagent/bin/python
     RL_REPO_DIR: /scratch/11584/lukedhlee/MarinSkyRL
