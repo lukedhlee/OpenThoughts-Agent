@@ -22,14 +22,31 @@ set -euo pipefail
 : "${TIME_LIMIT:=02:00:00}"
 : "${NUM_NODES:=8}"
 : "${JOB_NAME:=vista_moe30b_gsm8k_grpo10}"
-: "${MODEL_PATH:=Qwen/Qwen3-30B-A3B}"
+: "${MODEL_PATH:=}"
 : "${CONDA_BASE:=$PENFEVER_SCRATCH/miniconda3}"
 : "${RL_CONDA_ENV:=otagent}"
 
 export SCRATCH DCFT
+# Prefer Luke caches (tacc.env defaults HF_HUB_CACHE=$SCRATCH/hub — also OK if populated).
 export HF_HOME="${HF_HOME:-$SCRATCH/cache/hf}"
-export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-$SCRATCH/hub}"
 export FLASHINFER_WORKSPACE_BASE="${FLASHINFER_WORKSPACE_BASE:-$SCRATCH/flashinfer_ws}"
+
+# Resolve model to a LOCAL snapshot dir so login-node snapshot_download cannot OOM.
+if [[ -z "$MODEL_PATH" ]]; then
+  for cand in \
+      "$HF_HUB_CACHE/models--Qwen--Qwen3-30B-A3B/snapshots"/* \
+      "$SCRATCH/cache/hf/hub/models--Qwen--Qwen3-30B-A3B/snapshots"/*; do
+    if [[ -d "$cand" && -f "$cand/config.json" ]]; then
+      MODEL_PATH="$cand"
+      break
+    fi
+  done
+fi
+if [[ -z "$MODEL_PATH" ]]; then
+  echo "ERROR: no local Qwen3-30B-A3B snapshot under $HF_HUB_CACHE (refusing HF download on login)"
+  exit 1
+fi
 # Prefer Luke-owned MarinSkyRL (penfever's tree is often mode 700 / unreadable).
 if [[ -z "${RL_REPO_DIR:-}" ]]; then
   for cand in "$SCRATCH/MarinSkyRL" "$SCRATCH/SkyRL" \
