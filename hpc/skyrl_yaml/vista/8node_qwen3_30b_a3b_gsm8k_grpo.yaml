@@ -129,3 +129,10 @@ container:
     SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
     VLLM_ATTENTION_BACKEND: FLASH_ATTN
     FLASHINFER_WORKSPACE_BASE: /scratch/11584/lukedhlee/flashinfer_ws
+    CONDA_EXE: /scratch/10635/penfever/miniconda3/bin/conda
+    RL_REPO_DIR: /scratch/11584/lukedhlee/MarinSkyRL
+    SKYRL_HOME: /scratch/11584/lukedhlee/MarinSkyRL
+    PYTHONPATH: /scratch/11584/lukedhlee/harbor/src:/scratch/11584/lukedhlee/MarinSkyRL/skyrl-train:/scratch/11584/lukedhlee/OpenThoughts-Agent
+    WANDB_PROJECT: vista-moe-gsm8k-grpo
+    WANDB_MODE: online
+    DC_AGENT_SECRET_ENV: /scratch/11584/lukedhlee/keys.env

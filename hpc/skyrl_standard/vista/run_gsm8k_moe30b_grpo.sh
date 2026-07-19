@@ -65,13 +65,19 @@ if [[ -z "${WANDB_API_KEY:-}" ]]; then
   exit 1
 fi
 export WANDB_MODE="${WANDB_MODE:-online}"
-export WANDB_PROJECT="${WANDB_PROJECT:-vista-moe-gsm8k-grpo}"
+# Force project (tacc.env defaults WANDB_PROJECT=OpenThoughts-Agent).
+export WANDB_PROJECT="${WANDB_PROJECT_OVERRIDE:-vista-moe-gsm8k-grpo}"
 export DC_AGENT_SECRET_ENV="${DC_AGENT_SECRET_ENV:-$SCRATCH/keys.env}"
 # Ensure HF hub sees a token if secrets use either common name.
 if [[ -z "${HF_TOKEN:-}" && -n "${HUGGING_FACE_HUB_TOKEN:-}" ]]; then
   export HF_TOKEN="$HUGGING_FACE_HUB_TOKEN"
 fi
+# Prefer Luke-owned harbor + MarinSkyRL over penfever editable installs (mode 700).
+export SKYRL_HOME="${RL_REPO_DIR:-$SCRATCH/MarinSkyRL}"
+export RL_REPO_DIR="${RL_REPO_DIR:-$SKYRL_HOME}"
+export PYTHONPATH="$SCRATCH/harbor/src:${SKYRL_HOME}/skyrl-train:${DCFT}${PYTHONPATH:+:$PYTHONPATH}"
 echo "WandB: mode=$WANDB_MODE project=$WANDB_PROJECT entity=${WANDB_ENTITY:-unset}"
+echo "PYTHONPATH head: harbor + MarinSkyRL + DCFT"
 
 if [[ ! -f "$DATA_DIR/train.parquet" || ! -f "$DATA_DIR/validation.parquet" ]]; then
   echo "ERROR: gsm8k parquet missing under $DATA_DIR"
