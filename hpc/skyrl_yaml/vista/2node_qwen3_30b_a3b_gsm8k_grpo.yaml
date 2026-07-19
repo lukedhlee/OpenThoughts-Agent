@@ -64,21 +64,20 @@ trainer:
       fsdp_size: 1
       expert_model_parallel_size: 2
       moe_router_replay: false
-      # needs torchtitan@a1fdd7e; otagent lacks it (and pip torchtitan fights tyro).
-      # for-loop experts OK for 2-node smoke.
-      moe_grouped_gemm: false
+      # EP>1 needs grouped GEMM + torchtitan@a1fdd7e (user-site; needs tyro>=0.9).
+      moe_grouped_gemm: true
       ep_comm_backend: torch
-    ref:
-      model:
-        path: Qwen/Qwen3-30B-A3B
-      fsdp_config:
-        cpu_offload: true
-        reshard_after_forward: true
-        fsdp_size: 1
-        expert_model_parallel_size: 2
-        moe_router_replay: false
-        moe_grouped_gemm: false
-        ep_comm_backend: torch
+  ref:
+    model:
+      path: Qwen/Qwen3-30B-A3B
+    fsdp_config:
+      cpu_offload: true
+      reshard_after_forward: true
+      fsdp_size: 1
+      expert_model_parallel_size: 2
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
 
   placement:
     colocate_all: true
