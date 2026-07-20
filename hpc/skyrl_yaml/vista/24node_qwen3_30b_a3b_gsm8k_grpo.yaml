@@ -36,11 +36,11 @@ trainer:
   max_prompt_length: 512
 
   # Train pass@4 is too noisy (batch=32, temp=0.7) to judge learning — need val.
-  # Baseline at step 0, then every step while diagnosing early learning/stalls.
-  eval_interval: 1
+  # Baseline at step 0, then every 10 steps; full eval costs ~31 min on Vista 24n.
+  eval_interval: 10
   eval_before_train: true
   seed: 42
-  ckpt_interval: 20
+  ckpt_interval: 5
   resume_mode: null
   hf_save_interval: 999999
   hf_hub_repo_id: null
