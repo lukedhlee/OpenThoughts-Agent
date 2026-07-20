@@ -36,9 +36,10 @@ trainer:
   max_prompt_length: 512
 
   # Train pass@4 is too noisy (batch=32, temp=0.7) to judge learning — need val.
-  # Baseline at step 0, then every 5 steps (hung 843437 never reached old interval=20).
-  eval_interval: 5
+  # Baseline at step 0, then every step while diagnosing early learning/stalls.
+  eval_interval: 1
   eval_before_train: true
+  seed: 42
   ckpt_interval: 20
   resume_mode: null
   hf_save_interval: 999999
