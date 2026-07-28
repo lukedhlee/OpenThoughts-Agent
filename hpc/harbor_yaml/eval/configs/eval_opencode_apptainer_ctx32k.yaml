@@ -1,0 +1,72 @@
+job_name: swebench-opencode-apptainer-smoke
+jobs_dir: eval_jobs
+n_attempts: 1
+timeout_multiplier: 1.0
+debug: false
+
+orchestrator:
+  type: local
+  n_concurrent_trials: 1
+  quiet: false
+  plain_output: true
+  retry:
+    max_retries: 2
+    include_exceptions:
+    - BridgeOutageError
+    exclude_exceptions:
+    - AgentTimeoutError
+    - VerifierTimeoutError
+    - SandboxBuildFailedError
+    wait_multiplier: 2.0
+    min_wait_sec: 2.0
+    max_wait_sec: 30.0
+  kwargs: {}
+
+environment:
+  type: apptainer
+  force_build: false
+  delete: true
+  override_cpus: 2
+  override_memory_mb: 8192
+  override_storage_mb: 8192
+  kwargs:
+    # APPTAINER_BRIDGE_URL supplies bridge_url at runtime.
+    sif_cache: /p/scratch/synthlaion/lee27/sif
+
+verifier:
+  override_timeout_sec: null
+  max_timeout_sec: 14400
+  disable: false
+
+metrics: []
+
+agents:
+- name: opencode
+  import_path: null
+  model_name: vllm/override-at-runtime
+  override_timeout_sec: 1800
+  override_setup_timeout_sec: 60
+  max_timeout_sec: null
+  kwargs:
+    # The worker bind-mounts this exact pinned standalone binary. This skips
+    # Harbor's networked apt/NVM/npm setup and fails closed if it is absent.
+    version: 1.18.8
+    preinstalled: true
+    opencode_config:
+      autoupdate: false
+      compaction:
+        auto: false
+    model_info:
+      # 28,672 prompt + 4,096 generation = 32,768 total context.
+      max_input_tokens: 32768
+      max_output_tokens: 4096
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+    trajectory_config:
+      raw_content: false
+      linear_history: true
+
+datasets:
+- path: /replace/with/swebench/tasks/path
+
+tasks: []
