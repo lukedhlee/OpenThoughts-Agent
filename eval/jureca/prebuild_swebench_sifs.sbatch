@@ -23,6 +23,7 @@ SIF_CACHE="${2:-/p/scratch/synthlaion/lee27/sif}"
 MAX_PARALLEL="${3:-4}"
 PROXY_HOST="${PROXY_HOST:-10.14.0.53}"
 PROXY_PORT="${PROXY_PORT:-1080}"
+PULL_TIMEOUT_SEC="${PULL_TIMEOUT_SEC:-900}"
 
 if [[ ! -d "$DATASET" ]]; then
     echo "ERROR: dataset does not exist: $DATASET" >&2
@@ -96,8 +97,18 @@ pull_task() {
 
     tmp_target="$JOB_TMP/${task_name}.$$.sif"
     echo "[$task_name] pulling docker://$base_image"
-    if apptainer pull --disable-cache "$tmp_target" "docker://$base_image" &&
-       apptainer inspect "$tmp_target" >/dev/null; then
+    # Apptainer has occasionally finished and written a valid SIF but remained
+    # asleep in its parent process while using a SOCKS relay. Bound the call;
+    # after any non-zero exit, accept the file only if Apptainer itself can
+    # inspect it successfully.
+    pull_rc=0
+    timeout --signal=TERM --kill-after=30 "$PULL_TIMEOUT_SEC" \
+        apptainer pull --disable-cache "$tmp_target" "docker://$base_image" ||
+        pull_rc=$?
+    if [[ -s "$tmp_target" ]] && apptainer inspect "$tmp_target" >/dev/null; then
+        if (( pull_rc != 0 )); then
+            echo "[$task_name] pull exited $pull_rc, salvaging validated SIF"
+        fi
         mv "$tmp_target" "$target"
         printf '%s\tbuilt\t%s\n' "$task_name" "$target" >> "$STATUS_FILE"
         return 0
