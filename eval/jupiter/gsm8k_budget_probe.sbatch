@@ -57,7 +57,15 @@ module load GCC/14.3.0
 module load nvidia-compilers/25.9-CUDA-13
 
 # --- venv (NOT conda; conda is deliberately left out to avoid import conflicts)
-RL_ENV_DIR="${RL_ENV_DIR:-$WORKDIR/envs/rl}"
+# MUST be envs/rl-megatron, NOT envs/rl. Verified 2026-07-28 (job 1084979 died on
+# this): envs/rl ships vllm 0.13.0 whose _C.abi3.so links libcudart.so.12, while
+# that venv's torch is cu130 and Jupiter has NO CUDA 12 module at all -- so
+# `from vllm import LLM` is unsatisfiable there and no LD_LIBRARY_PATH can fix it.
+#   envs/rl          vllm 0.13.0 -> libcudart.so.12  BROKEN
+#   envs/rl-megatron vllm 0.22.0 -> libcudart.so.13  imports OK
+# rl-megatron also has pandas 3.0.5 / pyarrow 25.0.0 / transformers 5.8.1, and its
+# nvidia/* layout matches the LD_LIBRARY_PATH list below exactly.
+RL_ENV_DIR="${RL_ENV_DIR:-$WORKDIR/envs/rl-megatron}"
 if [ ! -x "$RL_ENV_DIR/bin/python" ]; then
   echo "FATAL: no python at $RL_ENV_DIR/bin/python" >&2
   exit 1
@@ -101,6 +109,27 @@ echo "  limit        : ${LIMIT} (0 = all 1319)"
 echo "  out          : $OUT_JSON"
 echo "=============================================================="
 nvidia-smi --query-gpu=index,name,memory.total --format=csv || true
+
+# --- preflight ---------------------------------------------------------------
+# Fail in seconds, not two minutes of model loading. Both of these have bitten a
+# real submission: the scorer (job 1075086, transitive func_timeout) and the vLLM
+# extension link (job 1084979, libcudart.so.12).
+echo "--- preflight ---"
+export WORKDIR
+python - <<'PREFLIGHT' || { echo "PREFLIGHT FAILED — not submitting the run" >&2; exit 1; }
+import importlib.metadata as md
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["WORKDIR"], "scripts", "analysis"))
+from gsm8k_budget_probe import load_compute_score
+fn, origin = load_compute_score(os.environ.get("GSM8K_SCORER_PATH", ""))
+assert fn("x #### 2", "2", method="strict") == 1.0, "scorer sanity check failed"
+print(f"  scorer  OK  ({origin})")
+from vllm import LLM, SamplingParams  # noqa: F401
+print(f"  vllm    OK  ({md.version('vllm')})")
+import pandas as pd
+print(f"  pandas  OK  ({pd.__version__})")
+PREFLIGHT
+echo "--- preflight passed ---"
 
 # shellcheck disable=SC2086
 srun --ntasks=1 python "$WORKDIR/scripts/analysis/gsm8k_budget_probe.py" \
