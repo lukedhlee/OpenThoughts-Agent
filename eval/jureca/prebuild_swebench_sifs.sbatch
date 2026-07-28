@@ -116,6 +116,15 @@ pull_task() {
         return 0
     fi
 
+    # A validated output may have been promoted by an operator after Apptainer
+    # finished writing but wedged during shutdown. Treat that as a successful
+    # cache fill instead of recording a false failure.
+    if [[ -s "$target" ]] && apptainer inspect "$target" >/dev/null; then
+        rm -f -- "$tmp_target"
+        printf '%s\tsalvaged\t%s\n' "$task_name" "$target" >> "$STATUS_FILE"
+        return 0
+    fi
+
     rm -f -- "$tmp_target"
     printf '%s\tfailed\t%s\n' "$task_name" "$base_image" >> "$STATUS_FILE"
     return 1
