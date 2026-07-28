@@ -84,6 +84,15 @@ export LD_LIBRARY_PATH="$SP/nvidia/cu13/lib:$SP/nvidia/cublas/lib:$SP/nvidia/cud
 # --- HF cache (model is already pulled; stay offline-friendly) ---------------
 export HF_HOME="${HF_HOME:-$SCRATCH_ROOT/cache/hf}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
+# MUST be offline. Jupiter compute nodes cannot reach huggingface.co, and this
+# venv has `include-system-site-packages = true`, so it imports huggingface_hub
+# 1.24.0 from miniforge3 rather than its own. That version raises
+# "Cannot send a request, as the client has been closed" instead of falling back
+# to the local cache, so a cached model still fails to load (job 1085300).
+# Forcing offline makes resolution cache-only, which is verified working.
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
+export HF_DATASETS_OFFLINE="${HF_DATASETS_OFFLINE:-1}"
 
 # --- vLLM flags (mirror the RL run) -----------------------------------------
 export VLLM_USE_V1=1
@@ -115,7 +124,7 @@ nvidia-smi --query-gpu=index,name,memory.total --format=csv || true
 # real submission: the scorer (job 1075086, transitive func_timeout) and the vLLM
 # extension link (job 1084979, libcudart.so.12).
 echo "--- preflight ---"
-export WORKDIR
+export WORKDIR MODEL PARQUET
 python - <<'PREFLIGHT' || { echo "PREFLIGHT FAILED — not submitting the run" >&2; exit 1; }
 import importlib.metadata as md
 import os, sys
@@ -128,6 +137,14 @@ from vllm import LLM, SamplingParams  # noqa: F401
 print(f"  vllm    OK  ({md.version('vllm')})")
 import pandas as pd
 print(f"  pandas  OK  ({pd.__version__})")
+# Resolve the tokenizer from cache alone -- catches a missing/offline model
+# before the multi-minute weight load.
+from transformers import AutoTokenizer
+tok = AutoTokenizer.from_pretrained(os.environ["MODEL"])
+print(f"  tokenizer OK ({len(tok)} tokens, offline)")
+df = pd.read_parquet(os.environ["PARQUET"])
+assert len(df) > 0 and "reward_spec" in df.columns, "parquet missing reward_spec"
+print(f"  parquet OK  ({len(df)} rows)")
 PREFLIGHT
 echo "--- preflight passed ---"
 
