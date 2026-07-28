@@ -29,9 +29,11 @@ comparison is exactly paired -- no sampling noise between arms:
                        slicing token ids is a faithful emulation)
   flexible @ full   -- last-number extraction; separates formatting from math
 
-Scoring imports `skyrl_gym.envs.gsm8k.utils` directly so the scorer is
-bit-identical to the one the RL run used. No fallback copy on purpose: a
-divergent reimplementation would silently invalidate the comparison.
+Scoring uses `skyrl_gym.envs.gsm8k.utils.compute_score` so the scorer is
+bit-identical to the one the RL run used -- see `load_compute_score`, which
+falls back to executing that same file directly when the package import trips
+over an unrelated missing dependency. No reimplemented copy on purpose: a
+divergent scorer would silently invalidate the comparison.
 
 Inference only. Loads no optimizer, writes no checkpoint, touches no Daytona.
 """
@@ -39,9 +41,12 @@ Inference only. Loads no optimizer, writes no checkpoint, touches no Daytona.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 
@@ -74,7 +79,64 @@ def parse_args() -> argparse.Namespace:
         default=25,
         help="How many full (prompt, response, verdict) records to keep for eyeballing",
     )
+    p.add_argument(
+        "--scorer-path",
+        default=os.environ.get("GSM8K_SCORER_PATH", ""),
+        help="Explicit path to skyrl_gym/envs/gsm8k/utils.py. Only needed if the package "
+        "import fails and the file isn't findable via PYTHONPATH.",
+    )
     return p.parse_args()
+
+
+def load_compute_score(explicit_path: str = "") -> tuple[Callable[..., float], str]:
+    """Return skyrl_gym's `compute_score`, however we can reach it.
+
+    Prefer the normal package import. It fails in our RL venv because
+    `skyrl_gym/__init__` eventually imports `skyrl_gym.tools.sql`, which needs
+    `func_timeout` -- a dependency of the SQL tool group that has nothing to do
+    with GSM8K and isn't installed. So fall back to executing the SAME
+    `utils.py` directly, which sidesteps the package `__init__` chain.
+
+    This is deliberately NOT a reimplementation: it is byte-for-byte the file
+    the RL run scored with (it imports only `re`), so the comparison stays
+    valid. Hard-fail if neither route works.
+    """
+    try:
+        from skyrl_gym.envs.gsm8k.utils import compute_score  # noqa: PLC0415
+
+        return compute_score, "package import"
+    except Exception as exc:  # ImportError, or a transitive dep blowing up
+        first_error = exc
+
+    candidates: list[Path] = []
+    if explicit_path:
+        candidates.append(Path(explicit_path))
+    for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep):
+        if entry:
+            candidates.append(Path(entry) / "skyrl_gym" / "envs" / "gsm8k" / "utils.py")
+
+    for cand in candidates:
+        if not cand.is_file():
+            continue
+        spec = importlib.util.spec_from_file_location("skyrl_gsm8k_utils", cand)
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        fn = getattr(module, "compute_score", None)
+        if fn is not None:
+            return fn, f"direct file load: {cand}"
+
+    print(
+        "FATAL: cannot obtain skyrl_gym's gsm8k compute_score.\n"
+        f"       package import failed with: {type(first_error).__name__}: {first_error}\n"
+        f"       and no usable utils.py among: {[str(c) for c in candidates] or '(none)'}\n"
+        "       Pass --scorer-path /path/to/skyrl_gym/envs/gsm8k/utils.py, or add\n"
+        "       .../MarinSkyRL/skyrl-gym to PYTHONPATH. Refusing to substitute a local\n"
+        "       copy of the scorer -- that would invalidate the comparison.",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
 
 
 def load_rows(parquet: str, limit: int) -> list[dict]:
@@ -106,17 +168,9 @@ def summarize(name: str, scores: list[float]) -> dict:
 def main() -> int:
     args = parse_args()
 
-    # Import the EXACT scorer the RL run used. Hard-fail rather than reimplement.
-    try:
-        from skyrl_gym.envs.gsm8k.utils import compute_score
-    except ImportError as exc:
-        print(
-            "FATAL: cannot import skyrl_gym.envs.gsm8k.utils.compute_score.\n"
-            "       Put MarinSkyRL/skyrl-gym on PYTHONPATH. Refusing to substitute a\n"
-            "       local copy of the scorer -- that would invalidate the comparison.",
-            file=sys.stderr,
-        )
-        raise SystemExit(2) from exc
+    # The EXACT scorer the RL run used. Hard-fails rather than reimplement.
+    compute_score, scorer_origin = load_compute_score(args.scorer_path)
+    print(f"[probe] scorer loaded via {scorer_origin}", flush=True)
 
     from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
@@ -221,6 +275,7 @@ def main() -> int:
             "seed": args.seed,
             "tensor_parallel_size": args.tensor_parallel_size,
             "thinking": "default chat template (ON for Qwen3)",
+            "scorer_origin": scorer_origin,
         },
         "arms": [summarize(k, v) for k, v in arms.items()],
         "tokens": {
