@@ -72,6 +72,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tensor-parallel-size", type=int, default=4)
     p.add_argument("--max-model-len", type=int, default=8192)
     p.add_argument("--gpu-memory-utilization", type=float, default=0.85)
+    p.add_argument(
+        "--moe-backend",
+        default="triton",
+        help="vLLM MoE kernel backend. Default 'triton' on purpose: with 'auto', vLLM picks a "
+        "FlashInfer CUTLASS path that JIT-builds 183 nvcc units at startup. That build failed "
+        "(exit 9) and hung the engine until walltime on job 1085876. Triton needs no runtime "
+        "CUTLASS build. Set 'auto' to restore stock behaviour.",
+    )
     p.add_argument("--limit", type=int, default=0, help="Only the first N rows (0 = all); smoke-test knob")
     p.add_argument(
         "--save-samples",
@@ -195,6 +203,7 @@ def main() -> int:
         seed=args.seed,
         enable_prefix_caching=True,
         trust_remote_code=True,
+        moe_backend=args.moe_backend,
     )
     sp = SamplingParams(
         n=1,
@@ -275,6 +284,7 @@ def main() -> int:
             "seed": args.seed,
             "tensor_parallel_size": args.tensor_parallel_size,
             "thinking": "default chat template (ON for Qwen3)",
+            "moe_backend": args.moe_backend,
             "scorer_origin": scorer_origin,
         },
         "arms": [summarize(k, v) for k, v in arms.items()],

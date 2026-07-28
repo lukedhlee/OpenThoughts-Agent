@@ -22,7 +22,7 @@
 #   PROBE_LIMIT=40 TIME_LIMIT=00:40:00 sbatch eval/jupiter/gsm8k_budget_probe.sbatch
 # ==============================================================================
 #SBATCH --job-name=jupiter_gsm8k_budget_probe
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=288
@@ -49,6 +49,10 @@ TRUNCATE_AT="${PROBE_TRUNCATE_AT:-1024 2048}"
 TP="${PROBE_TP:-4}"
 MAX_MODEL_LEN="${PROBE_MAX_MODEL_LEN:-8192}"
 GPU_UTIL="${PROBE_GPU_UTIL:-0.85}"
+# 'auto' makes vLLM 0.22 pick a FlashInfer CUTLASS MoE path that JIT-builds 183
+# nvcc units at engine start. On job 1085876 that build died (exit 9) and left
+# the engine hanging in shm_broadcast until the walltime. Triton needs no build.
+MOE_BACKEND="${PROBE_MOE_BACKEND:-triton}"
 LIMIT="${PROBE_LIMIT:-0}"
 OUT_JSON="${PROBE_OUT:-$RUN_DIR/results/probe_${SLURM_JOB_ID:-manual}.json}"
 
@@ -114,6 +118,7 @@ echo "  model        : $MODEL"
 echo "  parquet      : $PARQUET"
 echo "  max_generate : $MAX_GEN   (re-scored at: $TRUNCATE_AT)"
 echo "  TP           : $TP        max_model_len: $MAX_MODEL_LEN"
+echo "  moe_backend  : $MOE_BACKEND"
 echo "  limit        : ${LIMIT} (0 = all 1319)"
 echo "  out          : $OUT_JSON"
 echo "=============================================================="
@@ -158,6 +163,7 @@ srun --ntasks=1 python "$WORKDIR/scripts/analysis/gsm8k_budget_probe.py" \
   --tensor-parallel-size "$TP" \
   --max-model-len "$MAX_MODEL_LEN" \
   --gpu-memory-utilization "$GPU_UTIL" \
+  --moe-backend "$MOE_BACKEND" \
   --limit "$LIMIT"
 
 echo "Probe complete. Results: $OUT_JSON"
