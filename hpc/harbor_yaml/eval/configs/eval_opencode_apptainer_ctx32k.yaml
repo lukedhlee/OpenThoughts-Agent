@@ -43,7 +43,10 @@ metrics: []
 agents:
 - name: opencode
   import_path: null
-  model_name: vllm/override-at-runtime
+  # The JURECA smoke serves this exact ID. Normal evaluation launchers may
+  # replace it in their generated runtime config, but this checked-in smoke
+  # config must be runnable as-is so Harbor keeps the kwargs below.
+  model_name: vllm/qwen3-0.6b
   override_timeout_sec: 1800
   override_setup_timeout_sec: 60
   max_timeout_sec: null
@@ -67,6 +70,8 @@ agents:
       linear_history: true
 
 datasets:
-- path: /replace/with/swebench/tasks/path
+- path: /p/project1/synthlaion/lee27/swebench-verified-smoke
+  task_names:
+  - astropy__astropy-12907
 
 tasks: []
