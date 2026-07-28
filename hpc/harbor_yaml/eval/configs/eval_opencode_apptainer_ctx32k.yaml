@@ -55,6 +55,7 @@ agents:
     # Harbor's networked apt/NVM/npm setup and fails closed if it is absent.
     version: 1.18.8
     preinstalled: true
+    prompt_template_path: /p/project1/synthlaion/lee27/OpenThoughts-Agent/eval/jureca/opencode_swe_smoke_prompt.md.j2
     opencode_config:
       autoupdate: false
       compaction:
