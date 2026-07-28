@@ -37,14 +37,18 @@ if [[ ! "$MAX_PARALLEL" =~ ^[1-9][0-9]*$ ]] || (( MAX_PARALLEL > 8 )); then
 fi
 
 mkdir -p "$SIF_CACHE"
-JOB_TMP="/p/scratch/synthlaion/lee27/apptainer_tmp/prebuild_${SLURM_JOB_ID}"
+LOCAL_TMP_ROOT="${LOCALSCRATCH:-${TMPDIR:-/tmp}}"
+if [[ "$LOCAL_TMP_ROOT" != /* || "$LOCAL_TMP_ROOT" == "/" ]]; then
+    echo "ERROR: unsafe local temporary root: $LOCAL_TMP_ROOT" >&2
+    exit 2
+fi
+JOB_TMP="${LOCAL_TMP_ROOT}/sif_prebuild_${USER}_${SLURM_JOB_ID}"
 mkdir -p "$JOB_TMP"
 cleanup() {
-    case "$JOB_TMP" in
-        /p/scratch/synthlaion/lee27/apptainer_tmp/prebuild_*)
-            rm -rf -- "$JOB_TMP"
-            ;;
-    esac
+    local expected="${LOCAL_TMP_ROOT}/sif_prebuild_${USER}_${SLURM_JOB_ID}"
+    if [[ "$JOB_TMP" == "$expected" && -d "$JOB_TMP" ]]; then
+        rm -rf -- "$JOB_TMP"
+    fi
 }
 trap cleanup EXIT
 
@@ -60,6 +64,7 @@ export http_proxy="$ALL_PROXY"
 command -v apptainer >/dev/null
 echo "dataset=$DATASET"
 echo "sif_cache=$SIF_CACHE"
+echo "local_tmp=$JOB_TMP"
 echo "parallel=$MAX_PARALLEL"
 echo "proxy=socks5h://${PROXY_HOST}:${PROXY_PORT}"
 curl --fail --silent --show-error --max-time 20 \
