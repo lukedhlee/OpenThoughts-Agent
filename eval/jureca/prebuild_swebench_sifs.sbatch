@@ -23,7 +23,9 @@ SIF_CACHE="${2:-/p/scratch/synthlaion/lee27/sif}"
 MAX_PARALLEL="${3:-4}"
 PROXY_HOST="${PROXY_HOST:-10.14.0.53}"
 PROXY_PORT="${PROXY_PORT:-1080}"
-PULL_TIMEOUT_SEC="${PULL_TIMEOUT_SEC:-900}"
+# Large (roughly 2 GiB) SWE-bench images can spend well over 15 minutes in
+# their final shared-filesystem write when several pulls finish together.
+PULL_TIMEOUT_SEC="${PULL_TIMEOUT_SEC:-2700}"
 
 if [[ ! -d "$DATASET" ]]; then
     echo "ERROR: dataset does not exist: $DATASET" >&2
