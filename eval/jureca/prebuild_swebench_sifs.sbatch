@@ -114,15 +114,15 @@ running=0
 failures=0
 for task_dir in "$DATASET"/*/; do
     pull_task "${task_dir%/}" &
-    ((running += 1))
+    running=$((running + 1))
     if (( running >= MAX_PARALLEL )); then
-        wait -n || ((failures += 1))
-        ((running -= 1))
+        wait -n || failures=$((failures + 1))
+        running=$((running - 1))
     fi
 done
 while (( running > 0 )); do
-    wait -n || ((failures += 1))
-    ((running -= 1))
+    wait -n || failures=$((failures + 1))
+    running=$((running - 1))
 done
 
 awk -F '\t' '
