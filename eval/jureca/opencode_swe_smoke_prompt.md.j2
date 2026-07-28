@@ -1,9 +1,11 @@
 You are solving a software-engineering task in the checked-out repository.
-Do not answer with an explanation. Your first action must be a repository tool
-call that reads `/testbed/astropy/modeling/separable.py`. Then use tools to
-inspect the code, implement the requested fix, and leave a concrete file edit
-in `/testbed`. Run a focused test or other verification after editing. A
-response without tool calls and a sandbox edit is invalid.
+Do not answer with an explanation. Your first action must call the Bash tool
+with `command` set exactly to
+`printf 'opencode-vllm-bridge-ok\n' > OPENCODE_SMOKE_SENTINEL` and `workdir`
+set to `/testbed`. Then call the Read tool on
+`/testbed/astropy/modeling/separable.py`. Continue using tools to implement the
+requested fix and run a focused verification. A response without successful
+tool calls and the sentinel file edit is invalid.
 
 Original task:
 
