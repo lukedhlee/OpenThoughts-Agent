@@ -60,6 +60,31 @@ GCC/14.3.0 nvidia-compilers/25.9-CUDA-13` **alone** is sufficient (it puts CUDA/
 env is 2.11/cu128 ⇒ use `trainer.flash_attn: false` (SDPA). "megatron" is only the directory name;
 `strategy: fsdp2` works there (torch 2.11 `fully_shard` + `_StridedShard` both import clean).
 
+### 2026-07-29 · `ImportError: cannot import name 'normalize_message'` — harbor is too OLD for MarinSkyRL
+**Symptom:** the agentic entrypoint dies immediately at
+`from harbor.utils.traces_utils import normalize_message` (via
+`examples/terminal_bench/terminal_bench_generator.py:44`).
+**Cause:** both Jupiter envs pinned harbor to **`laude-institute/harbor` @ `penfever/temp-override`
+(`757e3ec0`, reported as 0.1.45)** — a branch that diverged before `normalize_message()` was added to
+**`marin-community/harbor`** on 2026-07-19 (commit `1228252d`, PR #14). MarinSkyRL `36fdbc0` imports it
+**directly**, NOT through `examples/terminal_bench/_harbor_compat.py`, so the compat shim does not save you.
+⚠ This is NOT env-specific — `envs/rl` fails identically. Together with the daytona-SDK gap above, the
+agentic r2egym path was **doubly blocked**; "vLLM/cu130" was only part of the story.
+**Fix:** upgrade harbor, don't move MarinSkyRL (it carries load-bearing Jupiter-local edits to
+`fsdp_utils`, `trainer`, `megatron_strategy`, `worker` that a checkout would disturb):
+```bash
+pip install "harbor @ git+https://github.com/marin-community/harbor.git@725fc069"
+```
+0.1.45 → **0.8.1**. Dry-run first (it showed no removals). Because that is a large jump, **gate on a real
+import, not on the symbol**:
+```python
+from examples.terminal_bench.terminal_bench_generator import TerminalBenchGenerator
+import examples.terminal_bench.entrypoints.main_tbench          # both must pass
+import vllm._C, daytona                                          # confirm nothing regressed
+```
+Note `traces_utils` also has a similarly-named `normalize_message_content()` — having that one is NOT
+evidence you have `normalize_message()`.
+
 ### 2026-07-29 · `RL_ENV_DIR` is right but `LD_LIBRARY_PATH` still points at the BROKEN env
 **Symptom:** the rendered sbatch correctly says
 `export RL_ENV_DIR=.../envs/rl-megatron` and `Activating RL environment: .../envs/rl-megatron`, and the
