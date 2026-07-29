@@ -92,27 +92,38 @@ if [[ -z "$MODEL_PATH" ]]; then
   exit 1
 fi
 
-# Resolve the r2egym parquet to a LOCAL path. scripts/datagen/extract_tasks_from_parquet.py
-# uses a local path directly, but falls back to importing data.commons for anything
-# it can't resolve locally -- and data.commons pulls rapidfuzz, which this env lacks.
-# Passing the cached snapshot dir keeps extraction off that branch entirely (and
-# off the network). Falls back to the repo id if the cache is somehow absent.
-TRAIN_DATA="${TRAIN_DATA:-}"
-if [[ -z "$TRAIN_DATA" ]]; then
+# train_data must be a directory of EXTRACTED Harbor task dirs (each holding
+# instruction.md), not a parquet. Two traps make this worth spelling out:
+#   * rl_launch_utils.resolve_rl_train_data() only extracts when the arg looks
+#     like an HF repo id; a local path is passed through VERBATIM. Handing it the
+#     parquet dir therefore yields zero tasks *silently* -- the only symptom is
+#     "No task directories or environments found; skipping" during the Daytona
+#     prebuild, and the job then trains on nothing.
+#   * Letting it treat this as an HF repo id instead makes it import data.commons
+#     (-> rapidfuzz, absent here) and every extract attempt dies.
+# So extract locally, once, and pass the extracted dir. Idempotent.
+: "${TASKS_DIR:=$JSC_SCRATCH/tasks/r2egym-patched-full-oracle}"
+if [[ -d "$TASKS_DIR" ]] && [[ -n "$(ls -A "$TASKS_DIR" 2>/dev/null)" ]]; then
+  echo "Using extracted r2egym tasks: $TASKS_DIR ($(ls "$TASKS_DIR" | wc -l) tasks)"
+else
+  PARQUET_DIR=""
   for candidate in "$HF_HUB_CACHE/datasets--DCAgent--r2egym-patched-full-oracle/snapshots"/*; do
-    if [[ -d "$candidate" ]] && compgen -G "$candidate/**/*.parquet" >/dev/null 2>&1 || \
-       { [[ -d "$candidate" ]] && [[ -n "$(find "$candidate" -maxdepth 2 -name '*.parquet' -print -quit 2>/dev/null)" ]]; }; then
-      TRAIN_DATA="$candidate"
+    if [[ -d "$candidate" ]] && [[ -n "$(find "$candidate" -maxdepth 2 -name '*.parquet' -print -quit 2>/dev/null)" ]]; then
+      PARQUET_DIR="$candidate"
       break
     fi
   done
+  if [[ -z "$PARQUET_DIR" ]]; then
+    echo "ERROR: no r2egym parquet under $HF_HUB_CACHE and no extracted tasks at $TASKS_DIR" >&2
+    echo "       stage it first: huggingface_hub.snapshot_download('$TRAIN_DATA_REPO', repo_type='dataset')" >&2
+    exit 1
+  fi
+  echo "Extracting r2egym tasks from $PARQUET_DIR -> $TASKS_DIR"
+  mkdir -p "$TASKS_DIR"
+  PYTHONPATH="$DCFT" "$RL_VENV/bin/python" -m scripts.datagen.extract_tasks_from_parquet \
+    --parquet "$PARQUET_DIR" --output_dir "$TASKS_DIR"
 fi
-if [[ -z "$TRAIN_DATA" ]]; then
-  echo "WARNING: r2egym parquet not found in $HF_HUB_CACHE; falling back to repo id" >&2
-  TRAIN_DATA="$TRAIN_DATA_REPO"
-else
-  echo "Using local r2egym parquet: $TRAIN_DATA"
-fi
+TRAIN_DATA="${TRAIN_DATA:-$TASKS_DIR}"
 
 mkdir -p "$EXPERIMENTS_DIR" "$WANDB_DIR"
 cd "$DCFT"
