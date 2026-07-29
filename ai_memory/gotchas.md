@@ -60,6 +60,39 @@ GCC/14.3.0 nvidia-compilers/25.9-CUDA-13` **alone** is sufficient (it puts CUDA/
 env is 2.11/cu128 ⇒ use `trainer.flash_attn: false` (SDPA). "megatron" is only the directory name;
 `strategy: fsdp2` works there (torch 2.11 `fully_shard` + `_StridedShard` both import clean).
 
+### 2026-07-29 · `colocate_all: false` silently forces the FULLY-ASYNC trainer (and its constraint set)
+**Symptom:** after all 8 vLLM engines load successfully, the run dies at trainer construction with
+`AssertionError: batched is not supported for fully async training.`
+**Cause:** `examples/terminal_bench/entrypoints/main_tbench.py` `get_trainer()` selects
+`FullyAsyncRayPPOTrainer if cfg.trainer.placement.colocate_all is False else RayPPOTrainer` — keyed on
+that **single flag**, with no separate opt-in. Because the 2026-07-26 decision fixes
+**disaggregated-only (`colocate_all: false`)** for this model/hardware, the fully-async trainer is
+**not optional**, and its constraints are hard requirements:
+
+| constraint (`fully_async_trainer.py` ~316–356) | our value |
+|---|---|
+| `train_batch_size == policy_mini_batch_size` | 32 == 32 ✓ |
+| `algorithm.dynamic_sampling.type is None` | default ✓ |
+| **`not generator.batched`** | was `true` ✗ → set **false** |
+| `generator.async_engine` | true ✓ |
+| `not colocate_all` | ✓ |
+| `policy_mini_batch_size <= fully_async.num_parallel_generation_workers` | 32 <= 32 ✓ |
+
+⚠ **`hpc/skyrl_yaml/jupiter/6node_qwen3_30b_a3b_r2egym_grpo.yaml` still pairs `batched: true` with
+`colocate_all: false`** and will fail this identical assert — fix it before launching the 30B.
+
+**Second trap in the same config block:** `fully_async.num_parallel_generation_workers` defaults to
+**768**. Generation concurrency is actually capped by the engine working set
+(`num_inference_engines * max_num_seqs / n_samples_per_prompt`; here `8*8/4 = 16` groups), NOT by worker
+count — so a large pool adds **no** throughput and instead accumulates a stale backlog that pins
+head-node memory (the documented 80B head-plasma/RAM overflow). Set it to the floor,
+`== policy_mini_batch_size`.
+
+**Semantics worth stating out loud:** fully-async training is **off-policy by up to
+`max_staleness_steps` (default 4)**. That is a change in what the experiment *is*, not a tuning detail.
+`use_tis: true` is the correct mitigation and should stay on; lower `max_staleness_steps` if a run needs
+to be closer to on-policy.
+
 ### 2026-07-29 · `ImportError: cannot import name 'normalize_message'` — harbor is too OLD for MarinSkyRL
 **Symptom:** the agentic entrypoint dies immediately at
 `from harbor.utils.traces_utils import normalize_message` (via
