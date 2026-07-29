@@ -60,6 +60,28 @@ GCC/14.3.0 nvidia-compilers/25.9-CUDA-13` **alone** is sufficient (it puts CUDA/
 env is 2.11/cu128 ⇒ use `trainer.flash_attn: false` (SDPA). "megatron" is only the directory name;
 `strategy: fsdp2` works there (torch 2.11 `fully_shard` + `_StridedShard` both import clean).
 
+### 2026-07-29 · `flash_attn: false` needs TWO more settings, one of which fails LOUD and one SILENT
+**Symptom (loud):** `AssertionError: Flash attention 2 should be used for use_sample_packing` at
+`FSDPPolicyWorkerBase.init_model` → `model_wrapper.py:397`.
+**Cause:** `trainer.use_sample_packing` defaults to **true** (`ppo_base_config.yaml:358`) and packing is
+implemented only on the flash-attn-2 varlen path, so it is mutually exclusive with any non-FA backend.
+**Fix:** `trainer.use_sample_packing: false`. Cost is ~zero when
+`micro_train_batch_size_per_gpu: 1` — there is nothing to pack together anyway.
+
+**Symptom (SILENT, and the one that actually matters):** the run trains, but absurdly slowly / OOMs at
+long context.
+**Cause:** `resolve_attn_implementation()` (`model_wrapper.py:96`) maps
+`attn_backend="auto"` (the default, `ppo_base_config.yaml:372`) + `use_flash_attention_2=False` →
+**`"eager"`**, *not* `sdpa`. Turning flash-attn off does NOT fall back to SDPA. At 28,672-token prompts
+eager attention is quadratic-memory and glacial — a run that "works" but is unusable, with no error.
+**Fix:** set **`trainer.attn_backend: sdpa`** explicitly. Valid values are
+`{auto, flash_attention_2, sdpa, flex}`.
+
+**Rule of thumb:** `flash_attn: false` is never a one-line change — it is the trio
+`flash_attn: false` + `attn_backend: sdpa` + `use_sample_packing: false`.
+(Aside: `context_parallel_size > 1` additionally *requires* `sdpa` or `flex`; flash-attn varlen is
+rejected under CP.)
+
 ### 2026-07-29 · `colocate_all: false` silently forces the FULLY-ASYNC trainer (and its constraint set)
 **Symptom:** after all 8 vLLM engines load successfully, the run dies at trainer construction with
 `AssertionError: batched is not supported for fully async training.`
