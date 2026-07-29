@@ -29,7 +29,26 @@ except ImportError:  # optional dependency
     storage = None
 import os
 import json
-import h5py
+try:
+    import h5py
+except ImportError:  # optional dependency
+
+    class _MissingH5py:
+        """Stand-in for an absent h5py.
+
+        h5py is only touched by the HDF5-specific cache paths below; the parquet
+        flows that most callers use never reach them. Importing this module must
+        not fail on clusters without h5py, but any genuine HDF5 use must still
+        fail loudly rather than silently misbehave.
+        """
+
+        def __getattr__(self, name: str):
+            raise RuntimeError(
+                f"h5py is not installed; HDF5 cache support is unavailable "
+                f"(attempted to access h5py.{name})"
+            )
+
+    h5py = _MissingH5py()
 
 logger = logging.getLogger(__name__)
 
