@@ -73,6 +73,18 @@ trainer:
   # targets torch 2.9/cu130, not this env's 2.11/cu128 => SDPA. Throughput
   # lever only; 8B @ 28k prompt + grad ckpt fits GH200 96GB comfortably.
   flash_attn: false
+  # REQUIRED with flash_attn: false. resolve_attn_implementation() maps
+  # attn_backend="auto" + use_flash_attention_2=False -> "eager", NOT sdpa.
+  # Eager attention at 28,672-token prompts is quadratic-memory and glacial, so
+  # leaving the default would have quietly produced a technically-working but
+  # unusable run. Ask for sdpa explicitly.
+  attn_backend: sdpa
+  # REQUIRED with flash_attn: false. model_wrapper.py asserts
+  # attn_implementation == "flash_attention_2" whenever use_sample_packing is on
+  # (default true), so packing and SDPA are mutually exclusive here.
+  # Cost is near-zero for this config: micro_train_batch_size_per_gpu=1 means
+  # there is nothing to pack together anyway.
+  use_sample_packing: false
   gradient_checkpointing: true
   gradient_checkpointing_use_reentrant: true
   algorithm:
