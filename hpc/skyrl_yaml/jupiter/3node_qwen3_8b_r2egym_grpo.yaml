@@ -193,6 +193,15 @@ container:
     # broken env, and the DCFT_RL_ENV fallback in the elif is never reached.
     # universal_rl.sbatch emits container.extra_env BEFORE activation for exactly this.
     RL_ENV_DIR: /e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron
+    # MUST also override LD_LIBRARY_PATH. Jupiter's hpc.py env_vars carries a
+    # machine-local hardcoded LD_LIBRARY_PATH pointing at envs/rl, and it is
+    # emitted WITHOUT a ${LD_LIBRARY_PATH} suffix -- so it (a) puts the broken
+    # env's torch/lib ahead of rl-megatron's on the search path, and (b) WIPES
+    # the CUDA/13 module paths where libcudart.so.13 actually lives. Both are
+    # fatal. container.extra_env is emitted AFTER that line, so this wins; the
+    # Ray srun env list also ends with LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-},
+    # and last-assignment-wins in `env`, so workers inherit this too.
+    LD_LIBRARY_PATH: "/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cu13/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cublas/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cuda_cupti/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cudnn/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cufft/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cufile/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/curand/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cusolver/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cusparse/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cusparselt/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nccl/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nvjitlink/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nvshmem/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nvtx/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/torch/lib:${CUDA_HOME}/lib64"
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     NCCL_DEBUG: WARN
     SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
