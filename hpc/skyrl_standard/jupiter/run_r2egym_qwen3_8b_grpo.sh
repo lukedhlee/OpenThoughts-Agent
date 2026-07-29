@@ -28,7 +28,12 @@ set -euo pipefail
 : "${CKPT_INTERVAL:=5}"
 : "${HF_SAVE_INTERVAL:=5}"
 : "${JOB_NAME:=jupiter_qwen3_8b_r2egym_grpo}"
-: "${HF_HUB_REPO_ID:=lukedhlee/$JOB_NAME}"
+# Trainer HF auto-push is OFF by default: Jupiter's secrets.env carries no HF
+# token (only DAYTONA/WANDB/SUPABASE), and the auto-pushed lukedhlee/<job> repo
+# has the wrong nested layout anyway. Publishing goes through
+# rl-agentic-job-cleanup -> laion/<job>-<step>-<size>. hf_save_interval still
+# writes local HF exports, which is what the offline SWE-bench-100 val consumes.
+: "${HF_HUB_REPO_ID:=}"
 : "${HF_HUB_PRIVATE:=false}"
 : "${RL_CONFIG:=$DCFT/hpc/skyrl_yaml/jupiter/3node_qwen3_8b_r2egym_grpo.yaml}"
 : "${TRAIN_DATA:=DCAgent/r2egym-patched-full-oracle}"
@@ -64,11 +69,16 @@ set -a
 source "$DC_AGENT_SECRET_ENV"
 set +a
 
-"$RL_VENV/bin/python" - <<'PY'
+# Only assert HF credentials when we actually intend to push.
+if [[ -n "$HF_HUB_REPO_ID" ]]; then
+  "$RL_VENV/bin/python" - <<'PY'
 from huggingface_hub import HfApi
 
 HfApi().whoami()
 PY
+else
+  echo "HF auto-push disabled (HF_HUB_REPO_ID empty); skipping whoami preflight."
+fi
 
 MODEL_PATH=""
 for candidate in "$HF_HUB_CACHE/models--Qwen--Qwen3-8B/snapshots"/*; do
@@ -85,6 +95,11 @@ fi
 mkdir -p "$EXPERIMENTS_DIR" "$WANDB_DIR"
 cd "$DCFT"
 
+HF_ARGS=()
+if [[ -n "$HF_HUB_REPO_ID" ]]; then
+  HF_ARGS=(--hf_hub_repo_id "$HF_HUB_REPO_ID" --hf_hub_private "$HF_HUB_PRIVATE")
+fi
+
 "$RL_VENV/bin/python" -m hpc.launch \
   --job_type rl \
   --rl_config "$RL_CONFIG" \
@@ -97,8 +112,7 @@ cd "$DCFT"
   --max_restarts "$MAX_RESTARTS" \
   --experiments_dir "$EXPERIMENTS_DIR" \
   --job_name "$JOB_NAME" \
-  --hf_hub_repo_id "$HF_HUB_REPO_ID" \
-  --hf_hub_private "$HF_HUB_PRIVATE" \
+  ${HF_ARGS[@]+"${HF_ARGS[@]}"} \
   --skyrl_override trainer.max_steps="$MAX_STEPS" \
   --skyrl_override trainer.ckpt_interval="$CKPT_INTERVAL" \
   --skyrl_override trainer.hf_save_interval="$HF_SAVE_INTERVAL"
