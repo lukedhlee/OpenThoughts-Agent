@@ -93,6 +93,24 @@ trainer:
   micro_forward_batch_size_per_gpu: 1
   micro_train_batch_size_per_gpu: 1
   max_prompt_length: 28672
+  # colocate_all: false AUTO-SELECTS FullyAsyncRayPPOTrainer (main_tbench.py
+  # get_trainer keys purely off that flag), which imposes its own constraint set:
+  #   train_batch_size == policy_mini_batch_size          (32 == 32, ok)
+  #   dynamic_sampling.type is None                       (default, ok)
+  #   NOT generator.batched                               <- must be false
+  #   generator.async_engine                              (true, ok)
+  #   NOT colocate_all                                    (ok)
+  #   policy_mini_batch_size <= num_parallel_generation_workers
+  # Since the disaggregated-only decision fixes colocate_all=false, the fully-async
+  # trainer is not optional here and these are hard requirements, not preferences.
+  fully_async:
+    # Default is 768, which is badly oversized for this run: generation concurrency
+    # is capped by the engine working set (num_inference_engines * max_num_seqs /
+    # n_samples_per_prompt = 8*8/4 = 16 groups), NOT by worker count. A large worker
+    # pool only lets a stale backlog accumulate and pins head-node memory -- the
+    # documented 80B head-plasma overflow. 32 is the floor (== policy_mini_batch_size)
+    # and already exceeds the working set.
+    num_parallel_generation_workers: 32
   eval_interval: 999999
   eval_before_train: false
   ckpt_interval: 5
@@ -160,7 +178,12 @@ generator:
   run_engines_locally: true
   weight_sync_backend: nccl
   async_engine: true
-  batched: true
+  # MUST be false: FullyAsyncRayPPOTrainer asserts `not generator.batched`, and
+  # colocate_all=false forces that trainer. Batched generation is incompatible with
+  # per-trajectory async rollout by design, and agentic multi-turn rollouts are
+  # per-trajectory anyway. (The 30B r2egym config still pairs batched=true with
+  # colocate_all=false and would fail this same assert.)
+  batched: false
   enable_http_endpoint: true
   enable_ray_prometheus_stats: false
   vllm_stats_interval: 1
