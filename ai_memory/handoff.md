@@ -4,11 +4,17 @@
 
 RL the general **`Qwen/Qwen3-30B-A3B`** (MoE, not Coder) and show a real post-RL lift on agentic coding
 evals (SWE-Bench Verified, OT-TB Lite, Terminal-Bench 2.0). Primary repo: **OpenThoughts-Agent**,
-branch `lukedhlee/vista-moe-grpo-30b`. Clusters: **Jupiter (JSC)** for training, **JURECA (JSC)** for
-the x86_64 sandbox bridge; Vista is concluded.
+branch `lukedhlee/vista-moe-grpo-30b`. Vista is concluded.
 
-**Current focus = the JURECA apptainer bridge** (the eval side), not the RL launch. See Goal + Next
-action below.
+**Cluster roles (corrected 2026-07-29 — the old "JURECA = the sandbox cluster" framing was wrong):**
+- **Jupiter (JSC)** — ALL model execution (training + vLLM), AND the r2egym sandboxes, because r2egym's
+  `python:3.6-slim-buster` base is multi-arch/arm64 and runs natively on GH200.
+- **JURECA (JSC)** — sandboxes for **SWE-bench only**, whose `sweb.eval.x86_64.*` images are x86_64-only
+  and cannot run on aarch64 Jupiter at all. **No model is ever served on JURECA.**
+
+**Current focus = the SANDBOX layer, which now blocks the RL run.** A small-model r2egym GRPO run
+(Qwen3-8B) was brought all the way up on 2026-07-29 and everything worked except sandboxes. See
+§ Sandbox below; it supersedes the older "the bridge is not on the RL critical path" framing.
 
 ## State
 
@@ -29,14 +35,89 @@ action below.
   `/Users/lukedhlee/OpenThoughts-Agent-apptainer-bridge` (`lukedhlee/apptainer-opencode-bridge` @
   `bc8378ed`) + `/Users/lukedhlee/harbor-apptainer-bridge` (`02b06bc5`), both clean. The current
   `vista-moe-grpo-30b` tree has no `--apptainer-bridge-url` wiring and no apptainer eval config.
-- **r2egym FSDP2 GRPO: designed, NOT launched.** Still the headline experiment, now queued behind the
-  bridge baseline. → [[r2egym_grpo_plan]]
-  - Its own blocker when we return to it: `envs/rl` cannot import vLLM (`libcudart.so.12` vs the Jul-27
-    cu130 torch swap), and `hpc/rl_launch_utils.py:780` still defaults `RL_ENV_DIR` there ⇒ **an FSDP2
-    launch today reproduces the break.** Fix = rebuild vLLM in `envs/rl` from `src/vllm_fork` against
-    cu130. → [[gotchas]]
+- **← r2egym GRPO (Qwen3-8B): LAUNCHED and RAN 2026-07-29. Whole stack works; SANDBOXES do not.**
+  Job `1087425`/`1087417` reached a full training step: 8 vLLM engines up (15.27 GiB each, **472,016
+  KV tokens** per engine), harbor 0.8.1, transformers 5.8.1, FSDP2 policy init, `init_weight_sync_state`
+  6.4s, `sync_weights_to_inference_engines` 5.9s, `fwd_logprobs` 5.1s, advantages, policy train.
+  **But `avg_raw_reward: 0.0`, `zero_rewards: 1.0`** — 128/128 rollouts died on
+  `DaytonaConnectionError`. Cancelled; no gradient was possible. See § Sandbox. → [[gotchas]]
+  - **The old `envs/rl` blocker is RESOLVED but the fix was different than expected:** `envs/rl` is
+    genuinely unusable (its `vllm._C` needs `libcudart.so.12`; Jupiter ships only CUDA/13), so the run
+    uses **`envs/rl-megatron`** ("megatron" is only the dir name — `strategy: fsdp2`). Nine further
+    launch blockers were fixed to get there — env completeness (daytona SDK), harbor too old
+    (`normalize_message`), `LD_LIBRARY_PATH` pointing at the broken env, `train_data` as a parquet
+    yielding ZERO tasks silently, the fully-async trainer's constraint set, and the
+    `flash_attn: false` trio. All recorded in [[gotchas]]; all fixed on the branch.
+- **★ r2egym itself may be the wrong dataset shape.** The co-lead's reference implementation states raw
+  r2egym **collapsed** with zero reward; she trains on a **model-specific learnable band**
+  (`0 < pass@8 < 1`, 740 tasks + 100 held out). Our config trains on all 3,328 — the configuration
+  already known to fail. **Measure base Qwen3-8B `pass@k` on an r2egym sample before any long run.**
+  → [[r2egym_apptainer_reference_impl]]
 - **Open, gating the 200 but not the 100:** no authoritative manifest for a second 100-task SWE-bench
   set (only the pinned `DCAgent2/swebench-verified-random-100-folders` @ `a2e51e9e`, exactly 100 tasks).
+
+## Sandbox — the current blocker (written 2026-07-29)
+
+**The one-line version:** agentic RL needs a sandbox per rollout; the only sandbox we had wired was
+**Daytona, which is a CLOUD API**, and **JSC compute nodes have no internet** — so every rollout fails.
+
+### Why it wasn't obvious
+
+The failure is **silent**. `mask_exceptions` includes `DaytonaError`/`NetworkError` with
+`default_error_treatment: zero`, so connection failures are absorbed into **zero rewards** instead of
+crashing. The run executes perfectly and reports `avg_raw_reward: 0.0` — which reads as "the model can't
+do it" rather than "the sandbox was never reachable". Under GRPO, all-zero reward ⇒ zero advantage
+variance ⇒ **no gradient**; it would have burned all 50 steps on 3 nodes reporting nothing wrong.
+**Always grep an RL log for `Network is unreachable` / `DaytonaConnectionError` before believing a low
+reward.**
+
+`hpc.py` does set `needs_ssh_tunnel=True` for jupiter, but the machine-local edit set
+`proxychains_binary=""`, and `hpc.py:752` gates the entire proxy-setup block on that being non-empty ⇒
+compute nodes get **no outbound path at all**. For the old GSM8K (non-agentic) runs that was harmless,
+which is why it went unnoticed.
+
+### The measured network shape (this is what constrains every option)
+
+From a real probe job on Jupiter compute `jpbo-040-12` — full table in [[gotchas]]:
+- internet (`app.daytona.io:443`, `huggingface.co:443`): **BLOCKED**
+- JURECA, any address/port: **BLOCKED**
+- Jupiter login via **public** IP: **BLOCKED**
+- Jupiter login via **internal** `10.128.1.2` / `10.99.0.2`, HTTP **and** `:22`: **REACHABLE**
+
+⚠ **Never probe with public IPs** — doing so gives a false "totally isolated" reading. Compute↔login
+works over `10.128.x`/`10.99.x` (same /16), which is why Ray works, and a **relay on a Jupiter login
+node is the basis of every viable fix.**
+
+### The three options
+
+| | what it is | status |
+|---|---|---|
+| **A · login-node proxy → cloud Daytona** | build proxychains-ng (gcc+git present on login), fill in `proxychains_binary`; compute reaches Daytona via login. Reuses the **7 already-prebuilt** r2egym snapshots. No SIFs, no tunnel, no TOTP. | viable, smallest change; **kept as fallback** |
+| **B · Jupiter-LOCAL apptainer bridge** ← chosen direction | bridge server on a Jupiter login node (`10.128.1.x:9920`), workers + SIFs on Jupiter compute. Works because r2egym is multi-arch/arm64. No cross-cluster anything. | **the reference implementation does exactly this** → [[r2egym_apptainer_reference_impl]] |
+| **C · JURECA bridge for r2egym** | what was briefly chosen before reading the reference impl | **WRONG CLUSTER** — unnecessary for arm64-capable r2egym, and Jupiter compute cannot reach JURECA at all |
+
+### What option B still needs
+
+1. **SIFs must be BUILT, not pulled.** r2egym `environment/Dockerfile`s are recipes
+   (`FROM python:3.6-slim-buster` + apt + pip), unlike SWE-bench's *published* images. The reference
+   impl converts Dockerfile→`.def` and runs `apptainer build --fakeroot`.
+2. **`--fakeroot` works on COMPUTE, not login.** Login fails with "No user namespaces available"; the
+   reference prebuild runs on 4 compute nodes. This resolves the open question in
+   [[apptainer_bridge_handoff]].
+3. **Building needs internet** (docker pull + apt + pip) and compute has none ⇒ pre-pull base layers into
+   `APPTAINER_CACHEDIR` from a login node, or proxy compute. **So option A's proxy work is likely
+   required for B too — it is not wasted either way.**
+4. **Agent compatibility unverified:** our bridge was validated only with **OpenCode**; the training
+   config uses **terminus-2** and the reference impl uses **terminus-structured** (not even in our pinned
+   harbor's `AgentName` enum).
+5. **Latency risk:** agentic rollouts make many sequential tool calls. Generation already took ~46 min for
+   one step's buffer against Daytona (mostly retry backoff), and 50 steps must fit a 12h walltime.
+
+### ⚠ Leaked credential to report
+
+The reference `prebuild_r2egym_worker.sh` contains a **plaintext Docker Hub PAT**, world-readable under
+`/p/project1/laionize`. **Marianna must revoke/reissue.** Not used by us; value deliberately not recorded.
+Details: [[r2egym_apptainer_reference_impl]].
 
 ## Goal (apptainer)
 
@@ -45,17 +126,38 @@ Turn the bridge from *plumbing that works* into **a SWE-bench number we can defe
 TP=4). That single run delivers the **base→RL Δ denominator** the headline needs, load-tests the bridge
 at 100-task concurrency, and exercises the regime — without waiting on the RL checkpoint.
 
+⚠ **Amended 2026-07-29:** the model for this eval must be served on **Jupiter**, not JURECA (no model runs
+on JURECA), with JURECA `dc-cpu` supplying only the x86_64 sandboxes. That makes a **reverse tunnel**
+(Jupiter → JURECA, initiated from Jupiter because JURECA→Jupiter has no route) a prerequisite, not an
+optional extra. Script + measured routing facts: `eval/jureca/jupiter_to_jureca_tunnel.sh` on the bridge
+branch, and § Sandbox above. The 100-task eval config already exists there too
+(`eval_opencode_apptainer_swebench100_ctx80k.yaml`, 77824+4096=81920, compaction off, 1 attempt) plus a
+clean `opencode_swebench_prompt.md.j2` — the pre-existing smoke template hardcodes a sentinel instruction
+and an astropy path and would corrupt all 100 tasks.
+
 ## Next action
 
-**Serve `Qwen/Qwen3-30B-A3B` on JURECA `dc-gpu` at TP=4 as a standalone vLLM smoke.** This is the gate
-and it fails fast: bf16 weights are ~60 GB against 40 GB A100s, so TP≥2 is mandatory and TP=1 cannot
-work — yet every model-backed bridge smoke to date was 0.6B at TP=1. Verify the engine comes up and that
-KV fits at ~81920 ctx with YARN scaling before any 100-task config work. Then, in order: author the
-81920-ctx eval config, size the worker pool against the `dc-cpu` 6h walltime, submit the 100-task run.
-Full gap list and ordering: [[apptainer_bridge_handoff]] § "2026-07-29 (later)".
+~~Serve `Qwen/Qwen3-30B-A3B` on JURECA `dc-gpu` at TP=4~~ — **SUPERSEDED 2026-07-29. No model runs on
+JURECA**, so the "does 30B fit A100-40GB at TP=4" question is **moot**; it was the largest listed unknown
+and it simply does not apply. Serving happens on Jupiter GH200 (96 GB), where an 8B measured 15.27 GiB +
+472k KV tokens per engine, so headroom is not the issue it was feared to be.
 
-This is an **eval**, not RL, so the standing "do not launch an RL job" guard does not apply and ordinary
-submission needs no approval — state the config, then go.
+**Actual next action — decide the sandbox path, then unblock RL** (§ Sandbox above):
+
+1. **Highest leverage, human-blocked: message Marianna.** She already runs r2egym+apptainer+8B RL on
+   Jupiter and owns the prebuild list, worker scripts, and learnable-band tooling — one reply could
+   replace most of options A/B. She also **must be told to rotate the leaked Docker Hub PAT**. Ask
+   additionally: does `/p/scratch` (her `sif_cache`) resolve from Jupiter, and how do air-gapped compute
+   nodes get internet during `apptainer build`?
+2. **Independent of ALL sandbox work — measure whether r2egym can move at all for our model:** base
+   Qwen3-8B `pass@k` on an r2egym sample, to see whether a learnable band exists. Inference-only, no
+   sandbox, no bridge. The reference impl says raw r2egym **collapses**, so without this a "fixed"
+   sandbox just buys a flat reward curve. Same lesson as [[gsm8k_format_artifact]].
+3. Then build the sandbox path (B, Jupiter-local, with A as fallback).
+
+Eval submission needs no approval; the standing "do not launch an RL job unasked" guard still applies to
+RL. Note the RL config itself is now **fully debugged and working** apart from sandboxes —
+`hpc/skyrl_yaml/jupiter/3node_qwen3_8b_r2egym_grpo.yaml` + `run_r2egym_qwen3_8b_grpo.sh`.
 
 In parallel (human-blocked, not on the critical path): **ask Marianna for the second 100-task
 manifest's provenance.** At n=100 the 95% CI is **±9.0 pts**, which barely resolves her +10 and cannot
