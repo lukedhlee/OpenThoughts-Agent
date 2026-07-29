@@ -60,6 +60,28 @@ GCC/14.3.0 nvidia-compilers/25.9-CUDA-13` **alone** is sufficient (it puts CUDA/
 env is 2.11/cu128 ⇒ use `trainer.flash_attn: false` (SDPA). "megatron" is only the directory name;
 `strategy: fsdp2` works there (torch 2.11 `fully_shard` + `_StridedShard` both import clean).
 
+### 2026-07-29 · `RL_ENV_DIR` is right but `LD_LIBRARY_PATH` still points at the BROKEN env
+**Symptom:** the rendered sbatch correctly says
+`export RL_ENV_DIR=.../envs/rl-megatron` and `Activating RL environment: .../envs/rl-megatron`, and the
+job looks properly configured — but it is not.
+**Cause:** Jupiter's **uncommitted machine-local** `hpc/hpc.py` edit adds a hardcoded
+`LD_LIBRARY_PATH` to the `jupiter` HPC `env_vars`, pinned to `envs/rl`, and it is emitted with **no
+`${LD_LIBRARY_PATH}` suffix**. Two independent fatal effects when the RL env is `rl-megatron`:
+1. `envs/rl/.../torch/lib` lands ahead of rl-megatron's. Torch uses **DT_RUNPATH**, which the linker
+   searches *after* `LD_LIBRARY_PATH` — so a torch-2.11/cu128 interpreter loads 2.9/cu130 `.so`s.
+2. It **wipes the CUDA/13 module paths**, which is the only source of `libcudart.so.13` — the one thing
+   that made `rl-megatron`'s `vllm._C` importable in the first place.
+
+The Ray `srun` command inherits it: the env list contains the hardcoded value AND ends with
+`LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}`, so every worker gets it too.
+**Fix:** override `LD_LIBRARY_PATH` in the YAML's `container.extra_env` (emitted *after* the hpc
+`env_vars` line, so it wins; and because `env` takes last-assignment-wins, the trailing
+`${LD_LIBRARY_PATH:-}` propagates the corrected value to Ray workers). Point it at rl-megatron's
+`nvidia/*/lib` + `torch/lib` and append `${CUDA_HOME}/lib64`. Do NOT rely on the cluster-local
+`hpc.py` edit being fixed — it is a divergence that should be reconciled separately.
+**Check before every launch:** `grep -c "envs/rl/lib" <rendered sbatch>` and confirm the LAST
+`export LD_LIBRARY_PATH` is the rl-megatron one. A correct `RL_ENV_DIR` is NOT sufficient evidence.
+
 ### 2026-07-29 · The two Jupiter RL envs are COMPLEMENTARY — neither is complete for agentic RL
 **Symptom:** you pick `envs/rl-megatron` because it's the only env whose vLLM works, and the launcher
 then dies with `ModuleNotFoundError: No module named 'daytona'` in `_default_daytona_factory`.
