@@ -60,6 +60,53 @@ GCC/14.3.0 nvidia-compilers/25.9-CUDA-13` **alone** is sufficient (it puts CUDA/
 env is 2.11/cu128 ⇒ use `trainer.flash_attn: false` (SDPA). "megatron" is only the directory name;
 `strategy: fsdp2` works there (torch 2.11 `fully_shard` + `_StridedShard` both import clean).
 
+### 2026-07-29 · ★ Daytona is UNREACHABLE from Jupiter compute nodes — agentic RL cannot use it as-is
+**Symptom:** an agentic RL run executes flawlessly end-to-end (weight sync, generation, fwd_logprobs,
+advantages, policy train) and reports **`avg_raw_reward: 0.0`, `zero_rewards: 1.0`** over the whole batch.
+Looks like the model is simply incapable.
+**Cause:** every rollout failed with
+`Failed to create snapshot: Cannot connect to host app.daytona.io:443 [Network is unreachable]
+(type=DaytonaConnectionError)`. **Daytona is a CLOUD API and JSC compute nodes have no internet.**
+`hpc.py` sets `needs_ssh_tunnel=True` for jupiter, but the lee27-local edit set
+`proxychains_binary=""`, and `hpc.py:752` gates the whole proxy-setup block on that being non-empty ⇒
+compute nodes get **no outbound path at all**.
+⚠ Because `mask_exceptions` includes `DaytonaError`/`NetworkError` with `default_error_treatment: zero`,
+these failures are **absorbed into zero rewards instead of crashing** — the run would have burned all 50
+steps and 3 nodes reporting nothing wrong. Under GRPO, all-zero rewards ⇒ zero advantage variance ⇒
+**no gradient**. This is the most dangerous silent-failure mode found so far.
+**Diagnostic:** always grep the RL log for `DaytonaConnectionError` / `Network is unreachable` before
+concluding anything from a low reward. `avg_raw_reward: 0.0` is far more often infra than capability.
+
+**MEASURED network facts (2026-07-29, from a real probe job on `jpbo-040-12`):**
+
+| from a Jupiter COMPUTE node | result |
+|---|---|
+| `app.daytona.io:443`, `huggingface.co:443` | BLOCKED |
+| JURECA (`jureca.fz-juelich.de:22`, `134.94.1.131:22`, `jrlogin04i:9920`) | BLOCKED |
+| Jupiter login via **public** IP (`134.94.0.132:22`) | BLOCKED |
+| Jupiter login via **internal** `10.128.1.2` (ib0) — HTTP **and** `:22` | **REACHABLE** |
+| Jupiter login via `10.99.0.2` — HTTP and `:22` | **REACHABLE** |
+| `10.201.15.132` (gpfs iface) | no |
+
+⚠ **Never probe reachability with public IPs/hostnames** — that gives a false "totally isolated" reading.
+Compute↔login works over `10.128.x`/`10.99.x` (same /16 as compute), which is why Ray works. A relay on
+a login node is therefore viable, and is the basis of every fix.
+
+### 2026-07-29 · r2egym env Dockerfiles must be BUILT (not pulled), and r2egym is multi-arch
+**Two facts that together decide which cluster r2egym sandboxes belong on:**
+1. r2egym `environment/Dockerfile` files are **build recipes** — `FROM python:3.6-slim-buster` plus
+   `apt-get install` and `pip install` — NOT published images. So `apptainer pull` cannot make a SIF;
+   they need `apptainer build`. This is the opposite of SWE-bench, where every task has a *published*
+   `swebench/sweb.eval.x86_64.*` that pulls directly (which is why the SWE-bench bridge was easy).
+2. `python:3.6-slim-buster` is a **multi-arch official image with arm64**, so r2egym runs **natively on
+   Jupiter's aarch64 GH200 nodes**. Only SWE-bench (x86_64-only) actually needs JURECA.
+⇒ **r2egym sandboxes belong on a JUPITER-LOCAL apptainer bridge; JURECA is for SWE-bench only.**
+**`--fakeroot`:** fails on JSC **login** nodes ("No user namespaces available") but the reference
+implementation runs `apptainer build --fakeroot` on **COMPUTE** nodes (`--nodes=4 --partition=devel`),
+so namespaces appear to be available there. This resolves the "untested on compute?" question in
+[[apptainer_bridge_handoff]]. Build also needs internet (docker pull + apt + pip), so either pre-pull
+base layers into `APPTAINER_CACHEDIR` from a login node, or proxy the compute nodes.
+
 ### 2026-07-29 · `flash_attn: false` needs TWO more settings, one of which fails LOUD and one SILENT
 **Symptom (loud):** `AssertionError: Flash attention 2 should be used for use_sample_packing` at
 `FSDPPolicyWorkerBase.init_model` → `model_wrapper.py:397`.
