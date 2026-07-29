@@ -36,7 +36,7 @@ set -euo pipefail
 : "${HF_HUB_REPO_ID:=}"
 : "${HF_HUB_PRIVATE:=false}"
 : "${RL_CONFIG:=$DCFT/hpc/skyrl_yaml/jupiter/3node_qwen3_8b_r2egym_grpo.yaml}"
-: "${TRAIN_DATA:=DCAgent/r2egym-patched-full-oracle}"
+: "${TRAIN_DATA_REPO:=DCAgent/r2egym-patched-full-oracle}"
 
 export SCRATCH="$JSC_SCRATCH"
 export DCFT
@@ -90,6 +90,28 @@ done
 if [[ -z "$MODEL_PATH" ]]; then
   echo "ERROR: Qwen3-8B is not cached under $HF_HUB_CACHE" >&2
   exit 1
+fi
+
+# Resolve the r2egym parquet to a LOCAL path. scripts/datagen/extract_tasks_from_parquet.py
+# uses a local path directly, but falls back to importing data.commons for anything
+# it can't resolve locally -- and data.commons pulls rapidfuzz, which this env lacks.
+# Passing the cached snapshot dir keeps extraction off that branch entirely (and
+# off the network). Falls back to the repo id if the cache is somehow absent.
+TRAIN_DATA="${TRAIN_DATA:-}"
+if [[ -z "$TRAIN_DATA" ]]; then
+  for candidate in "$HF_HUB_CACHE/datasets--DCAgent--r2egym-patched-full-oracle/snapshots"/*; do
+    if [[ -d "$candidate" ]] && compgen -G "$candidate/**/*.parquet" >/dev/null 2>&1 || \
+       { [[ -d "$candidate" ]] && [[ -n "$(find "$candidate" -maxdepth 2 -name '*.parquet' -print -quit 2>/dev/null)" ]]; }; then
+      TRAIN_DATA="$candidate"
+      break
+    fi
+  done
+fi
+if [[ -z "$TRAIN_DATA" ]]; then
+  echo "WARNING: r2egym parquet not found in $HF_HUB_CACHE; falling back to repo id" >&2
+  TRAIN_DATA="$TRAIN_DATA_REPO"
+else
+  echo "Using local r2egym parquet: $TRAIN_DATA"
 fi
 
 mkdir -p "$EXPERIMENTS_DIR" "$WANDB_DIR"
