@@ -60,6 +60,46 @@ GCC/14.3.0 nvidia-compilers/25.9-CUDA-13` **alone** is sufficient (it puts CUDA/
 env is 2.11/cu128 ⇒ use `trainer.flash_attn: false` (SDPA). "megatron" is only the directory name;
 `strategy: fsdp2` works there (torch 2.11 `fully_shard` + `_StridedShard` both import clean).
 
+### 2026-07-29 · The two Jupiter RL envs are COMPLEMENTARY — neither is complete for agentic RL
+**Symptom:** you pick `envs/rl-megatron` because it's the only env whose vLLM works, and the launcher
+then dies with `ModuleNotFoundError: No module named 'daytona'` in `_default_daytona_factory`.
+**Cause:** measured 2026-07-29 —
+
+| | `envs/rl` | `envs/rl-megatron` |
+|---|---|---|
+| vLLM | 0.13.0 — **broken** (`libcudart.so.12`) | 0.22.0 ✅ |
+| daytona SDK | 0.201.0 ✅ | **absent** |
+| harbor | 0.1.45 | 0.1.45 |
+| torch | 2.9.0+cu130 | 2.11.0+cu128 |
+| transformers | 4.57.3 | **5.8.1** (major bump) |
+| flash_attn | present | **absent** |
+
+Agentic RL needs BOTH a working vLLM and the daytona SDK (prebuild *and* runtime rollouts), so neither
+env works out of the box. This is a likely reason the agentic r2egym run was never launched.
+**Fix:** `pip install daytona==0.201.0` into `envs/rl-megatron` — purely additive (dry-run showed no
+removals and no torch/vLLM/ray/transformers downgrades). Then re-verify `vllm._C`, `ray`, `harbor`,
+`daytona` together under the sbatch's `module load`, not bare.
+⚠ Note `transformers` differs by a MAJOR version between the envs; don't assume a recipe validated on
+`envs/rl` transfers.
+
+### 2026-07-29 · `train_data` as a local parquet silently yields ZERO tasks
+**Symptom:** the launcher prints `Resolved train_data: [...]` and then
+`No task directories or environments found; skipping` during the Daytona prebuild. It still submits.
+The job would burn a multi-node allocation training on nothing.
+**Cause:** `hpc/rl_launch_utils.py` `resolve_rl_train_data()` extracts **only** when
+`is_hf_dataset_path(data_path)` is true; a local path is passed through **verbatim**. SkyRL's
+`TerminalBenchTaskDataset` wants a dir of task subdirs each holding `instruction.md`, not a parquet.
+Passing the HF repo id instead is no good either — that path imports `data.commons` → `rapidfuzz`,
+absent in `envs/rl-megatron`.
+**Fix:** extract explicitly, then pass the extracted dir:
+```bash
+python -m scripts.datagen.extract_tasks_from_parquet \
+  --parquet <cached snapshot dir> --output_dir $SCRATCH/tasks/<name>
+```
+r2egym: 3,328 task dirs in ~20s. **The confirmation you want in the log is
+`Found 3328 task(s) with 7 unique environment(s)`** — the "7 unique environments" line is the real
+proof the tasks are wired; a skipped prebuild means they are not.
+
 ### 2026-07-29 · Setting `DCFT_RL_ENV` silently activates the BROKEN env anyway
 **Symptom:** you export `DCFT_RL_ENV=.../envs/rl-megatron`, the job still runs the broken `envs/rl`.
 **Cause:** `hpc/rl_launch_utils.py:780` is `RL_ENV_DIR="${RL_ENV_DIR:-$WORKDIR/envs/rl}"` followed by a
