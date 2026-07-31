@@ -82,7 +82,7 @@ expected = {
     "z3-solver": "4.15.4.0",
 }
 found = {
-    dist.metadata["Name"].lower(): dist.version
+    dist.metadata["Name"].lower().replace("_", "-"): dist.version
     for dist in distributions(path=[str(target)])
 }
 if found != expected:
