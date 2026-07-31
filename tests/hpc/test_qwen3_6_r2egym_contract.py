@@ -94,6 +94,7 @@ def test_grpo_smoke_geometry_and_text_checkpoint_namespace() -> None:
     assert env["SKYRL_QWEN3_5_VLM_UNWRAP"] == "1"
     assert env["SKYRL_GDN_FLASHQLA"] == "1"
     assert env["SKYRL_GDN_FLASHQLA_REQUIRED"] == "1"
+    assert env["APPTAINER_BRIDGE_URL"] == "http://10.128.1.2:9920"
     assert env["PYTHONPATH"].startswith(
         "/e/scratch/reformo/lee27/pydeps/qwen36-flashqla-0.1.2:"
     )

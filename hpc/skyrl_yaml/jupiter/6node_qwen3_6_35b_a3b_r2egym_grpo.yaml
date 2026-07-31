@@ -250,7 +250,10 @@ container:
     OT_AGENT_RAY_LOG_DIR: /tmp/ray_logs
     RAY_object_spilling_config: '{"type":"filesystem","params":{"directory_path":"/e/scratch/reformo/lee27/ray_spill"}}'
     DC_AGENT_SECRET_ENV: /e/scratch/reformo/lee27/keys/secrets.env
-    APPTAINER_BRIDGE_URL: ${oc.env:APPTAINER_BRIDGE_URL,http://10.128.1.2:9920}
+    # container.extra_env is rendered as Bash exports before Hydra starts, so
+    # OmegaConf interpolation syntax is invalid here. The Hydra-side bridge_url
+    # above remains environment-resolvable from this concrete export.
+    APPTAINER_BRIDGE_URL: http://10.128.1.2:9920
     RL_REPO_DIR: /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge
     SKYRL_HOME: /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge
     CONDA_EXE: /e/scratch/reformo/lee27/miniforge3/bin/conda
