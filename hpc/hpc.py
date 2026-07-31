@@ -1918,7 +1918,13 @@ def set_environment(hpc_name: HPC) -> None:
                 key = key_part.replace("export ", "").strip()
                 value = value_part.strip().strip('"').strip("'")
 
-                os.environ[key] = os.path.expandvars(value)
+                # Dotenv files provide cluster defaults. An explicit caller
+                # environment must win, especially for user/project-specific
+                # checkout roots such as DCFT and SCRATCH. Overwriting those
+                # here can generate a valid sbatch file that immediately runs
+                # from another project's stale path.
+                if key not in os.environ:
+                    os.environ[key] = os.path.expandvars(value)
         print(f"Environment variables set from {dotenv}")
 
         # Legacy compatibility: treat DC_AGENT as the canonical repo root when DCFT is unset.
