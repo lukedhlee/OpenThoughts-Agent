@@ -22,7 +22,14 @@ config_groups:
 terminal_bench:
   trials_dir: null
   harbor:
-    name: terminus-2
+    name: opencode
+    version: 1.18.8
+    preinstalled: true
+    prompt_template_path: /e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge/eval/jureca/opencode_swebench_prompt.md.j2
+    opencode_config:
+      autoupdate: false
+      compaction:
+        auto: false
     max_episodes: 999999
     enable_summarize: false
     store_all_messages: true
@@ -31,11 +38,6 @@ terminal_bench:
     enable_episode_logging: false
     record_terminal_session: false
     enable_pane_logging: false
-    strict_json_parser: true
-    interleaved_thinking: true
-    extra_body:
-      chat_template_kwargs:
-        enable_thinking: true
     override_timeout_sec: 1800
     override_cpus: 2
     override_memory_mb: 4096

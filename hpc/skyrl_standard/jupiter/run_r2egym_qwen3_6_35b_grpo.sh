@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Qwen3.6-35B-A3B, initialized from the exact pinned FP8 checkpoint.
+# Qwen3.6-35B-A3B, initialized from the exact pinned plain checkpoint.
 # Default is a one-step, six-node compatibility smoke. Promote with
 # MAX_STEPS=50 only after the smoke writes a valid HF checkpoint and reward logs.
 set -euo pipefail
@@ -95,7 +95,7 @@ assert model.name == expected_revision, (
 config = AutoConfig.from_pretrained(model, local_files_only=True)
 assert str(config.model_type).startswith("qwen3_5"), config.model_type
 assert not getattr(config, "quantization_config", None), (
-    "expected the unquantized release; a quantization_config means the FP8 repo was staged"
+    "expected the unquantized release; a quantization_config means a quantized repo was staged"
 )
 # We deliberately stage the multimodal shell and let SkyRL unwrap it in memory
 # (SKYRL_QWEN3_5_VLM_UNWRAP=1). The GDN signature therefore lives one level down,
@@ -127,7 +127,7 @@ expected_packages = {
 assert manifest["format"] == "qwen3.6-flashqla-layer-v1", manifest
 assert manifest["packages"] == expected_packages, manifest
 found_packages = {
-    dist.metadata["Name"].lower(): dist.version
+    dist.metadata["Name"].lower().replace("_", "-"): dist.version
     for dist in distributions(path=[str(flashqla_layer)])
 }
 assert found_packages == expected_packages, found_packages
@@ -149,7 +149,19 @@ if [[ ! -d "$TASKS_DIR" ]]; then
   echo "ERROR: extracted r2egym task directory is missing: $TASKS_DIR" >&2
   exit 1
 fi
-TASK_COUNT="$(find "$TASKS_DIR" -mindepth 2 -maxdepth 2 -name instruction.md -print | wc -l)"
+TASK_COUNT="$("$RL_VENV/bin/python" - "$TASKS_DIR" <<'PY'
+import os
+import sys
+
+root = sys.argv[1]
+with os.scandir(root) as entries:
+    count = sum(
+        entry.is_dir() and os.path.isfile(os.path.join(entry.path, "instruction.md"))
+        for entry in entries
+    )
+print(count)
+PY
+)"
 if [[ "$TASK_COUNT" -ne 3328 ]]; then
   echo "ERROR: expected 3,328 extracted r2egym tasks, found $TASK_COUNT" >&2
   exit 1

@@ -34,10 +34,9 @@ def load_yaml(path: Path) -> dict:
 
 
 def test_pinned_origin_is_the_unquantized_release() -> None:
-    """The FP8 repo was dropped; both arms must resolve to the plain release at
-    one exact revision, or the paired SWE-Bench comparison is meaningless."""
+    """Both arms must resolve to the plain release at one exact revision, or
+    the paired SWE-Bench comparison is meaningless."""
     assert EXPECTED_REPO == "Qwen/Qwen3.6-35B-A3B"
-    assert not EXPECTED_REPO.endswith("-FP8")
     assert len(EXPECTED_REVISION) == 40 and EXPECTED_REVISION.isalnum()
 
     launcher = GRPO_LAUNCHER.read_text()
@@ -108,6 +107,27 @@ def test_grpo_launcher_requires_compiled_vllm_and_gpu_smoked_flashqla() -> None:
     assert '"$FLASHQLA_LAYER/gpu_sm90_smoke.ok"' in launcher
     assert '"Qwen3_5MoeGatedDeltaNet" in gdn._FLASHQLA_GDN_TYPES' in launcher
     assert '"flash-qla": "0.1.2"' in launcher
+
+
+def test_grpo_rollouts_use_pinned_opencode_without_compaction() -> None:
+    harbor = load_yaml(RL_CONFIG)["terminal_bench"]["harbor"]
+
+    assert harbor["name"] == "opencode"
+    assert harbor["version"] == "1.18.8"
+    assert harbor["preinstalled"] is True
+    assert harbor["prompt_template_path"].endswith(
+        "/eval/jureca/opencode_swebench_prompt.md.j2"
+    )
+    assert harbor["opencode_config"] == {
+        "autoupdate": False,
+        "compaction": {"auto": False},
+    }
+    for terminus_only_key in (
+        "strict_json_parser",
+        "interleaved_thinking",
+        "extra_body",
+    ):
+        assert terminus_only_key not in harbor
 
 
 def test_swebench_arms_share_one_served_id_and_81920_context() -> None:
