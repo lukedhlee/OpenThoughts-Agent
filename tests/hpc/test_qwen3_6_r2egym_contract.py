@@ -2,6 +2,8 @@ from pathlib import Path
 
 import yaml
 
+from hpc.rl_config_utils import parse_rl_config
+
 
 # The model is staged verbatim from the hub — there is no conversion script to
 # import these from, so the contract is pinned here and asserted against the
@@ -98,6 +100,29 @@ def test_grpo_smoke_geometry_and_text_checkpoint_namespace() -> None:
     assert "qwen36-flashqla-0.1.2-sm90" in env["TILELANG_CACHE_DIR"]
     # Unset means SkyRL auto-detects GDN from layer_types and masks broken FLA.
     assert "SKYRL_GDN_MASK_FLA" not in env
+
+
+def test_grpo_context_budget_is_single_source_of_truth() -> None:
+    raw = load_yaml(RL_CONFIG)
+    budget = raw["context_budget"]
+
+    assert budget == {
+        "request_window_tokens": 32_768,
+        "max_new_tokens_per_turn": 4_096,
+        "max_turns": 999_999,
+    }
+
+    parsed = parse_rl_config(str(RL_CONFIG))
+    assert parsed.trainer["max_prompt_length"] == 28_672
+    assert parsed.generator["max_turns"] == 999_999
+    assert parsed.generator["sampling_params"]["max_generate_length"] == 4_096
+    assert parsed.generator["engine_init_kwargs"]["max_model_len"] == 32_768
+    assert parsed.terminal_bench["harbor"]["max_episodes"] == 999_999
+    assert "max_turns" not in parsed.terminal_bench["harbor"]
+    assert parsed.terminal_bench["model_info"] == {
+        "max_input_tokens": 28_672,
+        "max_output_tokens": 4_096,
+    }
 
 
 def test_grpo_launcher_requires_compiled_vllm_and_gpu_smoked_flashqla() -> None:

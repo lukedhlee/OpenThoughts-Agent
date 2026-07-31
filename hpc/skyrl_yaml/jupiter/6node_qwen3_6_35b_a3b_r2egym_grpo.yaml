@@ -1,5 +1,13 @@
 entrypoint: examples.terminal_bench.entrypoints.main_tbench
 
+# The launcher materializes every consumer-specific limit from this single
+# request contract. Keep the derived trainer/generator/Harbor fields out of the
+# YAML so they cannot drift apart.
+context_budget:
+  request_window_tokens: 32768
+  max_new_tokens_per_turn: 4096
+  max_turns: 999999
+
 # Exact initialization:
 # Qwen/Qwen3.6-35B-A3B @ 995ad96eacd98c81ed38be0c5b274b04031597b0, staged
 # verbatim from the hub — no conversion step, no derived checkpoint.
@@ -30,7 +38,6 @@ terminal_bench:
       autoupdate: false
       compaction:
         auto: false
-    max_episodes: 999999
     enable_summarize: false
     store_all_messages: true
     trajectory_config:
@@ -84,9 +91,7 @@ terminal_bench:
     passthrough_exceptions:
       - AgentTimeoutError
       - ContextLengthExceededError
-  model_info:
-    max_input_tokens: 28672
-    max_output_tokens: 4096
+  model_info: {}
   archiving:
     enabled: false
   trace_upload:
@@ -116,7 +121,6 @@ trainer:
   eval_batch_size: 32
   micro_forward_batch_size_per_gpu: 1
   micro_train_batch_size_per_gpu: 1
-  max_prompt_length: 28672
   fully_async:
     num_parallel_generation_workers: 32
   eval_interval: 999999
@@ -199,14 +203,11 @@ generator:
   enable_ray_prometheus_stats: false
   vllm_stats_interval: 1
   append_eos_token_after_stop_str_in_multi_turn: true
-  max_turns: 999999
   sampling_params:
-    max_generate_length: 4096
     temperature: 1.0
     top_p: 0.95
     top_k: 20
-  engine_init_kwargs:
-    max_model_len: 32768
+  engine_init_kwargs: {}
 
 data:
   train_data: []
@@ -225,10 +226,9 @@ container:
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     NCCL_DEBUG: WARN
     SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
-    # This checkpoint was already converted from the Qwen3.6 VLM shell to the
-    # text CausalLM. Disable SkyRL's shell unwrap/name mapper; otherwise the
-    # policy's model.* weights are rewritten to model.language_model.* even
-    # though the text-only vLLM engine expects the original model.* namespace.
+    # The staged checkpoint is the published Qwen3.6 VLM shell. SkyRL unwraps
+    # its text tower in memory, and the same flag enables the matching
+    # policy-to-vLLM weight-name mapping.
     SKYRL_QWEN3_5_VLM_UNWRAP: "1"
     # Qwen3.6 has three GDN layers per four-layer block. Its pure-Torch kernel
     # is prohibitively slow at this run's 28k-token prompt length, so absence

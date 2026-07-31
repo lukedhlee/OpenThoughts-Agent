@@ -165,7 +165,10 @@ def _materialize_context_budget(
     )
 
     if terminal_bench is not None:
-        terminal_bench.setdefault("harbor", {})["max_turns"] = budget.max_turns
+        # Harbor's installed agents expose their interaction cap as
+        # ``max_episodes``. ``max_turns`` is the SkyRL generator-side name and
+        # is not part of HarborConfigBuilder's agent schema.
+        terminal_bench.setdefault("harbor", {})["max_episodes"] = budget.max_turns
         model_info = terminal_bench.get("model_info") or {}
         model_info["max_input_tokens"] = budget.max_input_tokens
         model_info["max_output_tokens"] = budget.max_new_tokens_per_turn
