@@ -244,6 +244,11 @@ container:
     WANDB_PROJECT: jupiter-r2egym-grpo-qwen36-35b
     WANDB_MODE: offline
     WANDB_DIR: /e/scratch/reformo/lee27/wandb
+    # Keep high-cardinality Ray startup logs node-local; the sbatch cleanup trap
+    # collects them into the experiment directory. Spill large objects to our
+    # writable project scratch instead of a stale user namespace.
+    OT_AGENT_RAY_LOG_DIR: /tmp/ray_logs
+    RAY_object_spilling_config: '{"type":"filesystem","params":{"directory_path":"/e/scratch/reformo/lee27/ray_spill"}}'
     DC_AGENT_SECRET_ENV: /e/scratch/reformo/lee27/keys/secrets.env
     APPTAINER_BRIDGE_URL: ${oc.env:APPTAINER_BRIDGE_URL,http://10.128.1.2:9920}
     RL_REPO_DIR: /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge

@@ -44,3 +44,15 @@ def test_rl_sbatch_skips_generic_cluster_conda_activation() -> None:
         '"conda_activate": "# Generic cluster Conda activation skipped for RL"'
         in source
     )
+
+
+def test_qwen36_rl_uses_only_operator_owned_ray_paths_and_no_proxy() -> None:
+    config = (
+        ROOT
+        / "hpc/skyrl_yaml/jupiter/6node_qwen3_6_35b_a3b_r2egym_grpo.yaml"
+    ).read_text()
+    hpc_source = (ROOT / "hpc/hpc.py").read_text()
+
+    assert "OT_AGENT_RAY_LOG_DIR: /tmp/ray_logs" in config
+    assert "/e/scratch/reformo/lee27/ray_spill" in config
+    assert 'proxychains_binary=""' in hpc_source

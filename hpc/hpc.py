@@ -500,7 +500,9 @@ class HPC(BaseModel):
         - Public key must be in ~/.ssh/authorized_keys on login node
         - proxychains-ng library must exist at cluster-specific path
         """
-        if not self.needs_ssh_tunnel:
+        if not self.needs_ssh_tunnel or (
+            not self.proxychains_binary and not self.proxychains_preload
+        ):
             return "# No SSH tunnel needed for this cluster"
 
         return r'''# ============================================================================
@@ -1014,7 +1016,10 @@ jupiter = HPC(
     },
     training_launcher="accelerate",
     needs_ssh_tunnel=True,
-    proxychains_binary="/e/scratch/jureap59/feuer1/proxychains-ng-aarch64/bin/proxychains4",
+    # The r2egym path is fully offline and reaches JURECA sandboxes through the
+    # internal Apptainer bridge. Leave proxy tooling unset so RL jobs do not
+    # emit another user's stale SOCKS setup.
+    proxychains_binary="",
     # Enable NUMA monitoring for GH200 unified memory debugging
     enable_numa_monitoring=True,
     # GH200 NUMA: --gpu-bind=closest restricts CPU affinity to NUMA node 0 only
