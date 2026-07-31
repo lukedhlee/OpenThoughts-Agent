@@ -1,7 +1,11 @@
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 from hpc.hpc import set_environment
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_set_environment_preserves_explicit_values(tmp_path, monkeypatch) -> None:
@@ -24,3 +28,19 @@ def test_set_environment_preserves_explicit_values(tmp_path, monkeypatch) -> Non
     assert os.environ["SCRATCH"] == "/project/operator"
     assert os.environ["DCFT"] == "/project/operator/execution-checkout"
     assert os.environ["WANDB_MODE"] == "offline"
+
+
+def test_jupiter_batch_dotenv_treats_checkout_paths_as_defaults() -> None:
+    dotenv = (ROOT / "hpc/dotenv/jupiter.env").read_text()
+
+    assert 'export SCRATCH="${SCRATCH:-/e/scratch/jureap59/$USER}"' in dotenv
+    assert 'export DCFT="${DCFT:-$SCRATCH/OpenThoughts-Agent}"' in dotenv
+
+
+def test_rl_sbatch_skips_generic_cluster_conda_activation() -> None:
+    source = (ROOT / "hpc/rl_launch_utils.py").read_text()
+
+    assert (
+        '"conda_activate": "# Generic cluster Conda activation skipped for RL"'
+        in source
+    )

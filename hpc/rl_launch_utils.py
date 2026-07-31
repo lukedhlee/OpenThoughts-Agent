@@ -1272,7 +1272,10 @@ fi"""
         "job_name": job_name,
         "sbatch_extra_directives": "\n".join(sbatch_directives),
         "module_commands": hpc.get_module_commands(),
-        "conda_activate": resolve_conda_activate(hpc, exp_args),
+        # RL has a dedicated activation block below (venv or --rl_use_conda).
+        # Running the cluster's generic training activation first is redundant
+        # and may point at another user's/project's environment.
+        "conda_activate": "# Generic cluster Conda activation skipped for RL",
         "cluster_env_file": hpc.dotenv_filename,
         "cuda_setup": cuda_setup,
         "nccl_exports": hpc.get_nccl_exports(),
