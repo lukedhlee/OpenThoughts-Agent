@@ -558,6 +558,8 @@ def launch_datagen_job_v2(exp_args: dict, hpc) -> None:
                 ingress_mode=exp_args.get("ingress_mode") or "pinggy",
                 ingress_host=exp_args.get("ingress_host"),
                 record_literal=bool(exp_args.get("record_literal")),
+                harbor_ref=exp_args.get("harbor_ref"),
+                apptainer_bridge_url=exp_args.get("apptainer_bridge_url"),
                 # Chunking fields (None when not chunking)
                 chunk_size=chunk_size if is_chunked else None,
                 chunk_index=chunk_idx,
@@ -953,6 +955,12 @@ class TracegenJobConfig:
     # server and route the agent endpoint through it. Default off = no proxy.
     record_literal: bool = False
 
+    # Select a local fork checkout without mutating shared environments. The
+    # launcher verifies the checkout's commit and prepends its src/ directory
+    # for the Harbor subprocess.
+    harbor_ref: Optional[str] = None
+    apptainer_bridge_url: Optional[str] = None
+
     # Ray object store size in GB (default: 40)
     ray_object_store_gb: float = 40.0
 
@@ -976,6 +984,60 @@ class TracegenJobRunner:
         self.config = config
         self._hpc = None
         self._proxychains_binary = ""
+        self._configure_harbor_runtime()
+
+    def _configure_harbor_runtime(self) -> None:
+        """Select the requested Harbor checkout and bridge endpoint.
+
+        Shared HPC checkouts must never be changed from inside an evaluation
+        job. ``--harbor-ref`` therefore validates the checkout named by
+        ``HARBOR_HOME`` and fails closed on a mismatch; the login-side deploy
+        step remains responsible for pulling that fork/ref.
+        """
+        if self.config.apptainer_bridge_url:
+            os.environ["APPTAINER_BRIDGE_URL"] = self.config.apptainer_bridge_url
+
+        if not self.config.harbor_ref:
+            return
+
+        harbor_home = os.environ.get("HARBOR_HOME")
+        if not harbor_home:
+            raise RuntimeError("--harbor-ref requires HARBOR_HOME to name a Harbor checkout")
+
+        checkout = Path(harbor_home).expanduser().resolve()
+        if not (checkout / ".git").exists():
+            raise RuntimeError(f"HARBOR_HOME is not a git checkout: {checkout}")
+
+        def rev_parse(revision: str) -> str:
+            result = subprocess.run(
+                ["git", "-C", str(checkout), "rev-parse", "--verify", revision],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Harbor ref {revision!r} is unavailable in {checkout}: "
+                    f"{result.stderr.strip()}"
+                )
+            return result.stdout.strip()
+
+        expected = rev_parse(f"{self.config.harbor_ref}^{{commit}}")
+        actual = rev_parse("HEAD")
+        if actual != expected:
+            raise RuntimeError(
+                f"Harbor checkout mismatch: {checkout} is at {actual}, "
+                f"but --harbor-ref {self.config.harbor_ref!r} resolves to {expected}. "
+                "Pull the requested fork/ref before submitting evaluations."
+            )
+
+        harbor_src = checkout / "src"
+        import_root = harbor_src if (harbor_src / "harbor").is_dir() else checkout
+        current = os.environ.get("PYTHONPATH", "")
+        os.environ["PYTHONPATH"] = (
+            f"{import_root}{os.pathsep}{current}" if current else str(import_root)
+        )
+        os.environ["HARBOR_REF"] = self.config.harbor_ref
 
     def _get_hpc(self):
         """Lazy-load HPC configuration."""

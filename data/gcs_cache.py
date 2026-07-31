@@ -16,10 +16,39 @@ import shutil
 import logging
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
-from google.cloud import storage
+try:
+    from google.cloud import storage
+except ImportError:  # optional dependency
+    # HPC clusters (e.g. Jupiter) have no GCS access and do not install
+    # google-cloud-storage. Importing this module must still succeed: the
+    # gcs_cache() decorator already degrades to no-op caching when GCSCache
+    # cannot be constructed, so a missing client is a fallback, not an error.
+    # Without this guard, `from data.gcs_cache import gcs_cache` hard-fails at
+    # import time and takes down unrelated callers such as
+    # scripts/harbor/tasks_parquet_converter.py.
+    storage = None
 import os
 import json
-import h5py
+try:
+    import h5py
+except ImportError:  # optional dependency
+
+    class _MissingH5py:
+        """Stand-in for an absent h5py.
+
+        h5py is only touched by the HDF5-specific cache paths below; the parquet
+        flows that most callers use never reach them. Importing this module must
+        not fail on clusters without h5py, but any genuine HDF5 use must still
+        fail loudly rather than silently misbehave.
+        """
+
+        def __getattr__(self, name: str):
+            raise RuntimeError(
+                f"h5py is not installed; HDF5 cache support is unavailable "
+                f"(attempted to access h5py.{name})"
+            )
+
+    h5py = _MissingH5py()
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +113,13 @@ class GCSCache:
         if credentials_path:
             os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
         
+        if storage is None:
+            raise RuntimeError(
+                "google-cloud-storage is not installed; GCS caching unavailable"
+            )
         self.client = storage.Client()
         self.bucket = self.client.bucket(bucket_name)
-    
+
     def _compute_directory_hash(self, dir_path: Union[str, Path]) -> str:
         """
         Compute hash of directory contents.
@@ -615,6 +648,10 @@ class GCSCacheHDF5:
         if credentials_path:
             os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
 
+        if storage is None:
+            raise RuntimeError(
+                "google-cloud-storage is not installed; GCS caching unavailable"
+            )
         self.client = storage.Client()
         self.bucket = self.client.bucket(bucket_name)
 

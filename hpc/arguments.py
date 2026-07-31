@@ -652,6 +652,20 @@ class DataGenArgs:
         default=None,
         metadata={"help": "Harbor job YAML describing trace execution"}
     )
+    harbor_ref: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Required git ref for the Harbor checkout in $HARBOR_HOME. "
+            "The evaluation fails closed if the checkout is at another commit."
+        },
+    )
+    apptainer_bridge_url: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Apptainer bridge URL forwarded to Harbor "
+            "(for example http://jrlogin04i:9920)."
+        },
+    )
     trace_engine: Optional[str] = field(
         default=None,
         metadata={"help": "Engine to use for trace generation (supports 'openai', 'anthropic', 'vllm_local', 'none'; defaults to datagen_engine)"}

@@ -722,6 +722,8 @@ def get_rl_env_activation(exp_args: Dict[str, Any]) -> str:
     conda_env = exp_args.get("rl_conda_env", "dcagent-rl")
 
     if use_conda:
+        # Absolute env paths are supported (Vista: penfever shared otagent).
+        conda_env_q = shlex.quote(str(conda_env))
         return f'''# Using conda environment for RL: {conda_env}
 echo "Activating conda environment: {conda_env}"
 # Disable unbound variable check during conda operations (conda scripts reference unset vars)
@@ -742,7 +744,18 @@ else
   set -u
   exit 1
 fi
-conda activate {conda_env}
+conda activate {conda_env_q}
+# TACC/XALT + module PATH churn can drop conda from PATH after activate; pin it.
+if [[ -z "${{CONDA_PREFIX:-}}" || ! -x "${{CONDA_PREFIX}}/bin/python" ]]; then
+  echo "ERROR: conda activate did not yield a usable CONDA_PREFIX/bin/python" >&2
+  echo "       CONDA_PREFIX=${{CONDA_PREFIX:-<unset>}} which python=$(command -v python || true)" >&2
+  set -u
+  exit 1
+fi
+export PATH="${{CONDA_PREFIX}}/bin:${{PATH}}"
+export RL_PYTHON="${{CONDA_PREFIX}}/bin/python"
+hash -r 2>/dev/null || true
+echo "Python executable: $RL_PYTHON"
 # Re-enable unbound variable check
 set -u'''
     else:
@@ -1779,6 +1792,8 @@ class RLJobRunner:
             object_store_memory=int(self.config.ray_object_store_gb * 1024 * 1024 * 1024),
             disable_cpu_bind=getattr(hpc, "disable_cpu_bind", False),
             gpu_bind=getattr(hpc, "gpu_bind", "none"),
+            # Vista/TACC: empty gpu_directive_format → no --gres on Ray srun.
+            gpu_gres=bool(getattr(hpc, "gpu_directive_format", "")),
             proxychains_binary=getattr(hpc, "proxychains_binary", None),
             # Apptainer RL runtime mode (OPT-IN): wrap ray start / ray.init()
             # wait scripts in `apptainer exec --nv` when a SIF is configured.

@@ -122,6 +122,10 @@ class RayClusterConfig:
     # CPU affinity on complex NUMA topologies (e.g., GH200 with 36 NUMA nodes).
     # Use SKYRL_ENABLE_NUMA_AFFINITY for application-level per-GPU NUMA binding.
     gpu_bind: str = "none"
+    # When False, omit ``--gres=gpu:N`` / rely on whole-node allocation.
+    # Vista/TACC: GPUs are NOT a SLURM gres (Gres=(null)); ``--gres=gpu:1``
+    # fails with "Invalid generic resource (gres) specification" (job 842804).
+    gpu_gres: bool = True
     # Enable periodic NUMA monitoring (useful for debugging GH200 unified memory allocation)
     # When enabled, logs numastat and nvidia-smi output every numa_monitor_interval seconds
     enable_numa_monitoring: bool = False
@@ -206,6 +210,8 @@ class RayCluster:
             object_store_memory=DEFAULT_OBJECT_STORE_MEMORY_BYTES,
             disable_cpu_bind=getattr(hpc, "disable_cpu_bind", False),
             gpu_bind=getattr(hpc, "gpu_bind", "none"),
+            # Empty gpu_directive_format ⇒ cluster does not expose GPUs as gres.
+            gpu_gres=bool(getattr(hpc, "gpu_directive_format", "")),
             use_proxychains=use_proxychains,
             proxychains_binary=proxychains_binary,
             enable_numa_monitoring=enable_numa_monitoring,
@@ -548,10 +554,11 @@ class RayCluster:
             f"--export=ALL,VLLM_HOST_IP={node_ip}",
             "--nodes=1",
             "--ntasks=1",
-            f"--gres=gpu:{self.config.gpus_per_node}",
-            f"--gpu-bind={self.config.gpu_bind}",
             "--overlap",
         ]
+        if self.config.gpu_gres:
+            srun_cmd.append(f"--gres=gpu:{self.config.gpus_per_node}")
+            srun_cmd.append(f"--gpu-bind={self.config.gpu_bind}")
         # Add --cpu-bind=none for Frontier/Cray systems
         if self.config.disable_cpu_bind:
             srun_cmd.append("--cpu-bind=none")
@@ -849,12 +856,16 @@ while True:
                 f"--export={self.config.srun_export_env}",
                 "--nodes=1",
                 "--ntasks=1",
-                f"--gres=gpu:{self.config.gpus_per_node}",
-                f"--gpu-bind={self.config.gpu_bind}",
                 "--overlap",
                 "-w", node,
-                sys.executable, "-c", monitor_script,
             ]
+            if self.config.gpu_gres:
+                # Insert before -w for readability; order among srun flags is free.
+                srun_cmd[4:4] = [
+                    f"--gres=gpu:{self.config.gpus_per_node}",
+                    f"--gpu-bind={self.config.gpu_bind}",
+                ]
+            srun_cmd.extend([sys.executable, "-c", monitor_script])
 
             proc = subprocess.Popen(
                 srun_cmd,

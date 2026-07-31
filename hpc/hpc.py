@@ -405,6 +405,12 @@ class HPC(BaseModel):
         """
         env_parts = []
         for key, value in {**self.env_vars, **self.library_paths}.items():
+            # Prefer job-level overrides already exported in the sbatch shell
+            # (e.g. Vista MoE gsm8k yaml sets CC/CXX/TRITON_CC=gcc/14.2.0 so
+            # FlashInfer CUTLASS MoE JIT is not pinned to hpc.library_paths gcc/15).
+            override = os.environ.get(key)
+            if override:
+                value = override
             env_parts.append(f"{key}={shlex.quote(str(value))}")
         env_parts.append("PATH=$PATH")
         env_parts.append("LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}")
@@ -413,6 +419,9 @@ class HPC(BaseModel):
         # Propagate CUDA_HOME so Triton can find ptxas on worker nodes
         # (set by 'module load CUDA/...' but not always inherited by Ray workers)
         env_parts.append("CUDA_HOME=${CUDA_HOME:-}")
+        # Prebuilt FlashInfer MoE workspace (must reach Ray workers; --export=ALL
+        # alone is not enough once ray_env_vars rebuilds a fresh `env ...` prefix).
+        env_parts.append("FLASHINFER_WORKSPACE_BASE=${FLASHINFER_WORKSPACE_BASE:-}")
         return " ".join(env_parts)
 
     def get_nccl_exports(self) -> str:
@@ -1305,6 +1314,9 @@ vista = HPC(
     partition="gh",
     gpus_per_node=1,
     cpus_per_node=72,
+    # GPUs are NOT a SLURM gres on Vista (Gres=(null)). Empty format ⇒ no
+    # #SBATCH --gres and RayCluster skips --gres=gpu:N (see ray_utils.gpu_gres).
+    gpu_directive_format="",
     internet_node=True,
     gpus_type="GH200 96GB",
     unified_gpu_memory=True,
@@ -1367,7 +1379,10 @@ vista = HPC(
     needs_cuda_detection=True,
     # Runtime configuration for Ray/vLLM
     modules=["gcc/15.1.0", "cuda/12.8", "tacc-apptainer"],
-    conda_activate="source $SCRATCH/miniconda3/etc/profile.d/conda.sh && conda activate $SCRATCH/miniconda3/envs/vllm_sandboxes",
+    # Shared lab otagent (penfever). Luke and other non-penfever SCRATCH trees do not
+    # ship $SCRATCH/miniconda3 — job 842670 died in 10s on EnvironmentLocationNotFound
+    # for vllm_sandboxes. Eval view already hard-codes this same path.
+    conda_activate="source /scratch/10635/penfever/miniconda3/etc/profile.d/conda.sh && conda activate /scratch/10635/penfever/miniconda3/envs/otagent",
     env_vars={
         "HF_HOME": "/tmp/hf_home",
         "PYTHONFAULTHANDLER": "1",
