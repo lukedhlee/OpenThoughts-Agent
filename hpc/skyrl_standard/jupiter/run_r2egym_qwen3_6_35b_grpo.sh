@@ -31,6 +31,11 @@ shopt -s nullglob
 : "${HF_HUB_REPO_ID:=}"
 : "${HF_HUB_PRIVATE:=false}"
 
+# The login-node preflight imports the compiled vLLM extension before Slurm's
+# generated sbatch can load the Jupiter runtime modules.
+module load GCC/14.3.0
+module load nvidia-compilers/25.9-CUDA-13
+
 export SCRATCH="$JSC_SCRATCH"
 export DCFT DCFT_RL_ENV="$RL_VENV" RL_ENV_DIR="$RL_VENV"
 export DC_AGENT_SECRET_ENV="${DC_AGENT_SECRET_ENV:-$JSC_SCRATCH/keys/secrets.env}"
