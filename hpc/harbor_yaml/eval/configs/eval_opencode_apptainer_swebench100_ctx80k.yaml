@@ -1,0 +1,102 @@
+# SWE-bench-100 validation through the JURECA apptainer bridge, at the eval
+# regime r2egym RL requires for comparability: ~81,920 total context, NO
+# summarization/compaction, 1 attempt per task, all 100 pinned tasks.
+#
+# Why the regime is load-bearing, not cosmetic: r2egym RL teaches long-horizon
+# persistence, and summarization + short context ERASES it. The RL co-lead
+# measured the same checkpoint at 40k/summ-ON = +2.7 (looks dead) vs
+# 81920/no-summ = +10 (clearly works). Running this at 32k would manufacture a
+# false negative.
+#
+# Pinned set: DCAgent2/swebench-verified-random-100-folders @ a2e51e9e...
+# (exactly 100 task dirs; all 100 SIFs cached and apptainer-inspect clean).
+# Do NOT relabel this a 200-task eval -- no provenance exists for a second
+# manifest, and the public sample100 overlaps this set by 18 tasks (182 unique).
+#
+# NOTE on context: Qwen3-8B's native max_position_embeddings is 40960, so 81920
+# is 2x native and REQUIRES explicit YARN rope scaling on the vLLM side
+# (factor 2.0). The server, not this file, must be launched with it.
+#
+# The model is served on JUPITER and reached over the Jupiter->JURECA reverse
+# tunnel; no model runs on JURECA. APPTAINER_BRIDGE_URL supplies bridge_url.
+
+job_name: swebench100-qwen3-8b-r2egym-ctx80k
+jobs_dir: eval_jobs
+n_attempts: 1
+timeout_multiplier: 1.0
+debug: false
+
+orchestrator:
+  type: local
+  # Sized to the bridge worker pool, NOT to the task count. Must stay <= total
+  # live workers (WORKERS_PER_NODE x nodes) or trials queue behind busy workers
+  # and burn the dc-cpu walltime.
+  n_concurrent_trials: 16
+  quiet: false
+  plain_output: true
+  retry:
+    max_retries: 2
+    include_exceptions:
+    - BridgeOutageError
+    exclude_exceptions:
+    - AgentTimeoutError
+    - VerifierTimeoutError
+    - SandboxBuildFailedError
+    wait_multiplier: 2.0
+    min_wait_sec: 2.0
+    max_wait_sec: 30.0
+  kwargs: {}
+
+environment:
+  type: apptainer
+  force_build: false
+  delete: true
+  override_cpus: 2
+  override_memory_mb: 8192
+  override_storage_mb: 8192
+  kwargs:
+    sif_cache: /p/scratch/synthlaion/lee27/sif
+
+verifier:
+  override_timeout_sec: null
+  max_timeout_sec: 14400
+  disable: false
+
+metrics: []
+
+agents:
+- name: opencode
+  import_path: null
+  # Served model ID on the Jupiter-side vLLM, reached through the tunnel.
+  model_name: vllm/qwen3-8b-r2egym
+  override_timeout_sec: 3600
+  override_setup_timeout_sec: 60
+  max_timeout_sec: null
+  kwargs:
+    version: 1.18.8
+    preinstalled: true
+    # Clean SWE-bench prompt. Do NOT point this at
+    # opencode_swe_smoke_prompt.md.j2 -- that template hardcodes a sentinel-file
+    # instruction and an astropy-specific path, which would corrupt all 100 tasks.
+    prompt_template_path: /p/project1/synthlaion/lee27/OpenThoughts-Agent/eval/jureca/opencode_swebench_prompt.md.j2
+    opencode_config:
+      autoupdate: false
+      compaction:
+        # MUST stay false -- this is the "no summarization" half of the regime.
+        auto: false
+    model_info:
+      # 77,824 prompt + 4,096 generation = 81,920 total.
+      max_input_tokens: 77824
+      max_output_tokens: 4096
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+    trajectory_config:
+      raw_content: false
+      linear_history: true
+
+datasets:
+# Empty task_names => all 100 pinned tasks.
+- path: /p/project1/synthlaion/lee27/swebench-verified-random-100-a2e51e9
+  task_names: []
+
+tasks: []

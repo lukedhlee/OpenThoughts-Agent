@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# Qwen3-8B (dense) FSDP2 + GRPO on r2egym, Jupiter/booster, disaggregated.
+#
+# Geometry: 3 nodes = 1 policy node (4x GH200, FSDP2 fsdp_size=4)
+#                   + 2 inference nodes (8 vLLM engines, TP=1).
+# Sandboxes: JURECA dc-cpu through the internal Jupiter Apptainer bridge
+#            (7 prebuilt SIFs cover all 3,328 tasks).
+# Validation: OFFLINE on saved checkpoints -- SWE-bench-100 through the JURECA
+#             apptainer bridge. Nothing in-loop; eval_interval is pinned off.
+#
+# NOTE the env: envs/rl is BROKEN on Jupiter (its vllm _C.so needs
+# libcudart.so.12, Jupiter only ships CUDA/13). envs/rl-megatron is the only
+# runnable vLLM; "megatron" is just the directory name -- strategy is fsdp2.
+# RL_ENV_DIR is forced via container.extra_env in the YAML, because
+# rl_launch_utils.py:780 would otherwise -d-test its way into the broken env.
+set -euo pipefail
+shopt -s nullglob
+
+: "${JSC_SCRATCH:=/e/scratch/reformo/lee27}"
+: "${RUNTIME_ROOT:=$JSC_SCRATCH/OpenThoughts-Agent}"
+: "${DCFT:=$JSC_SCRATCH/OpenThoughts-Agent-r2egym-bridge}"
+: "${RL_VENV:=$RUNTIME_ROOT/envs/rl-megatron}"
+: "${RL_REPO_DIR:=$JSC_SCRATCH/MarinSkyRL-apptainer-bridge}"
+: "${HARBOR_REPO:=$JSC_SCRATCH/harbor-apptainer-bridge}"
+: "${APPTAINER_BRIDGE_URL:=http://10.128.1.2:9920}"
+: "${EXPERIMENTS_DIR:=$JSC_SCRATCH/experiments}"
+: "${PARTITION:=booster}"
+: "${ACCOUNT:=reformo}"
+: "${TIME_LIMIT:=11:59:00}"
+: "${NUM_NODES:=3}"
+: "${MAX_RESTARTS:=2}"
+: "${MAX_STEPS:=50}"
+: "${CKPT_INTERVAL:=5}"
+: "${HF_SAVE_INTERVAL:=5}"
+: "${PREFLIGHT_ONLY:=0}"
+: "${JOB_NAME:=jupiter_qwen3_8b_r2egym_grpo}"
+# Trainer HF auto-push is OFF by default: Jupiter's secrets.env carries no HF
+# token (only DAYTONA/WANDB/SUPABASE), and the auto-pushed lukedhlee/<job> repo
+# has the wrong nested layout anyway. Publishing goes through
+# rl-agentic-job-cleanup -> laion/<job>-<step>-<size>. hf_save_interval still
+# writes local HF exports, which is what the offline SWE-bench-100 val consumes.
+: "${HF_HUB_REPO_ID:=}"
+: "${HF_HUB_PRIVATE:=false}"
+: "${RL_CONFIG:=$DCFT/hpc/skyrl_yaml/jupiter/3node_qwen3_8b_r2egym_grpo.yaml}"
+: "${TRAIN_DATA_REPO:=DCAgent/r2egym-patched-full-oracle}"
+
+export SCRATCH="$JSC_SCRATCH"
+export DCFT
+export DCFT_RL_ENV="$RL_VENV"
+export RL_ENV_DIR="$RL_VENV"
+export DC_AGENT_SECRET_ENV="${DC_AGENT_SECRET_ENV:-$JSC_SCRATCH/keys/secrets.env}"
+export HF_HOME="${HF_HOME:-$JSC_SCRATCH/cache/hf}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
+export WANDB_DIR="${WANDB_DIR:-$JSC_SCRATCH/wandb}"
+export WANDB_MODE="${WANDB_MODE:-offline}"
+export WANDB_PROJECT="${WANDB_PROJECT:-jupiter-r2egym-grpo-8b}"
+export RL_REPO_DIR
+export SKYRL_HOME="$RL_REPO_DIR"
+export APPTAINER_BRIDGE_URL
+export PYTHONPATH="$HARBOR_REPO/src:$SKYRL_HOME/skyrl-train:$SKYRL_HOME/skyrl-gym:$DCFT${PYTHONPATH:+:$PYTHONPATH}"
+
+if [[ ! -x "$RL_VENV/bin/python" ]]; then
+  echo "ERROR: missing RL runtime at $RL_VENV/bin/python" >&2
+  exit 1
+fi
+if [[ ! -f "$HARBOR_REPO/src/harbor/environments/apptainer/apptainer.py" ]]; then
+  echo "ERROR: missing Apptainer-enabled Harbor checkout at $HARBOR_REPO" >&2
+  exit 1
+fi
+if [[ ! -f "$RL_REPO_DIR/skyrl-train/examples/terminal_bench/harbor_config.py" ]]; then
+  echo "ERROR: missing bridge-enabled MarinSkyRL checkout at $RL_REPO_DIR" >&2
+  exit 1
+fi
+if [[ ! -f "$DC_AGENT_SECRET_ENV" ]]; then
+  echo "ERROR: missing secret environment file at $DC_AGENT_SECRET_ENV" >&2
+  exit 1
+fi
+if [[ ! -f "$RL_CONFIG" ]]; then
+  echo "ERROR: missing RL config at $RL_CONFIG" >&2
+  exit 1
+fi
+if ! curl --fail --silent --show-error --max-time 10 \
+  "$APPTAINER_BRIDGE_URL/status" >/dev/null; then
+  echo "ERROR: Apptainer bridge is not healthy at $APPTAINER_BRIDGE_URL" >&2
+  echo "       Do not launch: a disconnected bridge otherwise looks like zero reward." >&2
+  exit 1
+fi
+echo "Apptainer bridge preflight passed: $APPTAINER_BRIDGE_URL"
+
+set -a
+source "$DC_AGENT_SECRET_ENV"
+set +a
+
+# Only assert HF credentials when we actually intend to push.
+if [[ -n "$HF_HUB_REPO_ID" ]]; then
+  "$RL_VENV/bin/python" - <<'PY'
+from huggingface_hub import HfApi
+
+HfApi().whoami()
+PY
+else
+  echo "HF auto-push disabled (HF_HUB_REPO_ID empty); skipping whoami preflight."
+fi
+
+MODEL_PATH=""
+for candidate in "$HF_HUB_CACHE/models--Qwen--Qwen3-8B/snapshots"/*; do
+  if [[ -f "$candidate/config.json" ]] && { compgen -G "$candidate/model-*.safetensors" >/dev/null || [[ -f "$candidate/model.safetensors" ]]; }; then
+    MODEL_PATH="$candidate"
+    break
+  fi
+done
+if [[ -z "$MODEL_PATH" ]]; then
+  echo "ERROR: Qwen3-8B is not cached under $HF_HUB_CACHE" >&2
+  exit 1
+fi
+
+# train_data must be a directory of EXTRACTED Harbor task dirs (each holding
+# instruction.md), not a parquet. Two traps make this worth spelling out:
+#   * rl_launch_utils.resolve_rl_train_data() only extracts when the arg looks
+#     like an HF repo id; a local path is passed through VERBATIM. Handing it the
+#     parquet dir therefore yields zero tasks *silently* -- the only symptom is
+#     "No task directories or environments found; skipping" during the Daytona
+#     prebuild, and the job then trains on nothing.
+#   * Letting it treat this as an HF repo id instead makes it import data.commons
+#     (-> rapidfuzz, absent here) and every extract attempt dies.
+# So extract locally, once, and pass the extracted dir. Idempotent.
+: "${TASKS_DIR:=$JSC_SCRATCH/tasks/r2egym-patched-full-oracle}"
+if [[ -d "$TASKS_DIR" ]] && [[ -n "$(ls -A "$TASKS_DIR" 2>/dev/null)" ]]; then
+  echo "Using extracted r2egym tasks: $TASKS_DIR ($(ls "$TASKS_DIR" | wc -l) tasks)"
+else
+  PARQUET_DIR=""
+  for candidate in "$HF_HUB_CACHE/datasets--DCAgent--r2egym-patched-full-oracle/snapshots"/*; do
+    parquet_files=("$candidate"/*.parquet "$candidate"/*/*.parquet)
+    if [[ -d "$candidate" ]] && (( ${#parquet_files[@]} > 0 )); then
+      PARQUET_DIR="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$PARQUET_DIR" ]]; then
+    echo "ERROR: no r2egym parquet under $HF_HUB_CACHE and no extracted tasks at $TASKS_DIR" >&2
+    echo "       stage it first: huggingface_hub.snapshot_download('$TRAIN_DATA_REPO', repo_type='dataset')" >&2
+    exit 1
+  fi
+  echo "Extracting r2egym tasks from $PARQUET_DIR -> $TASKS_DIR"
+  mkdir -p "$TASKS_DIR"
+  PYTHONPATH="$DCFT" "$RL_VENV/bin/python" -m scripts.datagen.extract_tasks_from_parquet \
+    --parquet "$PARQUET_DIR" --output_dir "$TASKS_DIR"
+fi
+TRAIN_DATA="${TRAIN_DATA:-$TASKS_DIR}"
+
+mkdir -p "$EXPERIMENTS_DIR" "$WANDB_DIR"
+
+if [[ "$PREFLIGHT_ONLY" == "1" ]]; then
+  echo "r2egym preflight complete; no RL job submitted."
+  echo "  config: $RL_CONFIG"
+  echo "  model: $MODEL_PATH"
+  echo "  tasks: $TRAIN_DATA"
+  echo "  bridge: $APPTAINER_BRIDGE_URL"
+  echo "  Harbor: $HARBOR_REPO"
+  echo "  MarinSkyRL: $RL_REPO_DIR"
+  exit 0
+fi
+
+cd "$DCFT"
+
+HF_ARGS=()
+if [[ -n "$HF_HUB_REPO_ID" ]]; then
+  HF_ARGS=(--hf_hub_repo_id "$HF_HUB_REPO_ID" --hf_hub_private "$HF_HUB_PRIVATE")
+fi
+
+"$RL_VENV/bin/python" -m hpc.launch \
+  --job_type rl \
+  --rl_config "$RL_CONFIG" \
+  --model_path "$MODEL_PATH" \
+  --train_data "[\"$TRAIN_DATA\"]" \
+  --num_nodes "$NUM_NODES" \
+  --partition "$PARTITION" \
+  --account "$ACCOUNT" \
+  --time_limit "$TIME_LIMIT" \
+  --max_restarts "$MAX_RESTARTS" \
+  --experiments_dir "$EXPERIMENTS_DIR" \
+  --job_name "$JOB_NAME" \
+  ${HF_ARGS[@]+"${HF_ARGS[@]}"} \
+  --skyrl_override trainer.max_steps="$MAX_STEPS" \
+  --skyrl_override trainer.ckpt_interval="$CKPT_INTERVAL" \
+  --skyrl_override trainer.hf_save_interval="$HF_SAVE_INTERVAL"
