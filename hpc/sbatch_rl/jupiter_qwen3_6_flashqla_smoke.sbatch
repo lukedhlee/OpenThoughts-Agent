@@ -98,7 +98,10 @@ g_logits = torch.randn(
     requires_grad=True,
 )
 beta_logits = torch.randn_like(g_logits, requires_grad=True)
-g = F.logsigmoid(g_logits)
+# Qwen3.6 computes the decay gate from ``a.float()`` so FlashQLA receives an
+# FP32 gate even when the model activations are BF16. Its backward kernel
+# requires this contract because the accumulated gate gradient is FP32.
+g = F.logsigmoid(g_logits.float())
 beta = beta_logits.sigmoid()
 output, final_state = chunk_gated_delta_rule(
     q,
