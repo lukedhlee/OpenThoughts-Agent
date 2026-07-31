@@ -1,0 +1,245 @@
+entrypoint: examples.terminal_bench.entrypoints.main_tbench
+
+# Exact initialization:
+# Qwen/Qwen3.6-35B-A3B-FP8 @ 95a723d08a9490559dae23d0cff1d9466213d989,
+# dequantized once to a text-only BF16 checkpoint. The original checkpoint is
+# block-FP8 (128x128); SkyRL's optional FP8 weight receiver is per-tensor FP8 and
+# must not be enabled for this run.
+#
+# Geometry: 4 policy/ref nodes (16 GH200 GPUs, FSDP4 x EP4) plus two rollout
+# nodes (8 independent TP1 vLLM engines). The initial launch is one optimizer
+# step; only promote the same config to 50 steps after that smoke passes.
+
+config_groups:
+  terminal_bench_config: terminal_bench
+
+terminal_bench:
+  trials_dir: null
+  harbor:
+    name: terminus-2
+    max_episodes: 999999
+    enable_summarize: false
+    store_all_messages: true
+    trajectory_config:
+      raw_content: true
+    enable_episode_logging: false
+    record_terminal_session: false
+    enable_pane_logging: false
+    strict_json_parser: true
+    interleaved_thinking: true
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: true
+    override_timeout_sec: 1800
+    override_cpus: 2
+    override_memory_mb: 4096
+    override_storage_mb: 4096
+    environment_type: apptainer
+    bridge_url: ${oc.env:APPTAINER_BRIDGE_URL,http://10.128.1.2:9920}
+    sif_cache: /p/scratch/synthlaion/lee27/r2egym_sif
+    auto_snapshot: false
+    verifier_override_timeout_sec: 120
+    max_retries: 3
+    min_wait_sec: 60.0
+    max_wait_sec: 600.0
+    wait_multiplier: 2.0
+    exclude_exceptions:
+      - VerifierTimeoutError
+      - VerifierRuntimeError
+      - RewardFileNotFoundError
+      - RewardFileEmptyError
+      - VerifierOutputParseError
+      - BridgeOutageError
+      - BridgeOperationError
+      - BridgeOperationTimeoutError
+      - VerifierInfrastructureError
+    n_concurrent_trials: 32
+    log_level: INFO
+    enable_reward_shaping: false
+    collect_rollout_details: true
+    enable_error_classification: true
+    fail_on_infrastructure_error: true
+    mask_exceptions:
+      - DaytonaError
+      - EnvironmentStartTimeoutError
+      - BridgeOutageError
+      - BridgeOperationError
+      - BridgeOperationTimeoutError
+      - VerifierInfrastructureError
+      - NetworkError
+      - ConnectionError
+      - RewardFileNotFoundError
+      - RewardFileEmptyError
+      - AgentEnvironmentTimeoutError
+      - ContextLengthExceededError
+    default_error_treatment: mask
+    passthrough_exceptions:
+      - AgentTimeoutError
+      - ContextLengthExceededError
+  model_info:
+    max_input_tokens: 28672
+    max_output_tokens: 4096
+  archiving:
+    enabled: false
+  trace_upload:
+    enabled: false
+
+trainer:
+  strategy: fsdp2
+  flash_attn: false
+  attn_backend: sdpa
+  use_sample_packing: false
+  gradient_checkpointing: true
+  gradient_checkpointing_use_reentrant: true
+  algorithm:
+    advantage_estimator: grpo
+    use_kl_loss: false
+    kl_loss_coef: 0.0
+    eps_clip_low: 0.2
+    eps_clip_high: 0.2
+    loss_reduction: sequence_mean
+    use_tis: true
+    tis_imp_ratio_cap: 2.0
+  epochs: 1
+  max_steps: 1
+  update_epochs_per_batch: 1
+  train_batch_size: 32
+  policy_mini_batch_size: 32
+  eval_batch_size: 32
+  micro_forward_batch_size_per_gpu: 1
+  micro_train_batch_size_per_gpu: 1
+  max_prompt_length: 28672
+  fully_async:
+    num_parallel_generation_workers: 32
+  eval_interval: 999999
+  eval_before_train: false
+  ckpt_interval: 1
+  resume_mode: latest
+  hf_save_interval: 1
+  hf_upload_mode: all
+  hf_hub_repo_id: null
+  hf_hub_private: false
+  hf_hub_revision: main
+  enable_db_registration: false
+  project_name: jupiter-r2egym-grpo-qwen36-35b
+  log_level: INFO
+  tracker_commit_each_step: true
+  logger: wandb
+  run_name: null
+  ckpt_path: null
+  export_path: null
+  policy:
+    model:
+      path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B-FP8-origin-bf16-text/95a723d08a9490559dae23d0cff1d9466213d989
+    optimizer_config:
+      lr: 1.0e-6
+      weight_decay: 0.0
+      adam_betas: [0.9, 0.999]
+      max_grad_norm: 1.0
+    fsdp_config:
+      cpu_offload: false
+      reshard_after_forward: true
+      fsdp_size: 4
+      expert_model_parallel_size: 4
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+  ref:
+    model:
+      path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B-FP8-origin-bf16-text/95a723d08a9490559dae23d0cff1d9466213d989
+    fsdp_config:
+      cpu_offload: false
+      reshard_after_forward: true
+      fsdp_size: 4
+      expert_model_parallel_size: 4
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+  placement:
+    colocate_all: false
+    colocate_policy_ref: true
+    policy_num_nodes: 4
+    ref_num_nodes: 4
+    policy_num_gpus_per_node: 4
+    ref_num_gpus_per_node: 4
+    critic_num_nodes: 1
+    critic_num_gpus_per_node: 4
+    policy_strict_spread_pg: true
+    policy_per_gpu_bundles: true
+    policy_force_cvd_mask: true
+
+generator:
+  backend: vllm
+  timeout_multiplier: 1.0
+  model_dtype: bfloat16
+  enforce_eager: true
+  inference_engine_tensor_parallel_size: 1
+  num_inference_engines: 8
+  inference_engine_expert_parallel_size: 1
+  n_samples_per_prompt: 4
+  eval_n_samples_per_prompt: 1
+  gpu_memory_utilization: 0.85
+  max_num_seqs: 8
+  max_num_batched_tokens: 4096
+  enable_prefix_caching: true
+  enable_chunked_prefill: true
+  run_engines_locally: true
+  weight_sync_backend: nccl
+  async_engine: true
+  batched: false
+  enable_http_endpoint: true
+  enable_ray_prometheus_stats: false
+  vllm_stats_interval: 1
+  append_eos_token_after_stop_str_in_multi_turn: true
+  max_turns: 999999
+  sampling_params:
+    max_generate_length: 4096
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 20
+  engine_init_kwargs:
+    max_model_len: 32768
+
+data:
+  train_data: []
+  val_data: []
+
+rollout:
+  fanout:
+    enabled: true
+    num_coordinators: 4
+    cpus_per_coordinator: 8
+
+container:
+  extra_env:
+    RL_ENV_DIR: /e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron
+    LD_LIBRARY_PATH: "/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cu13/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cublas/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cuda_cupti/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cudnn/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cufft/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cufile/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/curand/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cusolver/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cusparse/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cusparselt/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nccl/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nvjitlink/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nvshmem/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nvtx/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/torch/lib:${CUDA_HOME}/lib64"
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    NCCL_DEBUG: WARN
+    SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
+    # This checkpoint was already converted from the Qwen3.6 VLM shell to the
+    # text CausalLM. Disable SkyRL's shell unwrap/name mapper; otherwise the
+    # policy's model.* weights are rewritten to model.language_model.* even
+    # though the text-only vLLM engine expects the original model.* namespace.
+    SKYRL_QWEN3_5_VLM_UNWRAP: "0"
+    # Qwen3.6 has three GDN layers per four-layer block. Its pure-Torch kernel
+    # is prohibitively slow at this run's 28k-token prompt length, so absence
+    # of the GPU-smoked official FlashQLA kernel must abort model startup.
+    SKYRL_GDN_FLASHQLA: "1"
+    SKYRL_GDN_FLASHQLA_REQUIRED: "1"
+    TILELANG_CACHE_DIR: /e/scratch/reformo/lee27/cache/tilelang/qwen36-flashqla-0.1.2-sm90
+    VLLM_FORCE_IPV4: "1"
+    GLOO_USE_IPV6: "0"
+    NCCL_SOCKET_FAMILY: AF_INET
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+    WANDB_PROJECT: jupiter-r2egym-grpo-qwen36-35b
+    WANDB_MODE: offline
+    WANDB_DIR: /e/scratch/reformo/lee27/wandb
+    DC_AGENT_SECRET_ENV: /e/scratch/reformo/lee27/keys/secrets.env
+    APPTAINER_BRIDGE_URL: ${oc.env:APPTAINER_BRIDGE_URL,http://10.128.1.2:9920}
+    RL_REPO_DIR: /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge
+    SKYRL_HOME: /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge
+    CONDA_EXE: /e/scratch/reformo/lee27/miniforge3/bin/conda
+    RL_PYTHON: /e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/bin/python
+    PYTHONPATH: /e/scratch/reformo/lee27/pydeps/qwen36-flashqla-0.1.2:/e/scratch/reformo/lee27/harbor-apptainer-bridge/src:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-train:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-gym:/e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge

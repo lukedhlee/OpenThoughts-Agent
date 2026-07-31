@@ -1,0 +1,41 @@
+# Use --model to select either the immutable BF16 baseline or a GRPO HF export.
+# Both arms use this exact serving config and the same stable served model ID.
+engine:
+  type: vllm_local
+  model: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B-FP8-origin-bf16-text/95a723d08a9490559dae23d0cff1d9466213d989
+  max_output_tokens: 4096
+  healthcheck_interval: 300
+  vllm_local: {}
+backend:
+  type: ray
+  wait_for_endpoint: true
+vllm_server:
+  model_path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B-FP8-origin-bf16-text/95a723d08a9490559dae23d0cff1d9466213d989
+  num_replicas: 1
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  data_parallel_size: 4
+  time_limit: '11:59:00'
+  max_model_len: 81920
+  max_num_seqs: 4
+  gpu_memory_utilization: 0.9
+  swap_space: 12
+  trust_remote_code: true
+  enable_auto_tool_choice: true
+  tool_call_parser: qwen3_coder
+  reasoning_parser: qwen3
+  extra_args:
+    - --dtype
+    - bfloat16
+    # KV FP8 is applied identically to baseline and post-GRPO arms. It leaves
+    # enough headroom for ~70 GB of BF16 parameters on each 96 GB GH200.
+    - --kv-cache-dtype
+    - fp8
+    - --block-size
+    - '16'
+    - --enable-chunked-prefill
+    - --max-num-partial-prefills
+    - '1'
+    - --enable-prefix-caching
+    - --served-model-name
+    - qwen3-6-35b-a3b-r2egym
