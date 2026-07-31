@@ -1,8 +1,10 @@
 import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 from hpc.hpc import set_environment
+from hpc.rl_launch_utils import _build_rl_container_env
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -56,3 +58,30 @@ def test_qwen36_rl_uses_only_operator_owned_ray_paths_and_no_proxy() -> None:
     assert "OT_AGENT_RAY_LOG_DIR: /tmp/ray_logs" in config
     assert "/e/scratch/reformo/lee27/ray_spill" in config
     assert 'proxychains_binary=""' in hpc_source
+
+
+def test_rl_container_env_preserves_json_and_runtime_expansion() -> None:
+    json_value = '{"type":"filesystem","params":{"directory_path":"/scratch/spill"}}'
+    block = _build_rl_container_env(
+        {
+            "extra_env": {
+                "RAY_object_spilling_config": json_value,
+                "LIBRARY_PATH": "${CUDA_HOME}/lib64",
+            }
+        },
+        {},
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            block
+            + "\nprintf '%s\\n%s\\n' \"$RAY_object_spilling_config\" \"$LIBRARY_PATH\"",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CUDA_HOME": "/opt/cuda"},
+    )
+    assert result.stdout.splitlines() == [json_value, "/opt/cuda/lib64"]

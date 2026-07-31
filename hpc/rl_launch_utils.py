@@ -948,7 +948,16 @@ def _build_rl_container_env(container: Mapping[str, Any], exp_args: dict) -> str
         # that test truthiness via int(); most callers use 1/0 or strings).
         if isinstance(value, bool):
             value = int(value)
-        lines.append(f'export {key}="{value}"')
+        # Keep values in a double-quoted shell word so intentional runtime
+        # expansions such as ${CUDA_HOME} still work, while preserving JSON or
+        # other embedded quotes verbatim.
+        escaped_value = (
+            str(value)
+            .replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("`", "\\`")
+        )
+        lines.append(f'export {key}="{escaped_value}"')
 
     if not lines:
         return "# (container section present but defined no overlays/pydeps/extra_env)"
