@@ -13,11 +13,11 @@ shopt -s nullglob
 : "${HARBOR_REPO:=$JSC_SCRATCH/harbor-apptainer-bridge}"
 : "${FLASHQLA_LAYER:=$JSC_SCRATCH/pydeps/qwen36-flashqla-0.1.2}"
 : "${APPTAINER_BRIDGE_URL:=http://10.128.1.2:9920}"
-: "${MODEL_REVISION:=95a723d08a9490559dae23d0cff1d9466213d989}"
-: "${MODEL_PATH:=$JSC_SCRATCH/models/Qwen3.6-35B-A3B-FP8-origin-bf16-text/$MODEL_REVISION}"
+: "${MODEL_REVISION:=995ad96eacd98c81ed38be0c5b274b04031597b0}"
+: "${MODEL_PATH:=$JSC_SCRATCH/models/Qwen3.6-35B-A3B/$MODEL_REVISION}"
 : "${TASKS_DIR:=$JSC_SCRATCH/tasks/r2egym-patched-full-oracle}"
 : "${EXPERIMENTS_DIR:=$JSC_SCRATCH/experiments}"
-: "${RL_CONFIG:=$DCFT/hpc/skyrl_yaml/jupiter/6node_qwen3_6_35b_a3b_fp8_origin_r2egym_grpo.yaml}"
+: "${RL_CONFIG:=$DCFT/hpc/skyrl_yaml/jupiter/6node_qwen3_6_35b_a3b_r2egym_grpo.yaml}"
 : "${PARTITION:=booster}"
 : "${ACCOUNT:=reformo}"
 : "${TIME_LIMIT:=02:00:00}"
@@ -27,7 +27,7 @@ shopt -s nullglob
 : "${CKPT_INTERVAL:=1}"
 : "${HF_SAVE_INTERVAL:=1}"
 : "${PREFLIGHT_ONLY:=0}"
-: "${JOB_NAME:=jupiter_qwen36_35b_fp8_origin_r2egym_grpo_smoke}"
+: "${JOB_NAME:=jupiter_qwen36_35b_r2egym_grpo_smoke}"
 : "${HF_HUB_REPO_ID:=}"
 : "${HF_HUB_PRIVATE:=false}"
 
@@ -49,8 +49,7 @@ for required in \
   "$RL_REPO_DIR/skyrl-train/skyrl_train/models/qwen3_5_vlm.py" \
   "$FLASHQLA_LAYER/qwen3_6_flashqla_manifest.json" \
   "$FLASHQLA_LAYER/gpu_sm90_smoke.ok" \
-  "$MODEL_PATH/config.json" \
-  "$MODEL_PATH/fp8_origin_provenance.json"; do
+  "$MODEL_PATH/config.json"; do
   if [[ ! -e "$required" ]]; then
     echo "ERROR: missing required path: $required" >&2
     exit 1
@@ -86,15 +85,32 @@ if Version(transformers.__version__) < Version("5.8.1"):
     raise SystemExit(f"transformers>=5.8.1 required, got {transformers.__version__}")
 if Version(vllm.__version__) < Version("0.19.0"):
     raise SystemExit(f"vllm>=0.19 required, got {vllm.__version__}")
-provenance = json.loads((model / "fp8_origin_provenance.json").read_text())
-assert provenance["source_repo"] == "Qwen/Qwen3.6-35B-A3B-FP8", provenance
-assert provenance["source_revision"] == expected_revision, provenance
-assert provenance["format"] == "qwen3.6-fp8-origin-bf16-text-v1", provenance
+# The staged tree is a verbatim hub snapshot pinned by revision in its path, so
+# the revision check is on the directory name rather than a generated provenance
+# file. Both eval arms must resolve to this exact revision or the paired
+# comparison is meaningless.
+assert model.name == expected_revision, (
+    f"staged model dir {model.name!r} is not the pinned revision {expected_revision!r}"
+)
 config = AutoConfig.from_pretrained(model, local_files_only=True)
 assert str(config.model_type).startswith("qwen3_5"), config.model_type
-assert not getattr(config, "quantization_config", None)
-assert not hasattr(config, "text_config"), "checkpoint is still a VLM shell"
-layer_types = getattr(config, "layer_types", None)
+assert not getattr(config, "quantization_config", None), (
+    "expected the unquantized release; a quantization_config means the FP8 repo was staged"
+)
+# We deliberately stage the multimodal shell and let SkyRL unwrap it in memory
+# (SKYRL_QWEN3_5_VLM_UNWRAP=1). The GDN signature therefore lives one level down,
+# on text_config, not on the top-level config.
+text_config = getattr(config, "text_config", None)
+assert text_config is not None, (
+    "expected the Qwen3.6 multimodal shell with a nested text_config; got a bare "
+    "text tower. If a pre-unwrapped checkpoint is staged on purpose, set "
+    "SKYRL_QWEN3_5_VLM_UNWRAP=0 in the RL config to match."
+)
+assert hasattr(text_config, "linear_conv_kernel_dim"), (
+    "text_config lacks the GatedDeltaNet signature; SkyRL's unwrap probe would "
+    "not fire and FlashQLA would be skipped"
+)
+layer_types = getattr(text_config, "layer_types", None)
 assert layer_types and any("linear" in str(kind).lower() for kind in layer_types), (
     "text config does not expose its GDN layer_types; SkyRL would skip FlashQLA"
 )

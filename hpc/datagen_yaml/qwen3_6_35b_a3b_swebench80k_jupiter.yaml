@@ -2,7 +2,7 @@
 # Both arms use this exact serving config and the same stable served model ID.
 engine:
   type: vllm_local
-  model: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B-FP8-origin-bf16-text/95a723d08a9490559dae23d0cff1d9466213d989
+  model: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96eacd98c81ed38be0c5b274b04031597b0
   max_output_tokens: 4096
   healthcheck_interval: 300
   vllm_local: {}
@@ -10,7 +10,7 @@ backend:
   type: ray
   wait_for_endpoint: true
 vllm_server:
-  model_path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B-FP8-origin-bf16-text/95a723d08a9490559dae23d0cff1d9466213d989
+  model_path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96eacd98c81ed38be0c5b274b04031597b0
   num_replicas: 1
   tensor_parallel_size: 1
   pipeline_parallel_size: 1

@@ -1,10 +1,16 @@
 entrypoint: examples.terminal_bench.entrypoints.main_tbench
 
 # Exact initialization:
-# Qwen/Qwen3.6-35B-A3B-FP8 @ 95a723d08a9490559dae23d0cff1d9466213d989,
-# dequantized once to a text-only BF16 checkpoint. The original checkpoint is
-# block-FP8 (128x128); SkyRL's optional FP8 weight receiver is per-tensor FP8 and
-# must not be enabled for this run.
+# Qwen/Qwen3.6-35B-A3B @ 995ad96eacd98c81ed38be0c5b274b04031597b0, staged
+# verbatim from the hub — no conversion step, no derived checkpoint.
+#
+# The published checkpoint is a multimodal shell (Qwen3_5MoeForConditionalGeneration:
+# 64.6 GiB text tower + 1.6 GiB MTP head + 0.8 GiB vision tower). SkyRL unwraps it
+# to the text tower at load time via SKYRL_QWEN3_5_VLM_UNWRAP=1 (its default), a
+# pure reference re-point of already-loaded submodules. The matching weight-sync
+# name mapping is gated on the same flag, so policy and rollout engines stay in
+# lockstep. Cost is ~3.6% extra read per load; a pre-unwrapped on-disk copy would
+# cost a second 67 GB artifact to pin and trust.
 #
 # Geometry: 4 policy/ref nodes (16 GH200 GPUs, FSDP4 x EP4) plus two rollout
 # nodes (8 independent TP1 vLLM engines). The initial launch is one optimizer
@@ -130,7 +136,7 @@ trainer:
   export_path: null
   policy:
     model:
-      path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B-FP8-origin-bf16-text/95a723d08a9490559dae23d0cff1d9466213d989
+      path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96eacd98c81ed38be0c5b274b04031597b0
     optimizer_config:
       lr: 1.0e-6
       weight_decay: 0.0
@@ -146,7 +152,7 @@ trainer:
       ep_comm_backend: torch
   ref:
     model:
-      path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B-FP8-origin-bf16-text/95a723d08a9490559dae23d0cff1d9466213d989
+      path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96eacd98c81ed38be0c5b274b04031597b0
     fsdp_config:
       cpu_offload: false
       reshard_after_forward: true
@@ -221,7 +227,7 @@ container:
     # text CausalLM. Disable SkyRL's shell unwrap/name mapper; otherwise the
     # policy's model.* weights are rewritten to model.language_model.* even
     # though the text-only vLLM engine expects the original model.* namespace.
-    SKYRL_QWEN3_5_VLM_UNWRAP: "0"
+    SKYRL_QWEN3_5_VLM_UNWRAP: "1"
     # Qwen3.6 has three GDN layers per four-layer block. Its pure-Torch kernel
     # is prohibitively slow at this run's 28k-token prompt length, so absence
     # of the GPU-smoked official FlashQLA kernel must abort model startup.

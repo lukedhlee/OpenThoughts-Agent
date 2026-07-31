@@ -2,21 +2,22 @@ from pathlib import Path
 
 import yaml
 
-from scripts.huggingface.dequantize_qwen3_6_fp8_for_grpo import (
-    EXPECTED_REPO,
-    EXPECTED_REVISION,
-    MINIMUM_BF16_CHECKPOINT_BYTES,
-)
+
+# The model is staged verbatim from the hub — there is no conversion script to
+# import these from, so the contract is pinned here and asserted against the
+# configs that consume it.
+EXPECTED_REPO = "Qwen/Qwen3.6-35B-A3B"
+EXPECTED_REVISION = "995ad96eacd98c81ed38be0c5b274b04031597b0"
 
 
 ROOT = Path(__file__).resolve().parents[2]
 RL_CONFIG = (
     ROOT
-    / "hpc/skyrl_yaml/jupiter/6node_qwen3_6_35b_a3b_fp8_origin_r2egym_grpo.yaml"
+    / "hpc/skyrl_yaml/jupiter/6node_qwen3_6_35b_a3b_r2egym_grpo.yaml"
 )
 SERVE_CONFIG = (
     ROOT
-    / "hpc/datagen_yaml/qwen3_6_35b_a3b_fp8_origin_bf16_swebench80k_jupiter.yaml"
+    / "hpc/datagen_yaml/qwen3_6_35b_a3b_swebench80k_jupiter.yaml"
 )
 EVAL_CONFIG = (
     ROOT
@@ -24,7 +25,7 @@ EVAL_CONFIG = (
 )
 GRPO_LAUNCHER = (
     ROOT
-    / "hpc/skyrl_standard/jupiter/run_r2egym_qwen3_6_35b_fp8_origin_grpo.sh"
+    / "hpc/skyrl_standard/jupiter/run_r2egym_qwen3_6_35b_grpo.sh"
 )
 
 
@@ -32,10 +33,31 @@ def load_yaml(path: Path) -> dict:
     return yaml.safe_load(path.read_text())
 
 
-def test_exact_fp8_origin_and_bf16_artifact_gate() -> None:
-    assert EXPECTED_REPO == "Qwen/Qwen3.6-35B-A3B-FP8"
-    assert EXPECTED_REVISION == "95a723d08a9490559dae23d0cff1d9466213d989"
-    assert MINIMUM_BF16_CHECKPOINT_BYTES >= 55_000_000_000
+def test_pinned_origin_is_the_unquantized_release() -> None:
+    """The FP8 repo was dropped; both arms must resolve to the plain release at
+    one exact revision, or the paired SWE-Bench comparison is meaningless."""
+    assert EXPECTED_REPO == "Qwen/Qwen3.6-35B-A3B"
+    assert not EXPECTED_REPO.endswith("-FP8")
+    assert len(EXPECTED_REVISION) == 40 and EXPECTED_REVISION.isalnum()
+
+    launcher = GRPO_LAUNCHER.read_text()
+    assert EXPECTED_REVISION in launcher
+    assert "fp8_origin_provenance" not in launcher
+    assert "dequantize" not in launcher.lower()
+
+    # Every consumer must point at the same pinned revision.
+    for path in (RL_CONFIG, SERVE_CONFIG):
+        assert EXPECTED_REVISION in path.read_text(), path
+
+
+def test_vlm_shell_is_unwrapped_in_memory_not_on_disk() -> None:
+    """We stage the multimodal shell and let SkyRL unwrap at load time. The flag
+    also gates the weight-sync name mapping, so policy and rollout engines must
+    agree on it."""
+    extra_env = load_yaml(RL_CONFIG)["container"]["extra_env"]
+    assert str(extra_env["SKYRL_QWEN3_5_VLM_UNWRAP"]) == "1", (
+        "unwrap must be enabled; the staged checkpoint is the multimodal shell"
+    )
 
 
 def test_grpo_smoke_geometry_and_text_checkpoint_namespace() -> None:
@@ -65,9 +87,10 @@ def test_grpo_smoke_geometry_and_text_checkpoint_namespace() -> None:
     assert generator["weight_sync_backend"] == "nccl"
     assert "quantization" not in generator
     assert "fuse_weights" not in generator
-    # Both policy and vLLM load the already-unwrapped text checkpoint. The VLM
-    # shell mapper would rewrite model.* to the wrong model.language_model.* keys.
-    assert env["SKYRL_QWEN3_5_VLM_UNWRAP"] == "0"
+    # Both policy and vLLM load the multimodal shell straight from the hub and
+    # unwrap in memory. The same flag gates the weight-sync name mapper, so it
+    # rewrites model.* to model.language_model.* for the engines in lockstep.
+    assert env["SKYRL_QWEN3_5_VLM_UNWRAP"] == "1"
     assert env["SKYRL_GDN_FLASHQLA"] == "1"
     assert env["SKYRL_GDN_FLASHQLA_REQUIRED"] == "1"
     assert env["PYTHONPATH"].startswith(
