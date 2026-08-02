@@ -114,6 +114,7 @@ def test_grpo_context_budget_is_single_source_of_truth() -> None:
         "request_window_tokens": 32_768,
         "max_new_tokens_per_turn": 4_096,
         "max_turns": 999_999,
+        "client_prompt_overhead_tokens": 1,
     }
 
     parsed = parse_rl_config(str(RL_CONFIG))
@@ -124,9 +125,17 @@ def test_grpo_context_budget_is_single_source_of_truth() -> None:
     assert parsed.terminal_bench["harbor"]["max_episodes"] == 999_999
     assert "max_turns" not in parsed.terminal_bench["harbor"]
     assert parsed.terminal_bench["model_info"] == {
-        "max_input_tokens": 28_672,
+        "max_input_tokens": 28_671,
         "max_output_tokens": 4_096,
     }
+    # OpenCode budgets message content before Qwen's chat template inserts one
+    # special token. The server-side request must still fit exactly in 32 KiB.
+    assert (
+        parsed.terminal_bench["model_info"]["max_input_tokens"]
+        + budget["client_prompt_overhead_tokens"]
+        + parsed.terminal_bench["model_info"]["max_output_tokens"]
+        == budget["request_window_tokens"]
+    )
 
 
 def test_grpo_launcher_requires_compiled_vllm_and_gpu_smoked_flashqla() -> None:

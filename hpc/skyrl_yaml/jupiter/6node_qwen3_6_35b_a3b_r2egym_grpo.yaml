@@ -7,6 +7,10 @@ context_budget:
   request_window_tokens: 32768
   max_new_tokens_per_turn: 4096
   max_turns: 999999
+  # OpenCode trims message content to max_input_tokens before Qwen's chat
+  # template adds one special token. Without this reserve, vLLM receives
+  # 28,673 + 4,096 tokens and rejects the request by exactly one token.
+  client_prompt_overhead_tokens: 1
 
 # Exact initialization:
 # Qwen/Qwen3.6-35B-A3B @ 995ad96eacd98c81ed38be0c5b274b04031597b0, staged
