@@ -258,6 +258,11 @@ container:
     # OmegaConf interpolation syntax is invalid here. The Hydra-side bridge_url
     # above remains environment-resolvable from this concrete export.
     APPTAINER_BRIDGE_URL: http://10.128.1.2:9920
+    # JURECA compute nodes cannot route directly to Jupiter's 10.128.x compute
+    # network. The Jupiter->JURECA control master reverse-forwards this internal
+    # JURECA login address to the per-job vLLM endpoint.
+    SKYRL_ROLLOUT_HTTP_ENDPOINT_HOST: jrlogin05i
+    SKYRL_ROLLOUT_HTTP_ENDPOINT_PORT: "18000"
     RL_REPO_DIR: /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge
     SKYRL_HOME: /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge
     CONDA_EXE: /e/scratch/reformo/lee27/miniforge3/bin/conda
