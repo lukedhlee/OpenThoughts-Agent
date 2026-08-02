@@ -81,10 +81,13 @@ model = Path(sys.argv[1])
 expected_revision = sys.argv[2]
 flashqla_layer = Path(sys.argv[3])
 import torch
+import torch.nn as nn
 import transformers
 import vllm
 import vllm._C
-from transformers import AutoConfig
+from transformers import AutoConfig, AutoModelForCausalLM
+
+from skyrl_train.distributed.fsdp_utils import get_fsdp_wrap_policy
 
 if Version(transformers.__version__) < Version("5.8.1"):
     raise SystemExit(f"transformers>=5.8.1 required, got {transformers.__version__}")
@@ -141,6 +144,21 @@ assert "format=qwen3.6-flashqla-smoke-v1" in smoke, smoke
 importlib.import_module("skyrl_train.models.qwen3_5_vlm")
 gdn = importlib.import_module("skyrl_train.models.qwen3_next_gdn")
 assert "Qwen3_5MoeGatedDeltaNet" in gdn._FLASHQLA_GDN_TYPES
+
+# Transformers 5.12 advertises a vision no-split class on the text CausalLM,
+# even though the RL policy contains only decoder layers. Exercise SkyRL's
+# resolver before reserving six nodes: it must retain the present decoder class
+# while ignoring the absent optional vision class.
+text_model_cls = AutoModelForCausalLM._model_mapping[type(text_config)]
+no_split_modules = list(text_model_cls._no_split_modules)
+decoder_cls_name = next(
+    name for name in no_split_modules if name.endswith("DecoderLayer")
+)
+decoder_cls = type(decoder_cls_name, (nn.Module,), {})
+wrap_probe = nn.Module()
+wrap_probe._no_split_modules = no_split_modules
+wrap_probe.add_module("decoder", decoder_cls())
+assert get_fsdp_wrap_policy(wrap_probe) is not None
 print(
     "Qwen3.6 runtime preflight passed:",
     f"torch={torch.__version__}",

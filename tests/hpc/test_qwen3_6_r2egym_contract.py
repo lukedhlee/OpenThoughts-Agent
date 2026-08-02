@@ -131,6 +131,7 @@ def test_grpo_launcher_requires_compiled_vllm_and_gpu_smoked_flashqla() -> None:
     launcher = GRPO_LAUNCHER.read_text()
 
     assert "import vllm._C" in launcher
+    assert "get_fsdp_wrap_policy(wrap_probe) is not None" in launcher
     assert '"$FLASHQLA_LAYER/gpu_sm90_smoke.ok"' in launcher
     assert '"Qwen3_5MoeGatedDeltaNet" in gdn._FLASHQLA_GDN_TYPES' in launcher
     assert '"flash-qla": "0.1.2"' in launcher
