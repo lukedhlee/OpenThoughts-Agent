@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from hpc.hpc import set_environment
-from hpc.rl_launch_utils import _build_rl_container_env
+from hpc.rl_launch_utils import _build_rl_container_env, get_rl_env_activation
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -85,3 +85,29 @@ def test_rl_container_env_preserves_json_and_runtime_expansion() -> None:
         env={**os.environ, "CUDA_HOME": "/opt/cuda"},
     )
     assert result.stdout.splitlines() == [json_value, "/opt/cuda/lib64"]
+
+
+def test_rl_env_selector_is_emitted_only_before_activation() -> None:
+    template = (ROOT / "hpc/sbatch_rl/universal_rl.sbatch").read_text()
+    early = _build_rl_container_env(
+        {"extra_env": {"RL_ENV_DIR": "/runtime/rl", "NCCL_DEBUG": "WARN"}},
+        {},
+    )
+    late = _build_rl_container_env(
+        {"extra_env": {"RL_ENV_DIR": "/runtime/rl", "NCCL_DEBUG": "WARN"}},
+        {},
+        exclude_extra_env_keys=("RL_ENV_DIR", "DCFT_RL_ENV"),
+    )
+
+    assert template.index("{rl_container_env}") < template.index("{rl_env_activation}")
+    assert 'export RL_ENV_DIR="/runtime/rl"' in early
+    assert "RL_ENV_DIR" not in late
+    assert 'export NCCL_DEBUG="WARN"' in late
+
+
+def test_rl_venv_activation_fails_fast_without_python_and_ray() -> None:
+    activation = get_rl_env_activation({})
+
+    assert '[[ ! -x "$RL_ENV_DIR/bin/python" || ! -x "$RL_ENV_DIR/bin/ray" ]]' in activation
+    assert "RL environment is not usable" in activation
+    assert "Warning: RL environment not found" not in activation

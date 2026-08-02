@@ -97,6 +97,11 @@ fi
 # region_id is left None when creating snapshots. This must stay aligned with
 # prebuild_daytona_snapshots() in hpc/rl_launch_utils.py, which is also region-less.
 
+# --- RL config environment (early) ---
+# Values such as RL_ENV_DIR select the runtime itself, so the YAML-provided
+# container.extra_env block must be materialized before activation.
+{rl_container_env}
+
 # --- RL Environment Activation ---
 # The RL environment is separate from datagen due to dependency conflicts.
 # Options:
@@ -121,16 +126,6 @@ fi
 
 # --- NCCL/Networking settings (cluster-specific) ---
 {nccl_exports}
-
-# --- RL container env (Apptainer SIF overlays / pydeps / extra exports) ---
-# Emitted by the launcher from the RL yaml `container:` section (if present).
-# Sets RL_CONTAINER_OVERLAYS / RL_CONTAINER_PYDEPS (read at runtime by
-# hpc/rl_launch_utils.py build_apptainer_prefix + _build_container_pythonpath)
-# plus any container.extra_env exports (e.g. SKYRL_GDN_MASK_FLA, alloc-conf).
-# Empty (comment-only) when the yaml has no container section — byte-identical
-# to the prior non-container path. Exported here so every Ray daemon/driver
-# (apptainer --env passthrough + srun --export=ALL) inherits them.
-{rl_container_env}
 
 # --- Standard environment variables ---
 # UV_USE_IO_URING=0 forces libuv (bundled in uvloop 0.22.1 as libuv 1.48.0)
@@ -172,14 +167,13 @@ export PYTHONPATH="$WORKDIR:${PYTHONPATH:-}"
 {rl_env_exports}
 
 # --- RL container env (LATE override — config container.extra_env wins) ---
-# Re-emit the yaml container.extra_env exports AFTER both the hardcoded
+# Re-emit non-activation yaml container.extra_env exports AFTER both the hardcoded
 # export TORCH_NCCL_* lines above and the RL-specific env exports block,
 # so a config that intentionally sets a normally-hardcoded var (e.g. #232 lowering
 # TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC to 600 so NCCL's flight-recorder fires BEFORE
 # vLLM's 900s execute_model watchdog and actually dumps) wins by shell last-write.
-# No-op for every config whose extra_env does NOT collide with a hardcoded var
-# (the earlier container-env block already exported those, re-export is
-# idempotent), so this is byte-identical behavior for all existing configs.
+# RL_ENV_DIR and DCFT_RL_ENV are intentionally excluded here: their final
+# assignment must stay above the activation block.
 {rl_container_env_late}
 
 # --- Ray defaults ---

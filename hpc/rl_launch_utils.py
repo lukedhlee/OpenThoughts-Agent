@@ -778,19 +778,21 @@ fi
 set -u
 
 RL_ENV_DIR="${RL_ENV_DIR:-$WORKDIR/envs/rl}"
-if [[ -d "$RL_ENV_DIR" ]]; then
-  echo "Activating RL environment: $RL_ENV_DIR"
-  source "$RL_ENV_DIR/bin/activate"
-elif [[ -n "${DCFT_RL_ENV:-}" ]] && [[ -d "$DCFT_RL_ENV" ]]; then
-  echo "Activating RL environment from DCFT_RL_ENV: $DCFT_RL_ENV"
-  source "$DCFT_RL_ENV/bin/activate"
-else
-  echo "Warning: RL environment not found at $RL_ENV_DIR"
-  echo "Run ./hpc/setup_rl_env.sh to create it, or set DCFT_RL_ENV"
+if [[ ! -d "$RL_ENV_DIR" ]] && [[ -n "${DCFT_RL_ENV:-}" ]]; then
+  RL_ENV_DIR="$DCFT_RL_ENV"
 fi
+if [[ ! -x "$RL_ENV_DIR/bin/python" || ! -x "$RL_ENV_DIR/bin/ray" ]]; then
+  echo "ERROR: RL environment is not usable: $RL_ENV_DIR" >&2
+  echo "       required executables: bin/python and bin/ray" >&2
+  exit 1
+fi
+echo "Activating RL environment: $RL_ENV_DIR"
+source "$RL_ENV_DIR/bin/activate"
+hash -r 2>/dev/null || true
 
 # Verify we're using the correct Python
-echo "Python executable: $(which python)"
+echo "Python executable: $(command -v python)"
+echo "Ray executable: $(command -v ray)"
 echo "Python path check: $(python -c 'import sys; print(sys.executable)')"'''
 
 
@@ -891,7 +893,12 @@ def build_skyrl_command_string(config: RLJobConfig) -> str:
     return " \\\n".join(parts)
 
 
-def _build_rl_container_env(container: Mapping[str, Any], exp_args: dict) -> str:
+def _build_rl_container_env(
+    container: Mapping[str, Any],
+    exp_args: dict,
+    *,
+    exclude_extra_env_keys: Sequence[str] = (),
+) -> str:
     """Build the `{rl_container_env}` sbatch block from a yaml `container:` section.
 
     Side effect: when ``container.sif`` is set and ``--rl_container_sif`` was NOT
@@ -916,6 +923,9 @@ def _build_rl_container_env(container: Mapping[str, Any], exp_args: dict) -> str
     Args:
         container: The parsed yaml ``container:`` mapping (or empty dict).
         exp_args: Experiment args dict (mutated to set rl_container_sif/binds).
+        exclude_extra_env_keys: ``extra_env`` keys to omit from this emission.
+            Used by the late override block so environment-selection values such
+            as ``RL_ENV_DIR`` are emitted only before venv activation.
 
     Returns:
         Multi-line shell string of export statements (or a single comment line).
@@ -942,8 +952,11 @@ def _build_rl_container_env(container: Mapping[str, Any], exp_args: dict) -> str
     if pydeps:
         lines.append(f'export RL_CONTAINER_PYDEPS="{pydeps}"')
 
+    excluded = set(exclude_extra_env_keys)
     extra_env = container.get("extra_env") or {}
     for key, value in extra_env.items():
+        if key in excluded:
+            continue
         # bool -> shell-friendly literal (True/False kept as-is for SKYRL_* flags
         # that test truthiness via int(); most callers use 1/0 or strings).
         if isinstance(value, bool):
@@ -1019,6 +1032,15 @@ def construct_rl_sbatch_script(exp_args: dict, hpc) -> str:
     # nothing changes for configs without a `container:` section.
     rl_container_env_block = _build_rl_container_env(
         parsed.raw.get("container") or {}, exp_args
+    )
+    # Most config environment values are re-emitted late so they can override
+    # launcher defaults. Environment-selection values are different: their last
+    # export must remain before activation, otherwise a rendered sbatch can
+    # activate the checkout-local fallback and only learn the real path later.
+    rl_container_env_late_block = _build_rl_container_env(
+        parsed.raw.get("container") or {},
+        exp_args,
+        exclude_extra_env_keys=("RL_ENV_DIR", "DCFT_RL_ENV"),
     )
 
     # Extract agent name and harbor_env from terminal_bench config
@@ -1289,11 +1311,9 @@ fi"""
         "cuda_setup": cuda_setup,
         "nccl_exports": hpc.get_nccl_exports(),
         "rl_container_env": rl_container_env_block,
-        # LATE re-emit of the SAME container.extra_env block, placed after
-        # {rl_env_exports} in the template so config extra_env wins by shell
-        # last-write over the hardcoded `export TORCH_NCCL_*` defaults and the
-        # hpc.env_vars block (idempotent / no-op for non-colliding configs).
-        "rl_container_env_late": rl_container_env_block,
+        # Late re-emit lets config extra_env win over launcher defaults, except
+        # for venv selectors whose final assignment must precede activation.
+        "rl_container_env_late": rl_container_env_late_block,
         "rl_env_exports": rl_env_exports,
         "ray_env_exports": hpc.get_ray_env_exports(experiments_subdir),
         "rl_env_activation": rl_env_activation,
