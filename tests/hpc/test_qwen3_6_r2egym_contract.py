@@ -87,6 +87,8 @@ def test_grpo_smoke_geometry_and_text_checkpoint_namespace() -> None:
     assert generator["inference_engine_tensor_parallel_size"] == 1
     assert generator["num_inference_engines"] == 8
     assert generator["weight_sync_backend"] == "nccl"
+    assert generator["engine_init_kwargs"]["enable_auto_tool_choice"] is True
+    assert generator["engine_init_kwargs"]["tool_call_parser"] == "qwen3_coder"
     assert "quantization" not in generator
     assert "fuse_weights" not in generator
     # Both policy and vLLM load the multimodal shell straight from the hub and
@@ -147,6 +149,8 @@ def test_grpo_explicitly_disables_hf_hub_upload() -> None:
 
     assert parsed.trainer["hf_hub_repo_id"] is None
     assert not any("trainer.hf_hub_repo_id" in arg for arg in args)
+    assert "++generator.engine_init_kwargs.enable_auto_tool_choice=true" in args
+    assert "++generator.engine_init_kwargs.tool_call_parser=qwen3_coder" in args
 
 
 def test_grpo_rollouts_use_pinned_opencode_without_compaction() -> None:

@@ -211,7 +211,14 @@ generator:
     temperature: 1.0
     top_p: 0.95
     top_k: 20
-  engine_init_kwargs: {}
+  # OpenCode always supplies its coding tools with tool_choice="auto". The
+  # exact checkpoint's chat template emits Qwen3 XML tool calls
+  # (<tool_call><function=...><parameter=...>), which vLLM 0.22 parses with
+  # qwen3_coder. Without both fields vLLM rejects every agent request before
+  # generation, so this is part of the rollout transport contract.
+  engine_init_kwargs:
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
 
 data:
   train_data: []
