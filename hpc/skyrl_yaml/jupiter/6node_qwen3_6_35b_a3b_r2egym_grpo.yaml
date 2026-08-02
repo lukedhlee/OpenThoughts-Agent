@@ -42,6 +42,10 @@ terminal_bench:
     store_all_messages: true
     trajectory_config:
       raw_content: true
+    # The host-side trace is authoritative. Re-uploading agent logs into the
+    # remote sandbox is unused by training and can park failed trials in Harbor's
+    # 60-600s retry backoff, starving the rollout engines.
+    upload_agent_logs: false
     enable_episode_logging: false
     record_terminal_session: false
     enable_pane_logging: false
