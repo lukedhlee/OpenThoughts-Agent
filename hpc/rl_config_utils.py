@@ -773,10 +773,11 @@ def build_skyrl_hydra_args(
             served_model_name
         )
 
-    # HuggingFace Hub upload settings (for automatic checkpoint uploads)
-    # Default to laion/<job_name> if not explicitly provided
+    # HuggingFace Hub upload settings (for automatic checkpoint uploads).
+    # Default to laion/<job_name> only when the YAML did not mention the key.
+    # An explicit `hf_hub_repo_id: null` means uploads are disabled.
     hf_hub_repo_id = exp_args.get("hf_hub_repo_id")
-    if not hf_hub_repo_id and job_name:
+    if not hf_hub_repo_id and "hf_hub_repo_id" not in trainer and job_name:
         hf_hub_repo_id = f"laion/{job_name}"
         print(f"HF Hub upload auto-defaulted to: {hf_hub_repo_id}")
     if hf_hub_repo_id:

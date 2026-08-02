@@ -1,8 +1,9 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 
-from hpc.rl_config_utils import parse_rl_config
+from hpc.rl_config_utils import build_skyrl_hydra_args, parse_rl_config
 
 
 # The model is staged verbatim from the hub — there is no conversion script to
@@ -133,6 +134,18 @@ def test_grpo_launcher_requires_compiled_vllm_and_gpu_smoked_flashqla() -> None:
     assert '"$FLASHQLA_LAYER/gpu_sm90_smoke.ok"' in launcher
     assert '"Qwen3_5MoeGatedDeltaNet" in gdn._FLASHQLA_GDN_TYPES' in launcher
     assert '"flash-qla": "0.1.2"' in launcher
+
+
+def test_grpo_explicitly_disables_hf_hub_upload() -> None:
+    parsed = parse_rl_config(str(RL_CONFIG))
+    args = build_skyrl_hydra_args(
+        parsed,
+        {"job_name": "qwen36-smoke", "num_nodes": 6},
+        SimpleNamespace(gpus_per_node=4),
+    )
+
+    assert parsed.trainer["hf_hub_repo_id"] is None
+    assert not any("trainer.hf_hub_repo_id" in arg for arg in args)
 
 
 def test_grpo_rollouts_use_pinned_opencode_without_compaction() -> None:
