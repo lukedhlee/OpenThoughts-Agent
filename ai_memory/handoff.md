@@ -1,4 +1,8 @@
-# Handoff — lukedhlee · updated 2026-08-01
+# Handoff — lukedhlee · updated 2026-08-03 (14:30 CEST)
+
+> **START HERE:** `notes/qwen36_resume_brief.md` § "LATEST LIVE UPDATE — 2026-08-03 14:10" has the
+> authoritative current state. This file is the durable frame; that file is the live log.
+> **The blocker is no longer infrastructure — it is the DATA.** See § Live state below.
 
 ## Objective
 
@@ -50,13 +54,12 @@ one is measured from the co-lead's live scripts, not inferred):**
   x86_64. Workers dial IN to the Jupiter bridge over a reverse SSH tunnel from the JURECA login node.
 - **No model is ever served on JURECA.** Jupiter compute never contacts JURECA — see § Sandbox.
 
-**Current focus = get the RL pipeline to complete one honest GRPO step.** Sandbox enablement,
-branch pushes, 24h JURECA walltime, Jupiter reconciliation, the FlashQLA GH200 gate, and exact-model
-staging are complete. Smoke attempt `1141941` loaded all eight plain-BF16 vLLM engines, then exposed a
-missing TorchTitan EP dependency before policy construction. The pinned dependency is installed and
-import-gated. Replacement `1144362` did not reach Ray: direct sbatch resubmission omitted inherited
-`RL_ENV_DIR`, so activation fell back to a nonexistent checkout-local `envs/rl` and bare `ray` exited
-127. See § Live state and remaining defects.
+**Current focus = get ONE honest GRPO step. The infrastructure now works; the DATA blocks it.**
+As of 2026-08-03 the pipeline runs cleanly end-to-end through Ray → 26/26 shards → fused-MoE JIT/KV →
+HTTP endpoint → policy/ref init → 693-tensor weight sync → **honest rollouts with real verifier
+rewards**. Four defects were root-caused and fixed today (§ Live state). What now blocks the milestone
+is that **raw r2egym yields ZERO within-group reward variance for this model**, so GRPO can form no
+advantage and no gradient exists. Two operator decisions are pending; see § Live state.
 
 ## State
 
@@ -432,43 +435,85 @@ harness before attributing a low number to the model.
 - Precedent for why: the GSM8K `pass_at_1 ≈ 0.45` plateau was a **format artifact**, not ability. A
   number that looks like capability is often the harness. → [[gsm8k_format_artifact]]
 
-## Live state and remaining defects
+## Live state and remaining defects — 2026-08-03
 
-1. **One-step GRPO is not complete.** Attempt `1141941` formed the 6-node/24-GPU Ray cluster, entered
-   W&B offline mode, recognized the exact plain checkpoint with `quantization=None`, and loaded all
-   eight TP1 BF16 vLLM engines (~64.69 GiB each). It then failed before policy model construction:
-   `ModuleNotFoundError: torchtitan`. The actual RL venv now has TorchTitan pinned at
-   `a1fdd7e43694bbfeff5d6ad8ac738c067bb90d41` plus locked `tomli`/`tyro`, and imports of
-   `expert_parallel` and SkyRL `MoE` pass. Replacement **`1144362` failed in 51 seconds before Ray**:
-   it was submitted directly from the rendered sbatch without the wrapper's inherited `RL_ENV_DIR`.
-   The script warned that `$WORKDIR/envs/rl` was absent but continued; its absolute driver Python
-   still launched, then every bare `ray` command failed with exit 127 because the venv was not on
-   `PATH`. This is a resubmission/environment-activation defect, not a Ray/TorchTitan/JURECA failure.
-   No rollout/reward/update result exists yet.
+**Nothing is running on Jupiter (0 nodes).** JURECA sandbox workers `15489111` alive until
+~18:50 CEST 08-03. Bridge pristine: 3542/3542 jobs, **zero errors**, all sandboxes reclaimed.
 
-2. **Runtime provisioning/activation is repaired on Jupiter but not fail-safe in rendered sbatch.**
-   SkyRL declares it under the `ep` extra, while the borrowed `envs/rl-megatron` venv lacked that
-   extra. Until the runtime bootstrap asserts `torchtitan.distributed.expert_parallel` and
-   `skyrl_train.models.layers.moe`, a fresh environment can reproduce `1141941`'s late failure.
-   Separately, venv activation currently relies on inherited `RL_ENV_DIR`, warns-and-continues when
-   absent, and receives the YAML's correct absolute `RL_ENV_DIR` only later in the sbatch. Render the
-   absolute path before activation and hard-fail if its Python/Ray are unavailable; never directly
-   resubmit the old rendered sbatch without an explicit `RL_ENV_DIR` export.
+### ⛔ BLOCKER 1 (operator decision) — the learnable band is REQUIRED
 
-3. **The cross-cluster path is healthy, but forced reconnect recovery is unproven.** Current measured
-   state: internal bridge `10.128.1.2:9920`, reverse listener reachable from JURECA, live SSH
-   ControlMaster, workers polling, and 1,442/1,442 cumulative bridge jobs completed with zero job
-   errors. After the smoke is no longer using the path, test `ServerAliveInterval=1` /
-   `ServerAliveCountMax=1`, deliberately break and re-establish the forward, prove failure is loud
-   and worker/job recovery succeeds, then restore conservative production keepalives.
+**22 prompt groups measured across two runs; ZERO had within-group reward variance.**
+`1219434` (32 groups × 2 samples): 15 groups, 0 with variance. `1221005` (16 × 4): 7 groups, 0 with
+variance — the four *complete* n=4 groups were perfectly uniform (`[1,1,1,1]`, `[1,1,1,1]`,
+`[0,0,0,0]`, `[0,0,0,0]`). Rewards are honest (verifier-scored, `exception_info: null`) and DO differ
+across tasks, but GRPO forms advantage **within** a group: all-zero groups are dropped by
+`rloo_n_filter_zero_reward_groups`, all-one groups carry zero advantage ⇒ **no gradient**. If per-task
+pass probability were mid-range, four uniform n=4 groups is a ~0.02% event.
+**Qwen3.6-35B-A3B is effectively deterministic per r2egym task.** The co-lead's model-specific band
+(`0 < pass@8 < 1`) is required, not optional. It was PARKED 2026-07-29 ("enable r2egym first") —
+r2egym IS enabled now and the parked risk has materialised in our own data. **Do not silently adopt
+the band; it is an operator call.**
 
-4. **Exception classification is name-based, not `isinstance`.** Any new exception subclass must be
-   enumerated in the config or it falls through to `default_error_treatment`. Fail-loud config limits
-   the damage but does not remove this structural hazard.
+### ⛔ BLOCKER 2 (operator decision) — filesystem: inodes AND bandwidth
 
-**Resolved former defects:** JURECA workers now request 24h; execution branches are pushed and Jupiter
-checkouts match local ground truth; the active tunnel is the reviewed internal-only path. Do not
-resurrect the stale public-bind script or use the historical dirty checkout.
+`1221005` died on `OSError: [Errno 122] Disk quota exceeded` on `/e/scratch` — **inodes, not bytes.**
+`/e/scratch/reformo` is shared by **26 users** at 6.14M/8M (77%); `/e/project1/reformo` is at **98%**
+(avoid). Our whole footprint is only ~470k (~8%), and today's three runs were 156 trial dirs
+(~1.9k inodes) — **tidying our traces frees almost nothing.** Freed ~85k by deleting `envs/rl`
+(77,743 inodes, verified permanently unusable: needs `libcudart.so.12`, Jupiter has only CUDA/13).
+**Measured, and this is the big one:** `/e/scratch` reads at **104 MB/s**; `/e/fscratch` (flash) at
+**2.3 GB/s — 22×**. 67 GiB ÷ 104 MB/s ≈ 11 min, which explains EVERY slow model load (7:38–15:21)
+and probably the unexplained 110-min shards→policy-init on `1221005`. Not vLLM, and not the prefetch
+flag (`1217881` already falsified that). **Recommend staging the read-only model + high-churn
+`trace_jobs` on `/e/fscratch`** (80k/8M inodes, 17.9 GB/42.9 TB). ⚠ measured from a login node — verify
+on compute; fscratch retention/purge policy is UNDOCUMENTED, so keep checkpoints/HF exports on
+`/e/scratch`. `/p/scratch` (JUST) has ~3M free inodes and freshest accounting but is not
+Jupiter-native ⇒ inode relief without a speed win. → [[gotchas]]
+
+### Fixed today — all pushed to lukedhlee forks + deployed, NO PRs
+
+| commit | repo | defect |
+|---|---|---|
+| `4fb4a158` | OT-Agent | `compaction.reserved` is DEAD CONFIG (opencode never reads it) → threshold via new `context_budget.client_window_tokens: 20480` |
+| `179b31e9` | harbor | opencode never set `AgentContext.metadata` → SkyRL extraction `TypeError` aborted every batch |
+| `1f38665f` | harbor | observations must be **user** turns; `role:"tool"` rejected by `utils.py:1943` |
+| `90109474` | OT-Agent | `NonZeroAgentExitCodeError` → `passthrough`; canary 32×2 → 16×4 |
+
+**All four CONFIRMED WORKING on `1221005`:** zero overflows, zero `Could not extract results`, zero
+role errors, zero non-zero-exit aborts, 25 honest rollouts. Deployed refs: OT-Agent `-next` at
+`90109474`, harbor at `1f38665f`, MarinSkyRL at `8ee69f3`.
+
+### Remaining structural hazards
+
+1. **TOKEN FIDELITY — gate before promoting past a smoke.** opencode records prose and tool calls as
+   separate structured events and discards raw completion text, so reconstructed `all_messages` is
+   **faithful in structure but approximate in tokens**. Adequate for pipeline validation; NOT adequate
+   for trusting TIS importance ratios. Exact path = the literal recording proxy (`literal.jsonl` →
+   `_parse_literal_proxy_log`), which has never been enabled here. **Enable before 50 steps.**
+2. **The update / checkpoint / HF-export path has NEVER executed with this model.** Reaching a finite
+   update is still the milestone.
+3. **Fail-loud taxonomy is a footgun:** `mask` = infrastructure ⇒ **ABORTS the whole batch** under
+   `fail_on_infrastructure_error`; only `passthrough` survives. Adding an exception to
+   `mask_exceptions` makes it MORE fatal, not less. Classification is also name-based, not
+   `isinstance`, so any new subclass must be enumerated.
+4. **Cross-checkout coupling:** the 6-node YAML hardcodes `prompt_template_path` into the STALE
+   `OpenThoughts-Agent-r2egym-bridge` checkout (`0f04b250`) while configs come from `-next`, and
+   `run_qwen36_live_canary.sh` defaults `DCFT` to that stale tree. Override `DCFT`; collapse before
+   promotion.
+5. **Forced tunnel reconnect recovery is still unproven** (bridge itself healthy: internal
+   `10.128.1.2:9920`, workers polling, zero job errors).
+6. ⚠ **SINGLE POINT OF FAILURE:** the Jupiter→JURECA ControlMaster (`~/.ssh/cm_jureca/qwen36`,
+   pid 185890) carries the reverse tunnel as a `-R` forward. If it dies the tunnel dies and rollouts
+   lose their endpoint; restoring it needs ONE interactive `ssh jureca` + TOTP that **only Luke can
+   do**. Also note `MaxSessions` on the Mac→Jupiter master: too many concurrent background SSH
+   sessions yields `Session open refused by peer`, which looks like an auth expiry but is not.
+
+**Resolved former defects:** JURECA workers request 24h; execution branches pushed and Jupiter
+checkouts match local ground truth; the active tunnel is the reviewed internal-only path; the
+`RL_ENV_DIR`-before-activation ordering is correct in rendered sbatch (export line 107, fallback 161);
+TorchTitan EP present. Do not resurrect the stale public-bind script or the historical dirty checkout.
+⚠ The pinned FlashInfer AOT artifact is **x86-64 and Jupiter is aarch64** — never enable
+`59e661e0`'s artifact here; all four AOT vars are removed from the Qwen configs.
 
 ## Invariants & constraints
 
@@ -504,6 +549,23 @@ One line each; full context, rejected options, and consequences in [[decisions]]
 
 - **This run's purpose is PIPELINE VALIDATION, not model quality.** The milestone is the one-step GRPO
   smoke with real reward variance. *(2026-07-31 eve)*
+- **Pushing to Luke's own repos/forks needs NO per-turn ask; opening a PR or merging still DOES.**
+  Standing operator grant. Still secret-scan before pushing (the OT-Agent fork is PUBLIC), and deploy
+  to clusters by fetch + hard reset, never rsync or hand-edit. *(2026-08-03)*
+- **`compaction.reserved` is dead config; the OpenCode compaction threshold moves via
+  `context_budget.client_window_tokens`.** Advertise a SMALLER window to the client (20480) while the
+  server keeps 32768/28672/4096. Rejected: trusting a key merely because it appears in the
+  materialized TrialConfig — verifying a key arrived proves nothing about whether the consumer reads
+  it. Third such key after `strict_json_parser` and `store_all_messages`. *(2026-08-03)*
+- **Tool observations reach SkyRL as `user` turns, not `role:"tool"`.** `utils.py:1943` accepts only
+  `user`/`assistant`; anything else raises and fail-loud aborts the batch. *(2026-08-03)*
+- **`NonZeroAgentExitCodeError` is `passthrough`, not `mask`.** It is the NORM for OpenCode (present
+  even on reward-1.0 trials), and `mask` ⇒ abort-the-batch. *(2026-08-03)*
+- **Canary geometry is 16 groups × 4 samples (64 trajectories), not 32 × 2.** Same cost, reallocated
+  toward within-group variance — the only kind GRPO consumes. *(2026-08-03)*
+- **PENDING OPERATOR DECISIONS (do not decide unilaterally):** (a) adopt the model-specific learnable
+  band, now empirically required; (b) move model + `trace_jobs` to `/e/fscratch` for 22× read speed
+  and inode headroom. *(raised 2026-08-03)*
 - **Model = `Qwen/Qwen3.6-35B-A3B` @ `995ad96e…`, the plain release.** FP8 reversed by operator; the
   dequantizer is deleted. The FP8 repo's `95a723d0…` hash does not carry across repos. *(2026-07-31 eve)*
 - **The multimodal shell is unwrapped IN MEMORY (`SKYRL_QWEN3_5_VLM_UNWRAP=1`), not on disk.** Rejected:
