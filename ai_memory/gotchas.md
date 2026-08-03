@@ -460,6 +460,61 @@ free inodes.
   conda forest on `/p/project1`.
 - Full map: [[jsc_paths_hazards]], [[jureca_what_goes_where]].
 
+## Harbor / OpenCode
+
+### 2026-08-03 · ★ `opencode_config.compaction.reserved` is DEAD CONFIG — OpenCode never reads it
+**Symptom:** agentic rollouts 400 with
+`prompt contains at least 28673 input tokens ... 4096 output tokens ... 32769 total`
+**even with** `compaction.auto: true` **and** `compaction.reserved: 16384` present and verified in the
+materialized Harbor TrialConfig (`agent.kwargs.opencode_config.compaction.reserved = 16384`).
+**Cause:** OpenCode 1.18.8 accepts the key, Harbor `_deep_merge`s it, and it is written to
+`~/.config/opencode/opencode.json` — **but OpenCode never reads it.** The proactive compaction
+threshold stays at its default `limit.context - limit.output`. With Harbor's
+`_resolve_model_limit` giving `context = window - output - 1024 = 27,648` and `output = 4,096`,
+that threshold is **23,552**. A prompt sitting *below* it (measured: 19,892) does not compact, and
+one large tool observation (measured: 44,027 bytes → **11,056 tokens**) then blows past the server's
+28,672 prompt ceiling. **Same class as the `strict_json_parser` bug: accepted, written, ignored.**
+Verifying a key reached the trial config proves NOTHING about whether the consumer honors it.
+**Fix:** move the threshold with the knob that actually drives it — the window ADVERTISED to the
+client. OpenThoughts `4fb4a158` adds `context_budget.client_window_tokens` (optional, defaults to
+the served window) and materializes THAT into `model_info.max_input_tokens` instead of
+`request_window_tokens`. At 20,480 → `context = 15,360`, compaction at **11,264**, leaving 17,408
+tokens of slack. Server contract unchanged (32,768 / 28,672 / 4,096). Preflight and the canary now
+**reject** `reserved` outright so it cannot silently return.
+**Evidence:** canary `r2egym-v1-00005__Bvnfhmh` (fail) vs `r2egym-v1-00005__oAMqKmL` (pass).
+
+### 2026-08-03 · ★ A big prompt drop is NOT proof compaction worked — it may be REACTIVE recovery
+**Symptom:** trajectory shows a large prompt-token drop (measured: 19,892 → 2,951, a 16,941-token
+fall) that looks exactly like healthy proactive compaction — but the run actually breached the
+context ceiling first.
+**Cause:** when OpenCode gets the 400, it recovers by summarizing ("create an anchored summary from
+the conversation history") and continues. That recovery produces the same signature as proactive
+compaction. A `has_compaction_drop()`-style check **cannot distinguish them**, so if OpenCode then
+exits 0 the run passes on a ceiling breach. Under GRPO the wasted request is a real rollout defect.
+**Fix:** always check for `ContextOverflowError` / `28673` / `32769` / `prompt contains at least` in
+the OpenCode event stream **before** interpreting a prompt drop. `4fb4a158` makes the canary fail on
+any such occurrence, and asserts `threshold + largest measured tool jump < server prompt ceiling`.
+**Corollary:** grepping a trial tree for success markers is unsound — the rendered trial config
+contains the instruction text, so marker strings match before the agent has done anything.
+
+### 2026-08-03 · Pinned FlashInfer AOT cache is x86-64; Jupiter GH200 is aarch64
+**Symptom:** `tvm_ffi.load_module` reports the `fused_moe_90` file as not found even though the file
+exists with the expected SHA-256.
+**Cause:** the loader's incompatible-ELF error surfaces as "file not found". The archive from
+`flashinfer-jit-cache` is an ELF **x86-64** shared library; Jupiter compute reports **aarch64**.
+Hash, package version, `is_aot`, and path checks all passed because **none of them called `dlopen`** —
+so the 90-second AOT smoke `1216854` was a **false positive**.
+**Fix:** never enable `59e661e0`'s artifact on Jupiter. Any AOT hook must validate ELF CPU
+architecture and perform a real `tvm_ffi.load_module` before model load. Use cold node-local JIT.
+
+### 2026-08-03 · Unbounded fused-MoE JIT can OOM a GH200 node during cold start
+**Symptom:** ~300–350 concurrent `nvcc`/`cicc`/`cc1plus` processes saturate node memory, NVCC targets
+die with exit code 9, and Ninja fails. No literal CUDA-OOM line is printed (job `1217866`).
+**Fix:** `MAX_JOBS=24` bounds Ninja concurrency. Measured on `1217900`: JIT completed in ~19 min with
+~1 concurrent compiler process and 660 GiB of 857 free — vs ~15.5 min unbounded, so the cost is small.
+Note the multi-engine case is milder (6-node `_17` peaked at 146 processes across 4 engines/node and
+succeeded unbounded); the single-engine-per-node case is the one that blew up.
+
 ## Cross-cluster
 
 ### 2026-07-22 · `NCCL_DEBUG=INFO` produces no NCCL lines in the Slurm `.out`
@@ -495,3 +550,111 @@ redirects `__path__` to MarinSkyRL's real examples tree. Full recipe:
 **Symptom:** `/p/project1/laionize/dcagent-shared/SkyRL` remote contains an EtashGuha PAT.
 **Fix:** clone from the **public** repo instead (pin the same commit); flag the key for rotation. A
 committed key is a leak — rotate, don't fix-forward.
+
+### 2026-07-31 · FlashQLA 0.1.2 backward asserts `dg should be fp32` on a BF16 smoke gate
+**Symptom:** the GH200 smoke compiles and executes every FlashQLA forward/backward TileLang kernel, then
+fails in `chunk_gated_delta_rule_bwd` at `assert dg.dtype == torch.float32`.
+**Cause:** the first smoke constructed `g = logsigmoid(g_logits)` from BF16 logits, so FlashQLA received a
+BF16 decay gate. The real Transformers Qwen3.5/3.6 path explicitly computes
+`g = -A_log.float().exp() * softplus(a.float() + dt_bias)`, so its gate is FP32 even when activations are
+BF16. This was a smoke-harness mismatch, not the model integration.
+**Fix:** construct the smoke gate from `g_logits.float()` while retaining a BF16 leaf to verify gradient
+flow back through the cast. Jupiter job `1139108` then passed BF16 forward/backward on GH200 and wrote
+`gpu_sm90_smoke.ok`.
+
+### 2026-07-31 · Pinned FlashQLA wheel validation rejects valid underscore metadata names
+**Symptom:** an isolated install of the five exact wheels succeeds, but its equality gate reports
+`flash_qla` and `torch_c_dlpack_ext` as unexpected instead of the expected hyphenated package names.
+**Cause:** wheel `Name` metadata is not guaranteed to use the same separator spelling as requirement
+names. The validator lowercased names but did not canonicalize underscores to hyphens.
+**Fix:** normalize `dist.metadata["Name"]` with `.lower().replace("_", "-")` in both the installer and
+GRPO preflight. Do not weaken version equality.
+
+### 2026-07-31 · Qwen3.6 login-node preflight cannot import `vllm._C` before CUDA modules load
+**Symptom:** the GRPO wrapper fails before submission with `ImportError: libcudart.so.13` even though the
+rendered Slurm job would load the correct modules.
+**Cause:** the wrapper deliberately imports `vllm._C` on the Jupiter login node as a fail-fast check, but
+that happens before generated sbatch setup. CUDA 13 is supplied by JSC modules, not the venv alone.
+**Fix:** load `GCC/14.3.0` and `nvidia-compilers/25.9-CUDA-13` in the wrapper before runtime imports.
+With the modules loaded, the full preflight passes using torch 2.11.0+cu128, Transformers 5.8.1, and
+vLLM 0.22.0.
+
+### 2026-07-31 · Cluster dotenv values can silently overwrite explicit launch paths
+**Symptom:** a generated Jupiter job starts in `/e/scratch/jureap59/feuer1/...` or activates that
+user's Miniforge even though the caller supplied owned `DCFT`, `SCRATCH`, and RL environment paths.
+**Cause:** `hpc.set_environment` and the generated sbatch sourced cluster dotenv values after the
+caller's environment, treating site defaults as overrides.
+**Fix:** dotenv entries are defaults only; preserve explicit caller values. Jupiter dotenv path
+assignments use `${NAME:-default}`, and RL jobs skip the generic cluster Conda activation before
+activating their dedicated venv. Regression-test the generated sbatch, not only the Python config.
+
+### 2026-07-31 · Offline W&B can still hang when distributed actors force `mode="shared"`
+**Symptom:** the driver says `WANDB_MODE=offline`, then model construction stalls for 90 seconds while
+per-node W&B actors attempt an online shared run.
+**Cause:** MarinSkyRL's distributed tracking path hard-coded `mode="shared"`; it ignored the driver's
+offline setting.
+**Fix:** derive W&B mode once. In offline/disabled mode initialize only the local run and do not create
+distributed per-node W&B actors. Jupiter job `1141941` proved the corrected path entered an offline
+run without network access.
+
+### 2026-07-31 · Qwen MoE policy construction needs the `ep` extra, not just base SkyRL
+**Symptom:** all eight vLLM engines load Qwen3.6 successfully, then FSDP policy initialization dies in
+`skyrl_train.models.layers.moe` with `ModuleNotFoundError: No module named 'torchtitan'`.
+**Cause:** the Qwen3.6 config enables grouped-GEMM MoE with the Torch expert-parallel backend. That
+path requires TorchTitan pinned at `a1fdd7e`, declared under SkyRL's `ep` extra, but the borrowed
+`envs/rl-megatron` runtime had only the base/vLLM dependencies.
+**Fix:** install exact TorchTitan commit `a1fdd7e43694bbfeff5d6ad8ac738c067bb90d41` plus its missing
+locked runtime dependencies (`tomli`, `tyro`) into the actual RL venv. Gate with imports of both
+`torchtitan.distributed.expert_parallel` and `skyrl_train.models.layers.moe` before submitting; a
+plain `import skyrl_train` is insufficient.
+
+### 2026-08-01 · Directly resubmitting a rendered RL sbatch can lose its venv
+**Symptom:** the batch driver reaches RayCluster, but every Ray head/worker step exits 127. Earlier in
+the log, `Python executable:` is empty and the script says the checkout-local `envs/rl` is absent.
+**Cause:** the wrapper exported an absolute `RL_ENV_DIR` in its submission environment, but the
+rendered sbatch did not encode it before activation. A later YAML/container export has the correct
+path but runs too late. Direct `sbatch old_rendered.sbatch` therefore falls back to
+`$WORKDIR/envs/rl`, warns and continues. The driver uses an absolute Python path, while RayCluster
+uses bare `ray`, producing the misleading late exit 127.
+**Fix:** launch through the wrapper or explicitly export the absolute `RL_ENV_DIR`. Durable fix: emit
+the resolved venv before activation and hard-fail unless both `bin/python` and `bin/ray` work. Never
+allow a missing RL environment to be only a warning. Job `1144362` is the reproducer; it did not test
+Ray, TorchTitan, GPUs, or JURECA.
+
+### 2026-08-03 · FlashInfer AOT metadata/path checks can accept the wrong CPU architecture
+**Symptom:** an AOT smoke verifies the exact archive/SO hashes, package version, `is_aot`, and
+`aot_path`, but the real Qwen engine fails only after a 67 GiB model load when
+`tvm_ffi.load_module()` reports that the verified `.so` cannot be opened.
+**Cause:** the staged official FlashInfer cache wheel was x86-64, while Jupiter GH200 compute nodes
+are aarch64. FlashInfer's JitSpec construction does not load the shared library; all old smoke
+assertions were metadata-only. The loader's incompatible-ELF failure looked like a missing file even
+though the file remained present with the expected hash.
+**Fix:** never infer binary compatibility from wheel name/hash/path. On the target compute node,
+compare the ELF `e_machine` field with `platform.machine()` and actually call
+`tvm_ffi.load_module()` before model load. Disable the x86 artifact in Jupiter configs and use the
+node-local cold JIT unless an exact aarch64 artifact is obtained. Jobs `1216854` (false-positive
+smoke) and `1217562` (real late-load failure) are the paired reproducer.
+
+### 2026-08-03 · Forced safetensors prefetch is slower for this 67-GiB Qwen checkpoint on Jupiter GPFS
+**Symptom:** vLLM warns that GPFS is not a recognized network filesystem and suggests
+`--safetensors-load-strategy=prefetch`, making it look like an obvious cold-start acceleration.
+**Cause:** the forced path spent 153 seconds reading all 26 shards into page cache with eight
+background threads while the loader also progressed slowly. Its observed shard times were roughly
+33--58 seconds, versus about 31 seconds on average for the ordinary loader; it had reached only
+12/26 shards after about 8.5 minutes of actual loading.
+**Fix:** keep the default safetensors loader for this exact model/runtime/GPFS path. Do not treat
+vLLM's generic filesystem warning as a site-specific performance result. Bounded comparator job
+`1217881` was cancelled once it had falsified the optimization.
+
+### 2026-08-03 · Unbounded FlashInfer fused-MoE JIT can exhaust a GH200 node during exact-model startup
+**Symptom:** after all 26 Qwen shards load, fused-MoE JIT launches roughly 300--350 compiler
+processes, node memory approaches saturation, many unrelated NVCC targets fail together with exit
+code 9, and Ninja reports `subcommand failed` / `Ninja build failed`. There may be no literal
+`CUDA OOM` or kernel-OOM line in the application log.
+**Cause:** FlashInfer honors `MAX_JOBS`, but without it Ninja derives concurrency from the 64-CPU
+allocation. Individual `cicc` processes reached several GiB RSS; the broad simultaneous SIGKILL-
+like failures are compiler-memory pressure, not a bad CUDA source or model weight.
+**Fix:** bound the exact diagnostic and future cold-JIT launches with `MAX_JOBS` (backup `1217900`
+uses 24) and verify the rendered/runtime environment carries it before model load. Job `1217866`
+is the reproducer: model load succeeded, then the unbounded build failed after roughly 20 minutes
+of post-load profiling/JIT.
