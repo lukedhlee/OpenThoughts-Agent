@@ -7,14 +7,33 @@ shopt -s nullglob
 
 : "${JSC_SCRATCH:=/e/scratch/reformo/lee27}"
 : "${RUNTIME_ROOT:=$JSC_SCRATCH/OpenThoughts-Agent}"
-: "${DCFT:=$JSC_SCRATCH/OpenThoughts-Agent-r2egym-bridge}"
+# The `-next` checkout is the DEPLOYED execution tree. The bare
+# OpenThoughts-Agent-r2egym-bridge path is a STALE tree (0f04b250) that was the
+# old default here and in the 6-node YAML's prompt_template_path, so a run could
+# silently mix configs from one checkout with templates from another. Both are
+# collapsed onto `-next` now; do not reintroduce the bare path.
+: "${DCFT:=$JSC_SCRATCH/OpenThoughts-Agent-r2egym-bridge-next}"
 : "${RL_VENV:=$RUNTIME_ROOT/envs/rl-megatron}"
 : "${RL_REPO_DIR:=$JSC_SCRATCH/MarinSkyRL-apptainer-bridge}"
 : "${HARBOR_REPO:=$JSC_SCRATCH/harbor-apptainer-bridge}"
 : "${FLASHQLA_LAYER:=$JSC_SCRATCH/pydeps/qwen36-flashqla-0.1.2}"
 : "${APPTAINER_BRIDGE_URL:=http://10.128.1.2:9920}"
 : "${MODEL_REVISION:=995ad96eacd98c81ed38be0c5b274b04031597b0}"
-: "${MODEL_PATH:=$JSC_SCRATCH/models/Qwen3.6-35B-A3B/$MODEL_REVISION}"
+# Read the checkpoint from FLASH. This value is passed to the launcher as
+# --model_path and OVERRIDES the YAML's policy/ref model path, so setting the
+# YAML alone is not enough -- both must agree or this silently wins.
+#
+# vLLM loads the 26 shards sequentially in ONE stream, so the load is bounded by
+# per-stream read bandwidth. Measured O_DIRECT on compute jpbo-018-14 (job
+# 1224678): /e/scratch 0.056 GiB/s per stream, /e/fscratch 2.51 GiB/s. End to
+# end on the same 1-GPU canary: "Loading weights took 701.12s" from /e/scratch
+# (1217900) vs 38.03s from /e/fscratch (1224804) -- 18.4x.
+#
+# Only the READ-ONLY model lives here; fscratch retention/purge policy is
+# UNDOCUMENTED. Checkpoints, exports and experiments stay on /e/scratch. Set
+# MODEL_PATH explicitly to fall back to /e/scratch if fscratch is ever purged.
+: "${MODEL_FS_ROOT:=/e/fscratch/reformo/lee27}"
+: "${MODEL_PATH:=$MODEL_FS_ROOT/models/Qwen3.6-35B-A3B/$MODEL_REVISION}"
 : "${TASKS_DIR:=$JSC_SCRATCH/tasks/r2egym-patched-full-oracle}"
 : "${EXPERIMENTS_DIR:=$JSC_SCRATCH/experiments}"
 : "${RL_CONFIG:=$DCFT/hpc/skyrl_yaml/jupiter/6node_qwen3_6_35b_a3b_r2egym_grpo.yaml}"

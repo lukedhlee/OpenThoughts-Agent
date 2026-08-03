@@ -31,9 +31,18 @@ context_budget:
 #
 # Intermediate bring-up canary only: 4 policy/ref nodes (16 GH200 GPUs,
 # FSDP4 x EP4) plus one rollout node (4 independent TP1 vLLM engines). It
-# deliberately collects only 32 prompt groups / 64 trajectories to shorten the
+# deliberately collects only 16 prompt groups / 128 trajectories to shorten the
 # path to reward, update, sync, and export evidence. Passing this canary does
 # not replace the established six-node final gate.
+#
+# The checkpoint is read from /e/fscratch, not /e/scratch. vLLM loads the 26
+# shards SEQUENTIALLY in one stream, so the load is bounded by PER-STREAM read
+# bandwidth: /e/scratch delivers 0.056 GiB/s per stream (O_DIRECT, compute
+# jpbo-018-14, job 1224678) and /e/fscratch 2.51 GiB/s. Measured end to end on
+# the same 1-GPU canary: "Loading weights took 701.12s" from /e/scratch
+# (1217900) vs 38.03s from /e/fscratch (1224804) -- 18.4x, ~11 min saved per
+# engine. Checkpoints and HF exports stay on /e/scratch: fscratch retention and
+# purge policy is UNDOCUMENTED, so only the read-only model is staged there.
 
 config_groups:
   terminal_bench_config: terminal_bench
@@ -44,7 +53,7 @@ terminal_bench:
     name: opencode
     version: 1.18.8
     preinstalled: true
-    prompt_template_path: /e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge/eval/jureca/opencode_swebench_prompt.md.j2
+    prompt_template_path: /e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next/eval/jureca/opencode_swebench_prompt.md.j2
     opencode_config:
       autoupdate: false
       compaction:
@@ -154,13 +163,15 @@ trainer:
   epochs: 1
   max_steps: 1
   update_epochs_per_batch: 1
-  # 16 prompt groups x 4 samples = 64 trajectories -- SAME cost as the previous
-  # 32 x 2, reallocated toward within-group variance, which is what GRPO
-  # actually needs. Measured on Jupiter 1219434: 0 of 15 groups had ANY
-  # within-group variance at 2 samples (every group was [1,1] or [0,0]), so
-  # every group was either filtered by rloo_n_filter_zero_reward_groups or had
-  # zero advantage -> no gradient. 16 groups is the hard valid minimum under
-  # FSDP4xEP4 fully-async GRPO.
+  # 16 prompt groups x 8 samples = 128 trajectories (see n_samples_per_prompt).
+  # History: 32x2 gave 0 of 15 groups with within-group variance (1219434);
+  # 16x4 gave 0 of 7 (1221005). Both were run with the agent silently capped at
+  # 600s, so 76% of trials were killed mid-task -- see BRIDGE_EXEC_TIMEOUT
+  # below. This run is the first with the full 1800s budget AND the co-lead's
+  # n=8 group size. 16 groups is the hard valid minimum under FSDP4xEP4
+  # fully-async GRPO; train_batch_size counts PROMPTS, so raising n does not
+  # disturb the trainer's batch constraints
+  # (train_batch_size == policy_mini_batch_size <= num_parallel_generation_workers).
   train_batch_size: 16
   policy_mini_batch_size: 16
   eval_batch_size: 16
@@ -188,7 +199,7 @@ trainer:
   export_path: null
   policy:
     model:
-      path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96eacd98c81ed38be0c5b274b04031597b0
+      path: /e/fscratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96eacd98c81ed38be0c5b274b04031597b0
     optimizer_config:
       lr: 1.0e-6
       weight_decay: 0.0
@@ -204,7 +215,7 @@ trainer:
       ep_comm_backend: torch
   ref:
     model:
-      path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96eacd98c81ed38be0c5b274b04031597b0
+      path: /e/fscratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96eacd98c81ed38be0c5b274b04031597b0
     fsdp_config:
       cpu_offload: false
       reshard_after_forward: true
@@ -234,11 +245,19 @@ generator:
   inference_engine_tensor_parallel_size: 1
   num_inference_engines: 4
   inference_engine_expert_parallel_size: 1
-  # 4, not 2. Doubles the chance of catching a mixed-outcome group and, if
-  # outcomes really are per-task deterministic, says so with far more
-  # confidence than n=2 can. That distinction decides whether the parked
-  # model-specific learnable band is required.
-  n_samples_per_prompt: 4
+  # 8, matching the co-lead's production GRPO group size (TRAIN_BATCH_SIZE=64
+  # x n=8 = ~500 rollouts/step across both her raw and filtered arms).
+  #
+  # Why n=8 and not 4: she builds her learnable band with a CHEAP p@4 filter and
+  # then TRAINS at n=8. The wide training group is what makes the cheap filter
+  # safe -- a task admitted on a noisy 1-of-4 still gets eight fresh samples at
+  # training time. Filtering at k=4 and training at n=4 is the fragile pairing,
+  # and n=4 is what we ran. P(within-group variance) at p=0.5 is 0.875 for n=4
+  # but 0.992 for n=8; at p=0.15 it is 0.48 vs 0.73.
+  #
+  # This raises the canary to 16 x 8 = 128 trajectories (was 64), so budget
+  # roughly double the rollout wall clock.
+  n_samples_per_prompt: 8
   eval_n_samples_per_prompt: 1
   gpu_memory_utilization: 0.85
   max_num_seqs: 8
@@ -298,6 +317,24 @@ container:
     NCCL_SOCKET_FAMILY: AF_INET
     HF_HUB_OFFLINE: "1"
     TRANSFORMERS_OFFLINE: "1"
+    # THE agent budget for OpenCode on the Apptainer bridge -- not
+    # agent.override_timeout_sec, which OpenCode never threads into exec().
+    # ApptainerEnvironment.exec() falls back to this when the caller passes no
+    # timeout, and the worker kills the process at that deadline.
+    #
+    # Measured on canary 1221005: 19 of 25 trials died at exactly 600s with
+    # `Command timed out after 600s` / return_code -1 (19 of 19 exceptions),
+    # while override_timeout_sec=1800 sat present-but-unreachable. The agent was
+    # cut off mid-task on 76% of trials, which flattens within-group reward
+    # variance -- the only variance GRPO consumes.
+    #
+    # 2100 > the 1800 agent budget ON PURPOSE: the trial layer's
+    # asyncio.wait_for(agent.run(), timeout=1800) must be the FIRST deadline to
+    # fire, because AgentTimeoutError is `passthrough` and preserves the
+    # trajectory, whereas a worker exec kill surfaces as
+    # NonZeroAgentExitCodeError. Keep this strictly above override_timeout_sec.
+    # Requires harbor >= f44a1170 (before that the 600 was hardcoded).
+    BRIDGE_EXEC_TIMEOUT: "2100"
     WANDB_PROJECT: jupiter-r2egym-grpo-qwen36-35b
     WANDB_MODE: offline
     WANDB_DIR: /e/scratch/reformo/lee27/wandb
@@ -320,4 +357,4 @@ container:
     SKYRL_HOME: /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge
     CONDA_EXE: /e/scratch/reformo/lee27/miniforge3/bin/conda
     RL_PYTHON: /e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/bin/python
-    PYTHONPATH: /e/scratch/reformo/lee27/pydeps/qwen36-flashqla-0.1.2:/e/scratch/reformo/lee27/harbor-apptainer-bridge/src:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-train:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-gym:/e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge
+    PYTHONPATH: /e/scratch/reformo/lee27/pydeps/qwen36-flashqla-0.1.2:/e/scratch/reformo/lee27/harbor-apptainer-bridge/src:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-train:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-gym:/e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next
