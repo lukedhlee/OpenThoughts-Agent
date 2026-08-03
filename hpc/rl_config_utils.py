@@ -29,10 +29,7 @@ _REQUIRED_CONTEXT_BUDGET_FIELDS = frozenset(
         "max_turns",
     }
 )
-_OPTIONAL_CONTEXT_BUDGET_FIELDS = frozenset({"client_prompt_overhead_tokens"})
-_CONTEXT_BUDGET_FIELDS = (
-    _REQUIRED_CONTEXT_BUDGET_FIELDS | _OPTIONAL_CONTEXT_BUDGET_FIELDS
-)
+_CONTEXT_BUDGET_FIELDS = _REQUIRED_CONTEXT_BUDGET_FIELDS
 
 _DERIVED_CONTEXT_FIELDS = (
     ("trainer", "max_prompt_length"),
@@ -54,27 +51,19 @@ class ContextBudget:
     request_window_tokens: int
     max_new_tokens_per_turn: int
     max_turns: int
-    client_prompt_overhead_tokens: int = 0
 
     @property
     def max_input_tokens(self) -> int:
         """Return the input allowance after reserving one complete response."""
         return self.request_window_tokens - self.max_new_tokens_per_turn
 
-    @property
-    def client_max_input_tokens(self) -> int:
-        """Return the client-advertised allowance before chat-template expansion."""
-        return self.max_input_tokens - self.client_prompt_overhead_tokens
-
     def as_dict(self) -> Dict[str, int]:
-        """Return the public contract with its derived client input allowance."""
+        """Return the public contract with its derived server prompt allowance."""
         return {
             "request_window_tokens": self.request_window_tokens,
             "max_new_tokens_per_turn": self.max_new_tokens_per_turn,
             "max_turns": self.max_turns,
-            "client_prompt_overhead_tokens": self.client_prompt_overhead_tokens,
             "max_input_tokens": self.max_input_tokens,
-            "client_max_input_tokens": self.client_max_input_tokens,
         }
 
 
@@ -120,16 +109,6 @@ def _require_positive_integer(value: Any, field_name: str, config_path: Path) ->
     return value
 
 
-def _require_nonnegative_integer(
-    value: Any, field_name: str, config_path: Path
-) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(
-            f"{config_path}: context_budget.{field_name} must be a nonnegative integer, got {value!r}"
-        )
-    return value
-
-
 def resolve_context_budget(raw: Dict[str, Any], config_path: Path) -> ContextBudget:
     """Validate the one public context declaration and derive its input allowance."""
     _validate_no_derived_context_fields(raw, config_path)
@@ -158,22 +137,11 @@ def resolve_context_budget(raw: Dict[str, Any], config_path: Path) -> ContextBud
         max_turns=_require_positive_integer(
             config["max_turns"], "max_turns", config_path
         ),
-        client_prompt_overhead_tokens=_require_nonnegative_integer(
-            config.get("client_prompt_overhead_tokens", 0),
-            "client_prompt_overhead_tokens",
-            config_path,
-        ),
     )
     if budget.max_input_tokens <= 0:
         raise ValueError(
             f"{config_path}: request_window_tokens ({budget.request_window_tokens}) must exceed "
             f"max_new_tokens_per_turn ({budget.max_new_tokens_per_turn})"
-        )
-    if budget.client_max_input_tokens <= 0:
-        raise ValueError(
-            f"{config_path}: client_prompt_overhead_tokens "
-            f"({budget.client_prompt_overhead_tokens}) must be smaller than the derived "
-            f"max_input_tokens ({budget.max_input_tokens})"
         )
     return budget
 
@@ -203,10 +171,11 @@ def _materialize_context_budget(
         # is not part of HarborConfigBuilder's agent schema.
         terminal_bench.setdefault("harbor", {})["max_episodes"] = budget.max_turns
         model_info = terminal_bench.get("model_info") or {}
-        # Agent clients count messages before the server's chat template adds
-        # special tokens. Reserve any declared template overhead here only;
-        # SkyRL still retains the full model-side prompt allowance above.
-        model_info["max_input_tokens"] = budget.client_max_input_tokens
+        # Harbor's installed agents interpret model_info.max_input_tokens as
+        # the model's total context window, not the server's prompt allowance.
+        # In particular, OpenCode subtracts max_output_tokens and its own
+        # safety margin before setting the client-side context limit.
+        model_info["max_input_tokens"] = budget.request_window_tokens
         model_info["max_output_tokens"] = budget.max_new_tokens_per_turn
         terminal_bench["model_info"] = model_info
 
