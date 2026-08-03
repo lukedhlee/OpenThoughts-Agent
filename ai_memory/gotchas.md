@@ -911,3 +911,52 @@ write to a remote file, and poll with short sequential `ssh` calls. Probe with
 ⚠ Do NOT kill a long background `ssh` just to reclaim the channel if the remote script owns a bridge
 env: SIGHUP can skip its cleanup `finally` and orphan an Apptainer env on a JURECA worker, and if the
 env-id was only printed to a buffered pipe you have no clean way to reclaim it.
+
+### 2026-08-04 · ~19 min of startup is vLLM profiling a VISION TOWER we never use
+**Symptom:** `init engine (profile, create kv cache, warmup model) took 1145.55 s` (19 min) on job
+`1217900`, unchanged by node/CPU headroom, and not explained by weight loading.
+**Cause:** the exact timeline shows the gap is the **memory-profiling forward pass**, and it is
+profiling multimodal inputs:
+
+```
+06:37:07  Model loading took 65.52 GiB memory and 703.18 seconds
+06:37:08  Encoder cache will be initialized with a budget of 16384 tokens,
+          and profiled with 1 image items of the maximum feature size
+          <18m59s of SILENCE>
+06:56:07  Available KV cache memory: 13.1 GiB
+06:56:07  GPU KV cache size: 560,505 tokens
+06:56:07  Maximum concurrency for 32,768 tokens per request: 17.11x
+06:56:07  flashinfer autotune starts -> ends 06:56:12 (only 5s)
+06:56:13  init engine ... took 1145.55 s
+06:56:30  Multi-modal warmup completed in 15.008s
+```
+
+Qwen3.6 is a multimodal **shell**. SkyRL unwraps it to the text tower
+(`SKYRL_QWEN3_5_VLM_UNWRAP=1`), the vision tower is parked and receives no gradients, and no rollout
+ever sends an image — but vLLM still profiles it with one max-feature-size image, in **eager mode**
+(`enforce_eager: true`), through a 35B MoE.
+**Fix (staged, not yet measured):** `MM_LIMIT=0` on the canary sbatch adds
+`--limit-mm-per-prompt '{"image":0,"video":0}'` (OT-Agent `8ac43278`, default unchanged). Should also
+**free KV cache**, because the profile is what sizes it.
+⚠ **This only became the dominant cost after fscratch.** At 701s load + 1145s init the load looked like
+the problem; at **38s** load the profile is ~95% of startup. Re-derive where time goes after every win
+— the bottleneck moves.
+
+### 2026-08-04 · `max_num_seqs: 8` leaves measured KV headroom of 17–36× on the floor
+**Symptom:** rollout concurrency capped at 32 sequences (4 engines × `max_num_seqs: 8`), matching the
+32 JURECA sandbox workers, and adding sandbox nodes alone did nothing.
+**Cause:** `1217900` measured `GPU KV cache size: 560,505 tokens` and
+`Maximum concurrency for 32,768 tokens per request: 17.11x`. So KV supports ~17 concurrent
+**full-length** sequences per engine while we allow 8. At the real prompt length — client window 20480
+⇒ Harbor `limit.context` 15,360 — headroom is `560505 / 15360 ≈ 36×`.
+**Also:** the agentic workload is **prefill-dominated**: measured **150,223 input vs 3,377 output**
+tokens per trial on `1221005` (44:1), because each turn re-sends the growing conversation. At
+`max_num_batched_tokens: 4096` a ~15k prompt costs ~4 chunked-prefill passes.
+**Fix (staged, not yet measured):** `MAX_NUM_SEQS` / `MAX_NUM_BATCHED_TOKENS` are env-overridable on
+the canary sbatch (`8ac43278`). ⚠ Scaling sequences only helps if sandbox workers scale WITH it —
+64 sequences needs 4 JURECA nodes, not 2. Balance both sides or one just queues on the other.
+⚠ Prefix caching is **enabled** server-side, but vLLM warns
+`Prefix caching in Mamba cache 'align' mode is currently enabled. Its support for Mamba layers is
+experimental` for `Qwen3_5MoeForConditionalGeneration`. Do NOT assume it is effective for the GDN
+layers — and do NOT read the agent's `n_cache_tokens: 0` as proof either way; that field is simply
+not populated (measured 0 across all 25 trials while the server had APC on).
