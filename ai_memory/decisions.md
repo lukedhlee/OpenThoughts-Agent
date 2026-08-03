@@ -363,3 +363,77 @@ The eventual five-node render must explicitly carry the proven bound before acce
 the x86-AOT replacement.
 **Consequence:** bounded compilation may take longer but must stay within node memory and the
 three-hour RL wall. Do not treat an unbounded 64-CPU Ninja launch as the default fallback.
+
+## 2026-08-04 — The 600s exec cap was the defect; `NonZeroAgentExitCodeError` was MISDIAGNOSED
+**Context:** 0 of 22 prompt groups showed within-group reward variance, and this was attributed to the
+model being deterministic per task and to raw r2egym being untrainable. Re-reading `1221005`'s traces
+showed **19 of 25 trials ended at exactly 600–601s** and **19 of 19** exceptions carried the literal
+`Command timed out after 600s` / `return_code -1`. `agent.override_timeout_sec = 1800.0` was
+materialized but unreachable: OpenCode issues its long-running `run` through `exec_as_agent()` without
+a `timeout_sec`, so it inherited `ApptainerEnvironment.exec()`'s hardcoded `timeout_sec or 600`, and
+the trial layer's `asyncio.wait_for(..., 1800)` is an OUTER guard that can only fire if it is shorter.
+**Decided:** the exec fallback is configurable (`BRIDGE_EXEC_TIMEOUT`, harbor `f44a1170`, default
+unchanged at 600) and is set **above** the agent budget — 2100 against 1800 — so a clean
+`AgentTimeoutError` (passthrough, trajectory preserved) beats an exec kill.
+**This SUPERSEDES the diagnosis in the 2026-08-03 entry** "`NonZeroAgentExitCodeError` is
+`passthrough`, not `mask`". The reclassification was right; the stated reason — "it is the NORM for
+OpenCode" — was wrong. It was the timeout kill, and calling it normal hid the real defect for a day.
+**Rejected:** raising the hardcoded 600 outright (a blunt global default), and plumbing the agent
+timeout through every agent's `exec` call (correct architecturally, but a wide change to shared code
+paths used by other people's runs; an unmerged fork fix should stay narrow).
+**Consequence:** the zero-variance result is **not clean evidence** about r2egym or about the model —
+76% of trials were cut off mid-task, which depresses pass rates and flattens exactly the within-group
+variance GRPO consumes. The band may or may not be needed; that is now an open measurement, not a
+settled conclusion. Fourth instance of the accepted-but-ignored-key bug class. → [[gotchas]]
+
+## 2026-08-04 — Stage the read-only checkpoint on `/e/fscratch` (operator approved)
+**Context:** operator approved decision 2 of the 2026-08-03 pair. The justification then rested on a
+documented "104 MB/s vs 2.3 GB/s". I briefly measured 1.67 GB/s off `/e/scratch` with a 4-stream `cp`
+and reported the 22× claim refuted — that was wrong: `cp` gets page cache + GPFS readahead. `O_DIRECT`
+on compute `jpbo-018-14` (job `1224678`) gives `/e/scratch` **0.056 GiB/s per stream** vs `/e/fscratch`
+**2.51 GiB/s**, so the original figures were right and if anything conservative.
+**Decided:** `MODEL_PATH` (and the YAML's policy/ref paths) point at `/e/fscratch`. Verified end to end
+on the 1-GPU canary: `Loading weights took 701.12s` (`1217900`, scratch) → **38.03s** (`1224804`,
+fscratch), **18.4×**.
+**Rejected:** moving checkpoints/HF exports there too — fscratch retention/purge policy is
+UNDOCUMENTED, so only the reproducible read-only artifact is staged on it.
+**Consequence:** `MODEL_PATH` is load-bearing because it reaches the launcher as `--model_path` and
+**overrides the YAML**; setting only the YAML is silently reverted. Also note the mechanism: vLLM reads
+the 26 shards **sequentially in one stream**, so this is a per-stream win, and `/e/scratch`'s ability
+to scale to 1.59 GiB/s across 26 streams is irrelevant to it. Does NOT address the unexplained
+110-minute shards→policy-init regression, which is after the bytes are in memory.
+
+## 2026-08-04 — GRPO group size n=8, matching the co-lead
+**Context:** her real config trains at `n_samples_per_prompt=8` (500 rollouts/step ÷ `TRAIN_BATCH_SIZE=64`)
+while building the band with a cheap **`p@4`** filter. The wide training group is what makes a noisy
+filter safe. Our canary filtered nothing and trained at n=4 — the fragile pairing. P(within-group
+variance) at p=0.15 is **0.48 at n=4 vs 0.73 at n=8**.
+**Decided:** canary is 16 groups × 8 = 128 trajectories. `train_batch_size` counts PROMPTS, so the
+fully-async constraints (`train_batch_size == policy_mini_batch_size <= num_parallel_generation_workers`)
+are untouched. Walltime raised 3h → 6h to cover double the trajectories at triple the per-trial budget.
+**Rejected:** filtering at k=8 to protect an n=4 group — doubles filter cost to fix the wrong end.
+**Supersedes** the 2026-08-03 "canary geometry is 16 × 4" entry.
+
+## 2026-08-04 — CORRECTION: raw r2egym does NOT collapse
+**Context:** the co-lead's written result summary. Her RAW arm reaches the **same ~45.5 p@1** on
+SWE-bench as the filtered band, in 120 steps instead of 60. The band "doesn't give any performance
+boost" — it is a convergence-rate and compute lever (60k → 48k rollouts, ~20%), not a quality one.
+Band yield is **~1.6k of 4.5k ≈ 36%** by `p@4`, on an **8B** (`g1_diverse_tezos_100k_8b`).
+**Consequence:** the claim "raw r2egym collapsed" — carried in [[handoff]], [[decisions]] (the
+2026-07-27 entry's "carried forward unchanged"), and as the headline of
+[[r2egym_apptainer_reference_impl]] — is **retired**. It made a flat reward curve look like a data
+problem for a week while the real cause was our own 600s timeout. And since the band buys no quality,
+for our **pipeline-validation** goal its only value is guaranteeing a nonzero gradient exists — so we
+need enough in-band tasks for ~16 groups for ONE step, not her 1.6k-task set for 60 steps.
+
+## 2026-08-04 — OPEN, operator only: DAPO dynamic sampling vs disaggregated-only
+**Context:** her config exposes `DYNAMIC_SAMPLING_TYPE=filter` — drop all-same-reward prompt groups and
+resample up to `max_sample_batches=30`. That targets our exact blocker at training time, as a flag,
+instead of via an offline band pass. **But** it requires the SYNC trainer (`colocate_all: true`):
+`main_tbench.py` selects `FullyAsyncRayPPOTrainer` purely off `colocate_all == False`, and
+`algorithm.dynamic_sampling.type is None` is a **hard constraint** of the fully-async trainer.
+**Tension:** that collides with the 2026-07-26 disaggregated-only decision ("colocation falsified").
+Sync also loses gen/train overlap.
+**Not decided — operator call.** Note it is not a full substitute: resampling cannot manufacture
+variance that does not exist, so if most tasks are 0-gradient it exhausts all 30 batches and
+underfills. Cheaper to try than a band, and complementary to one. → [[gotchas]]

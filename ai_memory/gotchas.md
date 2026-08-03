@@ -808,3 +808,89 @@ like failures are compiler-memory pressure, not a bad CUDA source or model weigh
 uses 24) and verify the rendered/runtime environment carries it before model load. Job `1217866`
 is the reproducer: model load succeeded, then the unbounded build failed after roughly 20 minutes
 of post-load profiling/JIT.
+
+---
+
+## 2026-08-04 · Qwen3.6 canary — four measurements that overturned prior conclusions
+
+### 2026-08-04 · Flat GRPO reward variance because the agent was killed at 600s, not 1800s
+**Symptom:** 0 of 22 prompt groups had ANY within-group reward variance across `1219434` (32×2) and
+`1221005` (16×4). Complete n=4 groups were perfectly uniform: `[1,1,1,1]`, `[0,0,0,0]`. Attributed to
+"Qwen3.6 is essentially deterministic per r2egym task" and to raw r2egym being untrainable.
+**Cause:** the agent was silently capped at **600 seconds**, not the configured 1800. On `1221005`,
+**19 of 25 trials** ended at exactly 600–601s, and **19 of 19** exceptions carried the literal string
+`Command timed out after 600s` with `return_code -1`. The chain:
+
+| layer | value |
+|---|---|
+| `trial.py:_compute_agent_timeout_sec()` | 1800 (from `agent.override_timeout_sec`) |
+| `trial.py:_run_agent_phase()` | `asyncio.wait_for(agent.run(), timeout=1800)` — **OUTER** guard |
+| `opencode.py:871` | issues `opencode ... run` via `exec_as_agent()` with **no `timeout_sec`** ← the gap |
+| `apptainer.py:397` | `effective_timeout = timeout_sec or 600` ← the real budget |
+| `worker.py:1117,1143` | kills at that deadline → `return_code -1` |
+
+The outer 1800s guard can only fire if it is **shorter** than the exec fallback, so the worker always
+won. `agent.override_timeout_sec = 1800.0` was present in the materialized TrialConfig the whole time.
+**This is the FOURTH instance of the signature bug** (cf. `strict_json_parser`, `compaction.reserved`,
+`store_all_messages`): a key accepted, deep-merged, written to disk, and ignored by its consumer.
+**Fix:** harbor `f44a1170` adds `BRIDGE_EXEC_TIMEOUT` (default unchanged at 600). Set it **ABOVE** the
+agent budget — 2100 against 1800 — so the outer guard wins: `AgentTimeoutError` is `passthrough` and
+preserves the trajectory, whereas an exec kill surfaces as `NonZeroAgentExitCodeError`. OT-Agent
+`2b6defd1` wires it in.
+⚠ **Corollary:** `NonZeroAgentExitCodeError` is NOT "the norm for OpenCode" as
+[[decisions]] records — it was the timeout kill. Reclassifying it to `passthrough` was still correct,
+but the *diagnosis* was wrong, and it hid the real defect for a day.
+
+### 2026-08-04 · Never infer filesystem bandwidth from `cp` — readahead flatters it 30×
+**Symptom:** a 4-stream `cp` of the 67 GiB checkpoint off `/e/scratch` ran at **1.67 GB/s**, appearing
+to refute the documented "104 MB/s" and the case for staging on `/e/fscratch`. I reported that the
+22× claim "doesn't survive" and that the loader, not the tier, was the bottleneck. **Both were wrong.**
+**Cause:** `cp` reads whole files sequentially through the page cache with GPFS readahead. `O_DIRECT`
+strips readahead out and measures the un-prefetched rate. Measured `O_DIRECT` on compute
+`jpbo-018-14` (job `1224678`):
+
+| streams | `/e/scratch` | `/e/fscratch` |
+|---|---|---|
+| 1 | **0.056 GiB/s (57 MB/s)** | **2.51 GiB/s** |
+| 26 | 1.586 GiB/s | 56.3 GiB/s |
+
+`/e/scratch` is ~57–62 MB/s **per stream** and scales roughly linearly with concurrency; fscratch is
+**45× faster single-stream**.
+**Fix:** benchmark with `iflag=direct`, from a **compute** node, at the concurrency the real consumer
+uses. A login-node `cp` answers a different question than the one you are asking.
+
+### 2026-08-04 · vLLM model load is PER-STREAM bound, so more aggregate bandwidth buys nothing
+**Symptom:** `Loading weights took 701.12 seconds` for 67 GiB (job `1217900`) = 98 MB/s, and no amount
+of node/CPU headroom changed it.
+**Cause:** vLLM loads the 26 safetensors shards **sequentially in one stream** (~26.9 s/shard), so it
+sits exactly on `/e/scratch`'s per-stream floor. `/e/scratch` *does* scale to 1.59 GiB/s at 26 streams
+— irrelevant, because vLLM only ever uses one.
+**Fix:** stage the read-only checkpoint on `/e/fscratch`. Measured on the same 1-GPU canary,
+end to end: **701.12s → 38.03s (job `1224804`), 18.4×**, ~11 min saved per engine load. `MODEL_PATH`
+is the load-bearing knob: it reaches the launcher as `--model_path` and **overrides the YAML**, so
+editing the YAML alone is silently reverted. Keep checkpoints/exports on `/e/scratch` — fscratch
+retention/purge policy is UNDOCUMENTED.
+⚠ This explains phase A of the load ONLY. The **110-minute** shards-loaded→policy-init regression on
+`1221005` (vs ~28 min on `1219434`) happens after the bytes are in memory and is STILL UNEXPLAINED.
+Loader thread-count is a second, independent lever that no filesystem change touches.
+
+### 2026-08-04 · `ssh jureca` from a Jupiter login node fails on hostname resolution, not a dead tunnel
+**Symptom:** `ssh jureca` → `Could not resolve hostname jureca`, and `ssh -O check jureca` →
+`No ControlPath specified`, both of which look like the reverse tunnel has died.
+**Cause:** there is **no `~/.ssh/config` on Jupiter**. The ControlMaster is reachable only through its
+explicit socket.
+**Fix:** `ssh -S ~/.ssh/cm_jureca/qwen36 jureca.fz-juelich.de "<cmd>"`. Check liveness with
+`ps -p <pid>` on the mux process, not with `-O check` sans socket. The master carries the reverse
+tunnel as a `-R` forward; restoring it needs one interactive TOTP that only the operator can supply,
+so **do not tear it down to "retry"**.
+
+### 2026-08-04 · `Session open refused by peer` is MaxSessions, and retrying burns TOTP attempts
+**Symptom:** `mux_client_request_session: session request failed: Session open refused by peer`,
+then ssh falls back to a fresh connection and prompts for TOTP, which in a non-interactive context
+fails three times with `TOTP token length is wrong`.
+**Cause:** too many concurrent background SSH sessions over the Mac→Jupiter ControlMaster exhaust
+`MaxSessions`. It is **not** an auth expiry, despite looking exactly like one.
+**Fix:** let long-running background sessions finish before issuing more; do not retry in a loop —
+repeated failed keyboard-interactive attempts risk locking the account. Also: piping a remote script
+through `tail` buffers its output until EOF, so `flush=True` in the remote script buys nothing; write
+to a remote file and read it separately if you need progress.

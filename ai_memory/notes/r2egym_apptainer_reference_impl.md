@@ -58,25 +58,103 @@ Other config of note: `AGENT=terminus-structured` (⚠ our bridge was only ever 
 handling only `FROM`/`RUN`/`ENV`/`WORKDIR` — sufficient for r2egym), then runs `apptainer build`, trying
 `--fakeroot` first and falling back to non-fakeroot. Apptainer cache/tmp are redirected to scratch.
 
-## ★ THE SCIENTIFIC FINDING — raw r2egym COLLAPSES
+## ★ THE BAND — CORRECTED 2026-08-04 from her own config + result summary
 
-Her script states the goal outright: *"does filtered-r2egym train STABLY with non-zero reward (unlike
-raw r2egym, which collapsed)"*.
+> ⚠ **This section was WRONG in three ways until 2026-08-04.** The operator obtained the actual
+> training script and her written result summary. The earlier text (preserved below under
+> "Superseded") was inferred from script fragments and overstated the case for the band. Three
+> separate reasoning errors were built on it over a week. **Do not re-derive from the old numbers.**
 
-So **training on the full 3,328-task r2egym is a configuration already known to collapse.** The fix she
-built is a **learnable band**:
+**Her experiment:** `DCAgent/g1_diverse_tezos_100k_8b` (an **8B**, not GLM) on R2E-gym,
+`terminus-structured`. Question: does a genuinely learnable band change transfer to OOD SWE-bench?
 
-- Keep only tasks where the BASE model scores **`0 < pass@8 < 1`**, plus `c/n <= 0.6` for a harder band.
-- Measured over a 3,000-task generation pass **under the exact training constraints** (40960 ctx,
-  50 turns, temp 1.0, terminus-structured, no summarize, timeout/context masked as fail) — the same
-  masking the training run uses, so the filter and the reward agree.
-- Yield: **740 tasks** train + **100 held out** for in-distribution eval (`fast_band_split.py`,
-  `build_learnable_dataset.py`, `merge_split_learnable.py`).
-- ⚠ **The band is MODEL-SPECIFIC** — she warns "do not swap it." A band built for her GLM checkpoint does
-  NOT transfer to Qwen3-8B; we would have to measure our own.
+**Band definition:** r2egym filtered by the base model's **`p@4`** (not `p@8`) — keep only tasks with
+headroom left for RL. Yield **~1.6k of 4.5k ≈ 36%**.
 
-This is the same lesson as [[gsm8k_format_artifact]] arriving from a different direction: measure whether
-reward can move at all before spending a run on it.
+**Result — the part that matters most to us:**
+
+> *"filtered band converges faster (it reaches the same ~45 p@1 on swebench by step 60) but it doesn't
+> give any performance boost."*
+
+The band is a **convergence-rate and compute lever, NOT a quality lever.** Same ceiling. Reward trends
+up more cleanly than the raw pool, and the band-trained model is more token-efficient per solution.
+
+**Her compute accounting** (to reach ~45.5 p@1 on SWE-bench):
+
+| arm | rollouts |
+|---|---|
+| RAW | 120 steps × 512 = **60k** |
+| BAND | 18k (`4.5k × p@4`) filtering + 60 steps × 512 = **48k** |
+| advantage | **12k, ~20%** |
+
+⇒ `n_samples_per_prompt` = **8** (both arms: 500 rollouts/step ÷ `TRAIN_BATCH_SIZE=64`).
+
+### The three corrections
+
+1. **Raw r2egym does NOT collapse.** Her RAW arm reaches the same ~45.5 p@1, just in 120 steps instead
+   of 60. The old headline "★ THE SCIENTIFIC FINDING — raw r2egym COLLAPSES" was the single most
+   load-bearing wrong claim in this note. It made a flat reward curve look like a data problem when
+   ours turned out to be a **600s agent timeout** (→ [[gotchas]], the `BRIDGE_EXEC_TIMEOUT` entry).
+2. **`p@4`, not `p@8`** — halves the filtering cost. And the design is coherent because she filters
+   cheap at k=4 but **TRAINS at n=8**: a task admitted on a noisy 1-of-4 still gets eight fresh
+   samples at training time. **Filtering at k=4 and training at n=4 is the fragile pairing**, and n=4
+   is what our canary ran. P(within-group variance) at p=0.15: **0.48 at n=4 vs 0.73 at n=8**.
+3. **Yield ~36%** (1.6k/4.5k), not the 740/3,000 ≈ 25% claimed below, and not the 7.8% one would get
+   by reading the `358` in her script (that is a different, harder cut).
+
+### Consequence for our pipeline-validation goal
+
+Our milestone is one honest GRPO step with a finite update — not model quality. Since the band buys
+**no quality**, its only value to us is **guaranteeing a nonzero gradient exists**. So we need enough
+in-band tasks to fill ~16 groups for ONE step, not her 1.6k-task set for a 60-step run. A ~384-task
+`p@4` probe (1,536 rollouts) sizes that, and at ~36% yield returns ~138 usable tasks.
+
+### Superseded (kept so the error is traceable)
+
+The old text claimed: band = `0 < pass@8 < 1` plus `c/n <= 0.6`; measured over a 3,000-task pass under
+the exact training constraints (40960 ctx, 50 turns, temp 1.0, terminus-structured, no summarize,
+timeout/context masked as fail); yield 740 train + 100 held out via `fast_band_split.py`,
+`build_learnable_dataset.py`, `merge_split_learnable.py`; band built for a "GLM checkpoint". The
+tooling names and the "measure under the exact training constraints" discipline still stand — that
+discipline is why our own 600s-capped measurement was invalid. **The numbers do not.**
+
+⚠ **The band is MODEL-SPECIFIC** — she warns "do not swap it." Hers is for an 8B; ours would be for a
+35B MoE. This part was always right.
+
+This is the same lesson as [[gsm8k_format_artifact]] from another direction: measure whether reward can
+move at all before spending a run on it — and check your measurement isn't truncated first.
+
+### A bug to not inherit from her script
+
+The ID-heldout leak guard is defeated by a later line:
+
+```bash
+export EVAL_DATASET2="${EVAL_DATASET2:-}"   # "ID heldout is a subset of the pool -> would leak; drop it"
+...
+EVAL_DATASET2=${EVAL_DATASET2:-/e/data1/.../r2egym_learnable_heldout}   # <-- re-enables it
+```
+
+`:-` substitutes on empty as well as unset, so it comes back. `EVAL_DATASET3` uses bare `-`, which
+treats empty as set, so that guard holds. Same class: `EPOCHS` is exported as 1 then re-assigned with
+`:-4`, a no-op, so the "EPOCHS=4 → ~22 steps" comments are stale and that script is the **raw-pool
+arm** (~71 steps/epoch over 4,578), not the filtered arm its comments describe.
+
+### Other transferable knobs from the real config
+
+- `TIMEOUT_SEC=1800`, `MAX_EPISODES=50`. She notes DeepSWE's reference is `trajectory_timeout=5400`.
+  **Our effective budget was 600s** — 3× below hers, 9× below the reference.
+- `MAX_STEPS` must be **target+1**: the trainer stops one step early (her `MAX_STEPS=60` produced a
+  last completed step of 59, no step-60 ckpt).
+- `HF_SAVE_INTERVAL=5` + a decoupled `watch_and_eval_jupiter.sh` — eval never blocks training. Solves
+  the synchronous-agentic-val problem our own plan flagged.
+- `DYNAMIC_SAMPLING_TYPE=filter` (DAPO-style: drop all-same-reward prompts, resample up to
+  `max_sample_batches=30`) — targets our exact zero-variance blocker, but **requires the SYNC trainer
+  (`COLOCATE_ALL=true`)**, which collides with our settled disaggregated-only decision. See
+  [[gotchas]] (`dynamic_sampling.type is None` is a hard fully-async constraint). Operator call.
+- `use_kl_loss` was overridden to **true** in her script; she notes the DeepSWE reference recipe uses
+  **false**, and that KL loss is an alignment tool, not a capability one.
+- 12 nodes, `POLICY_NUM_NODES=4`, `NUM_INFERENCE_ENGINES=8`, `TENSOR_PARALLEL_SIZE=4`, `LR=8e-6`,
+  `TRAIN_BATCH_SIZE=64`, `constant_with_warmup`, `NUM_WARMUP_STEPS=0`.
 
 ## Also worth copying: her eval design
 
