@@ -2,7 +2,59 @@
 
 You are resuming an RL training bring-up. Read this whole file before running anything.
 
-## LATEST LIVE UPDATE — 2026-08-03 08:00 CEST
+## LATEST LIVE UPDATE — 2026-08-03 11:35 CEST
+
+Supersedes everything below. **Three pipeline layers were opened today; the blocker is no longer
+infrastructure, it is the DATA.**
+
+### ⚠ THE HEADLINE — raw r2egym gives Qwen3.6 NO GRPO GRADIENT
+
+Job `1219434` produced 27 honest rollouts with real verifier rewards. Grouped by task:
+**0 of 15 groups had ANY within-group reward variance** — every group was `[1,1]` or `[0,0]`
+(5 groups all-solved, 8 all-unsolved, 2 singletons). GRPO computes advantage *within* a prompt
+group: all-zero groups are dropped by `rloo_n_filter_zero_reward_groups`, all-one groups carry zero
+advantage. **No group could contribute gradient**, regardless of how healthy the infrastructure is.
+Cross-task spread is not a substitute. If per-task pass probability were mid-range (~0.7), all 13
+observed pairs agreeing has probability ~0.05% — the near-determinism is real.
+
+**This is the PARKED learnable-band decision (operator, 2026-07-29) meeting our own measurement.**
+The co-lead reached the same conclusion independently. The canary is now 16 groups × 4 samples
+(same 64-trajectory cost) to test it properly; **if 4 samples still show no within-group variance,
+the model-specific band is REQUIRED, not optional.** That is an operator decision — surface it, do
+not silently adopt the band. → [[gotchas]], [[r2egym_apptainer_reference_impl]]
+
+### Fixes landed today (all pushed + deployed; no PRs opened)
+
+| commit | repo | defect |
+|---|---|---|
+| `4fb4a158` | OT-Agent | `compaction.reserved` is dead config → move threshold via `client_window_tokens` |
+| `179b31e9` | harbor | opencode never set `AgentContext.metadata` → SkyRL extraction `TypeError` aborted every batch |
+| `1f38665f` | harbor | observations must be **user** turns; `role:"tool"` is rejected by `utils.py:1943` |
+| `90109474` | OT-Agent | `NonZeroAgentExitCodeError` → `passthrough`; canary 32×2 → 16×4 |
+
+Each fix exposed the next layer. Order encountered: context overflow → extraction `TypeError`
+→ role `ValueError` + non-zero-exit abort → no within-group variance.
+
+### Live state
+
+Jupiter **`1221005`** submitted 11:32, 5 nodes, 3 h wall, PENDING. Predecessors `1218813`/`1219434`
+cancelled by us after their defects were diagnosed; all orphaned sandboxes reclaimed via
+`POST /env/stop {"env_id":...}`. Bridge pristine: 3033/3033 jobs, **zero errors**, `workers_alive:true`.
+JURECA workers **`15489111`** expire **~18:50 CEST** — the binding clock. Combined 2/16 while pending.
+
+**Single point of failure:** the Jupiter→JURECA ControlMaster (`~/.ssh/cm_jureca/qwen36`, pid 185890)
+carries the reverse tunnel as a `-R` forward. If it dies the tunnel dies and rollouts lose their
+endpoint; restoring it needs ONE interactive `ssh jureca` + TOTP, which only Luke can do.
+
+### Still unproven past this point
+
+The optimizer update, checkpoint, and HF export have **never executed** with this model. Reaching a
+finite update remains the milestone. Also outstanding: the **token-fidelity limit** — opencode does
+not retain raw completion text, so reconstructed `all_messages` is faithful in structure but
+approximate in tokens. Fine for pipeline validation; **enable the literal recording proxy
+(`literal.jsonl`) before trusting TIS importance ratios or promoting to 50 steps.**
+
+## PRIOR LIVE UPDATE — 2026-08-03 08:00 CEST
 
 This section supersedes every older live update below.
 
