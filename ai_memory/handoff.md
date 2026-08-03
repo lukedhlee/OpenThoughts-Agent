@@ -1,8 +1,13 @@
-# Handoff — lukedhlee · updated 2026-08-03 (14:30 CEST)
+# Handoff — lukedhlee · updated 2026-08-04 (01:00 KST)
 
-> **START HERE:** `notes/qwen36_resume_brief.md` § "LATEST LIVE UPDATE — 2026-08-03 14:10" has the
-> authoritative current state. This file is the durable frame; that file is the live log.
-> **The blocker is no longer infrastructure — it is the DATA.** See § Live state below.
+> **START HERE: § "Live state — 2026-08-04" in this file.** It supersedes both the 2026-08-03 block
+> below it and `notes/qwen36_resume_brief.md`, whose "LATEST LIVE UPDATE" is now one framing behind.
+> **The blocker was NOT the data — it was a 600s agent timeout** that killed 76% of trials mid-task.
+> Then read [[gotchas]] § 2026-08-04 and [[decisions]] § 2026-08-04.
+>
+> ⚠ Two conclusions carried in this file for a week are RETIRED: "raw r2egym collapses" (it does not)
+> and "Qwen3.6 is deterministic per r2egym task" (trajectories vary widely; only outcomes were
+> invariant, under a truncated budget).
 
 ## Objective
 
@@ -54,12 +59,15 @@ one is measured from the co-lead's live scripts, not inferred):**
   x86_64. Workers dial IN to the Jupiter bridge over a reverse SSH tunnel from the JURECA login node.
 - **No model is ever served on JURECA.** Jupiter compute never contacts JURECA — see § Sandbox.
 
-**Current focus = get ONE honest GRPO step. The infrastructure now works; the DATA blocks it.**
-As of 2026-08-03 the pipeline runs cleanly end-to-end through Ray → 26/26 shards → fused-MoE JIT/KV →
-HTTP endpoint → policy/ref init → 693-tensor weight sync → **honest rollouts with real verifier
-rewards**. Four defects were root-caused and fixed today (§ Live state). What now blocks the milestone
-is that **raw r2egym yields ZERO within-group reward variance for this model**, so GRPO can form no
-advantage and no gradient exists. Two operator decisions are pending; see § Live state.
+**Current focus = get ONE honest GRPO step.** The pipeline runs cleanly end-to-end through Ray → 26/26
+shards → fused-MoE JIT/KV → HTTP endpoint → policy/ref init → 693-tensor weight sync → honest rollouts
+with real verifier rewards. Five defects have been root-caused and fixed (four on 08-03, plus the 600s
+exec cap on 08-04).
+
+⚠ **The 08-03 claim that "raw r2egym yields ZERO within-group reward variance" is not clean evidence.**
+The agent was capped at 600s rather than the configured 1800s, so 76% of trials were killed mid-task.
+Whether variance appears under the restored budget is the **next measurement**, and it gates whether a
+learnable band is needed at all. See § Live state — 2026-08-04.
 
 ## State
 
@@ -115,12 +123,13 @@ advantage and no gradient exists. Two operator decisions are pending; see § Liv
     (`normalize_message`), `LD_LIBRARY_PATH` pointing at the broken env, `train_data` as a parquet
     yielding ZERO tasks silently, the fully-async trainer's constraint set, and the
     `flash_attn: false` trio. All recorded in [[gotchas]]; all fixed on the branch.
-- **PARKED by operator 2026-07-29 — the learnable band.** The co-lead reports raw r2egym **collapsed**
-  with zero reward; she trains on a **model-specific band** (`0 < pass@8 < 1` → 740 train + 100 held
-  out). Our config trains on all 3,328 — the configuration already known to fail. **Operator call:
-  forget the band for now, focus on enabling r2egym.** Raised twice, decided; do NOT re-litigate.
-  Consequence to keep in mind, not to act on: a flat reward curve in the Qwen3.6 smoke may be the
-  DATA, not the sandboxes. → [[r2egym_apptainer_reference_impl]]
+- **⚠ RETIRED 2026-08-04 — "raw r2egym collapsed" was never true.** The co-lead's own result summary:
+  her RAW arm reaches the **same ~45.5 p@1** on SWE-bench as the filtered band, in 120 steps instead of
+  60. The band is `p@4` (not `p@8`), yields **~1.6k of 4.5k (~36%)**, is built for an **8B**, and gives
+  **no performance boost** — convergence speed and ~20% compute only (60k → 48k rollouts). Our own flat
+  reward curve was a **600s agent timeout**, not the data. The band's only value for a
+  pipeline-validation goal is guaranteeing a nonzero gradient exists.
+  → [[r2egym_apptainer_reference_impl]], [[decisions]] 2026-08-04, [[gotchas]] 2026-08-04
 - **VALIDATED — the pinned SWE-bench-100 sandbox set.** The second 100-task manifest remains parked;
   do not invent a 200-task set. The confirmed first 100 now has complete oracle coverage as described
   above.
@@ -435,7 +444,66 @@ harness before attributing a low number to the model.
 - Precedent for why: the GSM8K `pass_at_1 ≈ 0.45` plateau was a **format artifact**, not ability. A
   number that looks like capability is often the harness. → [[gsm8k_format_artifact]]
 
-## Live state and remaining defects — 2026-08-03
+## Live state — 2026-08-04 (overnight session; times in KST)
+
+**The 2026-08-03 framing below is SUPERSEDED. The blocker was never the data — it was a 600s agent
+timeout.** Read this block, then [[gotchas]] § 2026-08-04, then [[decisions]] § 2026-08-04.
+
+### What was found
+
+`agent.override_timeout_sec = 1800` was materialized but **unreachable**. OpenCode issues its
+long-running `run` via `exec_as_agent()` with no `timeout_sec`, so it inherited
+`ApptainerEnvironment.exec()`'s hardcoded `timeout_sec or 600`; the trial layer's
+`asyncio.wait_for(agent.run(), 1800)` is an OUTER guard that can only fire if it is shorter. On
+`1221005`, **19 of 25 trials died at exactly 600–601s** and **19 of 19** exceptions carry the literal
+`Command timed out after 600s` / `return_code -1`. **76% of trials were cut off mid-task**, which
+flattens the within-group variance GRPO consumes. Fourth accepted-but-ignored-key bug.
+
+⇒ **The 0-of-22 zero-variance result is not clean evidence** about r2egym or about the model. And the
+co-lead's own numbers say **raw r2egym does not collapse** (same ~45.5 p@1, 120 steps vs 60); the band
+buys convergence speed and ~20% compute, **no quality**. Both prior conclusions are retired.
+
+### Shipped and deployed this session
+
+| commit | repo | change |
+|---|---|---|
+| `f44a1170` | harbor | `BRIDGE_EXEC_TIMEOUT` knob; default still 600; 4 tests |
+| `6b76270b` | OT-Agent | vLLM canary reads shards from a chosen filesystem |
+| `2b6defd1` | OT-Agent | exec timeout 2100, n=8, fscratch model, `-next` checkout, 6h wall |
+| `05518eed` | ai_memory | this correction set (local only, not pushed) |
+
+Measured wins: **`Loading weights` 701.12s → 38.03s (18.4×)** by staging the checkpoint on
+`/e/fscratch` (`1217900` vs `1224804`); `/e/scratch` is 0.056 GiB/s per stream vs fscratch 2.51
+(`O_DIRECT`, compute `jpbo-018-14`, job `1224678`), and vLLM reads the 26 shards **sequentially in one
+stream**, so it sits on that per-stream floor.
+
+Canary is now **16 × 8 = 128 trajectories**, agent budget 1800s with the exec fallback at 2100 so a
+clean `AgentTimeoutError` (passthrough, trajectory preserved) beats an exec kill, 6h wall.
+
+### Live resources
+
+- **Jupiter: 0 nodes.** Benchmark `1224678` and fscratch smoke `1224804` both COMPLETED and were freed.
+- **JURECA workers `15494122`** — submitted this session, 2 nodes × 16, **~22h left**. Predecessor
+  `15489111` expired on schedule; continuity was maintained across the handover.
+- **Bridge** `10.128.1.2:9920` pristine, `workers_alive: true`.
+- **ControlMaster** pid 185890 alive (28h+). ⚠ Reach JURECA only via
+  `ssh -S ~/.ssh/cm_jureca/qwen36 jureca.fz-juelich.de` — there is no `~/.ssh/config` on Jupiter, so a
+  bare `ssh jureca` fails on hostname resolution and **looks like a dead tunnel when it isn't**.
+
+### Still unexplained / still open
+
+1. **The 110-minute** shards-loaded→policy-init on `1221005` (vs ~28 min on `1219434`). Happens after
+   the bytes are in memory; fscratch does not address it. Untouched.
+2. **Whether the restored 1800s budget actually produces within-group variance.** This is the next
+   measurement and it gates whether a band is needed at all.
+3. **Operator decision — DAPO `dynamic_sampling: filter`** would drop all-same-reward groups and
+   resample, targeting the blocker as a flag, but it requires `colocate_all: true` and so collides with
+   the settled disaggregated-only decision. → [[decisions]] 2026-08-04.
+4. **Token fidelity** (`literal.jsonl`) still never enabled; still required before trusting TIS ratios
+   or promoting past a smoke.
+5. **The optimizer update, checkpoint, and HF export have still never executed** with this model.
+
+## Superseded live state — 2026-08-03
 
 **Nothing is running on Jupiter (0 nodes).** JURECA sandbox workers `15489111` alive until
 ~18:50 CEST 08-03. Bridge pristine: 3542/3542 jobs, **zero errors**, all sandboxes reclaimed.
@@ -496,10 +564,10 @@ role errors, zero non-zero-exit aborts, 25 honest rollouts. Deployed refs: OT-Ag
    `fail_on_infrastructure_error`; only `passthrough` survives. Adding an exception to
    `mask_exceptions` makes it MORE fatal, not less. Classification is also name-based, not
    `isinstance`, so any new subclass must be enumerated.
-4. **Cross-checkout coupling:** the 6-node YAML hardcodes `prompt_template_path` into the STALE
-   `OpenThoughts-Agent-r2egym-bridge` checkout (`0f04b250`) while configs come from `-next`, and
-   `run_qwen36_live_canary.sh` defaults `DCFT` to that stale tree. Override `DCFT`; collapse before
-   promotion.
+4. **Cross-checkout coupling — FIXED for the canary path (`2b6defd1`).** Both
+   `run_r2egym_qwen3_6_35b_grpo{,_canary}.sh` now default `DCFT` to `-next`, and the 5-node YAML's
+   `prompt_template_path` points there. ⚠ Still to check: the **6-node** production YAML and
+   `run_qwen36_live_canary.sh`, which may retain the stale `0f04b250` path.
 5. **Forced tunnel reconnect recovery is still unproven** (bridge itself healthy: internal
    `10.128.1.2:9920`, workers polling, zero job errors).
 6. ⚠ **SINGLE POINT OF FAILURE:** the Jupiter→JURECA ControlMaster (`~/.ssh/cm_jureca/qwen36`,
@@ -586,8 +654,9 @@ One line each; full context, rejected options, and consequences in [[decisions]]
   SWE-Bench-100 is the paired pre/post performance evaluation.** This supersedes the 2026-07-29
   Qwen3-8B bring-up decision to use held-out r2egym as the only validation. The nonexistent second
   SWE-Bench-100 manifest remains parked; do not invent 200 tasks. *(2026-07-31)*
-- **The learnable band is PARKED — operator call.** Enable r2egym first. Do not re-raise; the risk (raw
-  r2egym collapsed for the co-lead) is already recorded under State. *(2026-07-29 eve)*
+- **The learnable band is PARKED — operator call.** Enable r2egym first. *(2026-07-29 eve)*
+  ⚠ **Its premise is retired (2026-08-04):** raw r2egym did NOT collapse for the co-lead, and the band
+  gives no quality gain. Whether we need one is now an open measurement gated on the 600s-cap fix.
 - For this run, report the exact model origin and **specified eval regime** (pinned SWE-Bench-100,
   81,920 total context, no compaction, DP4×TP1, 100×1) plus the paired uncertainty statistics.
   Formal broader ID benchmarks remain Mrinal's. *(updated 2026-07-31)*
@@ -660,8 +729,8 @@ journals: 07-19/07-20 Vista, 07-22 Jupiter flash-attn + vLLM reload, 07-26 Megat
 
 **Queued RL work:** `notes/r2egym_apptainer_reference_impl.md` (**READ FIRST for anything r2egym** — the
 co-lead already runs r2egym+apptainer+8B RL on Jupiter; has the harbor wiring, the SIF build path, a
-leaked-credential flag, and the finding that **raw r2egym collapses** and needs a model-specific
-learnable band) · `notes/r2egym_grpo_plan.md` (design, val-set decision, eval handoff — **read before
+leaked-credential flag, and — ⚠ **CORRECTED 2026-08-04** — the retired claim that raw r2egym collapses;
+it does not, and the band is a compute lever, not a quality one) · `notes/r2egym_grpo_plan.md` (design, val-set decision, eval handoff — **read before
 launching**) · `notes/jupiter_bringup_and_throughput.md` · `notes/jupiter_megatron_bringup.md` ·
 `notes/megatron_vs_fsdp2.md` (**read before choosing a geometry/backend**) · `notes/moe_grpo_tis_r3.md` ·
 `notes/jupiter_cluster.md` · `notes/jupiter_ssh.md` · `notes/jupiter_wandb.md` · `notes/vista_secrets.md`.

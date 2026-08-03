@@ -1,122 +1,115 @@
-# ⚠ TEMPORARY TAKEOVER NOTE — written 2026-08-03 ~14:40 CEST · DELETE ONCE ABSORBED
+# ⚠ TEMPORARY TAKEOVER NOTE — rewritten 2026-08-04 ~01:00 KST · DELETE ONCE ABSORBED
 
-You are taking over a Qwen3.6-35B-A3B agentic-RL bring-up mid-flight. **Nothing is running on
-Jupiter.** Read this file first, then `notes/qwen36_resume_brief.md` § "LATEST LIVE UPDATE —
-2026-08-03 14:10", then `handoff.md`. `gotchas.md` has ~40 symptom→cause→fix entries; 8 are from
-2026-08-03 and every one of them cost a multi-node allocation to learn.
+Supersedes the 2026-08-03 version, whose central claim ("the DATA is the blocker") was **wrong**.
+Read `handoff.md` § "Live state — 2026-08-04" first, then `gotchas.md` § 2026-08-04 and
+`decisions.md` § 2026-08-04.
 
-## The one thing to understand before you do anything
+## The one thing to understand
 
-**The infrastructure works. The DATA is the blocker. Do not "fix" the pipeline again.**
+**The blocker was a 600-second agent timeout, not the data.**
 
-The pipeline now runs cleanly: Ray → 26/26 shards → fused-MoE JIT/KV → HTTP endpoint → policy/ref
-init → 693-tensor weight sync → **honest rollouts with real verifier rewards**. Four defects were
-root-caused, fixed, pushed and deployed on 08-03, and all four are confirmed working.
+`agent.override_timeout_sec = 1800` was materialized but unreachable. OpenCode issues its
+long-running `run` through `exec_as_agent()` with no `timeout_sec`, so it inherited
+`ApptainerEnvironment.exec()`'s hardcoded `timeout_sec or 600`. The trial layer's
+`asyncio.wait_for(agent.run(), 1800)` is an OUTER guard that can only fire if it is *shorter*, so the
+worker always won. On `1221005`: **19 of 25 trials ended at exactly 600–601s**, and **19 of 19**
+exceptions carry the literal `Command timed out after 600s` / `return_code -1`. 76% of trials were
+cut off mid-task, which flattens the within-group variance GRPO consumes.
 
-What blocks the milestone is that **raw r2egym produces ZERO within-group reward variance for this
-model**: 22 prompt groups across two runs, none with variance; the four *complete* 4-sample groups
-were perfectly uniform (`[1,1,1,1]`, `[1,1,1,1]`, `[0,0,0,0]`, `[0,0,0,0]`). GRPO forms advantage
-**within** a group, so all-zero groups are filtered and all-one groups carry zero advantage ⇒ **no
-gradient can exist**. Rewards ARE honest and DO differ across tasks; that is not a substitute.
+**Fourth instance of the signature bug** — a key accepted, deep-merged, written to disk, and ignored
+by its consumer (`strict_json_parser`, `compaction.reserved`, `store_all_messages`, now this).
 
-⇒ **Relaunching as-is cannot succeed.** It will burn 5 nodes and reproduce the same result.
+## Two conclusions that were carried for a week and are now RETIRED
 
-## Two decisions are the operator's. Do NOT decide them yourself.
+1. **"Raw r2egym collapses."** It does not. The co-lead's RAW arm reaches the **same ~45.5 p@1** on
+   SWE-bench as her filtered band, in 120 steps instead of 60. The band is `p@4` (not `p@8`), yields
+   **~1.6k of 4.5k (~36%)**, is built for an **8B**, and gives **no performance boost** — convergence
+   speed and ~20% compute only (60k → 48k rollouts). ⇒ For a *pipeline-validation* goal, a band's only
+   value is guaranteeing a nonzero gradient exists. We would need enough in-band tasks for ~16 groups
+   for ONE step, not her 1.6k-task set.
+2. **"Qwen3.6 is essentially deterministic per r2egym task."** Trajectories within a uniform group
+   differ wildly — distinct hashes, 26–60 messages, 1.7k–6.1k output tokens. Sampling works fine at
+   temp 1.0. Only the *outcomes* were invariant, and under a truncated budget.
 
-1. **Adopt the model-specific learnable band?** (`0 < pass@k < 1`, the co-lead's approach). Now
-   empirically required, not optional. It was explicitly PARKED by the operator on 2026-07-29
-   ("forget the band, focus on enabling r2egym"). r2egym IS enabled now and the parked risk has
-   materialised in our own measurements. **Surface it; do not silently adopt it.**
-2. **Move the model + `trace_jobs` to `/e/fscratch`?** Measured: `/e/scratch` reads at **104 MB/s**,
-   `/e/fscratch` at **2.3 GB/s (22×)**. Also fixes inode pressure (`/e/scratch` 77% of an 8M cap
-   shared by 26 users; `/e/fscratch` 1%). Caveats: measured from a login node, and fscratch
-   retention/purge is UNDOCUMENTED ⇒ stage only the read-only model and transient traces; keep
-   checkpoints/HF exports on `/e/scratch`.
+## Shipped, pushed, and deployed this session
 
-## Hard-won lessons you will otherwise repeat
-
-- **A config key arriving in the materialized TrialConfig proves NOTHING about whether the consumer
-  reads it.** Three OpenCode keys were accepted, deep-merged, written to disk, and silently ignored:
-  `strict_json_parser`, `compaction.reserved`, `store_all_messages`. Verify by BEHAVIOUR.
-- **Fail-loud taxonomy is inverted from intuition:** `mask` = infrastructure ⇒ **ABORTS the whole
-  batch** under `fail_on_infrastructure_error`. Only `passthrough` survives. Adding an exception to
-  `mask_exceptions` makes it MORE fatal.
-- **A large prompt drop is NOT proof compaction worked** — it may be *reactive* recovery after the
-  ceiling was already breached. Always check for `ContextOverflowError` first.
-- **Never grep a trial tree for success markers**: the rendered config contains the instruction text,
-  so markers match before the agent has done anything. I briefly reported a false pass this way.
-- **Harbor is a COPIED install** in `envs/rl-megatron/.../site-packages/harbor`; the fix only lands
-  because the sbatch puts `harbor-apptainer-bridge/src` first on `PYTHONPATH`. Verify harbor changes
-  with the job's real `PYTHONPATH` — a bare venv import reports the fix as absent.
-- **Never judge a venv from a bare login shell.** `rl-megatron` fails on `libcudart.so.13` without
-  `module load GCC/14.3.0 nvidia-compilers/25.9-CUDA-13`. (`envs/rl` was genuinely broken and is
-  deleted — it needed CUDA 12, which Jupiter does not have.)
-- **Never `find`/`du` on GPFS.** Use `jutil project dataquota -p reformo`. For subtree estimates use
-  bounded one-level `ls` counts.
-- **The pinned FlashInfer AOT artifact is x86-64; Jupiter is aarch64.** Hash/version/path checks all
-  passed because none called `dlopen`, so the 90-second "AOT smoke" was a FALSE POSITIVE.
-
-## Deployed state (verify before trusting)
-
-| repo | Jupiter path | ref |
+| commit | repo | change |
 |---|---|---|
-| OT-Agent | `/e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next` | `90109474` |
-| harbor | `/e/scratch/reformo/lee27/harbor-apptainer-bridge` | `1f38665f` |
-| MarinSkyRL | `/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge` | `8ee69f3` |
+| `f44a1170` | harbor | `BRIDGE_EXEC_TIMEOUT` knob; default still 600; 4 tests, Ruff clean |
+| `6b76270b` | OT-Agent | vLLM canary reads shards from a chosen filesystem |
+| `2b6defd1` | OT-Agent | exec timeout 2100, n=8, fscratch model, `-next` checkout, 6h wall |
+| `05518eed` | ai_memory | the correction set (**local only, not pushed**) |
 
-Local ground truth: `~/OpenThoughts-Agent-clean` (`90109474`), `~/harbor-apptainer-bridge`
-(`1f38665f`). `ai_memory` lives on branch `lukedhlee/vista-moe-grpo-30b` in `~/OpenThoughts-Agent`
-(commits `068f1578`→`d523d0ce`, local only).
+Deployed on Jupiter by fetch + hard reset: harbor `f44a1170`, OT-Agent `-next` `6b76270b`
+(⚠ `2b6defd1` deploy was INTERRUPTED — see Next actions).
 
-⚠ **Cross-checkout trap:** the 6-node YAML hardcodes `prompt_template_path` into the STALE
-`OpenThoughts-Agent-r2egym-bridge` (`0f04b250`), and `run_qwen36_live_canary.sh` defaults `DCFT` to
-that same stale tree. Always override `DCFT` to `-next`. Collapse this before promotion.
+## Measured this session
+
+- **`Loading weights` 701.12s → 38.03s (18.4×)** by staging the checkpoint on `/e/fscratch`
+  (`1217900` vs `1224804`, same 1-GPU canary).
+- `O_DIRECT`, compute `jpbo-018-14`, job `1224678`: `/e/scratch` **0.056 GiB/s per stream**,
+  `/e/fscratch` **2.51**. vLLM reads the 26 shards **sequentially in one stream**, so it sits exactly
+  on that per-stream floor — which is why aggregate bandwidth never helped.
+- ⚠ **Never infer filesystem bandwidth from `cp`.** A 4-stream `cp` gave 1.67 GB/s off `/e/scratch`
+  (page cache + readahead) and led me to wrongly report the 22× claim refuted. `O_DIRECT` from a
+  compute node, at the concurrency the real consumer uses, is the only valid measurement.
 
 ## Live resources
 
-- **Jupiter: 0 nodes.** Ceiling is 16 combined; never cancel anyone else's job. Cancelling *our own*
-  wedged job is pre-authorised.
-- **JURECA sandbox workers `15489111`** — expire **~18:50 CEST 2026-08-03**. If gone, submit a
-  replacement worker job through the live ControlMaster.
-- **Bridge `10.128.1.2:9920`** — was pristine at handoff: 3542/3542 jobs, zero errors,
-  `workers_alive:true`, all sandboxes reclaimed. Check `/status` first thing.
-- ⚠ **SINGLE POINT OF FAILURE:** the Jupiter→JURECA ControlMaster (`~/.ssh/cm_jureca/qwen36`,
-  pid 185890) carries the reverse tunnel as a `-R` forward. If it dies the tunnel dies and rollouts
-  lose their endpoint. Restoring needs ONE interactive `ssh jureca` + TOTP — **only Luke can do it.**
-  Separately, `Session open refused by peer` on the Mac→Jupiter master is `MaxSessions` exhaustion
-  from too many concurrent background SSH sessions, NOT an auth expiry.
+- **Jupiter: 0 nodes.** `1224678` and `1224804` COMPLETED and were freed.
+- **JURECA workers `15494122`**, 2 nodes × 16, ~22h left from 00:30 KST. Predecessor `15489111`
+  expired on schedule; continuity held.
+- **Bridge** `10.128.1.2:9920` pristine, `workers_alive: true`.
+- **ControlMaster** pid 185890 alive 28h+. Reach JURECA ONLY as
+  `ssh -S ~/.ssh/cm_jureca/qwen36 jureca.fz-juelich.de` — there is no `~/.ssh/config` on Jupiter, so a
+  bare `ssh jureca` fails on hostname resolution and **looks like a dead tunnel when it isn't**.
+- ⚠ `Session open refused by peer` on the Mac→Jupiter master is **MaxSessions**, not auth expiry.
+  Do NOT retry in a loop — the fallback prompts for TOTP and repeated failures risk an account lock.
+  Let long-running background SSH sessions finish first.
 
-## Useful operational recipes
+## Next actions, in order
 
-- Orphaned sandboxes after a cancellation: recover IDs **only from that run's own trace tree**
-  (`grep -rhoE "env-[0-9a-f]{12}"`), validate the exact form, then
-  `POST /env/stop` with `{"env_id": "..."}`. (`/env/<id>/stop` is a 404 — wrong shape.)
-- Allocation-free preflight: `DCFT=<next> PREFLIGHT_ONLY=1 REQUIRE_CLEAN_BRIDGE=1 bash
-  hpc/skyrl_standard/jupiter/run_r2egym_qwen3_6_35b_grpo_canary.sh`. Expect
-  `OpenCode limit=15360+4096, proactive_compaction_at=11264`.
-- Within-group variance readout (the number that actually matters): group `trace_jobs/*/result.json`
-  by task prefix and check `len(set(rewards)) > 1` per group. **Never** read a healthy-looking
-  `avg_raw_reward` as evidence GRPO can learn.
-- Route gate before trusting any rollout: prove `/health` **and** a real `/v1/chat/completions` from
-  an actual JURECA compute node (`srun --overlap --jobid=<workers> --nodelist=jrc0545`) through
-  `jrlogin05i:18000`, and confirm the served revision is `995ad96e…`.
-- After a job allocates, retarget the reverse listener:
-  `ssh -O cancel -R 10.14.0.46:18000:<old>:8000 jureca` then `-O forward` to the new head. Internal
-  binds only — never `0.0.0.0`, never a public IP.
+1. **Finish deploying `2b6defd1`** to `/e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next`
+   (`git fetch fork lukedhlee/qwen3-6-r2egym-grpo && git reset --hard 2b6defd1`). The deploy was
+   interrupted by MaxSessions exhaustion, so the tree may still be at `6b76270b`. **Verify before
+   launching** — without it the canary runs at n=4 with the 600s cap and reproduces the old result.
+2. **Read `/e/scratch/reformo/lee27/bench/timeout_proof.py` output** (job launched ~00:40 KST). It
+   isolates ONLY the changed path — one Apptainer env, `sleep 700` with `timeout_sec=1500` — and PASSES
+   iff `return_code 0` after >600s. If it FAILS, the fix did not take and step 3 must not run.
+3. **Allocation-free preflight**, then launch the 5-node canary:
+   `DCFT=/e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next PREFLIGHT_ONLY=1 \
+    REQUIRE_CLEAN_BRIDGE=1 bash hpc/skyrl_standard/jupiter/run_r2egym_qwen3_6_35b_grpo_canary.sh`
+   Expect `OpenCode limit=15360+4096, proactive_compaction_at=11264`.
+4. **The number that decides everything:** group `trace_jobs/*/result.json` by task prefix and check
+   `len(set(rewards)) > 1` per group. Reward lives at **`verifier_result.rewards.reward`**, NOT at
+   top-level `reward` (that key does not exist; reading it returns `None` for every trial).
+   Tooling already on Jupiter: `/e/scratch/reformo/lee27/bench/tput2.py <trace_jobs>`.
+   **Never** read a healthy `avg_raw_reward` as evidence GRPO can learn.
 
-## Never proven with this model
+## Still open
 
-The **optimizer update, checkpoint, and HF export** have never executed. Reaching a finite update is
-still the milestone. And the **token-fidelity limit** stands: opencode discards raw completion text,
-so reconstructed `all_messages` is faithful in structure but approximate in tokens — fine for
-pipeline validation, NOT for trusting TIS importance ratios. Enable the literal recording proxy
-(`literal.jsonl`) before promoting to 50 steps.
+- **The 110-minute** shards-loaded→policy-init on `1221005` vs ~28 min on `1219434`. After the bytes
+  are in memory; fscratch does not touch it. Unexplained.
+- **Operator decision:** DAPO `dynamic_sampling: filter` drops all-same-reward groups and resamples —
+  targets the blocker as a flag — but needs `colocate_all: true`, colliding with the settled
+  disaggregated-only decision. → `decisions.md` 2026-08-04.
+- **Token fidelity** (`literal.jsonl`) still never enabled; required before trusting TIS ratios.
+- **The optimizer update, checkpoint, and HF export have STILL never executed** with this model. That
+  remains the milestone.
+- The **6-node** production YAML and `run_qwen36_live_canary.sh` may still carry the stale
+  `0f04b250` checkout path; only the canary path was collapsed onto `-next`.
 
-## Suggested first moves
+## Traps worth not repeating
 
-1. `curl http://10.128.1.2:9920/status` and `squeue` on both clusters — establish reality.
-2. Confirm the JURECA worker fleet still exists; it may have expired.
-3. Ask the operator the two pending decisions above. **Do not relaunch before decision 1** — the
-   variance result means a relaunch cannot produce a gradient.
-4. If decision 2 is approved, the fscratch staging is cheap and independently valuable (22× load
-   speed) — worth doing even while decision 1 is open.
+- **A config key in the materialized TrialConfig proves NOTHING about whether the consumer reads it.**
+  Verify by BEHAVIOUR. Four keys have now failed this way.
+- **`mask` = infrastructure ⇒ ABORTS the whole batch** under `fail_on_infrastructure_error`. Only
+  `passthrough` survives. Adding an exception to `mask_exceptions` makes it MORE fatal.
+- **`MODEL_PATH` overrides the YAML** — it reaches the launcher as `--model_path`. Editing the YAML's
+  model path alone is silently reverted.
+- **Never grep a trial tree for success markers** — the rendered config contains the instruction text,
+  so markers match before the agent has done anything.
+- **Harbor is a COPIED install**; the fix only lands because the sbatch puts
+  `harbor-apptainer-bridge/src` first on `PYTHONPATH`. Verify with the job's REAL `PYTHONPATH`.
+- **Never `find`/`du` on GPFS.** Use `jutil project dataquota -p reformo`.
+- Piping a remote script through `tail` buffers its output until EOF; `flush=True` buys nothing.
