@@ -115,6 +115,18 @@ terminal_bench:
     passthrough_exceptions:
       - AgentTimeoutError
       - ContextLengthExceededError
+      # A non-zero OpenCode exit is the DOWNSTREAM MANIFESTATION of the two
+      # entries above: when the agent hits the server's context ceiling it
+      # exits 1. Classified as infrastructure it would take the `mask` path,
+      # and _raise_if_fail_loud aborts on ANY masked infrastructure error --
+      # so one trial killed all 64 trajectories (measured, Jupiter 1219434:
+      # a single 28673 overflow at 11:23:19 aborted the batch six seconds
+      # later). Passthrough keeps the trial's real verifier reward, which is
+      # the honest outcome: the agent ran out of context and did not solve
+      # the task. That is model behaviour, not broken infrastructure.
+      # Genuine infrastructure failures (bridge, verifier, network) remain
+      # fail-loud via mask_exceptions.
+      - NonZeroAgentExitCodeError
   model_info: {}
   archiving:
     enabled: false

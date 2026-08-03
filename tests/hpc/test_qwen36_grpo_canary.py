@@ -39,19 +39,24 @@ def test_canary_is_a_standalone_intermediate_profile() -> None:
     assert "5node_qwen3_6_35b_a3b_r2egym_grpo_canary.yaml" in launcher
 
 
-def test_canary_collects_exactly_64_trajectories_in_32_groups() -> None:
+def test_canary_collects_exactly_64_trajectories_in_16_groups() -> None:
+    """64 trajectories, reallocated toward WITHIN-GROUP variance.
+
+    GRPO needs variance inside a prompt group, not across tasks. Measured on
+    Jupiter 1219434 at 32 groups x 2 samples: 0 of 15 groups had any
+    within-group variance -- every group was [1,1] or [0,0], so each was either
+    filtered by rloo_n_filter_zero_reward_groups or carried zero advantage, and
+    no group could contribute gradient. 16 x 4 keeps the cost identical and is
+    the hard valid minimum group count under FSDP4xEP4 fully-async GRPO.
+    """
     raw = load_canary()
     trainer = raw["trainer"]
     generator = raw["generator"]
     harbor = raw["terminal_bench"]["harbor"]
 
-    assert trainer["train_batch_size"] == 32
-    assert trainer["policy_mini_batch_size"] == 32
-    assert trainer["fully_async"] == {
-        "num_parallel_generation_workers": 32,
-        "max_buffered_groups": 32,
-    }
-    assert generator["n_samples_per_prompt"] == 2
+    assert trainer["train_batch_size"] == 16
+    assert trainer["policy_mini_batch_size"] == 16
+    assert generator["n_samples_per_prompt"] == 4
     assert trainer["train_batch_size"] * generator["n_samples_per_prompt"] == 64
     assert harbor["n_concurrent_trials"] == 32
 

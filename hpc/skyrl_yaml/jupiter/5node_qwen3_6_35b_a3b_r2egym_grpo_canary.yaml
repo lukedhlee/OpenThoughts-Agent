@@ -117,6 +117,18 @@ terminal_bench:
     passthrough_exceptions:
       - AgentTimeoutError
       - ContextLengthExceededError
+      # A non-zero OpenCode exit is the DOWNSTREAM MANIFESTATION of the two
+      # entries above: when the agent hits the server's context ceiling it
+      # exits 1. Classified as infrastructure it would take the `mask` path,
+      # and _raise_if_fail_loud aborts on ANY masked infrastructure error --
+      # so one trial killed all 64 trajectories (measured, Jupiter 1219434:
+      # a single 28673 overflow at 11:23:19 aborted the batch six seconds
+      # later). Passthrough keeps the trial's real verifier reward, which is
+      # the honest outcome: the agent ran out of context and did not solve
+      # the task. That is model behaviour, not broken infrastructure.
+      # Genuine infrastructure failures (bridge, verifier, network) remain
+      # fail-loud via mask_exceptions.
+      - NonZeroAgentExitCodeError
   model_info: {}
   archiving:
     enabled: false
@@ -142,9 +154,16 @@ trainer:
   epochs: 1
   max_steps: 1
   update_epochs_per_batch: 1
-  train_batch_size: 32
-  policy_mini_batch_size: 32
-  eval_batch_size: 32
+  # 16 prompt groups x 4 samples = 64 trajectories -- SAME cost as the previous
+  # 32 x 2, reallocated toward within-group variance, which is what GRPO
+  # actually needs. Measured on Jupiter 1219434: 0 of 15 groups had ANY
+  # within-group variance at 2 samples (every group was [1,1] or [0,0]), so
+  # every group was either filtered by rloo_n_filter_zero_reward_groups or had
+  # zero advantage -> no gradient. 16 groups is the hard valid minimum under
+  # FSDP4xEP4 fully-async GRPO.
+  train_batch_size: 16
+  policy_mini_batch_size: 16
+  eval_batch_size: 16
   micro_forward_batch_size_per_gpu: 1
   micro_train_batch_size_per_gpu: 1
   fully_async:
@@ -215,7 +234,11 @@ generator:
   inference_engine_tensor_parallel_size: 1
   num_inference_engines: 4
   inference_engine_expert_parallel_size: 1
-  n_samples_per_prompt: 2
+  # 4, not 2. Doubles the chance of catching a mixed-outcome group and, if
+  # outcomes really are per-task deterministic, says so with far more
+  # confidence than n=2 can. That distinction decides whether the parked
+  # model-specific learnable band is required.
+  n_samples_per_prompt: 4
   eval_n_samples_per_prompt: 1
   gpu_memory_utilization: 0.85
   max_num_seqs: 8
