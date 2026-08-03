@@ -59,20 +59,57 @@ export VLLM_HOST_IP="$host"
 printf 'http://%s:8000/v1\n' "$host" >"$ENDPOINT_FILE"
 echo "QWEN36_VLLM_ENDPOINT=http://${host}:8000/v1"
 
-exec python -m vllm.entrypoints.openai.api_server \
-  --model "$MODEL_PATH" \
-  --served-model-name "$MODEL_REVISION" \
-  --host "$host" \
-  --port 8000 \
-  --tensor-parallel-size 1 \
-  --max-model-len 32768 \
-  --dtype bfloat16 \
-  --gpu-memory-utilization 0.85 \
-  --max-num-seqs 4 \
-  --max-num-batched-tokens 4096 \
-  --enable-prefix-caching \
-  --enable-chunked-prefill \
-  --enable-auto-tool-choice \
-  --tool-call-parser qwen3_coder \
-  --gdn-prefill-backend triton \
+# --- Startup / throughput knobs (defaults reproduce the previous behaviour) ---
+#
+# MM_LIMIT=0 adds --limit-mm-per-prompt '{"image":0,"video":0}'.
+#
+# WHY: Qwen3.6 is a multimodal SHELL. SkyRL unwraps it to the text tower
+# (SKYRL_QWEN3_5_VLM_UNWRAP=1), the vision tower is parked and gets no gradients,
+# and no rollout ever sends an image. But vLLM still profiles it: job 1217900
+# logged "Encoder cache will be initialized with a budget of 16384 tokens, and
+# profiled with 1 image items of the maximum feature size" at 06:37:08 and did
+# not emit "Available KV cache memory" until 06:56:07 -- ~19 MINUTES of
+# memory-profiling forward passes, in eager mode, through a 35B MoE, plus a
+# further "Multi-modal warmup completed in 15.008s".
+#
+# With the checkpoint on /e/fscratch the weight load is 38s, so that profile is
+# now ~95% of startup. Skipping the image profile should also FREE KV cache (the
+# profile is what sizes it), on top of the time saved.
+#
+# MAX_NUM_SEQS: 1217900 measured "GPU KV cache size: 560,505 tokens" and
+# "Maximum concurrency for 32,768 tokens per request: 17.11x" -- so KV supports
+# ~17 full-length concurrent sequences while the RL config caps at 8. At the
+# real prompt length (client window 20480 => ~15,360) headroom is ~36x. Raising
+# this is the cheapest rollout-throughput lever available.
+#
+# MAX_NUM_BATCHED_TOKENS: the agentic workload is PREFILL-dominated -- measured
+# 150,223 input tokens vs 3,377 output per trial on 1221005, a 44:1 ratio. At
+# 4096 a ~15k prompt takes ~4 chunked-prefill passes.
+: "${MAX_NUM_SEQS:=4}"
+: "${MAX_NUM_BATCHED_TOKENS:=4096}"
+: "${MM_LIMIT:=}"
+
+VLLM_ARGS=(
+  --model "$MODEL_PATH"
+  --served-model-name "$MODEL_REVISION"
+  --host "$host"
+  --port 8000
+  --tensor-parallel-size 1
+  --max-model-len 32768
+  --dtype bfloat16
+  --gpu-memory-utilization 0.85
+  --max-num-seqs "$MAX_NUM_SEQS"
+  --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
+  --enable-prefix-caching
+  --enable-chunked-prefill
+  --enable-auto-tool-choice
+  --tool-call-parser qwen3_coder
+  --gdn-prefill-backend triton
   --enforce-eager
+)
+if [[ -n "$MM_LIMIT" ]]; then
+  VLLM_ARGS+=(--limit-mm-per-prompt "{\"image\":$MM_LIMIT,\"video\":$MM_LIMIT}")
+fi
+echo "VLLM_ARGS: ${VLLM_ARGS[*]}"
+
+exec python -m vllm.entrypoints.openai.api_server "${VLLM_ARGS[@]}"
