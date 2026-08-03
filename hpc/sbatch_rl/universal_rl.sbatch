@@ -189,6 +189,12 @@ export RAY_RUNTIME_ENV_HOOK=ray._private.runtime_env.uv_runtime_env_hook.hook
 export TRITON_CACHE_VERBOSE=1
 source "$WORKDIR/hpc/shell_utils/triton_cache.sh"
 
+# --- Optional FlashInfer AOT staging (sbcast once, verify/extract node-locally) ---
+# Unset by default.  When configured, this keeps FLASHINFER_WORKSPACE_BASE as a
+# distinct per-job /tmp JIT fallback and only prepends the verified, read-only
+# AOT package root to PYTHONPATH.
+source "$WORKDIR/hpc/shell_utils/flashinfer_aot_cache.sh"
+
 # --- Hydra debugging ---
 export HYDRA_FULL_ERROR=1
 
