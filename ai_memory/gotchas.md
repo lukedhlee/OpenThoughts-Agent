@@ -537,6 +537,49 @@ NOT editable. The fix only takes effect because the rendered RL sbatch puts
 with the job's real `PYTHONPATH`** — a bare venv-python import resolves to the stale copy and will
 tell you the fix is absent.
 
+### 2026-08-03 · ★ SkyRL `all_messages` roles must be ONLY `user`/`assistant` — `tool` aborts the batch
+**Symptom:** `INFRASTRUCTURE FAILURE [ValueError]: ... failed during result processing: Expected
+message role to be 'user' or 'assistant', got tool`, which fail-loud escalates into aborting the
+whole generation.
+**Cause:** `skyrl_train/generators/utils.py:1943` accepts only those two roles. An OpenAI-style
+`role: "tool"` message — the natural way to represent an observation — is rejected.
+**Fix:** deliver tool observations as **user** turns (what terminus_2 does); fold the
+`tool_call_id` into the message text. Harbor `1f38665f`.
+
+### 2026-08-03 · ★★ A non-zero OpenCode exit is the NORM — fail-loud on it aborts every batch
+**Symptom:** `INFRASTRUCTURE FAILURE [NonZeroAgentExitCodeError]: ... Aborting rollout generation`,
+killing all 64 trajectories.
+**Cause:** two compounding facts. (1) `_raise_if_fail_loud` aborts on ANY exception classified as
+infrastructure — i.e. the **`mask`** treatment — when `fail_on_infrastructure_error: true`. So
+adding an exception to `mask_exceptions` does **NOT** make it survivable; it makes it fatal. Only
+`passthrough_exceptions` is survivable. (2) Retained results from `1219434` show
+`NonZeroAgentExitCodeError` on **nearly every trial, including ones scoring reward 1.0** — OpenCode
+routinely exits non-zero. One context overflow at 11:23:19 aborted the batch six seconds later.
+**Fix:** put `NonZeroAgentExitCodeError` in **`passthrough_exceptions`** next to
+`ContextLengthExceededError`, of which it is the downstream manifestation. The trial keeps its real
+verifier reward. Genuine infra (bridge/verifier/network) stays fail-loud via `mask_exceptions`.
+**Remember the taxonomy:** `mask` = infrastructure ⇒ **ABORTS** under fail-loud · `zero` = counted
+as reward 0 in the baseline · `passthrough` = keep the verifier reward, no abort.
+
+### 2026-08-03 · ★★ Qwen3.6-35B-A3B on raw r2egym is near-DETERMINISTIC per task ⇒ no GRPO gradient
+**Symptom:** rewards look healthy across tasks (5 groups all-1.0, 8 groups all-0.0) but **0 of 15
+groups had any WITHIN-group reward variance** at `n_samples_per_prompt: 2` — every group was `[1,1]`
+or `[0,0]`.
+**Why it matters:** GRPO advantage is computed *within* a prompt group. All-zero groups are dropped
+by `rloo_n_filter_zero_reward_groups: true`; all-one groups carry zero advantage. **No group can
+contribute gradient**, so the optimizer would have had nothing to consume even with rollouts and
+extraction working perfectly. Cross-task spread is NOT a substitute.
+**Evidence strength:** if per-task pass probability were mid-range (~0.7), the chance of all 13
+observed pairs agreeing is ~0.05%. The near-determinism is real, not sampling noise — though n=2
+per group is weak on its own.
+**Action taken:** canary rebalanced to **16 groups × 4 samples = 64 trajectories** (identical cost,
+reallocated toward within-group variance). 16 is the hard valid minimum under FSDP4xEP4 fully-async
+GRPO. If 4 samples still show no variance, that is strong evidence the **model-specific learnable
+band** (`0 < pass@k < 1`, PARKED by operator 2026-07-29) is REQUIRED, not optional — the co-lead
+reached the same conclusion independently. → [[r2egym_apptainer_reference_impl]]
+**Do not** read a healthy-looking `avg_raw_reward` as proof GRPO can learn; check within-group
+variance explicitly.
+
 ### 2026-08-03 · Pinned FlashInfer AOT cache is x86-64; Jupiter GH200 is aarch64
 **Symptom:** `tvm_ffi.load_module` reports the `fused_moe_90` file as not found even though the file
 exists with the expected SHA-256.
