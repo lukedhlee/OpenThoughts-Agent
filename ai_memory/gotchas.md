@@ -497,6 +497,46 @@ any such occurrence, and asserts `threshold + largest measured tool jump < serve
 **Corollary:** grepping a trial tree for success markers is unsound — the rendered trial config
 contains the instruction text, so marker strings match before the agent has done anything.
 
+### 2026-08-03 · ★★ SkyRL's RL extraction is hard-coupled to Terminus2 — OpenCode rollouts are unusable
+**Symptom:** every OpenCode RL rollout dies with
+`INFRASTRUCTURE FAILURE [TypeError]: Trajectory ... failed outside the model` and
+`fail_on_infrastructure_error: true` aborts the **whole generation batch** — including trials that
+already earned a real verifier reward of 1.0. Underlying error:
+`'NoneType' object is not subscriptable`.
+**Cause:** `terminal_bench_generator._process_trial_result` (MarinSkyRL ~line 1483) reads
+**unconditionally**:
+```python
+chat_history       = result.agent_result.metadata["all_messages"]
+summarization_count = result.agent_result.metadata["summarization_count"]
+```
+`terminus_2.py:2157-2160` is the **only** place in Harbor that populates these. Harbor's `opencode.py`
+never set `AgentContext.metadata` at all, so it is `None`. **Operator-required change A (switch
+training rollouts Terminus2 → OpenCode) silently severed the training data path.** It stayed hidden
+for days because every earlier run died sooner — Daytona → streaming → tool-choice → context
+overflow. `store_all_messages: true` was already being passed to OpenCode and silently ignored:
+**the third instance of accepted-but-unimplemented in one day**, after `strict_json_parser` and
+`compaction.reserved`.
+**Fix:** Harbor `179b31e9` on `lukedhlee/apptainer-opencode-bridge` — `_build_all_messages()`
+reconstructs an OpenAI-style chat history from the stdout events `_convert_events_to_trajectory`
+already parses; the instruction is captured in `run()` (it is a CLI arg, not an event). Populated
+**before** the trajectory-conversion early returns, so a conversion failure cannot abort a batch.
+Gated on `store_all_messages` ⇒ eval paths byte-identical. Validated against all 7 retained
+`1218813` trajectories: all reconstruct as `user/assistant/tool` alternation.
+⚠ **`rollout_details=None` is NOT the blocker** — SkyRL is None-safe there and falls back to the
+3-tuple path (TIS degrades, no crash). Only `metadata` is fatal.
+⚠ **FIDELITY LIMIT — gate before promoting past a smoke.** OpenCode records prose and tool calls as
+SEPARATE STRUCTURED EVENTS and does not retain raw completion text, so the model's literal Qwen3 XML
+tool-call markup is unrecoverable. The reconstruction is **faithful in structure, approximate in
+tokens** — fine for pipeline validation, NOT sufficient to trust TIS importance ratios. The exact
+path is the literal recording proxy (`literal.jsonl` → `_parse_literal_proxy_log` → per-turn
+`prompt_token_ids`/`completion_token_ids`); it was NOT enabled on `1218813`. **Enable it before the
+50-step promotion.**
+**Deployment trap:** harbor is a **copied install** in `envs/rl-megatron/lib/python3.12/site-packages/harbor`,
+NOT editable. The fix only takes effect because the rendered RL sbatch puts
+`harbor-apptainer-bridge/src` FIRST on `PYTHONPATH`, shadowing it. **Always verify a harbor change
+with the job's real `PYTHONPATH`** — a bare venv-python import resolves to the stale copy and will
+tell you the fix is absent.
+
 ### 2026-08-03 · Pinned FlashInfer AOT cache is x86-64; Jupiter GH200 is aarch64
 **Symptom:** `tvm_ffi.load_module` reports the `fused_moe_90` file as not found even though the file
 exists with the expected SHA-256.
