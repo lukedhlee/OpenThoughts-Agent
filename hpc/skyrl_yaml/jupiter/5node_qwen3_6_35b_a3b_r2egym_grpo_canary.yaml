@@ -1,0 +1,282 @@
+entrypoint: examples.terminal_bench.entrypoints.main_tbench
+
+# The launcher materializes every consumer-specific limit from this single
+# request contract. Keep the derived trainer/generator/Harbor fields out of the
+# YAML so they cannot drift apart.
+context_budget:
+  request_window_tokens: 32768
+  max_new_tokens_per_turn: 4096
+  max_turns: 999999
+
+# Exact initialization:
+# Qwen/Qwen3.6-35B-A3B @ 995ad96eacd98c81ed38be0c5b274b04031597b0, staged
+# verbatim from the hub — no conversion step, no derived checkpoint.
+#
+# The published checkpoint is a multimodal shell (Qwen3_5MoeForConditionalGeneration:
+# 64.6 GiB text tower + 1.6 GiB MTP head + 0.8 GiB vision tower). SkyRL unwraps it
+# to the text tower at load time via SKYRL_QWEN3_5_VLM_UNWRAP=1 (its default), a
+# pure reference re-point of already-loaded submodules. The matching weight-sync
+# name mapping is gated on the same flag, so policy and rollout engines stay in
+# lockstep. Cost is ~3.6% extra read per load; a pre-unwrapped on-disk copy would
+# cost a second 67 GB artifact to pin and trust.
+#
+# Intermediate bring-up canary only: 4 policy/ref nodes (16 GH200 GPUs,
+# FSDP4 x EP4) plus one rollout node (4 independent TP1 vLLM engines). It
+# deliberately collects only 32 prompt groups / 64 trajectories to shorten the
+# path to reward, update, sync, and export evidence. Passing this canary does
+# not replace the established six-node final gate.
+
+config_groups:
+  terminal_bench_config: terminal_bench
+
+terminal_bench:
+  trials_dir: null
+  harbor:
+    name: opencode
+    version: 1.18.8
+    preinstalled: true
+    prompt_template_path: /e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge/eval/jureca/opencode_swebench_prompt.md.j2
+    opencode_config:
+      autoupdate: false
+      compaction:
+        # Pipeline-validation smoke only: keep growing tool histories below
+        # vLLM's hard request boundary. Formal evaluation remains no-summary.
+        auto: true
+    enable_summarize: false
+    store_all_messages: true
+    trajectory_config:
+      raw_content: true
+    # The host-side trace is authoritative. Re-uploading agent logs into the
+    # remote sandbox is unused by training and can park failed trials in Harbor's
+    # 60-600s retry backoff, starving the rollout engines.
+    upload_agent_logs: false
+    enable_episode_logging: false
+    record_terminal_session: false
+    enable_pane_logging: false
+    override_timeout_sec: 1800
+    override_cpus: 2
+    override_memory_mb: 4096
+    override_storage_mb: 4096
+    environment_type: apptainer
+    bridge_url: ${oc.env:APPTAINER_BRIDGE_URL,http://10.128.1.2:9920}
+    sif_cache: /p/scratch/synthlaion/lee27/r2egym_sif
+    auto_snapshot: false
+    verifier_override_timeout_sec: 120
+    max_retries: 3
+    min_wait_sec: 60.0
+    max_wait_sec: 600.0
+    wait_multiplier: 2.0
+    exclude_exceptions:
+      - VerifierTimeoutError
+      - VerifierRuntimeError
+      - RewardFileNotFoundError
+      - RewardFileEmptyError
+      - VerifierOutputParseError
+      - BridgeOutageError
+      - BridgeOperationError
+      - BridgeOperationTimeoutError
+      - VerifierInfrastructureError
+    n_concurrent_trials: 32
+    log_level: INFO
+    enable_reward_shaping: false
+    collect_rollout_details: true
+    enable_error_classification: true
+    fail_on_infrastructure_error: true
+    mask_exceptions:
+      - DaytonaError
+      - EnvironmentStartTimeoutError
+      - BridgeOutageError
+      - BridgeOperationError
+      - BridgeOperationTimeoutError
+      - VerifierInfrastructureError
+      - NetworkError
+      - ConnectionError
+      - RewardFileNotFoundError
+      - RewardFileEmptyError
+      - AgentEnvironmentTimeoutError
+      - ContextLengthExceededError
+    default_error_treatment: mask
+    passthrough_exceptions:
+      - AgentTimeoutError
+      - ContextLengthExceededError
+  model_info: {}
+  archiving:
+    enabled: false
+  trace_upload:
+    enabled: false
+
+trainer:
+  strategy: fsdp2
+  flash_attn: false
+  attn_backend: sdpa
+  use_sample_packing: false
+  gradient_checkpointing: true
+  gradient_checkpointing_use_reentrant: true
+  algorithm:
+    advantage_estimator: grpo
+    use_kl_loss: false
+    kl_loss_coef: 0.0
+    eps_clip_low: 0.2
+    eps_clip_high: 0.2
+    loss_reduction: sequence_mean
+    use_tis: true
+    tis_imp_ratio_cap: 2.0
+  epochs: 1
+  max_steps: 1
+  update_epochs_per_batch: 1
+  train_batch_size: 32
+  policy_mini_batch_size: 32
+  eval_batch_size: 32
+  micro_forward_batch_size_per_gpu: 1
+  micro_train_batch_size_per_gpu: 1
+  fully_async:
+    num_parallel_generation_workers: 32
+    max_buffered_groups: 32
+  eval_interval: 999999
+  eval_before_train: false
+  ckpt_interval: 1
+  resume_mode: latest
+  hf_save_interval: 1
+  hf_upload_mode: all
+  hf_hub_repo_id: null
+  hf_hub_private: false
+  hf_hub_revision: main
+  enable_db_registration: false
+  project_name: jupiter-r2egym-grpo-qwen36-35b
+  log_level: INFO
+  tracker_commit_each_step: true
+  logger: wandb
+  run_name: null
+  ckpt_path: null
+  export_path: null
+  policy:
+    model:
+      path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96eacd98c81ed38be0c5b274b04031597b0
+    optimizer_config:
+      lr: 1.0e-6
+      weight_decay: 0.0
+      adam_betas: [0.9, 0.999]
+      max_grad_norm: 1.0
+    fsdp_config:
+      cpu_offload: false
+      reshard_after_forward: true
+      fsdp_size: 4
+      expert_model_parallel_size: 4
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+  ref:
+    model:
+      path: /e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96eacd98c81ed38be0c5b274b04031597b0
+    fsdp_config:
+      cpu_offload: false
+      reshard_after_forward: true
+      fsdp_size: 4
+      expert_model_parallel_size: 4
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+  placement:
+    colocate_all: false
+    colocate_policy_ref: true
+    policy_num_nodes: 4
+    ref_num_nodes: 4
+    policy_num_gpus_per_node: 4
+    ref_num_gpus_per_node: 4
+    critic_num_nodes: 1
+    critic_num_gpus_per_node: 4
+    policy_strict_spread_pg: true
+    policy_per_gpu_bundles: true
+    policy_force_cvd_mask: true
+
+generator:
+  backend: vllm
+  timeout_multiplier: 1.0
+  model_dtype: bfloat16
+  enforce_eager: true
+  inference_engine_tensor_parallel_size: 1
+  num_inference_engines: 4
+  inference_engine_expert_parallel_size: 1
+  n_samples_per_prompt: 2
+  eval_n_samples_per_prompt: 1
+  gpu_memory_utilization: 0.85
+  max_num_seqs: 8
+  max_num_batched_tokens: 4096
+  enable_prefix_caching: true
+  enable_chunked_prefill: true
+  run_engines_locally: true
+  weight_sync_backend: nccl
+  async_engine: true
+  batched: false
+  enable_http_endpoint: true
+  enable_ray_prometheus_stats: false
+  vllm_stats_interval: 1
+  append_eos_token_after_stop_str_in_multi_turn: true
+  sampling_params:
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 20
+  # OpenCode always supplies its coding tools with tool_choice="auto". The
+  # exact checkpoint's chat template emits Qwen3 XML tool calls
+  # (<tool_call><function=...><parameter=...>), which vLLM 0.22 parses with
+  # qwen3_coder. Without both fields vLLM rejects every agent request before
+  # generation, so this is part of the rollout transport contract.
+  engine_init_kwargs:
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+
+data:
+  train_data: []
+  val_data: []
+
+rollout:
+  fanout:
+    enabled: true
+    num_coordinators: 4
+    cpus_per_coordinator: 8
+
+container:
+  extra_env:
+    RL_ENV_DIR: /e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron
+    LD_LIBRARY_PATH: "/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cu13/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cublas/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cuda_cupti/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cudnn/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cufft/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cufile/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/curand/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cusolver/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cusparse/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cusparselt/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nccl/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nvjitlink/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nvshmem/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nvtx/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/torch/lib:${CUDA_HOME}/lib64"
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    NCCL_DEBUG: WARN
+    SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
+    # The staged checkpoint is the published Qwen3.6 VLM shell. SkyRL unwraps
+    # its text tower in memory, and the same flag enables the matching
+    # policy-to-vLLM weight-name mapping.
+    SKYRL_QWEN3_5_VLM_UNWRAP: "1"
+    # Qwen3.6 has three GDN layers per four-layer block. Its pure-Torch kernel
+    # is prohibitively slow at this run's 28k-token prompt length, so absence
+    # of the GPU-smoked official FlashQLA kernel must abort model startup.
+    SKYRL_GDN_FLASHQLA: "1"
+    SKYRL_GDN_FLASHQLA_REQUIRED: "1"
+    TILELANG_CACHE_DIR: /e/scratch/reformo/lee27/cache/tilelang/qwen36-flashqla-0.1.2-sm90
+    VLLM_FORCE_IPV4: "1"
+    GLOO_USE_IPV6: "0"
+    NCCL_SOCKET_FAMILY: AF_INET
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+    WANDB_PROJECT: jupiter-r2egym-grpo-qwen36-35b
+    WANDB_MODE: offline
+    WANDB_DIR: /e/scratch/reformo/lee27/wandb
+    # Keep high-cardinality Ray startup logs node-local; the sbatch cleanup trap
+    # collects them into the experiment directory. Spill large objects to our
+    # writable project scratch instead of a stale user namespace.
+    OT_AGENT_RAY_LOG_DIR: /tmp/ray_logs
+    RAY_object_spilling_config: '{"type":"filesystem","params":{"directory_path":"/e/scratch/reformo/lee27/ray_spill"}}'
+    DC_AGENT_SECRET_ENV: /e/scratch/reformo/lee27/keys/secrets.env
+    # container.extra_env is rendered as Bash exports before Hydra starts, so
+    # OmegaConf interpolation syntax is invalid here. The Hydra-side bridge_url
+    # above remains environment-resolvable from this concrete export.
+    APPTAINER_BRIDGE_URL: http://10.128.1.2:9920
+    # JURECA compute nodes cannot route directly to Jupiter's 10.128.x compute
+    # network. The Jupiter->JURECA control master reverse-forwards this internal
+    # JURECA login address to the per-job vLLM endpoint.
+    SKYRL_ROLLOUT_HTTP_ENDPOINT_HOST: jrlogin05i
+    SKYRL_ROLLOUT_HTTP_ENDPOINT_PORT: "18000"
+    RL_REPO_DIR: /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge
+    SKYRL_HOME: /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge
+    CONDA_EXE: /e/scratch/reformo/lee27/miniforge3/bin/conda
+    RL_PYTHON: /e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/bin/python
+    PYTHONPATH: /e/scratch/reformo/lee27/pydeps/qwen36-flashqla-0.1.2:/e/scratch/reformo/lee27/harbor-apptainer-bridge/src:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-train:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-gym:/e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge

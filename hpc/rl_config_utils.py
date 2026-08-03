@@ -813,6 +813,8 @@ def build_skyrl_hydra_args(
     # - engine_init_kwargs: vLLM engine settings vary by config
     # - hf_hub_*: HuggingFace upload settings not in base config
     # - enable_db_registration: database registration setting
+    # - max_buffered_groups: supported by the fully-async trainer but absent
+    #   from SkyRL's base Hydra config
     # - wrap_policy: fsdp_config.wrap_policy.transformer_layer_cls_to_wrap is not in
     #   SkyRL's base fsdp_config struct, so a bare override is rejected
     #   ("Key 'wrap_policy' is not in struct"); ++ adds-or-overrides it.
@@ -820,6 +822,7 @@ def build_skyrl_hydra_args(
         ".engine_init_kwargs",
         ".hf_hub_",
         ".enable_db_registration",
+        ".max_buffered_groups",
         ".optimizer_kwargs",
         ".rope_scaling",
         ".wrap_policy",
