@@ -631,6 +631,10 @@ SWE-bench SIFs · 30B-A3B on A100-40GB at TP=4 (moot — no model runs on JURECA
 
 ## Map
 
+**⚠ TEMPORARY:** `NEXT_SESSION.md` — takeover note for a fresh session (written 2026-08-03).
+Condensed current state, the two pending operator decisions, and the traps worth not repeating.
+**Delete it once absorbed into this file + `gotchas.md`.**
+
 **How to write memory:** `memory-guide.md` — two-tier rule + triage test. Read when *writing* memory.
 
 **Permanent, append-only:** `decisions.md` (every choice + context + rejected options — read before
