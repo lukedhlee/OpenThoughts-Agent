@@ -16,7 +16,26 @@ set -euo pipefail
 JSC_SCRATCH=/e/scratch/reformo/lee27
 RL_VENV="$JSC_SCRATCH/OpenThoughts-Agent/envs/rl-megatron"
 MODEL_REVISION=995ad96eacd98c81ed38be0c5b274b04031597b0
-MODEL_PATH="$JSC_SCRATCH/models/Qwen3.6-35B-A3B/$MODEL_REVISION"
+# MODEL_ROOT selects the FILESYSTEM the 26 shards are read from; the pinned
+# revision stays in the directory name either way so the identity assert below
+# still holds. vLLM loads shards SEQUENTIALLY in a single stream, so the load is
+# bounded by per-stream read bandwidth: /e/scratch delivers ~57-98 MB/s per
+# stream (measured O_DIRECT on compute jpbo-018-14, job 1224678) which is the
+# whole of the 701s "Loading weights" in job 1217900, while /e/fscratch delivers
+# 2.51 GiB/s per stream. Override to /e/fscratch/reformo/lee27 to read the
+# flash-staged copy. Default is unchanged.
+MODEL_ROOT="${MODEL_ROOT:-$JSC_SCRATCH}"
+MODEL_PATH="${MODEL_PATH:-$MODEL_ROOT/models/Qwen3.6-35B-A3B/$MODEL_REVISION}"
+
+# Fail loud rather than silently serving a different revision: the pinned hash
+# is load-bearing for the paired comparison, and it lives in the dir name only.
+case "$MODEL_PATH" in
+  *"$MODEL_REVISION"*) ;;
+  *) echo "ERROR: MODEL_PATH does not carry revision $MODEL_REVISION: $MODEL_PATH" >&2; exit 1 ;;
+esac
+test -s "$MODEL_PATH/model.safetensors.index.json" || {
+  echo "ERROR: no safetensors index under $MODEL_PATH" >&2; exit 1; }
+echo "MODEL_PATH=$MODEL_PATH"
 ENDPOINT_FILE="$JSC_SCRATCH/experiments/qwen36_vllm_canary_${SLURM_JOB_ID}.endpoint"
 
 module load GCC/14.3.0
