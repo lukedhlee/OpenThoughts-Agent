@@ -102,6 +102,20 @@ def test_grpo_smoke_geometry_and_text_checkpoint_namespace() -> None:
         "/e/scratch/reformo/lee27/pydeps/qwen36-flashqla-0.1.2:"
     )
     assert "qwen36-flashqla-0.1.2-sm90" in env["TILELANG_CACHE_DIR"]
+    assert env["FLASHINFER_AOT_ARCHIVE"].endswith(
+        "flashinfer-fused-moe-sm90a-aot-"
+        "fi0.6.11.post2-cu130-vllm0.22.0-torch2.11.0-py312.tar.gz"
+    )
+    assert env["FLASHINFER_AOT_ARCHIVE_SHA256"] == (
+        "35271d0fbdb42dcb02003c10b92e092ef046b575f5122ceef70b76bff76bf22e"
+    )
+    assert env["FLASHINFER_AOT_SO_SHA256"] == (
+        "976678d1c03a35358a165eb8ba9353bf1652ab297f07a1a763230f9493cadcd3"
+    )
+    assert env["FLASHINFER_AOT_CACHE_KEY"] == (
+        "fi0.6.11.post2-cu130-x86_64-manylinux2_28-sm90a-"
+        "vllm0.22.0-torch2.11.0-py312"
+    )
     # Unset means SkyRL auto-detects GDN from layer_types and masks broken FLA.
     assert "SKYRL_GDN_MASK_FLA" not in env
 

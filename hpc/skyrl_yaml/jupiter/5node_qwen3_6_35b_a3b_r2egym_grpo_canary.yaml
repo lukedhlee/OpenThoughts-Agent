@@ -252,6 +252,10 @@ container:
     SKYRL_GDN_FLASHQLA: "1"
     SKYRL_GDN_FLASHQLA_REQUIRED: "1"
     TILELANG_CACHE_DIR: /e/scratch/reformo/lee27/cache/tilelang/qwen36-flashqla-0.1.2-sm90
+    FLASHINFER_AOT_ARCHIVE: /e/scratch/reformo/lee27/cache/flashinfer-aot/fi0.6.11.post2-cu130-x86_64-manylinux2_28-sm90a-vllm0.22.0-torch2.11.0-py312/flashinfer-fused-moe-sm90a-aot-fi0.6.11.post2-cu130-vllm0.22.0-torch2.11.0-py312.tar.gz
+    FLASHINFER_AOT_ARCHIVE_SHA256: 35271d0fbdb42dcb02003c10b92e092ef046b575f5122ceef70b76bff76bf22e
+    FLASHINFER_AOT_SO_SHA256: 976678d1c03a35358a165eb8ba9353bf1652ab297f07a1a763230f9493cadcd3
+    FLASHINFER_AOT_CACHE_KEY: fi0.6.11.post2-cu130-x86_64-manylinux2_28-sm90a-vllm0.22.0-torch2.11.0-py312
     VLLM_FORCE_IPV4: "1"
     GLOO_USE_IPV6: "0"
     NCCL_SOCKET_FAMILY: AF_INET
