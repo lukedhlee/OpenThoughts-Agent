@@ -580,6 +580,55 @@ reached the same conclusion independently. → [[r2egym_apptainer_reference_impl
 **Do not** read a healthy-looking `avg_raw_reward` as proof GRPO can learn; check within-group
 variance explicitly.
 
+### 2026-08-03 · ★★ Slow model load is the FILESYSTEM: `/e/scratch` gives 104 MB/s, `/e/fscratch` 2.3 GB/s
+**Symptom:** the 67.0 GiB / 26-shard Qwen3.6 checkpoint takes **8–15 min per engine group** to load
+(measured 7:38, 9:49, 11:40, 15:21 across runs), ~18–30 s per 2.6 GiB shard.
+**Cause:** raw read bandwidth on `/e/scratch`. Measured with `dd ... iflag=direct` (O_DIRECT, 2 GiB)
+from a Jupiter login node:
+
+| path | throughput |
+|---|---|
+| `/e/scratch` read | **104 MB/s** |
+| `/e/fscratch` write | 283 MB/s |
+| `/e/fscratch` read | **2.3 GB/s (22×)** |
+
+67 GiB ÷ 104 MB/s ≈ 11 min — matches every observation. **It is not vLLM and not the prefetch
+setting.** vLLM does log
+`Auto-prefetch is disabled because the filesystem (GPFS) is not a recognized network FS (NFS/Lustre)`,
+which looks like the culprit, but job `1217881` already forced
+`--safetensors-load-strategy=prefetch` and it was NO faster (153 s populating page cache, then
+33–58 s/shard vs ~31 s baseline). You cannot prefetch your way out of a 104 MB/s pipe.
+**Fix:** stage the checkpoint on **`/e/fscratch`** (flash). Same 8M inode limit, only 1% used, and
+17.9 GB of a 42.9 TB data limit — a 67 GiB model is trivial. Projected load ~30 s instead of ~11 min.
+⚠ Caveats: measured from a LOGIN node (verify on compute), and **fscratch retention/purge policy is
+undocumented** — treat it as transient. Keep checkpoints/HF exports on `/e/scratch`; stage only the
+read-only model and the high-churn `trace_jobs` on fscratch.
+**Corollary:** this likely also explains the unexplained **110-min** shards→policy-init interval on
+`1221005` (vs ~28 min on `1219434`, same geometry) — GPFS contention across the 26 users sharing
+`reformo`, not a code regression.
+
+### 2026-08-03 · Filesystem choice on Jupiter — inode headroom and freshness differ a lot
+`jutil project dataquota -p reformo` (**never `find`/`du` on GPFS**):
+
+| filesystem | data | inodes | accounting freshness |
+|---|---|---|---|
+| `/e/scratch/reformo` (exa) | 79.9 TB / 214.7 TB | **6.14M / 8M (77%)** | stale (2026-07-24) |
+| `/e/project1/reformo` (exa) | 7.8 TB / 21.5 TB | **3.93M / 4M (98%)** | stale — **AVOID** |
+| `/p/scratch/reformo` (JUST) | 12.0 TB / 96.6 TB | 1.00M / 4M (25%) | **fresh (08-03)** |
+| `/e/fscratch/reformo` (exa flash) | 17.9 GB / 42.9 TB | **80k / 8M (1%)** | 2026-07-30 |
+
+`/e/scratch/reformo` is shared by **26 users**, so the inode cap is a shared resource — our own
+footprint was only ~470k of 6.14M (~8%), meaning tidying our debug traces frees almost nothing
+(today's three runs = 156 trial dirs ≈ 1.9k inodes). `/p/scratch` is the older cross-system JUST
+filesystem (our r2egym SIFs already live at `/p/scratch/synthlaion/lee27/r2egym_sif`); it has ~3M
+free inodes but is not Jupiter-native, so expect no bandwidth win. **`/e/fscratch` wins on both
+inodes and speed.**
+**Real deletion win found:** `envs/rl` was **77,743 inodes** of a venv that can NEVER work on Jupiter
+(its `vllm._C` needs `libcudart.so.12`; Jupiter ships only CUDA/13). Deleted after verifying the
+ImportError and that `envs/rl-megatron` still imports `vllm._C` (vllm 0.22.0, torch 2.11.0+cu128)
+**with `module load GCC/14.3.0 nvidia-compilers/25.9-CUDA-13`** — without those modules even the
+good env fails on `libcudart.so.13`, so never judge a venv from a bare login shell.
+
 ### 2026-08-03 · ★ `OSError: [Errno 122] Disk quota exceeded` mid-rollout = INODE exhaustion, not space
 **Symptom:** many trials abort simultaneously with
 `INFRASTRUCTURE FAILURE [OSError]` / `[Errno 122] Disk quota exceeded: '/e/scratch/...'`.
