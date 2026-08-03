@@ -27,6 +27,7 @@ shopt -s nullglob
 : "${CKPT_INTERVAL:=1}"
 : "${HF_SAVE_INTERVAL:=1}"
 : "${PREFLIGHT_ONLY:=0}"
+: "${REQUIRE_CLEAN_BRIDGE:=1}"
 : "${JOB_NAME:=jupiter_qwen36_35b_r2egym_grpo_smoke}"
 : "${HF_HUB_REPO_ID:=}"
 : "${HF_HUB_PRIVATE:=false}"
@@ -50,6 +51,7 @@ export PYTHONPATH="$FLASHQLA_LAYER:$HARBOR_REPO/src:$RL_REPO_DIR/skyrl-train:$RL
 for required in \
   "$RL_VENV/bin/python" \
   "$RL_CONFIG" \
+  "$DCFT/hpc/qwen36_grpo_preflight.py" \
   "$HARBOR_REPO/src/harbor/environments/apptainer/apptainer.py" \
   "$RL_REPO_DIR/skyrl-train/skyrl_train/models/qwen3_5_vlm.py" \
   "$FLASHQLA_LAYER/qwen3_6_flashqla_manifest.json" \
@@ -61,12 +63,22 @@ for required in \
   fi
 done
 
+BRIDGE_STATUS_FILE="$(mktemp)"
+trap 'rm -f "$BRIDGE_STATUS_FILE"' EXIT
 if ! curl --fail --silent --show-error --max-time 10 \
-  "$APPTAINER_BRIDGE_URL/status" >/dev/null; then
+  "$APPTAINER_BRIDGE_URL/status" >"$BRIDGE_STATUS_FILE"; then
   echo "ERROR: Apptainer bridge is unhealthy: $APPTAINER_BRIDGE_URL" >&2
   echo "A disconnected bridge can otherwise masquerade as zero reward." >&2
   exit 1
 fi
+
+# Fail in seconds, before importing the model stack, if the worker fleet is dead,
+# a dedicated smoke would inherit stale sandboxes, or the materialized OpenCode
+# context contract can still exceed vLLM's request window.
+"$RL_VENV/bin/python" -m hpc.qwen36_grpo_preflight \
+  --rl-config "$RL_CONFIG" \
+  --bridge-status-file "$BRIDGE_STATUS_FILE" \
+  --require-clean-bridge "$REQUIRE_CLEAN_BRIDGE"
 
 "$RL_VENV/bin/python" - "$MODEL_PATH" "$MODEL_REVISION" "$FLASHQLA_LAYER" <<'PY'
 import importlib
