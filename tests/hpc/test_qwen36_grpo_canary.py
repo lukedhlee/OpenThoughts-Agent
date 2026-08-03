@@ -101,7 +101,8 @@ def test_canary_retains_exact_safe_pipeline_contract() -> None:
     assert harbor["environment_type"] == "apptainer"
     assert harbor["bridge_url"].startswith("${oc.env:APPTAINER_BRIDGE_URL")
     assert harbor["opencode_config"]["compaction"]["auto"] is True
-    assert harbor["opencode_config"]["compaction"]["reserved"] == 16_384
+    assert "reserved" not in harbor["opencode_config"]["compaction"]
+    assert harbor["opencode_config"]["compaction"]["auto"] is True
     assert {"ContextLengthExceededError", "NonZeroAgentExitCodeError"}.issubset(
         harbor["exclude_exceptions"]
     )
@@ -110,6 +111,6 @@ def test_canary_retains_exact_safe_pipeline_contract() -> None:
     assert parsed.trainer["max_prompt_length"] == 28_672
     assert parsed.generator["engine_init_kwargs"]["max_model_len"] == 32_768
     assert parsed.terminal_bench["model_info"] == {
-        "max_input_tokens": 32_768,
+        "max_input_tokens": 20_480,
         "max_output_tokens": 4_096,
     }

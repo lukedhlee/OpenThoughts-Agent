@@ -29,7 +29,10 @@ _REQUIRED_CONTEXT_BUDGET_FIELDS = frozenset(
         "max_turns",
     }
 )
-_CONTEXT_BUDGET_FIELDS = _REQUIRED_CONTEXT_BUDGET_FIELDS
+_OPTIONAL_CONTEXT_BUDGET_FIELDS = frozenset({"client_window_tokens"})
+_CONTEXT_BUDGET_FIELDS = (
+    _REQUIRED_CONTEXT_BUDGET_FIELDS | _OPTIONAL_CONTEXT_BUDGET_FIELDS
+)
 
 _DERIVED_CONTEXT_FIELDS = (
     ("trainer", "max_prompt_length"),
@@ -51,11 +54,26 @@ class ContextBudget:
     request_window_tokens: int
     max_new_tokens_per_turn: int
     max_turns: int
+    # Window ADVERTISED to the agent client, when it must be smaller than the
+    # served window. OpenCode compacts proactively at ``limit.context -
+    # limit.output``, and Harbor derives ``limit.context`` from this value, so
+    # this is the only knob that actually moves OpenCode's compaction
+    # threshold. ``opencode_config.compaction.reserved`` does NOT: OpenCode
+    # 1.18.8 accepts and writes the key but never reads it, which is why a
+    # single ~11k-token tool observation could still cross the server's hard
+    # prompt ceiling with compaction nominally enabled. Defaults to the served
+    # window, i.e. no client/server divergence.
+    client_window_tokens: Optional[int] = None
 
     @property
     def max_input_tokens(self) -> int:
         """Return the input allowance after reserving one complete response."""
         return self.request_window_tokens - self.max_new_tokens_per_turn
+
+    @property
+    def advertised_window_tokens(self) -> int:
+        """Return the total window the agent client is told the model has."""
+        return self.client_window_tokens or self.request_window_tokens
 
     def as_dict(self) -> Dict[str, int]:
         """Return the public contract with its derived server prompt allowance."""
@@ -64,6 +82,7 @@ class ContextBudget:
             "max_new_tokens_per_turn": self.max_new_tokens_per_turn,
             "max_turns": self.max_turns,
             "max_input_tokens": self.max_input_tokens,
+            "client_window_tokens": self.advertised_window_tokens,
         }
 
 
@@ -137,10 +156,28 @@ def resolve_context_budget(raw: Dict[str, Any], config_path: Path) -> ContextBud
         max_turns=_require_positive_integer(
             config["max_turns"], "max_turns", config_path
         ),
+        client_window_tokens=(
+            _require_positive_integer(
+                config["client_window_tokens"], "client_window_tokens", config_path
+            )
+            if "client_window_tokens" in config
+            else None
+        ),
     )
     if budget.max_input_tokens <= 0:
         raise ValueError(
             f"{config_path}: request_window_tokens ({budget.request_window_tokens}) must exceed "
+            f"max_new_tokens_per_turn ({budget.max_new_tokens_per_turn})"
+        )
+    if budget.advertised_window_tokens > budget.request_window_tokens:
+        raise ValueError(
+            f"{config_path}: client_window_tokens ({budget.advertised_window_tokens}) must not "
+            f"exceed request_window_tokens ({budget.request_window_tokens}); advertising a larger "
+            "window than the server serves guarantees a request over the hard prompt ceiling"
+        )
+    if budget.advertised_window_tokens <= budget.max_new_tokens_per_turn:
+        raise ValueError(
+            f"{config_path}: client_window_tokens ({budget.advertised_window_tokens}) must exceed "
             f"max_new_tokens_per_turn ({budget.max_new_tokens_per_turn})"
         )
     return budget
@@ -175,7 +212,11 @@ def _materialize_context_budget(
         # the model's total context window, not the server's prompt allowance.
         # In particular, OpenCode subtracts max_output_tokens and its own
         # safety margin before setting the client-side context limit.
-        model_info["max_input_tokens"] = budget.request_window_tokens
+        # Advertise the CLIENT window here, not the served one: OpenCode turns
+        # this into ``limit.context`` and compacts at ``context - output``, so
+        # advertising the full served window leaves a compaction threshold too
+        # close to the hard ceiling for one large tool observation to fit.
+        model_info["max_input_tokens"] = budget.advertised_window_tokens
         model_info["max_output_tokens"] = budget.max_new_tokens_per_turn
         terminal_bench["model_info"] = model_info
 

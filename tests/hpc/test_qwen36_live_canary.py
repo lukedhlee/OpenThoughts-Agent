@@ -96,12 +96,12 @@ def valid_trial_config() -> dict:
                 "version": OPENCODE_VERSION,
                 "preinstalled": True,
                 "model_info": {
-                    "max_input_tokens": 32_768,
+                    "max_input_tokens": 20_480,
                     "max_output_tokens": 4_096,
                     "input_cost_per_token": 0,
                     "output_cost_per_token": 0,
                 },
-                "opencode_config": {"compaction": {"auto": True, "reserved": 16_384}},
+                "opencode_config": {"compaction": {"auto": True}},
             },
         },
         "environment": {

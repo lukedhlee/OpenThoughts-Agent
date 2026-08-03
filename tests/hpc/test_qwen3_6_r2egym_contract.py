@@ -106,6 +106,8 @@ def test_grpo_context_budget_is_single_source_of_truth() -> None:
         "request_window_tokens": 32_768,
         "max_new_tokens_per_turn": 4_096,
         "max_turns": 999_999,
+        # Advertised to OpenCode only; the server still serves 32_768.
+        "client_window_tokens": 20_480,
     }
 
     parsed = parse_rl_config(str(RL_CONFIG))
@@ -117,8 +119,11 @@ def test_grpo_context_budget_is_single_source_of_truth() -> None:
     assert "max_turns" not in parsed.terminal_bench["harbor"]
     assert parsed.terminal_bench["model_info"] == {
         # Harbor/OpenCode treats this as the total model window and subtracts
-        # output plus its own compaction safety margin.
-        "max_input_tokens": 32_768,
+        # output plus its own compaction safety margin. It is deliberately the
+        # SMALLER client window, so OpenCode's proactive compaction threshold
+        # (context - output = 11_264) sits far below the server's 28_672
+        # prompt ceiling. The server contract above is unchanged.
+        "max_input_tokens": 20_480,
         "max_output_tokens": 4_096,
     }
 
@@ -156,9 +161,12 @@ def test_grpo_rollouts_use_pinned_opencode_with_smoke_compaction() -> None:
     assert harbor["prompt_template_path"].endswith(
         "/eval/jureca/opencode_swebench_prompt.md.j2"
     )
+    # No `reserved`: OpenCode 1.18.8 accepts and writes the key but never
+    # reads it, so it is dead configuration (measured: overflow at 28_673 with
+    # reserved=16_384). The threshold comes from client_window_tokens.
     assert harbor["opencode_config"] == {
         "autoupdate": False,
-        "compaction": {"auto": True, "reserved": 16_384},
+        "compaction": {"auto": True},
     }
     assert {"ContextLengthExceededError", "NonZeroAgentExitCodeError"}.issubset(
         harbor["exclude_exceptions"]

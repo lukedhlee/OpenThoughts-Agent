@@ -7,6 +7,15 @@ context_budget:
   request_window_tokens: 32768
   max_new_tokens_per_turn: 4096
   max_turns: 999999
+  # Pipeline-validation smoke only. The SERVER still serves the full 32768
+  # window (28672 prompt + 4096 output); this is the smaller window ADVERTISED
+  # to OpenCode so that its proactive compaction threshold sits far enough
+  # below the hard prompt ceiling for one large tool observation to land
+  # safely. Harbor derives limit.context = 20480 - 4096 - 1024 = 15360 and
+  # OpenCode compacts at context - output = 11264, leaving 17408 tokens of
+  # slack against the 28672 ceiling -- more than the largest tool-output jump
+  # measured live (11056 tokens, canary r2egym-v1-00005__Bvnfhmh).
+  client_window_tokens: 20480
 
 # Exact initialization:
 # Qwen/Qwen3.6-35B-A3B @ 995ad96eacd98c81ed38be0c5b274b04031597b0, staged
@@ -37,13 +46,14 @@ terminal_bench:
     opencode_config:
       autoupdate: false
       compaction:
-        # Pipeline-validation smoke only: keep growing tool histories below
-        # vLLM's hard request boundary. OpenCode checks the previous assistant
-        # usage before appending the next tool result; reserve enough headroom
-        # for the largest tool-output jump observed during the live smoke.
-        # Formal evaluation remains no-summary.
+        # Pipeline-validation smoke only; formal evaluation remains no-summary.
+        # NOTE: do NOT add `reserved:` here. OpenCode 1.18.8 accepts the key,
+        # Harbor deep-merges it, and it is written to opencode.json -- but
+        # OpenCode never reads it, so it is dead configuration that silently
+        # buys no headroom (measured: canary r2egym-v1-00005__Bvnfhmh still
+        # overflowed at 28673 with reserved=16384 set). The compaction
+        # threshold is moved via context_budget.client_window_tokens instead.
         auto: true
-        reserved: 16384
     enable_summarize: false
     store_all_messages: true
     trajectory_config:

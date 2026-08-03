@@ -38,7 +38,14 @@ TOOL_MARKERS = (
 )
 TOOL_MARKER = TOOL_MARKERS[0]
 FINAL_MARKER = "CANARY_DONE"
-OPENCODE_COMPACTION_RESERVED = 16_384
+# Window advertised to OpenCode. Harbor turns this into
+# limit.context = window - output - 1024 = 15360, and OpenCode compacts
+# proactively at context - output = 11264 -- far enough below the server's
+# hard 28672 prompt ceiling to absorb one large tool observation.
+# `opencode_config.compaction.reserved` does NOT move this threshold: OpenCode
+# 1.18.8 accepts and writes the key but never reads it.
+OPENCODE_CLIENT_WINDOW = 20_480
+OPENCODE_SERVED_WINDOW = 32_768
 
 _CONTEXT_RE = re.compile(
     r"prompt contains at least|maximum context length|context length exceeded|"
@@ -307,11 +314,23 @@ def validate_canary_artifacts(
             "TOOL_ACTION",
             "trajectory lacks two sequential marker-bearing tool observations",
         )
+    # A ContextOverflowError anywhere in the stream means the hard ceiling was
+    # crossed and OpenCode compacted REACTIVELY to recover. That still produces
+    # a large prompt drop, so has_compaction_drop() alone would accept it --
+    # but it is exactly the failure this canary exists to catch, and under GRPO
+    # the wasted request is a real rollout defect. Reject it explicitly, even
+    # when OpenCode goes on to exit zero.
+    if _CONTEXT_RE.search(opencode_raw) or "ContextOverflowError" in opencode_raw:
+        raise CanaryFailure(
+            "COMPACTION",
+            "OpenCode hit the server's hard prompt ceiling and compacted "
+            "reactively; proactive compaction must fire BEFORE the overflow",
+        )
     if not has_compaction_drop(opencode_raw):
         raise CanaryFailure(
             "COMPACTION",
             "OpenCode events show no >=4096-token prompt drop after crossing the "
-            "reserved compaction threshold",
+            "proactive compaction threshold",
         )
     if not has_final_marker(opencode_raw):
         raise CanaryFailure(
@@ -354,7 +373,10 @@ def validate_materialized_trial_contract(
     kwargs = agent.get("kwargs")
     if not isinstance(kwargs, dict):
         raise CanaryFailure("CONTRACT", "materialized agent kwargs are missing")
-    expected_info = {"max_input_tokens": 32_768, "max_output_tokens": 4_096}
+    expected_info = {
+        "max_input_tokens": OPENCODE_CLIENT_WINDOW,
+        "max_output_tokens": 4_096,
+    }
     model_info = kwargs.get("model_info")
     if not isinstance(model_info, dict) or any(
         model_info.get(key) != value for key, value in expected_info.items()
@@ -377,11 +399,12 @@ def validate_materialized_trial_contract(
         raise CanaryFailure(
             "CONTRACT", "materialized OpenCode compaction.auto is not true"
         )
-    if compaction.get("reserved") != OPENCODE_COMPACTION_RESERVED:
+    if "reserved" in compaction:
         raise CanaryFailure(
             "CONTRACT",
-            "materialized OpenCode compaction.reserved must be "
-            f"{OPENCODE_COMPACTION_RESERVED}",
+            "materialized OpenCode compaction declares `reserved`, which OpenCode "
+            f"{OPENCODE_VERSION} silently ignores; the threshold must come from "
+            "context_budget.client_window_tokens instead",
         )
     if kwargs.get("api_base") != endpoint:
         raise CanaryFailure(
@@ -419,7 +442,10 @@ async def run_live_canary(args: argparse.Namespace) -> tuple[float, Path]:
     terminal.trials_dir = str(args.trials_dir)
     terminal.harbor.bridge_url = args.bridge_url
     terminal.harbor.n_concurrent_trials = 1
-    terminal.harbor.opencode_config.compaction.reserved = args.compaction_reserved
+    # The compaction threshold is set by context_budget.client_window_tokens,
+    # already materialized into model_info by parse_rl_config. Nothing to force
+    # here -- and `compaction.reserved` deliberately must NOT be injected,
+    # because OpenCode ignores it (see validate_materialized_trial_contract).
 
     builder = HarborConfigBuilder(terminal)
     config = builder.build_trial_config(
@@ -486,12 +512,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--bridge-url", default="http://10.128.1.2:9920")
     parser.add_argument("--bridge-timeout-sec", type=float, default=10.0)
     parser.add_argument("--agent-timeout-sec", type=float, default=300.0)
-    parser.add_argument(
-        "--compaction-reserved",
-        type=int,
-        default=OPENCODE_COMPACTION_RESERVED,
-        help="OpenCode compaction reserve applied at TrialConfig materialization",
-    )
     parser.add_argument(
         "--require-clean-bridge",
         choices=("0", "1"),

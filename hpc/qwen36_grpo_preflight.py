@@ -13,8 +13,17 @@ from hpc.rl_config_utils import parse_rl_config
 
 EXPECTED_WINDOW = 32_768
 EXPECTED_OUTPUT = 4_096
-EXPECTED_OPENCODE_CONTEXT = 27_648
-EXPECTED_OPENCODE_RESERVED = 16_384
+# Window advertised to OpenCode, deliberately smaller than the served window.
+# Harbor derives limit.context = 20480 - 4096 - 1024 = 15360, and OpenCode
+# compacts proactively at context - output = 11264, leaving 17408 tokens of
+# slack under the server's hard 28672 prompt ceiling.
+EXPECTED_CLIENT_WINDOW = 20_480
+EXPECTED_OPENCODE_CONTEXT = 15_360
+EXPECTED_OPENCODE_COMPACT_AT = 11_264
+# Largest single tool observation measured on the live endpoint: a 44027-byte
+# result rendered to 11056 prompt tokens (canary r2egym-v1-00005__Bvnfhmh,
+# 2026-08-03). History can grow by one of these between compaction checks.
+MAX_OBSERVED_TOOL_JUMP = 11_056
 ACTIVE_ENV_STATES = ("pending", "starting", "ready", "stopping")
 
 
@@ -98,10 +107,11 @@ def validate_context_contract(config_path: Path) -> None:
             "OpenCode compaction.auto must be true or its history can grow past "
             "the vLLM request boundary"
         )
-    if compaction.get("reserved") != EXPECTED_OPENCODE_RESERVED:
+    if "reserved" in compaction:
         raise ValueError(
-            "OpenCode compaction.reserved must be "
-            f"{EXPECTED_OPENCODE_RESERVED} to absorb large tool-output jumps"
+            "OpenCode 1.18.8 accepts `compaction.reserved` but never reads it, so it "
+            "buys no headroom (measured: overflow at 28673 with reserved=16384). "
+            "Move the threshold with context_budget.client_window_tokens instead"
         )
     retry_exclusions = harbor.get("exclude_exceptions")
     required_fail_fast = {"ContextLengthExceededError", "NonZeroAgentExitCodeError"}
@@ -115,10 +125,10 @@ def validate_context_contract(config_path: Path) -> None:
 
     model_info = terminal.get("model_info")
     expected_info = {
-        "max_input_tokens": EXPECTED_WINDOW,
+        "max_input_tokens": EXPECTED_CLIENT_WINDOW,
         "max_output_tokens": EXPECTED_OUTPUT,
     }
-    if model_info != expected_info:
+    if not isinstance(model_info, dict) or model_info != expected_info:
         raise ValueError(
             f"materialized Harbor model_info must be {expected_info}, got {model_info!r}"
         )
@@ -131,6 +141,26 @@ def validate_context_contract(config_path: Path) -> None:
     if limit != expected_limit:
         raise ValueError(
             f"Harbor/OpenCode model limit must be {expected_limit}, got {limit!r}"
+        )
+
+    # The load-bearing invariant. OpenCode compacts proactively at
+    # ``context - output``; between two checks the history can grow by one
+    # whole tool observation, and the largest measured live was 11056 tokens.
+    # If the threshold plus that jump can reach the server's prompt ceiling,
+    # the run overflows exactly as canary r2egym-v1-00005__Bvnfhmh did.
+    compact_at = limit["context"] - limit["output"]
+    if compact_at != EXPECTED_OPENCODE_COMPACT_AT:
+        raise ValueError(
+            f"OpenCode proactive compaction threshold must be "
+            f"{EXPECTED_OPENCODE_COMPACT_AT}, got {compact_at}"
+        )
+    server_prompt_ceiling = EXPECTED_WINDOW - EXPECTED_OUTPUT
+    if compact_at + MAX_OBSERVED_TOOL_JUMP >= server_prompt_ceiling:
+        raise ValueError(
+            f"compaction threshold {compact_at} leaves only "
+            f"{server_prompt_ceiling - compact_at} tokens under the server prompt "
+            f"ceiling {server_prompt_ceiling}, less than the largest measured tool "
+            f"observation ({MAX_OBSERVED_TOOL_JUMP} tokens)"
         )
 
     if parsed.trainer.get("max_prompt_length") != EXPECTED_WINDOW - EXPECTED_OUTPUT:
@@ -172,7 +202,7 @@ def main() -> None:
         "Qwen3.6 fast preflight passed: workers_alive=true, "
         f"clean_bridge={args.require_clean_bridge == '1'}, "
         f"OpenCode limit={EXPECTED_OPENCODE_CONTEXT}+{EXPECTED_OUTPUT}, "
-        f"compaction_reserved={EXPECTED_OPENCODE_RESERVED}"
+        f"proactive_compaction_at={EXPECTED_OPENCODE_COMPACT_AT}"
     )
 
 
