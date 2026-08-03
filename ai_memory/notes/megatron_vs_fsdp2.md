@@ -1,5 +1,10 @@
 # Megatron vs FSDP2 — PI decision to switch RL defaults (2026-07-25)
 
+The PI's benchmark that made Megatron the RL default (~9× total compute on long sequences), and the
+crucial caveat that GSM8K understates the win because our policy_train is already small there.
+Read before choosing a backend or before quoting a Megatron speedup number.
+Operational bring-up record: [[jupiter_megatron_bringup]].
+
 **PI (Ben Feuer / penfever) verdict:** "megatron curb stomps FSDP2 ... guess we're switching our RL defaults!"
 Megatron is **merged in MarinSkyRL** (took several PRs; **PR #7 (closed)** carries the actual results).
 

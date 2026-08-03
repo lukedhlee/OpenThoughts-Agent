@@ -1,5 +1,9 @@
 # JSC / JURECA hazards & paths (LAION)
 
+The JSC filesystem rules that can lock or ban a whole project: inode/file-count caps, the
+`$HOME` / `project1` / `scratch` / `data1` path map, and the one-time home-relocation recipe.
+Read before writing anything large or many-filed anywhere at JSC.
+
 Sources: [LAION JSC access](https://iffmd.fz-juelich.de/WPHnb-DoTAKN3BN0afc9MQ), [Home handling](https://iffmd.fz-juelich.de/EgRn0takSoaWym8N9qoq4g)
 
 ## Hard hazards (can ban / lock everyone)

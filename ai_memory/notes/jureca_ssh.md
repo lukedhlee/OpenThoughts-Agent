@@ -1,5 +1,9 @@
 # JURECA SSH (JuDoor)
 
+Getting `ssh jureca` to work: ed25519-only keys, the `from=` IP trap, the `IdentitiesOnly` config
+requirement, TOTP, and ControlMaster reuse.
+Read when a JURECA login breaks — most often after a cafe/home IP change.
+
 ## Facts
 - User: `lee27` · Host alias: `ssh jureca` · Key: `~/.ssh/id_ed25519_jsc`
 - JuDoor key page: https://judoor.fz-juelich.de/account/a/JSC_LDAP/lee27/system/jureca/add_ssh_key
@@ -19,7 +23,7 @@
 ai_memory/scripts/jureca_from_clause.sh          # print paste line
 # → JuDoor → Manage SSH-keys (JURECA) → paste → wait ≤15m → ssh jureca
 ```
-- Current (2026-07-28): `118.235.5.36` (also keep `61.72.135.209`, cafe/home IPs comma-separated)
+- Also JUWELS: same key line, **separate** JuDoor upload — see `ai_memory/notes/juwels_ssh.md` (`ssh juwels` / `ssh juwels-booster`)
 
 ## After login — original check target
 `/p/project1/laionize/marianna/dc_agent/bash-scripts/run_full_r2egym_filter_jureca.sh`

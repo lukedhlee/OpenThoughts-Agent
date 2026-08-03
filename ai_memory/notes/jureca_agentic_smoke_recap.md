@@ -1,5 +1,10 @@
 # JURECA Stream B — agentic smoke recap (parked)
 
+What the dense-model (0.6B→1.7B→8B) JURECA agentic GRPO smokes actually proved: cloud Daytona worked,
+Harbor `terminus-2` + MarinSkyRL `terminal_bench` was the harness, and reward rose from
+thinking-length shaping rather than verifier pass-rate.
+Read for what plumbing is already proven on JURECA; this stream is parked and is not the MoE work.
+
 **What ran:** dense Qwen3 **0.6B → 1.7B → 8B** agentic GRPO on JURECA A100. Plumbing proven; verifier/pass-rate lift was still open. **Not** the Vista MoE workstream.
 
 ## Train tasks (agentic)

@@ -1,6 +1,13 @@
-# Handoff — enable Apptainer on JSC + port the apptainer bridge
+# Enable Apptainer on JSC + port the apptainer bridge
 
-**Owner:** lukedhlee (JSC user `lee27`) · **Opened 2026-07-28** · **Status: JURECA CPU bridge smoke passed; next is small-Qwen OpenCode→vLLM smoke**
+Operational state of the JURECA apptainer/OpenCode bridge that replaces Daytona for SWE-bench: what's
+done, the exact commits and measured smokes, what's next, and the traps. **Status as of 2026-07-29:
+COMPLETE** except provenance for a second 100-task SWE-bench manifest — see the final section.
+Read before touching the bridge, the SIF cache, or the OpenCode wiring.
+
+**Owner:** lukedhlee (JSC user `lee27`) · **Opened 2026-07-28** · ⚠ the per-section status lines below
+are historical; the authoritative status is **§ Final bridge/evaluation status (2026-07-29)** at the
+bottom of this file.
 
 Parent: [[handoff]] (the r2egym GRPO task this serves).
 Full background analysis: [[apptainer_bridge_swebench]] — **read that second**, it has the measurements
@@ -632,3 +639,226 @@ At the final 2026-07-29 check:
 The infrastructure, model-backed smoke, launcher integration, cache, and small validation are complete.
 The only unresolved prerequisite for a claimed comparable 200-task run is authoritative provenance for
 Marianna's alleged second 100-task manifest. The confirmed pinned 100-task evaluation can be launched now.
+
+---
+
+## 2026-07-29 (later) — scoping the FIRST REAL RUN: base 30B on the pinned 100
+
+Everything validated so far ran at toy scale: 1-task infra smoke, 1-task model-backed smoke with
+**Qwen3-0.6B**, 3-task **pristine-oracle** run (no model reasoning at all), and a 100-SIF cache audit.
+**No real model has ever been evaluated through this bridge.** So the next run is both the first
+scientific deliverable and the first real load test.
+
+### Goal of the run
+
+Evaluate **base `Qwen/Qwen3-30B-A3B`** on the pinned 100-task set through the bridge. This gets three
+things at once:
+1. the **base→RL Δ denominator** — [[decisions]] 2026-07-28 makes the base→RL delta the headline, so the
+   baseline is needed regardless of when the RL checkpoint lands;
+2. the bridge proven at **100-task scale and real concurrency**, not 1–3 tasks;
+3. a first exercise of the **specified eval regime** (~81920 ctx, no summarization, TP=4) that
+   [[r2egym_grpo_plan]] requires for comparability with the co-lead's g1-8b numbers.
+
+Pinned set: `DCAgent2/swebench-verified-random-100-folders` @
+`a2e51e9e0e8029156ed340719eb8cc7ceee3ed1a`; JURECA copy
+`/p/project1/synthlaion/lee27/swebench-verified-random-100-a2e51e9`; all 100 SIFs cached and
+`apptainer inspect`-clean.
+
+### ⚠ Statistical power — this is WHY the second 100 matters
+
+At n=100 and p≈0.3, SE ≈ 4.6pp ⇒ **±9.0 pts at 95%**. That can just barely resolve the co-lead's
++10 effect and **cannot** resolve a +5. At n=200 it tightens to ±6.4. So the missing second manifest is
+not bookkeeping — it is the difference between a conclusive and an inconclusive headline. Do not claim a
+200 until provenance is obtained ([[decisions]] 2026-07-29), but do treat obtaining it as high-value.
+
+### Known gaps before the run can be submitted (measured against the repo 2026-07-29)
+
+1. **No 81920-ctx eval config exists.** The only apptainer eval config is
+   `hpc/harbor_yaml/eval/configs/eval_opencode_apptainer_ctx32k.yaml` — 32,768 total
+   (28,672 prompt + 4,096 output), compaction disabled, **one concurrent trial**. A 100-task run at the
+   specified regime needs a new config: ~81,920 total context (YARN rope scaling), summarization off,
+   1 trial/task, and real concurrency.
+2. **30B-A3B has never been served on JURECA, and TP=1 cannot work there.** bf16 weights are ~60 GB;
+   JURECA `dc-gpu` A100s are **40 GB** ⇒ **TP≥2 is mandatory**, and the regime spec says **TP=4**. Every
+   model-backed bridge smoke to date was 0.6B at TP=1. This is the largest technical unknown in the run.
+3. **KV headroom at 81920 ctx is unverified** on A100-40GB even at TP=4, and YARN scaling must be
+   configured explicitly for Qwen3 beyond its native context.
+4. **Worker pool is sized for one task.** The passing smoke used `WORKERS_PER_NODE=1`, `MAX_CHAIN=0`.
+   100 tasks needs a real pool, and the `dc-cpu` 6h walltime is short against Marianna's
+   `MAX_CHAIN=5` auto-requeue design — decide whether to port the requeue or size the run to fit 6h.
+5. **The bridge code is not on the working branch.** It lives only in the worktrees below; the
+   `lukedhlee/vista-moe-grpo-30b` checkout has no `--apptainer-bridge-url` wiring and no apptainer eval
+   config. Verified 2026-07-29 by grepping `hpc/` on both branches.
+
+### Checkout state (verified 2026-07-29, both clean)
+
+```
+OpenThoughts-Agent: /Users/lukedhlee/OpenThoughts-Agent-apptainer-bridge
+                    branch lukedhlee/apptainer-opencode-bridge @ bc8378ed
+Harbor:             /Users/lukedhlee/harbor-apptainer-bridge      @ 02b06bc5
+main checkout:      /Users/lukedhlee/OpenThoughts-Agent
+                    branch lukedhlee/vista-moe-grpo-30b @ 919345c2  ← NO bridge code here
+```
+JURECA clones to pull onto: `/p/project1/synthlaion/lee27/{harbor,OpenThoughts-Agent}`.
+
+### Ordering
+
+Gap 2 (serve 30B at TP=4 on `dc-gpu`) is the gate — it is independent of the bridge and fails fast, so
+do it first as a standalone serving smoke before wiring 100 tasks behind it. Gaps 1/3/4 are config work
+that only matters once a served endpoint exists. The Marianna ask runs in parallel; it blocks the 200,
+not the 100.
+
+---
+
+## Pinned SWE-bench-100 oracle + fail-loud validation (2026-07-29)
+
+### Final result
+
+The exact pinned set at
+`/p/project1/synthlaion/lee27/swebench-verified-random-100-a2e51e9` was exercised with pristine oracle
+solutions against the 100-SIF JURECA cache:
+
+```
+scorable tasks:                 100
+oracle reward 1:               100 / 100
+verifier infrastructure errors: 0 / 100
+genuine oracle reward 0:         0
+```
+
+The former infrastructure case, `psf__requests-2317`, is resolved hermetically as described below.
+Harbor's fail-loud behavior remains in place for real external-network verifier failures.
+
+This result combines the complete first 100-task pass with isolated reruns of every affected task:
+
+- full run:
+  `/e/scratch/reformo/lee27/dc_agent_eval/jobs/swebench100-oracle-jureca-20260729`
+- all 14 initially affected tasks:
+  `/e/scratch/reformo/lee27/dc_agent_eval/jobs/swebench14-oracle-retry-jureca-20260729`
+- real fail-loud pair:
+  `/e/scratch/reformo/lee27/dc_agent_eval/jobs/swebench2-oracle-fail-loud-f06df0f0-20260729`
+- final Astropy compatibility proof:
+  `/e/scratch/reformo/lee27/dc_agent_eval/jobs/swebench-astropy-oracle-9792153e-20260729`
+- final Requests/httpbin production proof:
+  `/p/scratch/synthlaion/lee27/dc_agent_eval/jobs/swebench-requests-2317-httpbin-production-v2-20260730`
+
+The first saturated run's two apparent `AgentTimeoutError`s and one missing reward were not accepted as
+model evidence. At lower load all three Django tasks passed. Eleven other initial zeros passed after
+the generated SWE-bench parser stopped downloading `environment.yml`/requirements from GitHub.
+`astropy__astropy-8872` then passed after the bridge replaced its deprecated `distutils.LooseVersion`
+import immediately before pytest; its generated script had reset the file after earlier compatibility
+hooks ran.
+
+### `psf__requests-2317` hermetic resolution (2026-07-30)
+
+Copying Marianna's worker proxy is not the complete fix:
+
+- Her JURECA worker opens an SSH-D tunnel from each compute node and runs commands through
+  proxychains. The same unattended tunnel cannot authenticate for `lee27` because this account's JSC
+  SSH MFA prompts after public-key authentication.
+- Direct internet on `dc-cpu-devel` reproduced the public-service failure rather than fixing it:
+  `httpbin.org` returned HTTP 503 across the old Requests 2.4.3 integration suite. The interrupted
+  oracle run is
+  `/p/scratch/synthlaion/lee27/dc_agent_eval/jobs/swebench-requests-2317-httpbin-devel-20260730`.
+- This matches SWE-Bench issue #484 and debug-gym's approach: host httpbin inside the sandbox.
+
+The pinned task at
+`/p/project1/synthlaion/lee27/swebench-verified-random-100-a2e51e9/psf__requests-2317` now:
+
+1. installs `httpbin[mainapp]==0.10.2` and `pytest-httpbin==2.1.0` into the task image;
+2. starts local HTTP and HTTPS gunicorn services on unprivileged ports 18080 and 18443;
+3. rewrites only verifier infrastructure URLs and trusts the packaged test CA;
+4. replaces the suite's unroutable `10.255.255.1` assumption with a local saturated TCP accept queue,
+   preserving the intended 100 ms `ConnectTimeout` checks on JSC.
+
+The clean-cache devel oracle first scored reward 1:
+
+```
+/p/scratch/synthlaion/lee27/dc_agent_eval/jobs/swebench-requests-2317-httpbin-hermetic-v2-20260730
+```
+
+The final proof used a one-worker `dc-cpu` allocation, no proxy, and the production cache. It scored
+reward 1 with zero exceptions in 36 seconds:
+
+```
+/p/scratch/synthlaion/lee27/dc_agent_eval/jobs/swebench-requests-2317-httpbin-production-v2-20260730
+```
+
+Production image:
+
+```
+/p/scratch/synthlaion/lee27/sif/psf__requests-2317.sif
+sha256 f2389c370f593217b588ff16514181fdab201bacd45a267672863afc0cf29f7e
+```
+
+Recoverable pre-fix image:
+
+```
+/p/scratch/synthlaion/lee27/sif/psf__requests-2317.pre-httpbin-20260730.sif
+sha256 ac73507bcd86f8058a5fdb8648a54e14df2bd310fefc038cb88b8e32972e9527
+```
+
+The optional Marianna-compatible worker proxy wiring is committed and pushed in Harbor as `462f0364`
+(`fix(jureca): reproduce worker proxy tunnel`), but it is not enabled or needed for this task.
+
+### Fail-loud behavior
+
+Harbor:
+
+- `BridgeOperationError` and `BridgeOperationTimeoutError` distinguish bridge work from agent work.
+- `BridgeOperationTimeoutError` deliberately does not inherit from `TimeoutError`, preventing Harbor
+  from mislabeling an overloaded bridge queue as `AgentTimeoutError`.
+- stop and transfer deadlines are 600 seconds; exceeding them propagates instead of logging and
+  continuing.
+- verifier transcripts containing both an external dependency host and a hard network failure in an
+  air-gapped sandbox raise `VerifierInfrastructureError`.
+- focused unit suite: 26 passed; required Marin pre-commit entry point passed.
+
+MarinSkyRL and r2egym configs:
+
+- `fail_on_infrastructure_error: true` aborts rollout generation on masked infrastructure failures.
+- unknown exceptions default to `mask`, not training reward zero.
+- `AgentTimeoutError` and `ContextLengthExceededError` remain passthrough model outcomes.
+- both Qwen3-8B and Qwen3-30B r2egym configs name the new infrastructure exceptions in retry exclusion
+  and masking lists.
+
+Exact local commits, all unpushed:
+
+```
+Harbor:             f06df0f0 fail-loud infrastructure types and verifier detection
+                    8269257c / 9792153e scoped Astropy compatibility
+MarinSkyRL:         2adac62 fail-loud generator mode
+OpenThoughts-Agent: 502227ba r2egym fail-loud configuration
+```
+
+### Tunnel security trap
+
+The stale Jupiter scratch copy of `jupiter_to_jureca_tunnel.sh` unexpectedly printed
+`Attempting public -R bind 0.0.0.0:9930` and succeeded. That new forward was cancelled immediately,
+before any worker or trial used it, and `ss` confirmed `:9930` closed. The reviewed local internal-only
+script was then staged as:
+
+```
+/e/scratch/reformo/lee27/tunnel_internal_20260729.sh
+```
+
+The validation listeners were verified as exact `10.14.0.44:<port>` bindings; no `0.0.0.0:<port>`
+binding remained. Do not invoke the stale scratch-checkout script until that checkout is synchronized.
+
+### Temporary jobs
+
+The validation allocations were submitted with bounded walltimes and `MAX_CHAIN=0`. Do not cancel them
+without an explicit operator ask; they expire on their own:
+
+```
+15478772  original 8-node SWE-bench-100 pool
+15478866  14-task retry pool
+15478891  fail-loud pair pool
+15478901  first Astropy compatibility retry
+15478907  final 10-minute Astropy proof
+```
+
+The three temporary retry listeners/forwards on ports 9930, 9932, and 9934 were closed after all
+environments stopped; both Jupiter-side and JURECA-side probes confirmed the ports closed. The Slurm
+allocations above were left untouched.
+
+No RL job was launched.

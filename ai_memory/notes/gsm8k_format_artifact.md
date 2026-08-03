@@ -1,5 +1,10 @@
 # GSM8K `pass_at_1 ≈ 0.45` is a FORMAT artifact, not math ability
 
+Paired evidence that the whole GSM8K plateau was answer formatting, not reasoning: `strict@1024 = 41.6%`
+vs `flexible@4096 = 90.67%` on identical rollouts, with the decomposition and root cause.
+Read before citing any GSM8K number from our runs, and before interpreting an r2egym reward curve —
+the transferable lesson at the bottom applies there too.
+
 **Measured 2026-07-29, Jupiter job `1086698`** (n=1319, full GSM8K val, paired design).
 Probe: `scripts/analysis/gsm8k_budget_probe.py` + `eval/jupiter/gsm8k_budget_probe.sbatch`.
 Raw results: `/e/scratch/reformo/lee27/experiments/jupiter_gsm8k_budget_probe/results/probe_1086698.json`.

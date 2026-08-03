@@ -1,5 +1,10 @@
 # Vista MoE gsm8k GRPO (standard / non-agentic)
 
+The Vista gsm8k GRPO setup as it stood: proven geometries per scale, the config/launcher file map, and
+the launch commands.
+Read only if Vista is revived. ⚠ Its `pass_at_1` results are a format artifact —
+[[gsm8k_format_artifact]].
+
 **Branch:** `lukedhlee/vista-moe-grpo-30b`  
 **Model:** `Qwen/Qwen3-30B-A3B` (not Coder)  
 **Session log (2026-07-19):** `ai_memory/logs/2026-07-19_vista_moe_gsm8k_grpo.md`  

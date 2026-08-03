@@ -1,5 +1,9 @@
 # JURECA setup plan — Marianna RL stack → lee27
 
+The RL co-lead's JURECA stack: her fork refs, tree layout, split `dc-cpu`/`dc-gpu`/router mode, and the
+inode-safe lee27 layout + env strategy for working alongside it.
+Read for her fork refs and JURECA design, or before deciding whether to reuse vs clone her env.
+
 Updated from Marianna’s handoff + partial read of her launch script on jrlogin12.
 
 ## What she pointed at

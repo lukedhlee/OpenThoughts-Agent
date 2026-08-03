@@ -99,3 +99,50 @@ our own plan needs.
   `terminus-structured`, which our pinned harbor's `AgentName` enum does not even contain.
 - Building needs internet (docker pull + apt + pip) but compute nodes have none — pre-pull base layers
   into `APPTAINER_CACHEDIR` from a login node, or proxy the compute nodes. Which does she do?
+
+---
+
+## ⚠ CORRECTION 2026-07-29 (later) — the reference impl is NOT Jupiter-local
+
+The claim above ("r2egym belongs on JUPITER, not JURECA" / bridge + workers both on Jupiter) was an
+INFERENCE from the RL script's `PARTITION="booster"`. It is **wrong**. Measured by reading her scripts
+read-only on JURECA:
+
+**Her actual architecture is split across two clusters:**
+- **RL job on Jupiter** — `/e/...` paths, `PARTITION=booster`, `ACCOUNT=reformo`, `NUM_NODES=12`,
+  `POLICY_NUM_NODES=4`, `NUM_INFERENCE_ENGINES=8`, `--reservation=reformo`.
+- **Bridge server on a Jupiter LOGIN node** — `10.128.1.1:9920`.
+- **Sandbox workers on JUWELS**, a separate CPU cluster —
+  `apptainer_bridge/juwels_workers.sbatch`: `--nodes=8`, `--partition=batch`,
+  `--account=transfernetx`, `--cpus-per-task=48`, `--mem=0`, `--time=24:00:00`, **no `--gres=gpu`**.
+- **Joined by a reverse SSH tunnel from the JUWELS login node into Jupiter:9920.**
+- SIF cache is JUWELS-side: `/p/scratch/transfernetx/nezhurina1/sif_cache` (x86_64 — does NOT transfer
+  to Jupiter GH200).
+
+Her sbatch header states the design verbatim: *"Each compute node: 1 dispatcher polls localhost:9920
+(via login node); N workers consume from local queue (no HTTP polling). Only 32 dispatchers poll
+through tunnel (not 512 workers)."* Plus auto-chain: the worker job submits its successor before
+starting, so workers outlive the 24h limit.
+
+### Three consequences — all of these reverse earlier conclusions
+
+1. **Cross-cluster sandboxes are PROVEN for agentic RL training, not fatal.** The earlier
+   latency objection to a remote sandbox cluster is refuted by her running exactly that in production
+   for this experiment. The dispatcher/local-queue design is how it's made to work.
+2. **The "Jupiter compute can't reach JURECA" probe result is IRRELEVANT to this design.** Traffic never
+   flows that way. Jupiter compute → Jupiter login bridge (internal `10.128.x`, measured reachable);
+   the CPU cluster's LOGIN node initiates the tunnel inbound. ⇒ This also dissolves the routing gap
+   flagged against the SWE-bench eval plan in [[apptainer_bridge_handoff]].
+3. **Option B ("Jupiter-local bridge") in [[handoff]] § Sandbox is NOT what the reference impl does,**
+   and it is the worse option: Jupiter has **no CPU-only partition** (measured
+   `sinfo`: only `booster` + `largebooster`, both `gpu:gh200:4`, 288 CPUs / 878 GB / node), so
+   Jupiter-hosted sandboxes occupy GH200 nodes to run pytest. **JUWELS ≈ JURECA for our purposes
+   (operator, 2026-07-29): both have CPU clusters** ⇒ port her design with **JURECA `dc-cpu`
+   (`synthlaion`)** as the sandbox cluster, where our worker sbatch is ALREADY ported and smoke-passed.
+
+### Also measured
+- Her Jupiter eval datasets confirm the three-val-set design: `r2egym_learnable_heldout`,
+  `swebench-verified-random-100-folders` @ `a2e51e9e`, `swebench_verified_100_r2egymfmt`.
+- **Her learnable splits are permission-denied to us** —
+  `/e/data1/datasets/playground/ot/hf_hub/r2egym_learnable_{train,heldout}` → `Permission denied`.
+  So the band tooling must be requested or rebuilt; it cannot be read.

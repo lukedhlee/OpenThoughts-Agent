@@ -1,5 +1,10 @@
 # JURECA / JSC — what goes where (`lee27`)
 
+The concrete per-artifact placement table for JURECA (code, envs, caches, logs, checkpoints, datasets,
+SIFs), the env vars to set once, and the symlink recipe.
+Read when deciding where to put anything on JURECA. Hard hazards behind those rules:
+[[jsc_paths_hazards]].
+
 Rule of thumb (same idea as TACC `$HOME` vs `$SCRATCH`):
 - **`$HOME`** = tiny / fragile  
 - **`/p/project1/...`** = durable code & light project files (inode-sensitive)  

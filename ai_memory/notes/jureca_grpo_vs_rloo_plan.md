@@ -1,4 +1,9 @@
-# Plan — GRPO vs RLOO A/B on JURECA (sandbox-free gsm8k, lee27)
+# GRPO vs RLOO A/B on JURECA (sandbox-free gsm8k, lee27) — DONE
+
+The completed clean A/B that found GRPO and RLOO statistically tied, with the source-verified proof that
+only one knob differed, the fairness table, and the offline-uv/no-internet setup recipe.
+Read as the template for a fair single-knob A/B, or for the JURECA SkyRL offline setup. The estimator
+question itself is settled — see [[decisions]].
 
 Status: **DONE (2026-07-13).** Both arms COMPLETED (GRPO job 15426255, RLOO 15426256), synced to WandB
 `lukeleeai/gsm8k-grpo-vs-rloo` (runs nsb1bipp=grpo, dt0pjlma=rloo).

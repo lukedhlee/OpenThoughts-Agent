@@ -1,5 +1,9 @@
 # JUDAC SSH (JuDoor)
 
+Getting `ssh judac` to work, and when to use JUDAC (data transfer, git, HF, anything needing net)
+instead of a JURECA login node.
+Read when staging data or when a JUDAC login breaks after an IP change.
+
 Data-access / transfer login at JSC ([access docs](https://apps.fz-juelich.de/jsc/hps/judac/access.html)). Same rules as JURECA: ed25519 + `from=` + MFA TOTP. **Keys are per-system** — uploading for JURECA does **not** cover JUDAC.
 
 ## Facts

@@ -1,7 +1,13 @@
 # Apptainer bridge + SWE-bench as a validation set
 
+Why SWE-bench cannot be a Daytona validation set and cannot run on Jupiter at all: the x86_64-vs-aarch64
+fact, the measured 1-snapshot-per-task result, harbor's non-reaping of snapshots, and the co-lead's
+bridge architecture that fixes it.
+Read before proposing any SWE-bench val set, sizing a val set against the snapshot cap, or copying her
+bridge subsystem.
+
 Investigated 2026-07-28. Companion to [[jureca_marianna_setup_plan]] (her fork refs / JURECA layout)
-and the eval-regime confound in `handoff.md`.
+and the eval-regime confound in [[r2egym_grpo_plan]].
 
 Visual explainer (2026-07-28): https://claude.ai/code/artifact/6447de1d-c124-4830-b2fc-165173afd06b
 

@@ -1,5 +1,9 @@
 # TACC Vista — Luke quick ref
 
+Vista access and orientation: login + MFA, the two accounts (`lukedhlee` vs penfever/`CCR24067`),
+partition/QOS node caps, login-node don'ts, the repo tree, and the OT-Agent env preamble.
+Read only if Vista work is revived — the MoE workstream moved to Jupiter.
+
 ## Login (your account)
 ```bash
 ssh vista          # lukedhlee@vista.tacc.utexas.edu

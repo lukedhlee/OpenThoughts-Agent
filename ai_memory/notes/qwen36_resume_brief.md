@@ -2,7 +2,89 @@
 
 You are resuming an RL training bring-up. Read this whole file before running anything.
 
-## LATEST LIVE UPDATE — 2026-08-03 11:35 CEST
+## LATEST LIVE UPDATE — 2026-08-03 14:10 CEST · ⛔ STOPPED, TWO DECISIONS NEEDED
+
+Supersedes everything below. **Nothing is running on Jupiter (0 nodes).** JURECA workers
+`15489111` still alive (20h01m of 24h ⇒ expire ~18:50 CEST). Bridge pristine: 3542/3542 jobs,
+**zero errors**, all sandboxes reclaimed.
+
+### ⛔ DECISION 1 — the learnable band is REQUIRED. This is now settled empirically.
+
+**22 prompt groups measured across two runs. ZERO had within-group reward variance.**
+
+| run | config | groups | with variance |
+|---|---|---|---|
+| `1219434` | 32 groups × **2** samples | 15 | **0** |
+| `1221005` | 16 groups × **4** samples | 7 (4 complete) | **0** |
+
+The four complete n=4 groups were perfectly uniform: `[1,1,1,1]`, `[1,1,1,1]`, `[0,0,0,0]`,
+`[0,0,0,0]`. Rewards are real and honest — verifier-scored, `exception_info: null`, mixed ACROSS
+tasks (solved vs unsolved) — but GRPO computes advantage **within** a group. All-zero groups are
+dropped by `rloo_n_filter_zero_reward_groups`; all-one groups carry zero advantage. **No group can
+contribute gradient.** If per-task pass probability were mid-range, four uniform n=4 groups has
+probability ~0.02%.
+
+**Qwen3.6-35B-A3B is essentially deterministic per r2egym task.** The pipeline is not the problem
+any more; the DATA is. The co-lead's model-specific learnable band (`0 < pass@8 < 1` → 740 train +
+100 held out) is **required, not optional**. This was PARKED by the operator on 2026-07-29 with
+"forget the band for now, focus on enabling r2egym" — r2egym IS now enabled, and the parked risk has
+materialised in our own measurements. **Operator decision needed; do not silently adopt the band.**
+→ [[gotchas]], [[r2egym_apptainer_reference_impl]]
+
+### ⛔ DECISION 2 — `/e/scratch` INODE pressure killed `1221005`; cleanup needs approval
+
+`1221005` aborted at 14:03 with `OSError: [Errno 122] Disk quota exceeded: '/e/scratch/...'` across
+many trials at once. Not a code defect. `jutil project dataquota -p reformo` (the sanctioned tool —
+**never `find`/`du` on GPFS**):
+
+| filesystem | data | **inodes** |
+|---|---|---|
+| `/e/scratch/reformo` | 79.9 TB / 214.7 TB (37%) | **6,136,227 / 8,000,000 soft (77%)** |
+| `/e/project1/reformo` | 7.8 TB / 21.5 TB (36%) | **3,925,319 / 4,000,000 soft (98%)** |
+
+Data is fine; this is **inodes**. Counters are stale (last updated 2026-07-24), so real usage is
+higher after today. `/e/project1` at 98% of its inode soft limit is independently alarming —
+the handoff notes hitting the project file-count cap **locks the project for ALL users**.
+
+`/e/scratch/reformo/lee27/experiments` holds **103 entries**, including 17 dead
+`jupiter_qwen36_35b_r2egym_grpo_smoke_*` trees plus today's three cancelled canary trees; each
+trial directory is many small files. **Deleting them is a destructive action requiring explicit
+approval, so nothing was deleted.** All evidence needed for the findings above has already been
+extracted. Recommend approving deletion of the superseded `smoke_3..smoke_17` and `__dryrun_*`
+trees, and adopting a post-run trace cleanup step.
+
+### Fixes landed today — all pushed + deployed, no PRs
+
+| commit | repo | defect it fixed |
+|---|---|---|
+| `4fb4a158` | OT-Agent | `compaction.reserved` is dead config → threshold via `client_window_tokens: 20480` |
+| `179b31e9` | harbor | opencode never set `AgentContext.metadata` → extraction `TypeError` aborted every batch |
+| `1f38665f` | harbor | observations must be **user** turns; `role:"tool"` rejected by `utils.py:1943` |
+| `90109474` | OT-Agent | `NonZeroAgentExitCodeError` → `passthrough`; canary 32×2 → 16×4 |
+
+**All four are CONFIRMED WORKING on `1221005`:** zero context overflows, zero
+`Could not extract results`, zero `Expected message role`, zero non-zero-exit aborts. The pipeline
+ran cleanly through Ray → 26/26 shards (7m38s) → JIT/KV → endpoint → policy init → 693-tensor weight
+sync (301.9s) → 25 honest rollouts with real rewards. Only the disk quota stopped it.
+
+### Unexplained timing regression — worth a look
+
+`1221005` took **110 min** from shards-loaded to `init policy/ref/critic models done`, versus ~28 min
+on `1219434` with identical geometry. That squeeze is why the run had only ~40 min of wall left when
+rollouts began. Cause unknown; suspect GPFS metadata contention (consistent with the inode pressure).
+
+### Still never executed with this model
+
+**The optimizer update, checkpoint, and HF export.** A finite update remains the milestone. Also
+open: the **token-fidelity limit** — opencode discards raw completion text, so reconstructed
+`all_messages` is structurally faithful but approximate in tokens. Enable the literal recording proxy
+(`literal.jsonl`) before trusting TIS importance ratios or promoting to 50 steps.
+
+**Single point of failure:** Jupiter→JURECA ControlMaster (`~/.ssh/cm_jureca/qwen36`, pid 185890)
+carries the reverse tunnel as a `-R` forward. If it dies, restoring it needs ONE interactive
+`ssh jureca` + TOTP that only Luke can do.
+
+## PRIOR LIVE UPDATE — 2026-08-03 11:35 CEST
 
 Supersedes everything below. **Three pipeline layers were opened today; the blocker is no longer
 infrastructure, it is the DATA.**

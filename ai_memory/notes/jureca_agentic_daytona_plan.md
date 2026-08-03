@@ -1,5 +1,11 @@
 # JURECA agentic RL (Daytona) bring-up — plan + state
 
+How the JURECA agentic-RL runtime was finally made to import (the borrowed env + the `examples`
+PYTHONPATH shim + the pyoverlay), after the fresh-venv flash-attn build wall and the discovery that the
+co-lead's own path is Apptainer, not Daytona.
+Read for the runtime recipe and the launcher anatomy. ⚠ Sections are layered oldest-first; the ✅
+RUNTIME UNBLOCKED section supersedes BOTTOM LINE, OPEN DECISION, and Next below it.
+
 Goal: smoke-test **agentic** RL (Harbor drives agent rollouts in **cloud Daytona** sandboxes →
 verifier reward → SkyRL GRPO/RLOO update) on JURECA, for lee27. Distinct from the sandbox-free
 gsm8k A/B (see [[jureca_grpo_vs_rloo_plan]]).

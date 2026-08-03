@@ -580,6 +580,24 @@ reached the same conclusion independently. → [[r2egym_apptainer_reference_impl
 **Do not** read a healthy-looking `avg_raw_reward` as proof GRPO can learn; check within-group
 variance explicitly.
 
+### 2026-08-03 · ★ `OSError: [Errno 122] Disk quota exceeded` mid-rollout = INODE exhaustion, not space
+**Symptom:** many trials abort simultaneously with
+`INFRASTRUCTURE FAILURE [OSError]` / `[Errno 122] Disk quota exceeded: '/e/scratch/...'`.
+`OSError` is not in the exception config, so it takes `default_error_treatment: mask` ⇒ classified
+infrastructure ⇒ `_raise_if_fail_loud` aborts the whole batch (killed Jupiter `1221005` at 14:03).
+**Cause:** **inodes, not bytes.** `jutil project dataquota -p reformo` showed `/e/scratch/reformo` at
+37% of its data limit but **77% of its 8M inode soft limit**, and `/e/project1/reformo` at **98%**.
+Every RL trial directory is many small files, so a few dozen 64-trajectory runs move the inode
+counter fast. The quota counters are refreshed only every few days, so a healthy-looking number can
+be badly stale (ours was 10 days old).
+**Diagnose with `jutil project dataquota -p <ACCOUNT>` — NEVER `find`/`du` on GPFS**; the metadata
+scan is itself the hazard the handoff warns about, and hitting a project file-count cap **locks the
+project for ALL users**.
+**Fix:** delete superseded experiment trace trees (`experiments/<run>/.../trace_jobs`) after
+extracting their findings, and treat post-run trace cleanup as part of finishing a run rather than an
+afterthought. Extract the metrics you need FIRST — the reward/variance analysis only needs
+`result.json` per trial.
+
 ### 2026-08-03 · Pinned FlashInfer AOT cache is x86-64; Jupiter GH200 is aarch64
 **Symptom:** `tvm_ffi.load_module` reports the `fused_moe_90` file as not found even though the file
 exists with the expected SHA-256.

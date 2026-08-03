@@ -1,5 +1,10 @@
 # Jupiter — operator cheat sheet (`lee27`)
 
+Durable Jupiter facts: GH200 hardware, the `booster` / `largebooster` / `develbooster` policy differences,
+accounts, the `/e/...` path map and inode quotas, and the RL-venv dependency pins.
+Read before choosing a partition, requesting nodes, or installing anything into an RL venv.
+(The dated failure modes at the bottom are also in [[gotchas]], which is their canonical home.)
+
 Live-checked 2026-07-22.
 
 ## Hardware

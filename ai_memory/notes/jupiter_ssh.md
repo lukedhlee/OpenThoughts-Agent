@@ -1,5 +1,9 @@
 # Jupiter SSH (JuDoor) — `lee27`
 
+Getting `ssh jupiter` to work: the per-system JuDoor key upload, the `from=` IP clause, IPv4 forcing,
+TOTP, and ControlMaster reuse so agents skip MFA.
+Read when a Jupiter login breaks — most often after a cafe/home IP change.
+
 ## Status (2026-07-22)
 - Maintenance banner in lab ops (`Jun 23 → Jul 12`) is **stale** — login nodes answer again.
 - Local alias ready: `ssh jupiter` → `lee27@login02.jupiter.fz-juelich.de` (IPv4).

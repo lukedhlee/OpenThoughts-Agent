@@ -1,5 +1,9 @@
 # Jupiter WandB (`lee27`)
 
+Why Jupiter runs log WandB offline and how to sync them from a login node afterwards, plus the secrets
+pointer and project naming.
+Read before launching a tracked run, or when a finished run's curves aren't in WandB yet.
+
 ## Rule
 **Compute nodes have no internet** → train with `WANDB_MODE=offline`, sync from a **login node**.
 

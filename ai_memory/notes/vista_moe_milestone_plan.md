@@ -1,5 +1,10 @@
 # Vista MoE — milestone plan (Luke)
 
+The original five-step ladder from gsm8k smoke to full agentic RL, plus the TaskTrove-vs-AgentTrove-vs-
+held-out-evals distinction (which artifact plays which role).
+Read for the framing of what trains on what and what measures success; the ladder itself is superseded
+by [[r2egym_grpo_plan]].
+
 **Major milestone:** RL `Qwen/Qwen3-30B-A3B` on Vista with Harbor + Daytona on coding/agentic tasks → lift on **SWE-Bench Verified / OT-TB Lite / TB2**.
 
 **Immediate goal:** land gsm8k GRPO smoke (job `842670`) — prove MoE train loop only.

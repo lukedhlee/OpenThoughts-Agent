@@ -1,5 +1,9 @@
 # Vista — Qwen3-30B-A3B MoE GPU sizing
 
+GPU-count arithmetic for the 30B-A3B MoE: what fits on one GH200, the 24-GPU disagg reference layout,
+the hard EP/FSDP divisibility table, and measured single-GPU vLLM TPS.
+Read when converting a Jupiter (4 GPU/node) layout to Vista (1 GPU/node) or sizing a new geometry.
+
 **PI target model:** `Qwen/Qwen3-30B-A3B` (general MoE — NOT Coder).
 Also measured: `Qwen/Qwen3-Coder-30B-A3B-Instruct` for TPS compare only.
 Both: plain `qwen3_moe`, ~30B total / ~3B active, 128 experts top-8, bf16 ≈ **60 GB**.

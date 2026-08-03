@@ -1,5 +1,9 @@
 # Vista MoE — quantization, multi-node stack, expert residency
 
+Conceptual model of how we shard Qwen3-30B-A3B: no quantization, EP×FSDP divisibility rules, what
+colocate-vs-disagg means, and why experts are sharded-resident rather than swapped.
+Read before picking an EP×FSDP geometry, or when someone claims we quantize or offload experts.
+
 **Model:** `Qwen/Qwen3-30B-A3B` — 30B total / ~3B active, 128 experts top-8, **bf16 (no quant)**.
 
 ## MarinSkyRL vs SkyRL
