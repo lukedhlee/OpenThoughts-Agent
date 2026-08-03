@@ -32,7 +32,8 @@ done
 export APPTAINER_BRIDGE_URL
 export PYTHONPATH="$HARBOR_REPO/src:$RL_REPO_DIR/skyrl-train:$DCFT${PYTHONPATH:+:$PYTHONPATH}"
 
-exec "$RL_VENV/bin/python" "$DCFT/hpc/qwen36_live_canary.py" \
+cd "$DCFT"
+exec "$RL_VENV/bin/python" -m hpc.qwen36_live_canary \
   --rl-config "$RL_CONFIG" \
   --tasks-dir "$TASKS_DIR" \
   --trials-dir "$TRIALS_DIR" \

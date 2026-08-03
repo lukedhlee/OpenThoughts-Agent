@@ -14,22 +14,13 @@ EXPECTED_REVISION = "995ad96eacd98c81ed38be0c5b274b04031597b0"
 
 
 ROOT = Path(__file__).resolve().parents[2]
-RL_CONFIG = (
-    ROOT
-    / "hpc/skyrl_yaml/jupiter/6node_qwen3_6_35b_a3b_r2egym_grpo.yaml"
-)
-SERVE_CONFIG = (
-    ROOT
-    / "hpc/datagen_yaml/qwen3_6_35b_a3b_swebench80k_jupiter.yaml"
-)
+RL_CONFIG = ROOT / "hpc/skyrl_yaml/jupiter/6node_qwen3_6_35b_a3b_r2egym_grpo.yaml"
+SERVE_CONFIG = ROOT / "hpc/datagen_yaml/qwen3_6_35b_a3b_swebench80k_jupiter.yaml"
 EVAL_CONFIG = (
     ROOT
     / "hpc/harbor_yaml/eval/configs/eval_opencode_apptainer_qwen3_6_swebench100_ctx80k.yaml"
 )
-GRPO_LAUNCHER = (
-    ROOT
-    / "hpc/skyrl_standard/jupiter/run_r2egym_qwen3_6_35b_grpo.sh"
-)
+GRPO_LAUNCHER = ROOT / "hpc/skyrl_standard/jupiter/run_r2egym_qwen3_6_35b_grpo.sh"
 
 
 def load_yaml(path: Path) -> dict:
@@ -102,20 +93,7 @@ def test_grpo_smoke_geometry_and_text_checkpoint_namespace() -> None:
         "/e/scratch/reformo/lee27/pydeps/qwen36-flashqla-0.1.2:"
     )
     assert "qwen36-flashqla-0.1.2-sm90" in env["TILELANG_CACHE_DIR"]
-    assert env["FLASHINFER_AOT_ARCHIVE"].endswith(
-        "flashinfer-fused-moe-sm90a-aot-"
-        "fi0.6.11.post2-cu130-vllm0.22.0-torch2.11.0-py312.tar.gz"
-    )
-    assert env["FLASHINFER_AOT_ARCHIVE_SHA256"] == (
-        "35271d0fbdb42dcb02003c10b92e092ef046b575f5122ceef70b76bff76bf22e"
-    )
-    assert env["FLASHINFER_AOT_SO_SHA256"] == (
-        "976678d1c03a35358a165eb8ba9353bf1652ab297f07a1a763230f9493cadcd3"
-    )
-    assert env["FLASHINFER_AOT_CACHE_KEY"] == (
-        "fi0.6.11.post2-cu130-x86_64-manylinux2_28-sm90a-"
-        "vllm0.22.0-torch2.11.0-py312"
-    )
+    assert not any(key.startswith("FLASHINFER_AOT_") for key in env)
     # Unset means SkyRL auto-detects GDN from layer_types and masks broken FLA.
     assert "SKYRL_GDN_MASK_FLA" not in env
 
@@ -180,8 +158,11 @@ def test_grpo_rollouts_use_pinned_opencode_with_smoke_compaction() -> None:
     )
     assert harbor["opencode_config"] == {
         "autoupdate": False,
-        "compaction": {"auto": True},
+        "compaction": {"auto": True, "reserved": 16_384},
     }
+    assert {"ContextLengthExceededError", "NonZeroAgentExitCodeError"}.issubset(
+        harbor["exclude_exceptions"]
+    )
     for terminus_only_key in (
         "strict_json_parser",
         "interleaved_thinking",

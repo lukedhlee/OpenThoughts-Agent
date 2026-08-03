@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import platform
 import subprocess
 import tarfile
 import textwrap
@@ -27,18 +28,28 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(0o755)
 
 
-def _make_archive(tmp_path: Path) -> tuple[Path, str]:
+def _make_archive(
+    tmp_path: Path, *, elf_machine: int | None = None
+) -> tuple[Path, str]:
     payload = tmp_path / "payload"
     package = payload / "flashinfer_jit_cache"
     so = package / "jit_cache/fused_moe_90/fused_moe_90.so"
     so.parent.mkdir(parents=True)
-    (package / "__init__.py").write_text(
-        "from ._build_meta import __version__\n"
+    (package / "__init__.py").write_text("from ._build_meta import __version__\n")
+    (package / "_build_meta.py").write_text(f"__version__ = {EXPECTED_VERSION!r}\n")
+    machine = (
+        elf_machine
+        or {
+            "x86_64": 62,
+            "amd64": 62,
+            "aarch64": 183,
+            "arm64": 183,
+        }[platform.machine().lower()]
     )
-    (package / "_build_meta.py").write_text(
-        f"__version__ = {EXPECTED_VERSION!r}\n"
-    )
-    so.write_bytes(b"fake but hash-checked shared object\n")
+    header = bytearray(20)
+    header[:7] = b"\x7fELF\x02\x01\x01"
+    header[18:20] = machine.to_bytes(2, "little")
+    so.write_bytes(header + b"fake but hash-checked shared object\n")
 
     archive = tmp_path / "flashinfer-aot.tar.gz"
     with tarfile.open(archive, "w:gz") as tf:
@@ -66,6 +77,9 @@ def _make_fake_runtime(tmp_path: Path) -> Path:
             """
         )
     )
+    tvm_ffi = runtime / "tvm_ffi/__init__.py"
+    tvm_ffi.parent.mkdir(parents=True)
+    tvm_ffi.write_text("def load_module(path):\n    return object()\n")
     return runtime
 
 
@@ -74,7 +88,7 @@ def _make_fake_slurm(tmp_path: Path) -> Path:
     bin_dir.mkdir()
     _write_executable(
         bin_dir / "sbcast",
-        "#!/bin/bash\nset -e\n[[ $1 == --force ]]\ncp \"$2\" \"$3\"\n",
+        '#!/bin/bash\nset -e\n[[ $1 == --force ]]\ncp "$2" "$3"\n',
     )
     _write_executable(
         bin_dir / "srun",
@@ -90,8 +104,13 @@ def _make_fake_slurm(tmp_path: Path) -> Path:
     return bin_dir
 
 
-def _run_stage(tmp_path: Path, *, overrides: dict[str, str] | None = None):
-    archive, so_sha = _make_archive(tmp_path)
+def _run_stage(
+    tmp_path: Path,
+    *,
+    overrides: dict[str, str] | None = None,
+    elf_machine: int | None = None,
+):
+    archive, so_sha = _make_archive(tmp_path, elf_machine=elf_machine)
     runtime = _make_fake_runtime(tmp_path)
     bin_dir = _make_fake_slurm(tmp_path)
     workspace = tmp_path / "writable-jit-fallback"
@@ -125,7 +144,11 @@ def _run_stage(tmp_path: Path, *, overrides: dict[str, str] | None = None):
 
 def test_unset_hook_is_noop() -> None:
     result = subprocess.run(
-        ["bash", "-c", f"PYTHONPATH=sentinel; source {SCRIPT}; printf %s \"$PYTHONPATH\""],
+        [
+            "bash",
+            "-c",
+            f'PYTHONPATH=sentinel; source {SCRIPT}; printf %s "$PYTHONPATH"',
+        ],
         text=True,
         capture_output=True,
         check=False,
@@ -159,6 +182,14 @@ def test_stages_verifies_and_forces_node_local_writable_fallback(
     )
     assert values["PYTHONPATH"].startswith("/tmp/flashinfer_aot_unit_123/")
     assert values["WORKSPACE"] == "/tmp/flashinfer_unit_123"
+
+
+def test_rejects_wrong_cpu_architecture_before_model_load(tmp_path: Path) -> None:
+    host = platform.machine().lower()
+    wrong_machine = 183 if host in ("x86_64", "amd64") else 62
+    result = _run_stage(tmp_path, elf_machine=wrong_machine)
+    assert result.returncode != 0
+    assert "CPU architecture mismatch" in result.stderr
 
 
 @pytest.mark.parametrize(

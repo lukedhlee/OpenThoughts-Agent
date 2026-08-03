@@ -40,8 +40,12 @@ terminal_bench:
       autoupdate: false
       compaction:
         # Pipeline-validation smoke only: keep growing tool histories below
-        # vLLM's hard request boundary. Formal evaluation remains no-summary.
+        # vLLM's hard request boundary. OpenCode checks the previous assistant
+        # usage before appending the next tool result; reserve enough headroom
+        # for the largest tool-output jump observed during the live smoke.
+        # Formal evaluation remains no-summary.
         auto: true
+        reserved: 16384
     enable_summarize: false
     store_all_messages: true
     trajectory_config:
@@ -76,6 +80,10 @@ terminal_bench:
       - BridgeOperationError
       - BridgeOperationTimeoutError
       - VerifierInfrastructureError
+      # Deterministic agent/context failures are canary failures, not reasons
+      # to hold a rollout slot across 60/120/240-second retry backoff.
+      - ContextLengthExceededError
+      - NonZeroAgentExitCodeError
     n_concurrent_trials: 32
     log_level: INFO
     enable_reward_shaping: false
@@ -252,10 +260,6 @@ container:
     SKYRL_GDN_FLASHQLA: "1"
     SKYRL_GDN_FLASHQLA_REQUIRED: "1"
     TILELANG_CACHE_DIR: /e/scratch/reformo/lee27/cache/tilelang/qwen36-flashqla-0.1.2-sm90
-    FLASHINFER_AOT_ARCHIVE: /e/scratch/reformo/lee27/cache/flashinfer-aot/fi0.6.11.post2-cu130-x86_64-manylinux2_28-sm90a-vllm0.22.0-torch2.11.0-py312/flashinfer-fused-moe-sm90a-aot-fi0.6.11.post2-cu130-vllm0.22.0-torch2.11.0-py312.tar.gz
-    FLASHINFER_AOT_ARCHIVE_SHA256: 35271d0fbdb42dcb02003c10b92e092ef046b575f5122ceef70b76bff76bf22e
-    FLASHINFER_AOT_SO_SHA256: 976678d1c03a35358a165eb8ba9353bf1652ab297f07a1a763230f9493cadcd3
-    FLASHINFER_AOT_CACHE_KEY: fi0.6.11.post2-cu130-x86_64-manylinux2_28-sm90a-vllm0.22.0-torch2.11.0-py312
     VLLM_FORCE_IPV4: "1"
     GLOO_USE_IPV6: "0"
     NCCL_SOCKET_FAMILY: AF_INET

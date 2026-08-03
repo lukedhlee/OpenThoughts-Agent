@@ -4,10 +4,11 @@
 This probe allocates no Slurm nodes.  It runs one Harbor trial through an
 already-live SkyRL HTTP endpoint and an already-live JURECA Apptainer bridge.
 The selected r2egym task supplies the real cached environment and verifier; an
-appended instruction asks the model to execute a short, recognizable bash
-command and stop.  The original verifier still runs, so its reward may quite
-honestly be zero.  That reward is evidence that the verifier path executed,
-not a model-quality or reward-variance measurement.
+appended instruction asks the model to execute two sequential, deliberately
+large bash outputs so the next model request crosses OpenCode's proactive
+compaction threshold.  The original verifier still runs, so its reward may
+quite honestly be zero.  That reward is evidence that the verifier path
+executed, not a model-quality or reward-variance measurement.
 """
 
 from __future__ import annotations
@@ -31,7 +32,13 @@ from hpc.rl_config_utils import parse_rl_config
 
 MODEL_REVISION = "995ad96eacd98c81ed38be0c5b274b04031597b0"
 OPENCODE_VERSION = "1.18.8"
-TOOL_MARKER = "QWEN36_CANARY_TOOL_OK"
+TOOL_MARKERS = (
+    "QWEN36_CANARY_TOOL_ONE_OK",
+    "QWEN36_CANARY_TOOL_TWO_OK",
+)
+TOOL_MARKER = TOOL_MARKERS[0]
+FINAL_MARKER = "CANARY_DONE"
+OPENCODE_COMPACTION_RESERVED = 16_384
 
 _CONTEXT_RE = re.compile(
     r"prompt contains at least|maximum context length|context length exceeded|"
@@ -139,17 +146,25 @@ def select_task(tasks_dir: Path) -> Path:
     return min(candidates, key=lambda path: path.name)
 
 
-def canary_instruction(marker: str = TOOL_MARKER) -> str:
-    """Return the short appended instruction that makes the tool gate observable."""
+def canary_instruction(markers: tuple[str, str] = TOOL_MARKERS) -> str:
+    """Return a two-turn large-tool-output context-boundary probe."""
+    first, second = markers
     return f"""# Pipeline canary override
 
 This is an infrastructure canary, not the repository-fixing task above. Do not
-attempt the original issue. Use the bash tool now to run exactly this command:
+attempt the original issue. Run exactly two bash tool calls, sequentially in two
+separate assistant turns. Never combine or parallelize them.
 
-    printf '{marker}\\n' | tee /tmp/qwen36_canary_tool_ok
+First call:
 
-After the tool returns `{marker}`, stop immediately with one short sentence.
-Do not inspect files and do not perform any other work.
+    python -c 'print(" cat"*11000); print("{first}")'
+
+Wait for that result. Then make this separate second call:
+
+    python -c 'print(" cat"*11000); print("{second}")'
+
+After the second result, reply exactly `{FINAL_MARKER}` and stop. Do not inspect
+files, attempt the original task, or perform any other work.
 """
 
 
@@ -166,10 +181,14 @@ def opencode_error_text(raw_text: str) -> str:
     return "\n".join(errors)
 
 
-def _tool_marker_completed(trajectory: Any, marker: str) -> bool:
+def _tool_markers_completed(
+    trajectory: Any, markers: tuple[str, str] = TOOL_MARKERS
+) -> bool:
+    """Require both marker calls in distinct, ordered trajectory steps."""
     if not isinstance(trajectory, dict):
         return False
-    for step in trajectory.get("steps") or []:
+    completed: list[tuple[int, str]] = []
+    for step_index, step in enumerate(trajectory.get("steps") or []):
         if not isinstance(step, dict):
             continue
         calls = step.get("tool_calls") or []
@@ -187,8 +206,63 @@ def _tool_marker_completed(trajectory: Any, marker: str) -> bool:
                 continue
             call_id = str(call.get("tool_call_id"))
             arguments = json.dumps(call.get("arguments"), sort_keys=True)
-            if marker in arguments and marker in outputs.get(call_id, ""):
-                return True
+            matches = [
+                marker
+                for marker in markers
+                if marker in arguments and marker in outputs.get(call_id, "")
+            ]
+            if len(matches) == 1:
+                completed.append((step_index, matches[0]))
+    if len(completed) != len(markers):
+        return False
+    if [marker for _, marker in completed] != list(markers):
+        return False
+    return completed[0][0] < completed[1][0]
+
+
+def opencode_input_tokens(raw_text: str) -> list[int]:
+    """Extract ordered prompt-token counts from OpenCode step-finish events."""
+    values: list[int] = []
+    for line in raw_text.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "step_finish":
+            continue
+        part = event.get("part")
+        tokens = part.get("tokens") if isinstance(part, dict) else None
+        value = tokens.get("input") if isinstance(tokens, dict) else None
+        if isinstance(value, int) and not isinstance(value, bool):
+            values.append(value)
+    return values
+
+
+def has_compaction_drop(raw_text: str) -> bool:
+    """Prove a large prompt was compacted before the next model request."""
+    values = opencode_input_tokens(raw_text)
+    return any(
+        before >= 11_264 and before - after >= 4_096
+        for before, after in zip(values, values[1:])
+    )
+
+
+def has_final_marker(raw_text: str, marker: str = FINAL_MARKER) -> bool:
+    """Require the model's final text event, not merely the injected prompt."""
+    for line in raw_text.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        part = event.get("part")
+        if (
+            isinstance(part, dict)
+            and part.get("type") == "text"
+            and marker in str(part.get("text", ""))
+        ):
+            return True
     return False
 
 
@@ -197,7 +271,8 @@ def validate_canary_artifacts(
     trajectory: Any,
     *,
     opencode_errors: str = "",
-    marker: str = TOOL_MARKER,
+    opencode_raw: str = "",
+    markers: tuple[str, str] = TOOL_MARKERS,
 ) -> float:
     """Validate exact identity, a completed tool action, and numeric reward."""
     if not isinstance(result, dict):
@@ -227,11 +302,20 @@ def validate_canary_artifacts(
     if model.get("provider") != "vllm":
         raise CanaryFailure("IDENTITY", f"expected vllm provider, got {model!r}")
 
-    if not _tool_marker_completed(trajectory, marker):
+    if not _tool_markers_completed(trajectory, markers):
         raise CanaryFailure(
             "TOOL_ACTION",
-            "trajectory has no tool call whose command and observed output contain "
-            f"{marker}",
+            "trajectory lacks two sequential marker-bearing tool observations",
+        )
+    if not has_compaction_drop(opencode_raw):
+        raise CanaryFailure(
+            "COMPACTION",
+            "OpenCode events show no >=4096-token prompt drop after crossing the "
+            "reserved compaction threshold",
+        )
+    if not has_final_marker(opencode_raw):
+        raise CanaryFailure(
+            "COMPACTION", f"OpenCode never emitted final marker {FINAL_MARKER}"
         )
 
     verifier = result.get("verifier_result")
@@ -288,10 +372,16 @@ def validate_materialized_trial_contract(
             "materialized OpenCode must be preinstalled at exact version "
             f"{OPENCODE_VERSION}",
         )
-    compaction = kwargs.get("opencode_config", {}).get("compaction", {}).get("auto")
-    if compaction is not True:
+    compaction = kwargs.get("opencode_config", {}).get("compaction", {})
+    if compaction.get("auto") is not True:
         raise CanaryFailure(
             "CONTRACT", "materialized OpenCode compaction.auto is not true"
+        )
+    if compaction.get("reserved") != OPENCODE_COMPACTION_RESERVED:
+        raise CanaryFailure(
+            "CONTRACT",
+            "materialized OpenCode compaction.reserved must be "
+            f"{OPENCODE_COMPACTION_RESERVED}",
         )
     if kwargs.get("api_base") != endpoint:
         raise CanaryFailure(
@@ -329,6 +419,7 @@ async def run_live_canary(args: argparse.Namespace) -> tuple[float, Path]:
     terminal.trials_dir = str(args.trials_dir)
     terminal.harbor.bridge_url = args.bridge_url
     terminal.harbor.n_concurrent_trials = 1
+    terminal.harbor.opencode_config.compaction.reserved = args.compaction_reserved
 
     builder = HarborConfigBuilder(terminal)
     config = builder.build_trial_config(
@@ -362,12 +453,19 @@ async def run_live_canary(args: argparse.Namespace) -> tuple[float, Path]:
         trajectory = None
     raw_path = trial_dir / "agent" / "opencode.txt"
     try:
-        errors = opencode_error_text(raw_path.read_text())
+        raw_text = raw_path.read_text()
+        errors = opencode_error_text(raw_text)
     except OSError:
+        raw_text = ""
         errors = ""
 
     try:
-        reward = validate_canary_artifacts(result, trajectory, opencode_errors=errors)
+        reward = validate_canary_artifacts(
+            result,
+            trajectory,
+            opencode_errors=errors,
+            opencode_raw=raw_text,
+        )
     except CanaryFailure as exc:
         raise CanaryFailure(exc.kind, f"{exc.args[0]}\ntrial={trial_dir}") from exc
     return reward, trial_dir
@@ -388,6 +486,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--bridge-url", default="http://10.128.1.2:9920")
     parser.add_argument("--bridge-timeout-sec", type=float, default=10.0)
     parser.add_argument("--agent-timeout-sec", type=float, default=300.0)
+    parser.add_argument(
+        "--compaction-reserved",
+        type=int,
+        default=OPENCODE_COMPACTION_RESERVED,
+        help="OpenCode compaction reserve applied at TrialConfig materialization",
+    )
     parser.add_argument(
         "--require-clean-bridge",
         choices=("0", "1"),

@@ -8,12 +8,10 @@ from hpc.rl_config_utils import build_skyrl_hydra_args, parse_rl_config
 
 ROOT = Path(__file__).resolve().parents[2]
 CANARY_CONFIG = (
-    ROOT
-    / "hpc/skyrl_yaml/jupiter/5node_qwen3_6_35b_a3b_r2egym_grpo_canary.yaml"
+    ROOT / "hpc/skyrl_yaml/jupiter/5node_qwen3_6_35b_a3b_r2egym_grpo_canary.yaml"
 )
 CANARY_LAUNCHER = (
-    ROOT
-    / "hpc/skyrl_standard/jupiter/run_r2egym_qwen3_6_35b_grpo_canary.sh"
+    ROOT / "hpc/skyrl_standard/jupiter/run_r2egym_qwen3_6_35b_grpo_canary.sh"
 )
 EXPECTED_REVISION = "995ad96eacd98c81ed38be0c5b274b04031597b0"
 
@@ -27,9 +25,13 @@ def test_canary_is_a_standalone_intermediate_profile() -> None:
     launcher = CANARY_LAUNCHER.read_text()
 
     assert "defaults" not in raw and "base_config" not in raw
-    assert set(("terminal_bench", "trainer", "generator", "rollout", "container")) <= set(raw)
+    assert set(
+        ("terminal_bench", "trainer", "generator", "rollout", "container")
+    ) <= set(raw)
     assert "intermediate" in CANARY_CONFIG.read_text().lower()
-    assert "not replace the established six-node final gate" in CANARY_CONFIG.read_text()
+    assert (
+        "not replace the established six-node final gate" in CANARY_CONFIG.read_text()
+    )
     assert "export NUM_NODES=5" in launcher
     assert "export MAX_STEPS=1" in launcher
     assert "export CKPT_INTERVAL=1" in launcher
@@ -99,6 +101,10 @@ def test_canary_retains_exact_safe_pipeline_contract() -> None:
     assert harbor["environment_type"] == "apptainer"
     assert harbor["bridge_url"].startswith("${oc.env:APPTAINER_BRIDGE_URL")
     assert harbor["opencode_config"]["compaction"]["auto"] is True
+    assert harbor["opencode_config"]["compaction"]["reserved"] == 16_384
+    assert {"ContextLengthExceededError", "NonZeroAgentExitCodeError"}.issubset(
+        harbor["exclude_exceptions"]
+    )
 
     parsed = parse_rl_config(str(CANARY_CONFIG))
     assert parsed.trainer["max_prompt_length"] == 28_672

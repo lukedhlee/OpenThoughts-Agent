@@ -104,6 +104,7 @@ _flashinfer_aot_stage_node() {
     # that runtime discovery points at this node-local .so, not a shared/JIT copy.
     PYTHONPATH="$root:${PYTHONPATH:-}" python - "$root" "$root/$so_rel" <<'PY'
 import pathlib
+import platform
 import sys
 
 root = pathlib.Path(sys.argv[1]).resolve()
@@ -133,7 +134,38 @@ if actual_so != expected_so:
     raise SystemExit(
         f"fused_moe_90 AOT path mismatch: expected {expected_so}, got {actual_so}"
     )
-print(f"[flashinfer_aot] verified version={version} aot_path={actual_so}")
+
+# Metadata/path/hash checks can all pass for a wheel built for the wrong CPU
+# architecture.  Jupiter GH200 nodes are aarch64; an x86_64 ELF survives those
+# checks and fails only when FlashInfer first calls dlopen after model loading.
+header = actual_so.read_bytes()[:20]
+if len(header) < 20 or header[:4] != b"\x7fELF":
+    raise SystemExit(f"AOT artifact is not an ELF shared object: {actual_so}")
+byteorder = "little" if header[5] == 1 else "big"
+elf_machine = int.from_bytes(header[18:20], byteorder=byteorder)
+host_machine = platform.machine().lower()
+expected_elf_machine = {
+    "x86_64": 62,
+    "amd64": 62,
+    "aarch64": 183,
+    "arm64": 183,
+}.get(host_machine)
+if expected_elf_machine is None or elf_machine != expected_elf_machine:
+    raise SystemExit(
+        "FlashInfer AOT CPU architecture mismatch: "
+        f"host={host_machine!r} expected_elf_machine={expected_elf_machine!r} "
+        f"artifact_elf_machine={elf_machine}"
+    )
+
+# Perform the operation that the old smoke omitted: actually load the module.
+# This catches missing transitive libraries/ABI drift before model loading.
+import tvm_ffi
+
+tvm_ffi.load_module(str(actual_so))
+print(
+    f"[flashinfer_aot] verified version={version} host={host_machine} "
+    f"aot_path={actual_so} dlopen=ok"
+)
 PY
     local verify_status=$?
     if [[ "$verify_status" -ne 0 ]]; then

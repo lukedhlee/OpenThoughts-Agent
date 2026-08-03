@@ -4,13 +4,18 @@ from pathlib import Path
 import pytest
 
 from hpc.qwen36_live_canary import (
+    FINAL_MARKER,
     MODEL_REVISION,
     OPENCODE_VERSION,
     TOOL_MARKER,
+    TOOL_MARKERS,
     CanaryFailure,
     canary_instruction,
     classify_failure,
+    has_compaction_drop,
+    has_final_marker,
     normalize_endpoint,
+    opencode_input_tokens,
     opencode_error_text,
     select_task,
     validate_canary_artifacts,
@@ -43,15 +48,42 @@ def valid_trajectory() -> dict:
                     {
                         "tool_call_id": "call-1",
                         "function_name": "bash",
-                        "arguments": {"command": f"printf {TOOL_MARKER}"},
+                        "arguments": {"command": f"printf {TOOL_MARKERS[0]}"},
                     }
                 ],
                 "observation": {
-                    "results": [{"source_call_id": "call-1", "content": TOOL_MARKER}]
+                    "results": [
+                        {"source_call_id": "call-1", "content": TOOL_MARKERS[0]}
+                    ]
                 },
-            }
+            },
+            {
+                "source": "agent",
+                "tool_calls": [
+                    {
+                        "tool_call_id": "call-2",
+                        "function_name": "bash",
+                        "arguments": {"command": f"printf {TOOL_MARKERS[1]}"},
+                    }
+                ],
+                "observation": {
+                    "results": [
+                        {"source_call_id": "call-2", "content": TOOL_MARKERS[1]}
+                    ]
+                },
+            },
         ]
     }
+
+
+def valid_opencode_raw() -> str:
+    events = [
+        {"type": "step_finish", "part": {"tokens": {"input": 9_000}}},
+        {"type": "step_finish", "part": {"tokens": {"input": 20_000}}},
+        {"type": "step_finish", "part": {"tokens": {"input": 3_500}}},
+        {"type": "message_part", "part": {"type": "text", "text": FINAL_MARKER}},
+    ]
+    return "\n".join(json.dumps(event) for event in events)
 
 
 def valid_trial_config() -> dict:
@@ -69,7 +101,7 @@ def valid_trial_config() -> dict:
                     "input_cost_per_token": 0,
                     "output_cost_per_token": 0,
                 },
-                "opencode_config": {"compaction": {"auto": True}},
+                "opencode_config": {"compaction": {"auto": True, "reserved": 16_384}},
             },
         },
         "environment": {
@@ -102,12 +134,50 @@ def test_endpoint_must_be_explicit_v1_base() -> None:
 
 
 def test_canary_requires_exact_identity_tool_observation_and_numeric_reward() -> None:
-    assert validate_canary_artifacts(valid_result(0.0), valid_trajectory()) == 0.0
-    assert validate_canary_artifacts(valid_result(1.0), valid_trajectory()) == 1.0
+    raw = valid_opencode_raw()
+    assert (
+        validate_canary_artifacts(
+            valid_result(0.0), valid_trajectory(), opencode_raw=raw
+        )
+        == 0.0
+    )
+    assert (
+        validate_canary_artifacts(
+            valid_result(1.0), valid_trajectory(), opencode_raw=raw
+        )
+        == 1.0
+    )
 
 
 def test_zero_reward_is_a_valid_canary_transport_result() -> None:
-    assert validate_canary_artifacts(valid_result(0.0), valid_trajectory()) == 0.0
+    assert (
+        validate_canary_artifacts(
+            valid_result(0.0),
+            valid_trajectory(),
+            opencode_raw=valid_opencode_raw(),
+        )
+        == 0.0
+    )
+
+
+def test_large_tool_instruction_requires_two_sequential_calls() -> None:
+    instruction = canary_instruction()
+    assert instruction.count('print(" cat"*11000)') == 2
+    assert all(marker in instruction for marker in TOOL_MARKERS)
+    assert "Never combine or parallelize" in instruction
+
+
+def test_compaction_evidence_requires_large_prompt_drop_and_final_text() -> None:
+    raw = valid_opencode_raw()
+    assert opencode_input_tokens(raw) == [9_000, 20_000, 3_500]
+    assert has_compaction_drop(raw)
+    assert has_final_marker(raw)
+    flat = "\n".join(
+        json.dumps({"type": "step_finish", "part": {"tokens": {"input": value}}})
+        for value in (9_000, 20_000, 19_000)
+    )
+    assert not has_compaction_drop(flat)
+    assert not has_final_marker(flat)
 
 
 def test_materialized_trial_keeps_exact_endpoint_agent_context_and_bridge() -> None:
@@ -125,6 +195,7 @@ def test_materialized_trial_keeps_exact_endpoint_agent_context_and_bridge() -> N
         ("preinstalled", False),
         ("api_base", "http://wrong/v1"),
         ("compaction", False),
+        ("compaction_reserved", 4_096),
         ("max_input_tokens", 28_672),
     ],
 )
@@ -133,6 +204,8 @@ def test_materialized_trial_contract_rejects_runtime_drift(field: str, value) ->
     kwargs = config["agent"]["kwargs"]
     if field == "compaction":
         kwargs["opencode_config"]["compaction"]["auto"] = value
+    elif field == "compaction_reserved":
+        kwargs["opencode_config"]["compaction"]["reserved"] = value
     elif field == "max_input_tokens":
         kwargs["model_info"][field] = value
     else:
@@ -149,19 +222,25 @@ def test_missing_tool_observation_fails_loudly() -> None:
     trajectory = valid_trajectory()
     trajectory["steps"][0]["observation"]["results"] = []
     with pytest.raises(CanaryFailure, match=r"CANARY_FAIL\[TOOL_ACTION\]"):
-        validate_canary_artifacts(valid_result(), trajectory)
+        validate_canary_artifacts(
+            valid_result(), trajectory, opencode_raw=valid_opencode_raw()
+        )
 
 
 def test_wrong_model_or_opencode_version_fails_identity() -> None:
     result = valid_result()
     result["agent_info"]["version"] = "latest"
     with pytest.raises(CanaryFailure, match=r"CANARY_FAIL\[IDENTITY\]"):
-        validate_canary_artifacts(result, valid_trajectory())
+        validate_canary_artifacts(
+            result, valid_trajectory(), opencode_raw=valid_opencode_raw()
+        )
 
     result = valid_result()
     result["agent_info"]["model_info"]["name"] = "Qwen3.6-35B-A3B"
     with pytest.raises(CanaryFailure, match=r"CANARY_FAIL\[IDENTITY\]"):
-        validate_canary_artifacts(result, valid_trajectory())
+        validate_canary_artifacts(
+            result, valid_trajectory(), opencode_raw=valid_opencode_raw()
+        )
 
 
 @pytest.mark.parametrize("reward", [None, True, "0", float("nan"), float("inf")])
@@ -169,7 +248,9 @@ def test_missing_or_nonfinite_reward_is_verifier_infrastructure_failure(reward) 
     result = valid_result()
     result["verifier_result"]["rewards"]["reward"] = reward
     with pytest.raises(CanaryFailure, match=r"CANARY_FAIL\[VERIFIER_INFRA\]"):
-        validate_canary_artifacts(result, valid_trajectory())
+        validate_canary_artifacts(
+            result, valid_trajectory(), opencode_raw=valid_opencode_raw()
+        )
 
 
 def test_trial_exception_uses_specific_failure_class() -> None:
@@ -192,11 +273,13 @@ def test_only_opencode_error_events_are_scanned() -> None:
     assert opencode_error_text(raw) == '{"name": "APIConnectionError"}'
 
 
-def test_instruction_demands_one_observable_real_tool_action() -> None:
+def test_instruction_demands_two_observable_large_tool_actions() -> None:
     prompt = canary_instruction()
     assert "bash tool" in prompt
-    assert "tee /tmp/qwen36_canary_tool_ok" in prompt
+    assert prompt.count('python -c \'print(" cat"*11000)') == 2
     assert TOOL_MARKER in prompt
+    assert TOOL_MARKERS[1] in prompt
+    assert FINAL_MARKER in prompt
 
 
 def test_task_selection_is_top_level_and_deterministic(tmp_path: Path) -> None:
@@ -217,4 +300,4 @@ def test_launcher_uses_no_scheduler_and_keeps_exact_runtime_defaults() -> None:
     assert "http://jrlogin05i:18000/v1" in launcher
     assert "http://10.128.1.2:9920" in launcher
     assert "REQUIRE_CLEAN_BRIDGE:=1" in launcher
-    assert "qwen36_live_canary.py" in launcher
+    assert "-m hpc.qwen36_live_canary" in launcher
