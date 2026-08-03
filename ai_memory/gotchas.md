@@ -894,3 +894,20 @@ fails three times with `TOTP token length is wrong`.
 repeated failed keyboard-interactive attempts risk locking the account. Also: piping a remote script
 through `tail` buffers its output until EOF, so `flush=True` in the remote script buys nothing; write
 to a remote file and read it separately if you need progress.
+
+### 2026-08-04 (later) · CORRECTION: it is ONE session channel, not "too many sessions"
+**Supersedes the `Session open refused by peer` entry above**, which blamed generic `MaxSessions`
+exhaustion from *many* concurrent background SSH sessions. Measured: with **exactly one** long-running
+background `ssh jupiter` alive (a 703s remote script), `ssh -O check jupiter` reported
+`Master running (pid=55008)` while every new `ssh jupiter` bypassed the mux and fell through to
+`keyboard-interactive`, failing 3× with `TOTP token length is wrong`.
+**Cause:** JSC's sshd allows ~**one** session channel per multiplexed connection. Everything else in a
+session only works because the calls are **sequential**.
+**Fix / rule:** **never run a long-lived background `ssh` to Jupiter while other work needs the
+connection** — it locks out the connection for its entire duration, and every locked-out attempt burns
+a TOTP attempt (repeated failures risk an account lock). For anything long: `nohup` it **remotely**,
+write to a remote file, and poll with short sequential `ssh` calls. Probe with
+`ssh -o BatchMode=yes` so a refusal fails cleanly instead of prompting.
+⚠ Do NOT kill a long background `ssh` just to reclaim the channel if the remote script owns a bridge
+env: SIGHUP can skip its cleanup `finally` and orphan an Apptainer env on a JURECA worker, and if the
+env-id was only printed to a buffered pipe you have no clean way to reclaim it.
