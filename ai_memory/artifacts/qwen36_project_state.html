@@ -1,0 +1,1772 @@
+<title>Qwen3.6 Paired GRPO — Project State</title>
+<style>
+  :root {
+    --paper:      #f5f6f8;
+    --surface:    #ffffff;
+    --surface-2:  #eceef2;
+    --line:       #d8dce3;
+    --line-soft:  #e6e9ee;
+    --text:       #171c23;
+    --text-2:     #4d5765;
+    --text-3:     #78838f;
+    --accent:     #3d6ea8;
+    --accent-dim: #dfe8f3;
+    --ok:         #2e7d5b;
+    --ok-bg:      #e2f0ea;
+    --warn:       #a5741a;
+    --warn-bg:    #f6edda;
+    --stop:       #b4462e;
+    --stop-bg:    #f8e5e0;
+
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+    --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
+    --s5: 24px; --s6: 32px; --s7: 48px; --s8: 72px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:      #0d1116;
+      --surface:    #141a21;
+      --surface-2:  #1b222b;
+      --line:       #29323d;
+      --line-soft:  #212932;
+      --text:       #e4e8ed;
+      --text-2:     #a4b0bd;
+      --text-3:     #74808d;
+      --accent:     #6f9fd8;
+      --accent-dim: #1c2836;
+      --ok:         #57b98c;
+      --ok-bg:      #16281f;
+      --warn:       #d6a445;
+      --warn-bg:    #2b2415;
+      --stop:       #e07a5f;
+      --stop-bg:    #2d1a15;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#0d1116; --surface:#141a21; --surface-2:#1b222b; --line:#29323d;
+    --line-soft:#212932; --text:#e4e8ed; --text-2:#a4b0bd; --text-3:#74808d;
+    --accent:#6f9fd8; --accent-dim:#1c2836; --ok:#57b98c; --ok-bg:#16281f;
+    --warn:#d6a445; --warn-bg:#2b2415; --stop:#e07a5f; --stop-bg:#2d1a15;
+  }
+  :root[data-theme="light"] {
+    --paper:#f5f6f8; --surface:#ffffff; --surface-2:#eceef2; --line:#d8dce3;
+    --line-soft:#e6e9ee; --text:#171c23; --text-2:#4d5765; --text-3:#78838f;
+    --accent:#3d6ea8; --accent-dim:#dfe8f3; --ok:#2e7d5b; --ok-bg:#e2f0ea;
+    --warn:#a5741a; --warn-bg:#f6edda; --stop:#b4462e; --stop-bg:#f8e5e0;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--text);
+    font-family: var(--sans); font-size: 15px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: var(--s6) var(--s5) var(--s8); }
+
+  code, .mono { font-family: var(--mono); font-variant-ligatures: none; }
+  code {
+    font-size: 0.86em; background: var(--surface-2);
+    padding: 1px 5px; border-radius: 3px; color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  a { color: var(--accent); }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px;
+  }
+
+  /* ---------- masthead ---------- */
+  .mast { border-bottom: 2px solid var(--text); padding-bottom: var(--s4); margin-bottom: var(--s5); }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--text-3);
+    display: flex; gap: var(--s3); flex-wrap: wrap; margin-bottom: var(--s3);
+  }
+  h1 {
+    font-family: var(--mono); font-size: clamp(23px, 4vw, 33px);
+    font-weight: 600; letter-spacing: -.02em; line-height: 1.15;
+    margin: 0 0 var(--s3); text-wrap: balance;
+  }
+  .sub { color: var(--text-2); max-width: 68ch; margin: 0; }
+
+  /* ---------- live strip ---------- */
+  .live {
+    display: grid; gap: var(--s3); margin-bottom: var(--s6);
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+  .tile {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--line); border-radius: 4px;
+    padding: var(--s3) var(--s4) var(--s4);
+    display: flex; flex-direction: column; gap: var(--s1);
+  }
+  .tile.t-ok   { border-left-color: var(--ok); }
+  .tile.t-wait { border-left-color: var(--warn); }
+  .tile.t-stop { border-left-color: var(--stop); }
+  .tile .k {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .11em;
+    text-transform: uppercase; color: var(--text-3);
+  }
+  .tile .v {
+    font-family: var(--mono); font-size: 19px; font-weight: 600;
+    font-variant-numeric: tabular-nums; letter-spacing: -.01em;
+  }
+  .tile .n { font-size: 12.5px; color: var(--text-2); line-height: 1.45; }
+
+  /* ---------- callouts ---------- */
+  .blocker {
+    background: var(--warn-bg); border: 1px solid var(--warn);
+    border-left-width: 4px; border-radius: 4px;
+    padding: var(--s4) var(--s5); margin-bottom: var(--s6);
+    display: flex; flex-direction: column; gap: var(--s2);
+  }
+  .blocker .lbl {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--warn); font-weight: 600;
+  }
+  .blocker p { margin: 0; color: var(--text); }
+
+  .insight {
+    background: var(--accent-dim);
+    border-left: 4px solid var(--accent); border-radius: 4px;
+    padding: var(--s4) var(--s5); margin-top: var(--s5);
+  }
+  .insight .lbl {
+    display: block; font-family: var(--mono); font-size: 10.5px;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--accent);
+    font-weight: 600; margin-bottom: var(--s2);
+  }
+  .insight p { margin: 0; font-size: 14px; color: var(--text); }
+  .insight p + p { margin-top: var(--s2); }
+  .insight.i-warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .insight.i-warn .lbl { color: var(--warn); }
+  .insight.i-stop { background: var(--stop-bg); border-left-color: var(--stop); }
+  .insight.i-stop .lbl { color: var(--stop); }
+  .insight.i-ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .insight.i-ok .lbl { color: var(--ok); }
+
+  /* ---------- sections ---------- */
+  section { margin-bottom: var(--s7); scroll-margin-top: var(--s4); }
+  h2 {
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--text-2);
+    margin: 0 0 var(--s2); padding-bottom: var(--s2);
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: var(--s3);
+  }
+  .lede { color: var(--text-2); margin: 0 0 var(--s4); max-width: 70ch; }
+  .prose { color: var(--text-2); max-width: 70ch; margin: 0 0 var(--s4); }
+  .prose:last-child { margin-bottom: 0; }
+  .prose strong { color: var(--text); }
+  .sub-h {
+    font-family: var(--mono); font-size: 15px; font-weight: 600;
+    margin: var(--s6) 0 var(--s3); padding-top: var(--s4);
+    border-top: 1px solid var(--line-soft); letter-spacing: -.01em;
+  }
+
+  /* ---------- gate ladder ---------- */
+  .pipe { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); }
+  .gate {
+    background: var(--surface); border: 1px solid var(--line);
+    border-top: 3px solid var(--line); border-radius: 4px;
+    padding: var(--s3) var(--s4) var(--s4);
+    display: flex; flex-direction: column; gap: var(--s2);
+  }
+  .gate.is-done  { border-top-color: var(--ok); }
+  .gate.is-live  { border-top-color: var(--warn); }
+  .gate .idx {
+    font-family: var(--mono); font-size: 11px; color: var(--text-3);
+    letter-spacing: .1em;
+  }
+  .gate h3 { font-size: 15px; margin: 0; font-weight: 600; line-height: 1.3; }
+  .gate p { margin: 0; font-size: 13px; color: var(--text-2); line-height: 1.5; }
+
+  .pill {
+    display: inline-flex; align-items: center; align-self: flex-start;
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    letter-spacing: .1em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 3px; white-space: nowrap;
+  }
+  .p-ok    { background: var(--ok-bg);   color: var(--ok); }
+  .p-wait  { background: var(--warn-bg); color: var(--warn); }
+  .p-stop  { background: var(--stop-bg); color: var(--stop); }
+  .p-flat  { background: var(--surface-2); color: var(--text-3); }
+
+  /* ---------- cluster diagram ---------- */
+  .diagram {
+    display: grid; gap: var(--s3); align-items: stretch;
+    grid-template-columns: 1fr auto 1fr;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 4px; padding: var(--s5) var(--s4);
+  }
+  .dcol { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
+  .dcol-h {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .11em;
+    text-transform: uppercase; color: var(--text-3); text-align: center;
+    padding-bottom: var(--s2);
+  }
+  .dbox {
+    border: 1px solid var(--line); border-radius: 4px;
+    padding: var(--s3); background: var(--paper); text-align: center;
+    display: flex; flex-direction: column; gap: var(--s1); flex: 1;
+    justify-content: center;
+  }
+  .dbox.accent { border-color: var(--accent); background: var(--accent-dim); }
+  .dbox strong { font-family: var(--mono); font-size: 12.5px; }
+  .dbox span { font-size: 12px; color: var(--text-2); line-height: 1.45; }
+  .darrow { display: flex; align-items: center; gap: var(--s2); padding: 0 var(--s2); }
+  .darrow::before, .darrow::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .darrow span {
+    font-family: var(--mono); font-size: 10px; color: var(--text-3);
+    letter-spacing: .06em; white-space: nowrap;
+  }
+  .dlink { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s2); }
+  .dlink-line { flex: 1; width: 1px; background: var(--accent); min-height: 18px; }
+  .dlink-lbl {
+    font-family: var(--mono); font-size: 10px; color: var(--accent);
+    letter-spacing: .06em; text-align: center; line-height: 1.5; max-width: 108px;
+  }
+  .dnote {
+    font-size: 12.5px; color: var(--text-3); margin: var(--s2) 0 0;
+    font-style: italic; text-align: center;
+  }
+  @media (max-width: 720px) {
+    .diagram { grid-template-columns: 1fr; }
+    .dlink { flex-direction: row; padding: var(--s2) 0; }
+    .dlink-line { width: auto; flex: 1; height: 1px; min-height: 0; }
+  }
+
+  /* ---------- tracks / cards ---------- */
+  .cols { display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .track {
+    background: var(--surface); border: 1px solid var(--line);
+    border-top: 3px solid var(--accent); border-radius: 4px;
+    padding: var(--s4) var(--s5) var(--s5);
+  }
+  .track-h {
+    display: block; font-family: var(--mono); font-size: 12px;
+    letter-spacing: .1em; text-transform: uppercase; font-weight: 600;
+    margin-bottom: var(--s3); color: var(--accent);
+  }
+  .track p { margin: 0 0 var(--s3); font-size: 14px; color: var(--text-2); }
+  .track p:last-child { margin-bottom: 0; }
+  .track strong { color: var(--text); }
+
+  .why { display: grid; gap: var(--s3); margin-bottom: var(--s5);
+         grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); }
+  .why-item {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 4px; padding: var(--s3) var(--s4) var(--s4);
+  }
+  .why-n {
+    display: block; font-family: var(--mono); font-size: 10.5px;
+    letter-spacing: .11em; text-transform: uppercase; color: var(--accent);
+    font-weight: 600; margin-bottom: var(--s2);
+  }
+  .why-item p { margin: 0; font-size: 13px; color: var(--text-2); line-height: 1.55; }
+
+  /* ---------- consequence chain ---------- */
+  .chain { list-style: none; margin: 0 0 var(--s4); padding: 0;
+           display: flex; flex-direction: column; gap: 0; }
+  .chain li {
+    position: relative; padding: var(--s3) 0 var(--s3) var(--s6);
+    border-bottom: 1px solid var(--line-soft); font-size: 14px; color: var(--text-2);
+  }
+  .chain li:last-child { border-bottom: none; }
+  .chain li::before {
+    content: attr(data-step); position: absolute; left: 0; top: var(--s3);
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    color: var(--accent); letter-spacing: .05em;
+  }
+  .chain li strong { color: var(--text); }
+
+  /* ---------- q&a ---------- */
+  .qa { display: flex; flex-direction: column; gap: var(--s5); }
+  .qa-item {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 4px; padding: var(--s4) var(--s5) var(--s5);
+  }
+  .qa-q {
+    font-family: var(--mono); font-size: 14.5px; font-weight: 600;
+    color: var(--text); margin: 0 0 var(--s3); line-height: 1.45;
+    letter-spacing: -.01em; text-wrap: balance;
+    display: flex; gap: var(--s3); align-items: baseline;
+  }
+  .qa-q .qm {
+    color: var(--accent); font-size: 12px; flex-shrink: 0;
+    letter-spacing: .08em; padding-top: 1px;
+  }
+  .qa-item p { margin: 0 0 var(--s3); color: var(--text-2); font-size: 14px; max-width: 74ch; }
+  .qa-item p:last-child { margin-bottom: 0; }
+  .qa-item strong { color: var(--text); }
+  .qa-short {
+    display: block; font-size: 14px; color: var(--text);
+    background: var(--accent-dim); border-left: 3px solid var(--accent);
+    border-radius: 3px; padding: var(--s3) var(--s4); margin-bottom: var(--s3);
+  }
+  .ladder { list-style: none; margin: 0 0 var(--s3); padding: 0; font-size: 13.5px; }
+  .ladder li {
+    display: flex; gap: var(--s3); align-items: baseline; padding: var(--s2) 0;
+    border-bottom: 1px solid var(--line-soft); color: var(--text-2);
+  }
+  .ladder li:last-child { border-bottom: none; }
+  .ladder .cap {
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+    font-weight: 600; color: var(--text); flex-shrink: 0; width: 74px;
+    text-align: right;
+  }
+  .ladder li.bind { background: var(--warn-bg); border-radius: 3px; padding-left: var(--s2); }
+  .ladder li.bind .cap { color: var(--warn); }
+
+  /* ---------- tables ---------- */
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px;
+            background: var(--surface); margin-bottom: var(--s4); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 540px; }
+  th, td { text-align: left; padding: var(--s2) var(--s4);
+           border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--text-3); font-weight: 600;
+    background: var(--surface-2); position: sticky; top: 0;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.file, td.mono2 { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+  td.num { font-family: var(--mono); text-align: right;
+           font-variant-numeric: tabular-nums; white-space: nowrap; }
+  caption {
+    font-family: var(--mono); text-align: left; padding: var(--s3) var(--s4);
+    font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--text-3); border-bottom: 1px solid var(--line);
+  }
+
+  /* ---------- caveats ---------- */
+  .cav { display: flex; flex-direction: column; gap: var(--s3); }
+  details.cave {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 4px solid var(--text-3); border-radius: 4px;
+  }
+  details.cave[data-sev="high"] { border-left-color: var(--stop); }
+  details.cave[data-sev="med"]  { border-left-color: var(--warn); }
+  details.cave > summary {
+    cursor: pointer; padding: var(--s3) var(--s4);
+    display: flex; gap: var(--s3); align-items: baseline;
+    font-weight: 600; list-style: none;
+  }
+  details.cave > summary::-webkit-details-marker { display: none; }
+  details.cave > summary::after {
+    content: "+"; margin-left: auto; font-family: var(--mono);
+    color: var(--text-3); font-weight: 400;
+  }
+  details.cave[open] > summary::after { content: "\2212"; }
+  details.cave > summary:hover { background: var(--surface-2); }
+  .cave-body { padding: 0 var(--s4) var(--s4) var(--s4); color: var(--text-2); font-size: 14px; }
+  .cave-body p { margin: 0 0 var(--s2); }
+  .cave-body p:last-child { margin-bottom: 0; }
+  .cave-body b.tag {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--accent);
+  }
+
+  /* ---------- stacks ---------- */
+  .stack { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
+  .stack li {
+    display: flex; gap: var(--s3); align-items: baseline;
+    font-size: 14px; padding-bottom: var(--s2);
+    border-bottom: 1px dashed var(--line-soft); color: var(--text-2);
+  }
+  .stack li:last-child { border-bottom: none; }
+  .stack li strong { color: var(--text); }
+  .mark { font-family: var(--mono); font-size: 12px; flex-shrink: 0; width: 14px; }
+  .mark.y { color: var(--ok); }
+  .mark.n { color: var(--text-3); }
+  .mark.q { color: var(--warn); }
+
+  footer {
+    border-top: 1px solid var(--line); padding-top: var(--s4);
+    font-size: 12.5px; color: var(--text-3); font-family: var(--mono);
+    display: flex; flex-wrap: wrap; gap: var(--s2) var(--s5);
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <div class="eyebrow">
+      <span>ot-agent</span><span>·</span>
+      <span>2026-08-04</span><span>·</span>
+      <span>jupiter + jureca</span><span>·</span>
+      <span>pipeline validation</span>
+    </div>
+    <h1>Qwen3.6-35B-A3B — paired GRPO experiment</h1>
+    <p class="sub">
+      GRPO-train <code>Qwen/Qwen3.6-35B-A3B</code> on r2egym, then measure the paired pre/post change on
+      the pinned 100-task SWE-Bench Verified set. Everything upstream of the first optimizer step is
+      built and measured. This page is the implementation reference: what runs, where, and why each
+      value is the value it is.
+    </p>
+    <p class="sub" style="margin-top: var(--s3)">
+      → <a href="#overnight"><strong>While you were away</strong></a> is the overnight log: what broke,
+      what was fixed, and which earlier conclusions turned out to be wrong. Everything below it is the
+      standing implementation reference and is unchanged except where the overnight section says so.
+    </p>
+    <p class="sub" style="margin-top: var(--s3)">
+      → For the from-scratch explanation — the build spec, the worked arithmetic, and nineteen questions
+      including five open issues — see the
+      <a href="https://claude.ai/code/artifact/8ca729ed-68e6-43a7-8681-9f7a0640fba7"><strong>companion
+      guide</strong></a>.
+    </p>
+  </header>
+
+  <div class="live">
+    <div class="tile t-wait">
+      <span class="k">GRPO canary · jupiter</span>
+      <span class="v">1229343</span>
+      <span class="n">RUNNING 37 m, 5 h 22 m left · 5 nodes <code>jpbo-004-[19,23-26]</code> · 16 × 8 = 128 trajectories. Route gate <strong>passed</strong>.</span>
+    </div>
+    <div class="tile t-ok">
+      <span class="k">Sandbox bridge</span>
+      <span class="v">32 / 32</span>
+      <span class="n">Envs ready and jobs active — rollouts genuinely in flight. <code>workers_alive: true</code>. The 134 lifetime errors are all from the aborted <code>1225422</code>.</span>
+    </div>
+    <div class="tile t-ok">
+      <span class="k">JURECA workers</span>
+      <span class="v">15494122</span>
+      <span class="n">RUNNING 10 h 05 m, <strong>13 h 54 m left</strong> · 2 nodes × 16 = 32 sandbox slots. Submitted overnight to replace the expiring fleet.</span>
+    </div>
+    <div class="tile">
+      <span class="k">JSC node budget</span>
+      <span class="v">7 / 16</span>
+      <span class="n">5 Jupiter GPU + 2 JURECA CPU. The 16-node ceiling is a hard operator constraint.</span>
+    </div>
+  </div>
+
+  <div class="blocker">
+    <span class="lbl">Where things stand · 2026-08-04 09:30 KST</span>
+    <p>
+      <strong>Still no honest GRPO step — but the reason changed completely.</strong> The blocker was
+      never the data. The agent was being killed at <strong>600 seconds</strong> instead of the
+      configured 1800, on 76% of trials, which flattened exactly the within-group reward variance GRPO
+      consumes. That is fixed, proven live, and <code>1229343</code> is the first run with both the
+      restored budget and a verified route to the model.
+    </p>
+    <p>
+      The milestone is unchanged and unreached: <strong>one finite optimizer update</strong>. It has
+      still never executed with this model.
+    </p>
+  </div>
+
+  <section id="overnight">
+    <h2>While you were away <span class="pill p-wait">03 Aug 23:20 → 04 Aug 09:30 KST</span></h2>
+    <p class="lede">
+      Three runs, one real defect found, one self-inflicted failure, and two conclusions this project
+      had been building on for a week turned out to be wrong. Read the first box and you have the gist.
+    </p>
+
+    <div class="insight i-stop">
+      <span class="lbl">The headline — the data was never the blocker</span>
+      <p>
+        The 22-groups-zero-variance result that stopped work on 08-03 was measured through a
+        <strong>truncated agent</strong>. <code>agent.override_timeout_sec = 1800</code> was set and
+        present in the materialized config, but unreachable: OpenCode issues its long-running
+        <code>run</code> through <code>exec_as_agent()</code> with no <code>timeout_sec</code>, so it
+        inherited <code>ApptainerEnvironment.exec()</code>'s hardcoded <code>timeout_sec or 600</code>.
+        On <code>1221005</code>, <strong>19 of 25 trials ended at exactly 600–601 s</strong> and
+        <strong>19 of 19</strong> exceptions carried the literal string
+        <code>Command timed out after 600s</code>.
+      </p>
+      <p>
+        Agents were cut off mid-task on 76% of trials. A task that would have been solved at minute 12
+        scores zero at minute 10 — and a group of eight such zeros carries no gradient. That is a
+        plausible manufacturer of the exact symptom we spent a week attributing to r2egym.
+      </p>
+    </div>
+
+    <h3 class="sub-h">The three runs, and what each one actually cost</h3>
+    <div class="scroll">
+      <table>
+        <caption>Overnight allocation ledger</caption>
+        <thead>
+          <tr><th>Run</th><th>Config</th><th>Outcome</th><th>What it produced</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono2">1221005<br><span style="color:var(--text-3)">08-03, prior</span></td>
+            <td>16 × 4 · <strong>600 s</strong> cap</td>
+            <td><span class="pill p-stop">Quota abort</span></td>
+            <td>25 honest rollouts, 0 of 7 groups with variance. <strong>Invalid as evidence</strong> — the budget was truncated.</td>
+          </tr>
+          <tr>
+            <td class="mono2">1225422<br><span style="color:var(--text-3)">08-04 05:25</span></td>
+            <td>16 × 8 · 1800 s</td>
+            <td><span class="pill p-stop">Failed · 3 h 12 m</span></td>
+            <td><strong>Zero usable rewards.</strong> The reverse tunnel still pointed at the previous run's head node, so no agent ever reached the model. My omission — see below.</td>
+          </tr>
+          <tr>
+            <td class="mono2">1229343<br><span style="color:var(--text-3)">08-04 08:51</span></td>
+            <td>16 × 8 · 1800 s</td>
+            <td><span class="pill p-wait">Running</span></td>
+            <td>First run with the restored budget <em>and</em> a verified route. 32 envs in flight; results pending.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="sub-h">How the 600-second cap hid</h3>
+    <p class="prose">
+      Four layers, each individually reasonable. The outer guard could only ever fire if it were
+      <em>shorter</em> than the inner one, and it wasn't:
+    </p>
+    <ol class="chain">
+      <li data-step="01"><code>trial.py</code> computes the agent timeout as <strong>1800 s</strong> from <code>override_timeout_sec</code>. Correct.</li>
+      <li data-step="02"><code>_run_agent_phase()</code> wraps the agent in <code>asyncio.wait_for(..., timeout=1800)</code> — an <strong>outer</strong> guard.</li>
+      <li data-step="03"><code>opencode.py</code> calls <code>exec_as_agent()</code> <strong>without passing that timeout</strong>. This is the gap.</li>
+      <li data-step="04"><code>apptainer.py</code> falls back: <code>effective_timeout = timeout_sec or 600</code>, and sends 600 to the worker.</li>
+      <li data-step="05">The worker kills at 600 s → <code>return_code -1</code> → <code>NonZeroAgentExitCodeError</code>. The outer guard never gets to fire.</li>
+    </ol>
+    <div class="insight i-warn">
+      <span class="lbl">Fourth instance of the same bug class</span>
+      <p>
+        A key that is accepted, deep-merged, written to disk, and then ignored by its consumer — after
+        <code>strict_json_parser</code>, <code>compaction.reserved</code>, and
+        <code>store_all_messages</code>. Verifying that a key reaches the materialized config proves
+        nothing. Only behaviour does.
+      </p>
+      <p>
+        A related correction: <code>NonZeroAgentExitCodeError</code> was recorded as “the norm for
+        OpenCode.” It was not — it was the timeout kill. Reclassifying it to <code>passthrough</code>
+        was still right, but the wrong diagnosis hid the real defect for a day.
+      </p>
+    </div>
+
+    <h3 class="sub-h">Shipped, tested, deployed</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Commit</th><th>Repo</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td class="mono2">f44a1170</td><td>harbor</td><td><code>BRIDGE_EXEC_TIMEOUT</code> knob; default stays 600 so flag-off is byte-identical; 4 tests, Ruff clean.</td></tr>
+          <tr><td class="mono2">6b76270b</td><td>OT-Agent</td><td>vLLM canary can read shards from a chosen filesystem, with two fail-loud revision asserts.</td></tr>
+          <tr><td class="mono2">2b6defd1</td><td>OT-Agent</td><td>Exec timeout 2100, <strong>n = 8</strong>, fscratch checkpoint, <code>-next</code> checkout, 6 h wall.</td></tr>
+          <tr><td class="mono2">8ac43278</td><td>OT-Agent</td><td>Startup/rollout knobs staged with measured justification, defaults unchanged.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose">
+      The exec fallback is deliberately set <strong>above</strong> the agent budget — 2100 against 1800
+      — so the outer guard wins and raises a clean <code>AgentTimeoutError</code>, which is
+      <code>passthrough</code> and preserves the trajectory, rather than an exec kill. Proven in
+      isolation before use: one sandbox, <code>sleep 700</code> at <code>timeout_sec=1500</code>,
+      returned <strong>0 after 703 s</strong> with the sentinel intact.
+    </p>
+
+    <h3 class="sub-h">Loading: 18× faster, and the bottleneck moved somewhere better</h3>
+    <div class="scroll">
+      <table>
+        <caption>Checkpoint read — <code>O_DIRECT</code>, compute node <code>jpbo-018-14</code>, job 1224678</caption>
+        <thead><tr><th>Measurement</th><th class="num">/e/scratch</th><th class="num">/e/fscratch</th></tr></thead>
+        <tbody>
+          <tr><td>Read bandwidth, 1 stream</td><td class="num">0.056 GiB/s</td><td class="num"><strong>2.51 GiB/s</strong></td></tr>
+          <tr><td>Read bandwidth, 26 streams</td><td class="num">1.586 GiB/s</td><td class="num">56.3 GiB/s</td></tr>
+          <tr><td><code>Loading weights</code>, 1 GPU canary</td><td class="num">701.12 s</td><td class="num"><strong>38.03 s</strong></td></tr>
+          <tr><td><code>Loading weights</code>, in the 5-node run</td><td class="num">—</td><td class="num">61.6 s</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose">
+      vLLM loads the 26 shards <strong>sequentially, in one stream</strong>, so it sits exactly on the
+      per-stream floor — which is why aggregate bandwidth never helped. In the real job four engines
+      contend, so it lands at 61.6 s rather than 38 s; still <strong>11×</strong>.
+    </p>
+    <div class="insight">
+      <span class="lbl">Re-derive the bottleneck after every win</span>
+      <p>
+        At 701 s load + 1145 s engine init, the load looked like the problem. At 38 s load, the
+        <strong>19-minute memory-profiling pass is ~95% of startup</strong> — and the log says it is
+        <em>“profiled with 1 image items of the maximum feature size.”</em> It is profiling the
+        <strong>vision tower</strong>, in eager mode, through a 35B MoE. Qwen3.6 is a multimodal shell,
+        SkyRL unwraps to the text tower, and no rollout ever sends an image.
+      </p>
+      <p>
+        The same log line exposes a rollout lever: KV measured <code>560,505 tokens</code> and
+        <code>17.11×</code> concurrency at 32k, while <code>max_num_seqs</code> is <strong>8</strong>.
+        At the real ~15,360-token prompt length the headroom is ~36×. Both knobs are staged behind
+        env vars, defaults unchanged, to be A/B'd on one GPU — not guessed at on five nodes.
+      </p>
+    </div>
+
+    <h3 class="sub-h">Three conclusions retired</h3>
+    <ul class="stack">
+      <li><span class="mark n">✕</span><span><strong>“Raw r2egym collapses.”</strong> It does not. Your co-lead's raw arm reaches the same <strong>~45.5 p@1</strong> as her filtered band, in 120 steps instead of 60. The band is a convergence-rate and compute lever (60k → 48k rollouts, ~20%), <strong>not a quality one</strong>. It was the headline of our reference note and it misdirected a week.</span></li>
+      <li><span class="mark n">✕</span><span><strong>“Qwen3.6 is deterministic per r2egym task.”</strong> Trajectories inside a uniform group differ widely — distinct hashes, 26–60 messages, 1.7k–6.1k output tokens. Sampling works. Only the <em>outcomes</em> were invariant, under a truncated budget.</span></li>
+      <li><span class="mark n">✕</span><span><strong>My own “the 22× fscratch claim doesn't survive.”</strong> I measured a 4-stream <code>cp</code> at 1.67 GB/s and called the tier innocent. <code>cp</code> gets page cache and readahead; <code>O_DIRECT</code> shows 57 MB/s per stream. The original figures were right, and conservative.</span></li>
+      <li><span class="mark y">✓</span><span><strong>Corrected band parameters:</strong> filter is <code>p@4</code> (not <code>p@8</code>), yield <strong>~1.6k of 4.5k ≈ 36%</strong>, built for an 8B. She filters cheap at k=4 but <em>trains at n=8</em> — the wide training group is what makes a noisy filter safe. Our canary trained at n=4, the fragile pairing. Now n=8.</span></li>
+    </ul>
+
+    <div class="insight i-stop">
+      <span class="lbl">My error, plainly</span>
+      <p>
+        <code>1225422</code> was doomed before it started. Every sandbox's <code>api_base</code> is
+        <code>http://jrlogin05i:18000/v1</code>, a reverse tunnel that forwards to a
+        <strong>specific Jupiter head node</strong>. It still pointed at <code>10.128.42.66</code> — the
+        head of the <em>previous</em> run. TCP connected in 0.95 ms and HTTP returned <code>000</code>.
+        Every agent waited on a model it could never reach, produced <strong>zero tokens</strong>, and
+        hung to the 1800 s guard.
+      </p>
+      <p>
+        There is a documented retarget step and a documented route gate whose entire purpose is to catch
+        this. <strong>I ran neither</strong>, and it cost a 5-node, 3-hour allocation plus 29 orphaned
+        sandboxes. The durable fix is for the launch script to retarget from
+        <code>$SLURM_JOB_NODELIST</code> itself and refuse to start rollouts unless the compute-node
+        gate passes — manual discipline has now failed once here.
+      </p>
+    </div>
+
+    <h3 class="sub-h">The route gate, run properly this time</h3>
+    <ul class="stack">
+      <li><span class="mark y">✓</span><span>Tunnel retargeted to the live head <code>10.128.16.163</code>, internal bind only. Verified I can cancel and re-add the forward on the existing ControlMaster <strong>without TOTP</strong> — that was the one thing that might have needed you, and it doesn't.</span></li>
+      <li><span class="mark y">✓</span><span><code>/health</code> → <strong>200</strong> through <code>jrlogin05i:18000</code>.</span></li>
+      <li><span class="mark y">✓</span><span>Real <code>/v1/chat/completions</code> from an actual <strong>compute</strong> node (<code>jrc0502</code>), not the login node — served model <code>995ad96eacd98c81ed38be0c5b274b04031597b0</code>, the exact pinned revision.</span></li>
+      <li><span class="mark y">✓</span><span>29 orphaned sandboxes reclaimed from the failed run's own trace tree, shape-validated: 29 stopped, 32 already gone, 0 failed. Bridge returned to <code>ready: 0</code>.</span></li>
+    </ul>
+
+    <h3 class="sub-h">What is still not known</h3>
+    <ul class="stack">
+      <li><span class="mark q">?</span><span><strong>Whether within-group reward variance appears at the restored 1800 s budget.</strong> This is the question the whole night was for, and it is still open. <code>1229343</code> answers it.</span></li>
+      <li><span class="mark n">✕</span><span><strong>The optimizer update, checkpoint and HF export have still never executed</strong> with this model. Unchanged since 07-31. This remains the milestone.</span></li>
+      <li><span class="mark q">?</span><span>The <strong>110-minute</strong> shards-loaded → policy-init regression on <code>1221005</code> versus ~28 min on <code>1219434</code>. It happens after the bytes are in memory, so fscratch does not touch it. Untouched.</span></li>
+      <li><span class="mark q">?</span><span>Whether prefix caching is effective here at all — it is enabled, but vLLM warns it is <em>experimental for Mamba <code>align</code> mode</em> on this architecture. The agent's <code>n_cache_tokens: 0</code> proves nothing; that field is simply never populated.</span></li>
+    </ul>
+
+    <div class="insight i-warn">
+      <span class="lbl">Waiting on you — one decision</span>
+      <p>
+        Your co-lead's config exposes <code>DYNAMIC_SAMPLING_TYPE=filter</code> — DAPO-style: drop
+        all-same-reward prompt groups and resample up to 30 batches. That targets our exact blocker as a
+        <em>flag</em>, rather than via an offline band pass. <strong>But it requires the sync trainer
+        (<code>colocate_all: true</code>)</strong>, which collides with the settled disaggregated-only
+        decision, and it cannot manufacture variance that does not exist.
+      </p>
+      <p>
+        Not urgent: if <code>1229343</code> shows variance, this is moot.
+      </p>
+    </div>
+
+    <div class="insight i-ok">
+      <span class="lbl">The honest scorecard</span>
+      <p>
+        Banked: a real defect root-caused and fixed with tests; an 11–18× faster model load; three wrong
+        beliefs retired; two acceleration levers identified with measurements behind them; the sandbox
+        fleet renewed and the bridge clean.
+      </p>
+      <p>
+        Not banked: <strong>the milestone.</strong> Three 5-node allocations have now gone to
+        infrastructure rather than data. Shipped commits are not progress toward a finite optimizer
+        update, and I don't want the volume of them to read as if they were.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>What this run is for</h2>
+    <div class="insight">
+      <span class="lbl">Operator, 2026-07-31</span>
+      <p>
+        <strong>Prove the RL pipeline works.</strong> Not model quality, not a competitive number. The
+        milestone is a single optimizer step producing <em>real reward variance</em> and a finite
+        update. A small or noisy improvement is a pass. The paired SWE-Bench arms are the science that
+        follows, not the thing under test.
+      </p>
+      <p>
+        Consequence: anything off the path to that gate is deferred — the learnable-band filter, the
+        vision tower, the second SWE-Bench manifest, auto-chain validation.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The gate ladder</h2>
+    <p class="lede">
+      Strictly sequential — each gate is a precondition for the next, which is why these carry numbers
+      and the sections below do not.
+    </p>
+    <div class="pipe">
+      <div class="gate is-done">
+        <span class="idx">GATE 1</span>
+        <h3>Branches &amp; sync</h3>
+        <span class="pill p-ok">Passed</span>
+        <p>Execution branches pushed; Jupiter checkouts reconciled by fetch + hard reset, never <code>git pull</code>.</p>
+      </div>
+      <div class="gate is-done">
+        <span class="idx">GATE 2</span>
+        <h3>FlashQLA on GH200</h3>
+        <span class="pill p-ok">Passed · 1139108</span>
+        <p>Pinned ARM64 kernel passed real BF16 forward <em>and backward</em>, wrote <code>gpu_sm90_smoke.ok</code>.</p>
+      </div>
+      <div class="gate is-done">
+        <span class="idx">GATE 3</span>
+        <h3>Sandbox runtime</h3>
+        <span class="pill p-ok">Passed</span>
+        <p>7 r2egym SIFs built; 128/128 concurrent oracle rollouts in 96 s, zero exceptions; SWE-Bench oracle 100/100.</p>
+      </div>
+      <div class="gate is-live">
+        <span class="idx">GATE 4</span>
+        <h3>One-step GRPO</h3>
+        <span class="pill p-wait">Queued · 1144362</span>
+        <p>32 rollouts. Needs model load, reward variance, finite update, weight sync, valid HF save. <strong>This is the milestone.</strong></p>
+      </div>
+      <div class="gate">
+        <span class="idx">GATE 5</span>
+        <h3>Tunnel resilience</h3>
+        <span class="pill p-flat">After gate 4</span>
+        <p>Force a bounded disconnect at 1 s detection, prove loud failure and recovery, then restore production keepalives.</p>
+      </div>
+      <div class="gate">
+        <span class="idx">GATE 6</span>
+        <h3>Promote + paired eval</h3>
+        <span class="pill p-flat">Not started</span>
+        <p>50 steps, baseline SWE-Bench-100 in parallel, then the matched post arm and the paired report.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Initialization — the model, and why there is no conversion step</h2>
+    <p class="prose">
+      Exact origin is <code>Qwen/Qwen3.6-35B-A3B</code> at revision
+      <code>995ad96eacd98c81ed38be0c5b274b04031597b0</code>, staged verbatim from the hub to
+      <code>/e/scratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96e…</code>. The revision is pinned
+      <strong>in the directory name</strong>, and the preflight asserts <code>model.name ==
+      expected_revision</code> — there is no generated provenance file to drift. Policy, reference, both
+      rollout engines and both eval arms resolve to that one path, so nothing about format can confound
+      the measured delta.
+    </p>
+    <p class="prose">
+      The published checkpoint is a <strong>multimodal shell</strong>
+      (<code>Qwen3_5MoeForConditionalGeneration</code>). We train only the text tower. The mechanism
+      that strips it is the part worth knowing precisely:
+    </p>
+
+    <div class="scroll">
+      <table>
+        <caption>Measured composition of the 67.0 GiB checkpoint</caption>
+        <thead><tr><th>Component</th><th class="num">Size</th><th class="num">Share</th><th>Fate</th></tr></thead>
+        <tbody>
+          <tr><td>text tower + <code>lm_head</code></td><td class="num">64.6 GiB</td><td class="num">96.4%</td><td><span class="pill p-ok">Trains</span></td></tr>
+          <tr><td>MTP head</td><td class="num">1.6 GiB</td><td class="num">2.3%</td><td>Read, then dropped</td></tr>
+          <tr><td>vision tower</td><td class="num">0.8 GiB</td><td class="num">1.2%</td><td>Read, then dropped</td></tr>
+          <tr><td><strong>total</strong></td><td class="num"><strong>67.0 GiB</strong></td><td class="num">100%</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="prose">
+      <code>SKYRL_QWEN3_5_VLM_UNWRAP=1</code> (SkyRL's default) makes the unwrap happen <strong>in
+      memory</strong>. Per <code>skyrl_train/models/qwen3_5_vlm.py</code> it is a pure reference
+      re-point of already-loaded submodules — text keys map <strong>1:1, 0 missing / 0 extra</strong>.
+      The same flag gates <code>map_text_name_to_vlm_engine</code>, so the trainer's parameter names and
+      the rollout engines' names stay in lockstep during weight sync. <strong>Never set this to
+      0</strong> — that was the old design, which required an on-disk pre-unwrapped checkpoint that no
+      longer exists.
+    </p>
+    <p class="prose">
+      Cost of unwrapping on every load: ~2.4 GiB of extra read, <strong>3.6%</strong>, on data being
+      streamed anyway, roughly ten times per job. The rejected alternative was a second permanent
+      67 GB artifact plus a conversion job and script.
+    </p>
+
+    <div class="insight i-warn">
+      <span class="lbl">The one real cost, named honestly</span>
+      <p>
+        Rollout engines instantiate the full shell too, so ~0.8 GiB of vision weights sits resident per
+        engine, unused. Under 1% of a 96 GB GH200, but it comes out of KV-cache headroom. Watch it only
+        if KV pressure ever becomes binding.
+      </p>
+      <p>
+        Downstream consequence, deferred to publishing: <strong>the export will be text-only</strong>,
+        so it is not a drop-in replacement for the base model. Re-attaching later is ~40 lines given the
+        1:1 key mapping.
+      </p>
+    </div>
+
+    <div class="insight i-stop">
+      <span class="lbl">FP8 is dead — 2026-07-31</span>
+      <p>
+        An earlier same-day plan used <code>Qwen/Qwen3.6-35B-A3B-FP8</code> at <code>95a723d0…</code>.
+        The operator reversed it. <strong>That hash is invalid for the plain repo</strong> — revision
+        hashes do not carry across repos. The 262-line dequantizer and its sbatch are deleted. If you
+        find <code>dequantize</code> or FP8 anywhere in a Qwen3.6 path, it is stale.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>GDN and FlashQLA — the architecture, and the kernel it demands</h2>
+    <p class="lede">
+      These are the two things that arrived with the model switch, and they are unrelated to precision.
+      GDN is an architecture; FlashQLA is the kernel that makes it trainable at our prompt length.
+    </p>
+
+    <div class="cols">
+      <div class="track">
+        <span class="track-h">GDN — Gated DeltaNet</span>
+        <p>
+          A linear-attention layer. Softmax attention compares every token to every other, so cost
+          grows with the <em>square</em> of sequence length. GDN carries a fixed-size recurrent state
+          updated by a gated delta rule, so cost grows <em>linearly</em>.
+        </p>
+        <p>
+          Qwen3.6 is hybrid: <strong>three GDN layers per four-layer block</strong>, so one layer in
+          four is full attention. Most of linear attention's efficiency, some exact-recall capacity
+          retained.
+        </p>
+        <p>
+          The signature lives on <code>config.text_config</code>, not the top-level config — because we
+          deliberately stage the shell. The preflight asserts <code>linear_conv_kernel_dim</code> and a
+          <code>layer_types</code> list containing a <code>linear</code> entry, because without them
+          SkyRL's unwrap probe never fires and FlashQLA is silently skipped.
+        </p>
+      </div>
+
+      <div class="track" style="border-top-color: var(--warn)">
+        <span class="track-h" style="color: var(--warn)">FlashQLA 0.1.2 — the kernel</span>
+        <p>
+          The delta-rule update is inherently sequential, so the Transformers pure-Torch fallback walks
+          the recurrence step by step. Tolerable on short prompts,
+          <strong>prohibitive at 28,672 tokens</strong>. A fused, chunked kernel is mandatory.
+        </p>
+        <p>
+          Two constraints make it awkward: it must be built for <strong>ARM64</strong> (GH200 is
+          aarch64), and it must support the <strong>backward</strong> pass, since this is training.
+        </p>
+        <p>
+          MarinSkyRL binds it to <code>Qwen3_5MoeGatedDeltaNet</code> and <strong>fails loudly if the
+          kernel is absent or unused</strong> — <code>SKYRL_GDN_FLASHQLA_REQUIRED=1</code>. You cannot
+          silently fall back to the slow path and mistake it for a hung job.
+        </p>
+      </div>
+    </div>
+
+    <p class="prose" style="margin-top: var(--s5)">
+      The kernel ships as a fully pinned dependency layer at
+      <code>/e/scratch/reformo/lee27/pydeps/qwen36-flashqla-0.1.2</code>, prepended to
+      <code>PYTHONPATH</code>. The preflight reads its manifest and then reads the
+      <em>installed distributions on that path</em> and requires exact equality with five versions —
+      it does not trust a build log line.
+    </p>
+
+    <div class="scroll">
+      <table>
+        <caption>The pinned FlashQLA layer · <code>qwen3_6_flashqla_manifest.json</code>, format <code>qwen3.6-flashqla-layer-v1</code></caption>
+        <thead><tr><th>Package</th><th class="mono2">Pinned version</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td class="mono2">flash-qla</td><td class="mono2">0.1.2</td><td>The GDN chunked forward/backward kernel</td></tr>
+          <tr><td class="mono2">tilelang</td><td class="mono2">0.1.9</td><td>Kernel DSL and JIT; cache pinned per-arch to <code>TILELANG_CACHE_DIR</code></td></tr>
+          <tr><td class="mono2">apache-tvm-ffi</td><td class="mono2">0.1.9</td><td>TileLang's FFI layer</td></tr>
+          <tr><td class="mono2">torch-c-dlpack-ext</td><td class="mono2">0.1.5</td><td>Zero-copy tensor handoff into the kernel</td></tr>
+          <tr><td class="mono2">z3-solver</td><td class="mono2">4.15.4.0</td><td>TileLang's scheduling constraint solver</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="insight i-ok">
+      <span class="lbl">Gate 2 · job 1139108 · what actually got proven</span>
+      <p>
+        Real BF16 forward <em>and backward</em> on GH200, writing
+        <code>gpu_sm90_smoke.ok</code> with <code>format=qwen3.6-flashqla-smoke-v1</code>. The first
+        attempt failed at <code>assert dg.dtype == torch.float32</code> — the smoke harness had built
+        the decay gate from BF16 logits, while the real Transformers path computes
+        <code>g = -A_log.float().exp() * softplus(a.float() + dt_bias)</code>, an FP32 gate under BF16
+        activations. <strong>That was a harness mismatch, not a model-integration defect</strong> — worth
+        knowing, because it looked like the latter for a while.
+      </p>
+      <p>
+        Still unproven inside gate 4: the full policy-model binding and the first real training
+        backward through a 35B MoE.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Geometry — six nodes, and why they split 4 / 2</h2>
+    <p class="prose">
+      Six Jupiter <code>booster</code> nodes, 4 × GH200 each. <strong>Four nodes are policy and
+      reference</strong> — 16 GPUs at <code>fsdp_size: 4</code> × <code>expert_model_parallel_size:
+      4</code>, with <code>colocate_policy_ref: true</code> so the reference shares those GPUs.
+      <strong>Two nodes are rollout</strong> — eight independent TP1 BF16 vLLM engines, one per GPU.
+    </p>
+
+    <div class="scroll">
+      <table>
+        <caption>Why each of these is the value it is</caption>
+        <thead><tr><th>Setting</th><th class="mono2">Value</th><th>Reason</th></tr></thead>
+        <tbody>
+          <tr><td>placement</td><td class="mono2">colocate_all: false</td><td>Colocation on 30B-A3B/GH200 is <strong>falsified</strong>, not merely unfavorable — four distinct failures in the bake-off vs disagg running clean.</td></tr>
+          <tr><td>expert parallel</td><td class="mono2">EP 4 × FSDP 4</td><td>MoE experts shard across 4 ranks; the dense path shards across the other 4. <code>ep_comm_backend: torch</code>, <code>moe_grouped_gemm: true</code>.</td></tr>
+          <tr><td>CPU offload</td><td class="mono2">false</td><td>Measured on the 16-GPU layout: policy_train 533 s → 113 s (4.7×), step 891 s → 432 s, no OOM. Offload is a last-resort memory workaround, never a default.</td></tr>
+          <tr><td>rollout engines</td><td class="mono2">8 × TP1</td><td>TP&gt;1 in the RL loop has never been run on Jupiter. It is the only thing that could reopen colocation.</td></tr>
+          <tr><td>attention</td><td class="mono2">sdpa</td><td>See the <code>flash_attn</code> trio below — this one has a silent failure mode.</td></tr>
+          <tr><td>engine mode</td><td class="mono2">enforce_eager: true</td><td>Skips <code>torch.compile</code> and CUDA-graph capture at engine start; buys startup determinism during bring-up.</td></tr>
+          <tr><td>weight sync</td><td class="mono2">nccl</td><td>Still <strong>~43% of a 6-node step</strong>. The largest known unclaimed speedup.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="insight i-warn">
+      <span class="lbl">Do not add nodes to speed up eval</span>
+      <p>
+        Measured negative result: 8-node (16 engines) vs 6-node (8 engines) eval ran ~49–55 s/unit vs
+        ~52 s/unit — about 6%. Eval is latency/decode-bound and <code>eval_batch_size: 32</code>
+        doesn't saturate 8 engines. The real levers are batch size, shorter eval generation, or fewer
+        samples.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The GRPO step itself</h2>
+    <p class="prose">
+      One derived contract drives every consumer limit. <code>context_budget</code> declares
+      <code>request_window_tokens: 32768</code> and <code>max_new_tokens_per_turn: 4096</code>; the
+      launcher materializes the trainer, generator and Harbor fields from it so they cannot drift apart.
+      That leaves the <strong>28,672-token prompt budget</strong> that makes FlashQLA load-bearing.
+    </p>
+
+    <div class="scroll">
+      <table>
+        <caption>Batch algebra for the smoke</caption>
+        <thead><tr><th>Quantity</th><th class="num">Value</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td><code>train_batch_size</code></td><td class="num">32</td><td>Must equal <code>policy_mini_batch_size</code> — a hard fully-async assert.</td></tr>
+          <tr><td><code>n_samples_per_prompt</code></td><td class="num">4</td><td>The GRPO group size. Variance <em>within</em> a group is the entire gradient signal.</td></tr>
+          <tr><td>prompts per step</td><td class="num">8</td><td>32 ÷ 4. Eight r2egym tasks, four attempts each.</td></tr>
+          <tr><td><code>micro_train_batch_size_per_gpu</code></td><td class="num">1</td><td>Which is why disabling sample packing costs ~nothing.</td></tr>
+          <tr><td><code>max_steps</code></td><td class="num">1</td><td>Promotion to 50 requires a non-smoke job name and <code>MAX_RESTARTS ≥ 1</code>; the wrapper refuses otherwise.</td></tr>
+          <tr><td>concurrency ceiling</td><td class="num">16</td><td><code>8 engines × max_num_seqs 8 ÷ 4 samples</code>. Not the worker-pool size, and not the trial count — see Q1.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="prose">
+      Algorithm: <code>advantage_estimator: grpo</code>, <code>lr 1e-6</code>,
+      <strong>no KL loss</strong> (<code>use_kl_loss: false</code>, coef 0), symmetric clip
+      <code>0.2 / 0.2</code>, <code>loss_reduction: sequence_mean</code>,
+      <code>max_grad_norm 1.0</code>. Sampling is <code>temperature 1.0, top_p 0.95, top_k 20</code> —
+      GRPO needs the group to actually diverge.
+    </p>
+    <p class="prose">
+      <strong>GRPO vs RLOO is a settled non-lever.</strong> A clean A/B on gsm8k over 35 steps landed
+      77.71% vs 78.24% final pass@1, tracking within ±0.5 pp at every checkpoint. Don't sweep it again.
+    </p>
+
+    <h3 class="sub-h">The consequence chain nobody expects</h3>
+    <p class="prose">
+      One flag cascades into four required settings. This is the single highest-value thing to
+      internalize about our trainer configuration:
+    </p>
+    <ol class="chain">
+      <li data-step="01"><strong><code>colocate_all: false</code></strong> is forced by the falsified-colocation decision.</li>
+      <li data-step="02">
+        <code>main_tbench.get_trainer()</code> keys <em>only</em> on that flag:
+        <code>FullyAsyncRayPPOTrainer if colocate_all is False else RayPPOTrainer</code>. There is no
+        separate opt-in — <strong>the fully-async trainer is not optional.</strong>
+      </li>
+      <li data-step="03">
+        Its constraint set becomes hard requirements: <code>train_batch_size == policy_mini_batch_size</code>,
+        <code>dynamic_sampling is None</code>, <code>async_engine: true</code>, and
+        <strong><code>batched: false</code></strong> — <code>batched: true</code> dies with
+        <code>AssertionError: batched is not supported for fully async training</code> after all eight
+        engines have already loaded.
+      </li>
+      <li data-step="04">
+        <code>num_parallel_generation_workers</code> defaults to <strong>768</strong>. Throughput is
+        capped by the engine working set (16 groups), so a large pool adds nothing and accumulates a
+        stale backlog that pins head-node memory. Set to the floor: <strong>32</strong>.
+      </li>
+      <li data-step="05">
+        Fully-async training is <strong>off-policy by up to <code>max_staleness_steps</code></strong>.
+        That changes what the experiment <em>is</em>, not just its speed. <code>use_tis: true</code> with
+        <code>tis_imp_ratio_cap: 2.0</code> is the correct mitigation and stays on.
+      </li>
+    </ol>
+
+    <p class="prose">
+      Why TIS and not router replay: the measured generator↔trainer gap was
+      <code>log_ratio_abs_mean ≈ 0.030</code> nats (importance ratio ≈ 1.009) with a routing tail of
+      <strong>0.035%</strong> capped. R3 would recover approximately nothing here. Revisit only for
+      long-context, larger-MoE, or genuinely high-staleness regimes.
+    </p>
+  </section>
+
+  <section>
+    <h2>Where a rollout's reward comes from</h2>
+    <p class="lede">
+      The whole cross-cluster architecture exists to answer one question: where does the throwaway Linux
+      box come from that grades each rollout? Every constraint below follows from that.
+    </p>
+
+    <div class="why">
+      <div class="why-item">
+        <span class="why-n">Why not Daytona</span>
+        <p>It's a cloud API and JSC compute nodes have no internet. Every rollout failed — that is what killed the 07-29 run.</p>
+      </div>
+      <div class="why-item">
+        <span class="why-n">Why not Docker</span>
+        <p>No root on a shared HPC cluster. Apptainer runs unprivileged from a single-file <code>.sif</code>.</p>
+      </div>
+      <div class="why-item">
+        <span class="why-n">Why two clusters</span>
+        <p>SWE-Bench SIFs are x86_64; Jupiter's GH200s are aarch64. And Jupiter has <em>no CPU-only partition</em> — local sandboxes would burn GH200s running pytest.</p>
+      </div>
+      <div class="why-item">
+        <span class="why-n">Why a reverse tunnel</span>
+        <p>Jupiter compute can't reach JURECA, and JURECA can't reach Jupiter at all. But compute <em>can</em> reach a Jupiter login node internally, and JURECA's login node can dial out.</p>
+      </div>
+    </div>
+
+    <div class="diagram" role="img" aria-label="Jupiter GPU compute talks to a bridge server on a Jupiter login node over internal addresses; JURECA's login node dials in over a reverse SSH tunnel; JURECA CPU compute runs one dispatcher per node feeding sixteen Apptainer workers.">
+      <div class="dcol">
+        <span class="dcol-h">Jupiter · GH200 · aarch64</span>
+        <div class="dbox accent">
+          <strong>GPU compute · 6 nodes</strong>
+          <span>Policy + ref: 16 GPUs, EP4×FSDP4<br>Rollout: 8 TP1 vLLM engines</span>
+        </div>
+        <div class="darrow"><span>internal 10.128.x only</span></div>
+        <div class="dbox">
+          <strong>Login node</strong>
+          <span>Bridge server <code>10.128.1.2:9920</code><br>internal bind, never <code>0.0.0.0</code></span>
+        </div>
+      </div>
+
+      <div class="dlink">
+        <div class="dlink-line"></div>
+        <span class="dlink-lbl">reverse SSH tunnel<br>dialed IN from JURECA</span>
+        <div class="dlink-line"></div>
+      </div>
+
+      <div class="dcol">
+        <span class="dcol-h">JURECA · dc-cpu · x86_64</span>
+        <div class="dbox">
+          <strong>Login node</strong>
+          <span>Initiates the tunnel<br>reverse listener <code>:9920</code></span>
+        </div>
+        <div class="darrow"><span>node-local queue</span></div>
+        <div class="dbox accent">
+          <strong>CPU compute</strong>
+          <span>1 dispatcher/node polls the tunnel<br>16 workers/node run Apptainer instances</span>
+        </div>
+      </div>
+    </div>
+    <p class="dnote">
+      The dispatcher layer exists to protect the tunnel — dispatchers poll it, not workers. Workers only
+      POST results back. No model is ever served on JURECA, and Jupiter compute never contacts JURECA.
+    </p>
+
+    <p class="prose" style="margin-top: var(--s5)">
+      Reachability is <strong>asymmetric and counter-intuitive</strong>, which is why the earlier
+      architecture was wrong twice. Measured from a real probe job on Jupiter compute
+      <code>jpbo-040-12</code>:
+    </p>
+    <div class="scroll">
+      <table>
+        <caption>From a Jupiter compute node</caption>
+        <thead><tr><th>Target</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td class="mono2">app.daytona.io:443, huggingface.co:443</td><td><span class="pill p-stop">Blocked</span></td></tr>
+          <tr><td class="mono2">JURECA, any address or port</td><td><span class="pill p-stop">Blocked</span></td></tr>
+          <tr><td class="mono2">Jupiter login via <em>public</em> IP</td><td><span class="pill p-stop">Blocked</span></td></tr>
+          <tr><td class="mono2">Jupiter login via 10.128.1.2 / 10.99.0.2 — HTTP and :22</td><td><span class="pill p-ok">Reachable</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="insight i-warn">
+      <span class="lbl">Never probe reachability with public IPs</span>
+      <p>
+        Doing so returns a false "totally isolated" reading. Compute↔login works over
+        <code>10.128.x</code>/<code>10.99.x</code> — same /16 — which is also why Ray works at all, and
+        why a relay on a login node is the basis of every viable design.
+      </p>
+    </div>
+
+    <div class="cols" style="margin-top: var(--s5)">
+      <div class="track">
+        <span class="track-h">Training signal — r2egym</span>
+        <p>
+          <strong>3,328 tasks</strong> sharing only <strong>7 unique environment hashes</strong>, which
+          is what makes this affordable. Unlike SWE-Bench these are Dockerfile <em>recipes</em>, not
+          published images, so the worker converts each to a <code>.def</code> and runs
+          <code>apptainer build</code> itself — <code>--fakeroot</code> first, non-fakeroot fallback.
+          The seven SIFs live in <code>/p/scratch/synthlaion/lee27/r2egym_sif</code>.
+        </p>
+        <p>
+          Per rollout: the model gets a repo and an issue, edits code in its own Apptainer instance,
+          then pytest runs inside that container. Pass/fail is the reward — a binary test outcome that
+          formatting cannot game, which is precisely why r2egym replaced gsm8k.
+        </p>
+        <p>
+          Sandbox limits per trial: <code>2 CPUs</code>, <code>4096 MB</code> RAM,
+          <code>4096 MB</code> storage, agent timeout <code>1800 s</code>, verifier timeout
+          <code>120 s</code>, <code>n_concurrent_trials: 32</code>.
+        </p>
+      </div>
+      <div class="track">
+        <span class="track-h">Measurement — SWE-Bench Verified 100</span>
+        <p>
+          <code>DCAgent2/swebench-verified-random-100-folders</code> @ <code>a2e51e9e…</code>, exactly
+          100 task dirs with their own 100 SIFs, built and cached. It rides identical rails — same
+          bridge, same tunnel, same workers — so switching is a config change, not a second system.
+        </p>
+        <p>
+          Never trained on. Oracle coverage is <strong>100/100</strong>: the last holdout,
+          <code>psf__requests-2317</code>, previously failed on an <code>httpbin.org</code>
+          infrastructure exception and now uses an in-container httpbin plus a local TCP
+          connect-timeout tarpit. <strong>No oracle or model failure can hide behind an infrastructure
+          zero.</strong>
+        </p>
+        <p>
+          Contamination audit parsed all 3,328 × 100 pairs: zero direct issue matches, including
+          same-repository comparisons across differing commits. One unrelated SymPy pair shares repo +
+          base commit at similarity <code>0.174699</code>.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Questions worth asking about the sandbox layer</h2>
+    <p class="lede">
+      The concurrency and isolation story is the least documented part of the stack and the part most
+      likely to surprise you. Answers below are read out of
+      <code>harbor/environments/apptainer/{server,worker}.py</code> and the live allocation, not inferred.
+    </p>
+
+    <div class="qa">
+
+      <div class="qa-item">
+        <p class="qa-q"><span class="qm">Q1</span><span>How many rollouts can actually be in flight at once — and which number is the real ceiling?</span></p>
+        <span class="qa-short">
+          Four different limits stack, and they are deliberately <em>not</em> equal. The binding one for
+          token throughput is <strong>16</strong>; the binding one for sandboxes is <strong>32</strong>.
+        </span>
+        <ul class="ladder">
+          <li><span class="cap">32</span><span><strong>Worker slots.</strong> 2 JURECA nodes × <code>WORKERS_PER_NODE=16</code>. One Apptainer instance per worker.</span></li>
+          <li><span class="cap">32</span><span><strong>Harbor trial concurrency</strong> — <code>n_concurrent_trials: 32</code>. Deliberately matched to worker slots.</span></li>
+          <li><span class="cap">32</span><span><strong>Rollouts in the smoke step</strong> — 8 prompts × 4 samples. So the step is sized to fill the sandbox fleet exactly once.</span></li>
+          <li class="bind"><span class="cap">16</span><span><strong>Concurrent generation groups</strong> — <code>8 engines × max_num_seqs 8 ÷ 4 samples</code>. This is the token-throughput ceiling.</span></li>
+          <li><span class="cap">8</span><span><strong>Concurrent instance <em>starts</em> per node</strong> — <code>BRIDGE_START_CONCURRENCY=8</code>. A throttle on setup only, not on running work.</span></li>
+        </ul>
+        <p>
+          The apparent mismatch — 32 sandboxes for 16 servable groups — is correct and necessary.
+          <strong>A trial holds its sandbox for the entire episode</strong>, including all the time it
+          spends waiting on the model to produce the next command. An idle container costs a process and
+          some page cache; a queued trial that cannot get a sandbox costs wall-clock. So the sandbox pool
+          is provisioned to the rollout count, and the engines throttle generation underneath it.
+        </p>
+      </div>
+
+      <div class="qa-item">
+        <p class="qa-q"><span class="qm">Q2</span><span>How many nodes does one task get? And if a node has 256 CPUs, why only 16 tasks on it?</span></p>
+        <span class="qa-short">
+          A task gets <strong>2 CPUs of one node</strong> — not a node. And the node is only ~12%
+          subscribed, because the limit is neither cores nor memory.
+        </span>
+        <p>
+          A JURECA <code>dc-cpu</code> node is <strong>256 logical CPUs and ~515 GB RAM</strong>. Our
+          allocation takes <code>--cpus-per-task=128</code> and <code>--mem=0</code> (the whole node) on
+          each of 2 nodes. Each trial is capped at <code>override_cpus: 2</code> and
+          <code>override_memory_mb: 4096</code>. So 16 workers consume <strong>32 of 256 CPUs and 64 of
+          515 GB</strong>.
+        </p>
+        <p>
+          The real constraint is Apptainer's setuid starter. From the worker source: <em>"the suid-starter
+          overloads when too many fakeroot+overlay.img creations run in parallel (seen at &gt;~16
+          concurrent starts: starter-suid exit 255)"</em>. That is why 16 is the worker count and why
+          starts — but not <code>exec</code> or <code>stop</code> — are throttled to 8 by a semaphore.
+          <strong>The ceiling is an image-instantiation bottleneck, not a resource one</strong>, which
+          also means adding CPU nodes scales the fleet linearly while raising workers-per-node does not.
+        </p>
+        <p>
+          Zero GPU nodes are involved in grading. That is the entire point of the two-cluster split:
+          pytest runs on free CPU while the GH200s stay on tokens.
+        </p>
+      </div>
+
+      <div class="qa-item">
+        <p class="qa-q"><span class="qm">Q3</span><span>If 3,328 tasks share only 7 images, how does each trial get its own filesystem — and how does state not leak between them?</span></p>
+        <span class="qa-short">
+          The SIF is <strong>immutable and shared</strong>. Every writable byte a trial produces lives in
+          a per-trial <strong>ext3 overlay image</strong> plus a set of per-trial bind mounts, both on
+          node-local disk.
+        </span>
+        <p>
+          Per environment the worker creates a unique <code>env_id</code>, an instance named
+          <code>hb_&lt;env_id&gt;</code>, and a staging directory via <code>mkdtemp</code> under the
+          node-local staging base. Inside that staging directory it runs
+          <code>apptainer overlay create --size 4096 overlay.img</code> and attaches it with
+          <code>--overlay</code>. <strong>That ext3 image <em>is</em> the 4096 MB storage
+          limit</strong> — it is a filesystem size, not a cgroup quota.
+        </p>
+        <p>
+          On top of that, each instance gets its own read-write binds —
+          <code>/workspace</code>, <code>/tests</code>, <code>/setup_files</code>,
+          <code>/logs/agent</code>, <code>/logs/verifier</code>, <code>/tmp</code>, and the Dockerfile's
+          <code>WORKDIR</code> — plus read-only binds for the static agent tools into
+          <code>/usr/local/bin</code>. Isolation is Apptainer's own mount namespace, so two trials from
+          the same SIF see different roots for every path either of them can write.
+        </p>
+        <p>
+          One implementation detail worth carrying: it must be an overlay <em>image file</em>, not a
+          directory. In setuid mode Apptainer rejects a directory overlay — <em>"only root user can use
+          sandbox as overlay in setuid mode"</em> — and <code>--writable-tmpfs</code> would cap the
+          writable layer at RAM. The image file is the only option that gives an unprivileged, sized,
+          writable layer.
+        </p>
+      </div>
+
+      <div class="qa-item">
+        <p class="qa-q"><span class="qm">Q4</span><span>When the model emits a command, how does the system know which of the 32 containers to run it in — across two clusters and a tunnel?</span></p>
+        <span class="qa-short">
+          <strong>Sticky routing on <code>env_id</code>.</strong> The first job for an environment is
+          claimable by anyone; every job after it is pinned to the worker that claimed it.
+        </span>
+        <p>
+          The bridge keeps <code>_envs</code> (<code>env_id</code> → env info), one general
+          <code>_job_queue</code>, and <code>_worker_queues</code> (<code>worker_id</code> → deque).
+          <code>POST /env/create</code> mints an <code>env_id</code> and enqueues a <strong>START</strong>
+          job on the general queue. Whichever worker polls <code>GET /worker/get_job</code> first claims
+          it and becomes that environment's owner. From then on, every <code>exec</code>,
+          <code>upload</code>, <code>download</code> and <code>stop</code> for that
+          <code>env_id</code> is routed to <em>that worker's</em> queue.
+        </p>
+        <p>
+          This is forced, not stylistic: the instance and its overlay image exist only on one node's local
+          disk. No other worker can <code>apptainer exec instance://hb_&lt;env_id&gt;</code> against it.
+          The trainer never addresses a node — it addresses an <code>env_id</code>, and affinity is the
+          bridge's problem.
+        </p>
+      </div>
+
+      <div class="qa-item">
+        <p class="qa-q"><span class="qm">Q5</span><span>128 concurrent sandboxes over one SSH tunnel — why isn't the tunnel the bottleneck?</span></p>
+        <span class="qa-short">
+          Because <strong>workers never poll it.</strong> One dispatcher per node polls on behalf of its
+          16 workers, so tunnel traffic scales with <em>nodes</em>, not sandboxes.
+        </span>
+        <p>
+          The co-lead's design note says it plainly: <em>"Only 32 dispatchers poll through tunnel (not 512
+          workers)."</em> At the 128-way scale test, eight nodes × 16 workers ran through exactly
+          <strong>eight</strong> pollers. The measured result: 128/128 oracle rollouts completed in 96 s
+          with zero exceptions, retries, cancellations, or connection errors.
+        </p>
+        <p>
+          Live counters put the polling cost in perspective: <strong>40,165 worker polls for 1,442
+          jobs</strong>, ~28 polls per job. That ratio is what you pay for a poll-based design, and it is
+          affordable precisely because it is the dispatcher paying it.
+        </p>
+      </div>
+
+      <div class="qa-item">
+        <p class="qa-q"><span class="qm">Q6</span><span>What happens to a trial if its worker or the tunnel dies mid-episode?</span></p>
+        <span class="qa-short">
+          By design it becomes a <strong>named infrastructure exception that is masked, never scored
+          zero</strong>. Recovery, as distinct from correct failure, is <em>unproven</em> — that is gate 5.
+        </span>
+        <p>
+          Sticky routing means an environment is pinned to one node, so a lost worker strands that
+          environment's queued jobs. The intended path is that this surfaces as
+          <code>BridgeOutageError</code> / <code>BridgeOperationTimeoutError</code>, lands in
+          <code>mask_exceptions</code>, and is therefore excluded from the GRPO baseline rather than
+          entering it as reward 0. Bridge errors are deliberately <em>not</em> subclasses of agent
+          <code>TimeoutError</code> so the two can never be conflated.
+        </p>
+        <p>
+          What has actually been measured is the healthy path: 1,442/1,442 jobs, zero job errors, and 101
+          environments created and reaped. <strong>A forced disconnect has never been run.</strong> Gate 5
+          is exactly that test — break the ControlMaster and forward at
+          <code>ServerAliveInterval=1</code> / <code>ServerAliveCountMax=1</code>, confirm failure is loud
+          and workers plus queued work recover, then restore conservative production keepalives. Until
+          then, treat recovery as a design intention.
+        </p>
+      </div>
+
+      <div class="qa-item">
+        <p class="qa-q"><span class="qm">Q7</span><span>Why does the smoke request only 2 CPU nodes when the scale test used 8?</span></p>
+        <span class="qa-short">
+          Because the smoke needs exactly 32 slots, and the <strong>16-node combined JSC ceiling</strong>
+          has to cover 6 Jupiter GPU nodes too.
+        </span>
+        <p>
+          6 + 2 = 8 of 16. The 32 rollouts of a one-step smoke fit precisely in 2 × 16 worker slots, so
+          more CPU nodes would sit idle while consuming budget that the GPU side may need. Promotion to
+          50 steps is where the worker fleet scales back up — and where the <strong>auto-chain matters
+          for the first time</strong>, since it has never actually crossed a walltime boundary
+          (<code>MAX_CHAIN=0</code> in every recorded smoke). It is off the critical path today only
+          because workers now request the 24 h maximum, which outlasts the run.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Reward integrity — the most dangerous class of bug we have</h2>
+    <p class="prose">
+      Under GRPO, all-zero reward means zero advantage variance means <strong>no gradient</strong>. A run
+      can therefore execute flawlessly end to end — weight sync, generation, logprobs, advantages,
+      policy train — and report nothing wrong while learning nothing. Job <code>1087425</code> did
+      exactly that: <code>avg_raw_reward: 0.0</code>, <code>zero_rewards: 1.0</code>, 128/128 rollouts
+      dead on an unreachable cloud API.
+    </p>
+
+    <div class="insight i-stop">
+      <span class="lbl">Corrected 2026-07-31 — the earlier explanation of this was wrong</span>
+      <p>
+        The old account blamed <code>mask_exceptions</code> plus
+        <code>default_error_treatment: zero</code> for absorbing connection failures. That is not what
+        the code does. Reading
+        <code>terminal_bench_generator.py:1215-1249</code>: <code>mask</code> means <em>exclude from the
+        RLOO-N baseline</em>, which is the correct treatment for infrastructure failure. Returning
+        <code>False</code> is what includes a rollout at reward 0. <code>default_error_treatment</code>
+        applies only to exceptions in none of the three lists.
+      </p>
+      <p>
+        <strong>The actual defect is line 1215:</strong> <code>exception_type =
+        type(exception).__name__</code>. Classification is an <strong>exact class-name string match,
+        not <code>isinstance</code></strong>. The job raised <code>DaytonaConnectionError</code>, which
+        matches neither <code>DaytonaError</code> nor <code>ConnectionError</code>, fell through to the
+        <code>zero</code> default, and became real training signal.
+      </p>
+    </div>
+
+    <p class="prose">
+      What the config does about it now. <code>default_error_treatment: mask</code> and
+      <code>fail_on_infrastructure_error: true</code>, with every named infrastructure exception
+      enumerated across three lists:
+    </p>
+    <div class="scroll">
+      <table>
+        <caption>Exception routing in <code>6node_qwen3_6_35b_a3b_r2egym_grpo.yaml</code></caption>
+        <thead><tr><th>List</th><th>Meaning</th><th>Notable members</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="mono2">mask_exceptions</td>
+            <td>Excluded from the baseline — infrastructure, not capability</td>
+            <td class="mono2">BridgeOutageError, BridgeOperationError, BridgeOperationTimeoutError, VerifierInfrastructureError, NetworkError, ConnectionError, RewardFileNotFoundError, RewardFileEmptyError</td>
+          </tr>
+          <tr>
+            <td class="mono2">exclude_exceptions</td>
+            <td>Not retried — retrying a broken verifier just burns walltime</td>
+            <td class="mono2">VerifierTimeoutError, VerifierRuntimeError, VerifierOutputParseError, RewardFile*Error, Bridge*Error</td>
+          </tr>
+          <tr>
+            <td class="mono2">passthrough_exceptions</td>
+            <td>Genuine model outcomes — these <em>should</em> score</td>
+            <td class="mono2">AgentTimeoutError, ContextLengthExceededError</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose">
+      Retries are bounded and backed off: <code>max_retries: 3</code>, wait <code>60 s → 600 s</code> at
+      <code>×2</code>. Bridge job errors and timeouts are deliberately <em>not</em> subclasses of agent
+      <code>TimeoutError</code>, so the two can never be conflated.
+    </p>
+    <div class="insight i-warn">
+      <span class="lbl">The structural hazard that remains</span>
+      <p>
+        Matching is still name-based. <strong>Any new exception subclass must be enumerated by hand or
+        it silently falls through</strong> to the default. Fail-loud config limits the damage; it does
+        not remove the hazard. Practical rule: <em>always grep an RL log for
+        <code>Network is unreachable</code> and connection errors before believing a low reward.</em>
+        <code>avg_raw_reward: 0.0</code> is far more often infrastructure than capability.
+      </p>
+    </div>
+    <p class="prose">
+      The launch wrapper enforces the same principle before Slurm ever sees the job: it
+      <code>curl</code>s <code>$APPTAINER_BRIDGE_URL/status</code> and refuses to submit on failure,
+      with the comment <em>"A disconnected bridge can otherwise masquerade as zero reward."</em>
+    </p>
+    <div class="insight i-warn">
+      <span class="lbl">And a data-shaped version of the same risk</span>
+      <p>
+        The co-lead reports <strong>raw r2egym collapses</strong> with zero reward; she trains on a
+        model-specific learnable band (<code>0 &lt; pass@8 &lt; 1</code> → 740 train + 100 held out). Our
+        config trains on all 3,328 — the configuration already known to fail for her. The band is
+        <strong>parked by operator decision; do not re-litigate it.</strong> But keep the consequence in
+        mind when reading gate 4: a flat reward curve may be the <em>data</em>, not the sandboxes. If
+        variance is zero, stop and report rather than silently promoting.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The runtime environment — the least elegant part of the stack</h2>
+    <p class="prose">
+      The run uses <code>envs/rl-megatron</code>, where <strong>"megatron" is only the directory
+      name</strong> — the strategy is <code>fsdp2</code>. The sibling <code>envs/rl</code> is genuinely
+      unusable: its <code>vllm._C</code> needs <code>libcudart.so.12</code> and Jupiter ships only
+      CUDA/13, so no <code>LD_LIBRARY_PATH</code> can fix it.
+    </p>
+    <div class="scroll">
+      <table>
+        <caption>The two Jupiter RL environments, measured</caption>
+        <thead><tr><th></th><th class="mono2">envs/rl</th><th class="mono2">envs/rl-megatron</th></tr></thead>
+        <tbody>
+          <tr><td>vLLM</td><td class="mono2">0.13.0 — <span class="pill p-stop">broken</span></td><td class="mono2">0.22.0 ✓</td></tr>
+          <tr><td>torch</td><td class="mono2">2.9.0+cu130</td><td class="mono2">2.11.0+cu128</td></tr>
+          <tr><td>transformers</td><td class="mono2">4.57.3</td><td class="mono2">5.8.1</td></tr>
+          <tr><td>flash_attn</td><td class="mono2">present</td><td class="mono2">absent</td></tr>
+          <tr><td>harbor</td><td class="mono2">0.1.45 — too old</td><td class="mono2">0.8.1 ✓</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose">
+      Note transformers differs by a <strong>major version</strong> between them — a recipe validated on
+      one does not transfer. The environment is selected via <code>RL_ENV_DIR</code> in the YAML's
+      <code>container.extra_env</code>, not <code>DCFT_RL_ENV</code>, because
+      <code>rl_launch_utils.py:780</code> tests only <code>-d $WORKDIR/envs/rl</code> and that directory
+      <em>exists</em> — a directory-exists test cannot detect a broken env, so the
+      <code>DCFT_RL_ENV</code> branch is never reached.
+    </p>
+    <p class="prose">
+      The YAML also overrides <code>LD_LIBRARY_PATH</code> wholesale, listing every
+      <code>nvidia/*/lib</code> plus <code>torch/lib</code> from rl-megatron and appending
+      <code>${CUDA_HOME}/lib64</code>. That is not belt-and-braces: a machine-local
+      <code>hpc.py</code> edit on Jupiter injects an <code>envs/rl</code>-pinned path with no
+      <code>${LD_LIBRARY_PATH}</code> suffix, which both shadows rl-megatron's torch libs (torch uses
+      DT_RUNPATH, searched <em>after</em> <code>LD_LIBRARY_PATH</code>) and wipes the CUDA/13 module
+      paths that make <code>vllm._C</code> importable at all.
+    </p>
+
+    <h3 class="sub-h">What the preflight actually asserts</h3>
+    <p class="prose">
+      <code>run_r2egym_qwen3_6_35b_grpo.sh</code> refuses to submit unless all of this holds. It is the
+      encoded form of every failure we have already paid for:
+    </p>
+    <ul class="stack">
+      <li><span class="mark y">✓</span><span><strong>Seven paths exist</strong> — the venv python, the RL config, harbor's <code>apptainer.py</code>, SkyRL's <code>qwen3_5_vlm.py</code>, the FlashQLA manifest, <code>gpu_sm90_smoke.ok</code>, and the model's <code>config.json</code>.</span></li>
+      <li><span class="mark y">✓</span><span><strong>Bridge health</strong> — <code>curl --fail</code> on <code>/status</code>.</span></li>
+      <li><span class="mark y">✓</span><span><strong>CUDA modules load first</strong> — <code>GCC/14.3.0</code> and <code>nvidia-compilers/25.9-CUDA-13</code>, because the wrapper imports <code>vllm._C</code> on the <em>login node</em> before any sbatch setup exists.</span></li>
+      <li><span class="mark y">✓</span><span><strong><code>import vllm._C</code>, not <code>import vllm</code></strong> — the top-level import is lazy and succeeds even in the broken env.</span></li>
+      <li><span class="mark y">✓</span><span><strong>Version floors</strong> — transformers ≥ 5.8.1, vLLM ≥ 0.19.</span></li>
+      <li><span class="mark y">✓</span><span><strong>Revision, from the directory name</strong> — plus <code>model_type</code> starts with <code>qwen3_5</code> and <code>quantization_config</code> is absent.</span></li>
+      <li><span class="mark y">✓</span><span><strong>The shell is a shell</strong> — a nested <code>text_config</code> exists, carries <code>linear_conv_kernel_dim</code>, and exposes GDN <code>layer_types</code>.</span></li>
+      <li><span class="mark y">✓</span><span><strong>Exact wheel equality</strong> — five FlashQLA packages, names canonicalized with <code>.lower().replace("_","-")</code> because wheel <code>Name</code> metadata is not guaranteed to match requirement spelling.</span></li>
+      <li><span class="mark y">✓</span><span><strong>Task count is exactly 3,328</strong> — counted as directories containing <code>instruction.md</code>. A parquet passed as <code>train_data</code> silently yields <em>zero</em> tasks and still submits.</span></li>
+      <li><span class="mark y">✓</span><span><strong>Promotion guards</strong> — <code>MAX_STEPS &gt; 1</code> requires a non-smoke job name and <code>MAX_RESTARTS ≥ 1</code>.</span></li>
+      <li><span class="mark n">○</span><span><strong>Not yet asserted:</strong> <code>torchtitan.distributed.expert_parallel</code> and <code>skyrl_train.models.layers.moe</code>. This is the open gap that let <code>1141941</code> fail late.</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Failure modes worth memorizing</h2>
+    <p class="lede">
+      Each of these cost more than ten minutes, and most of them look like something else. The silent
+      ones are the expensive ones.
+    </p>
+    <div class="cav">
+      <details class="cave" data-sev="high">
+        <summary><span class="pill p-stop">Silent</span> <span><code>flash_attn: false</code> is never a one-line change</span></summary>
+        <div class="cave-body">
+          <p>
+            Turning flash attention off does <strong>not</strong> fall back to SDPA.
+            <code>resolve_attn_implementation()</code> maps <code>attn_backend: auto</code> plus
+            <code>use_flash_attention_2=False</code> to <strong><code>eager</code></strong>. At 28,672-token
+            prompts eager attention is quadratic-memory and glacial — a run that "works" but is unusable,
+            with no error anywhere.
+          </p>
+          <p>
+            There is also a loud half: <code>use_sample_packing</code> defaults to true and is implemented
+            only on the flash-attn-2 varlen path, so it asserts at <code>init_model</code>.
+          </p>
+          <p class="fix">
+            <b class="tag">Fix</b> The trio, always together: <code>flash_attn: false</code> +
+            <code>attn_backend: sdpa</code> + <code>use_sample_packing: false</code>. Packing costs nothing
+            at <code>micro_train_batch_size_per_gpu: 1</code> anyway.
+          </p>
+        </div>
+      </details>
+
+      <details class="cave" data-sev="high">
+        <summary><span class="pill p-stop">Silent</span> <span>A parquet as <code>train_data</code> yields zero tasks and still submits</span></summary>
+        <div class="cave-body">
+          <p>
+            <code>resolve_rl_train_data()</code> only extracts when <code>is_hf_dataset_path()</code> is
+            true; a local path passes through verbatim, and SkyRL's dataset wants a directory of task
+            subdirs each holding <code>instruction.md</code>. The log says
+            <em>"No task directories or environments found; skipping"</em> and the job burns a multi-node
+            allocation training on nothing.
+          </p>
+          <p class="fix">
+            <b class="tag">Fix</b> Extract explicitly with
+            <code>scripts.datagen.extract_tasks_from_parquet</code>, then pass the directory. The
+            confirmation to look for is
+            <strong><code>Found 3328 task(s) with 7 unique environment(s)</code></strong> — a skipped
+            prebuild means the tasks are not wired.
+          </p>
+        </div>
+      </details>
+
+      <details class="cave" data-sev="med">
+        <summary><span class="pill p-wait">Loud, but very late</span> <span>MoE policy construction needs SkyRL's <code>ep</code> extra</span></summary>
+        <div class="cave-body">
+          <p>
+            All eight vLLM engines load Qwen3.6 successfully — the expensive part — and then FSDP policy
+            init dies in <code>skyrl_train.models.layers.moe</code> with
+            <code>ModuleNotFoundError: No module named 'torchtitan'</code>. Grouped-GEMM MoE with the
+            Torch expert-parallel backend requires TorchTitan, declared under SkyRL's <code>ep</code>
+            extra, which the borrowed <code>envs/rl-megatron</code> lacked. This is exactly what killed
+            <code>1141941</code>.
+          </p>
+          <p class="fix">
+            <b class="tag">Fix</b> Install TorchTitan at
+            <code>a1fdd7e43694bbfeff5d6ad8ac738c067bb90d41</code> plus <code>tomli</code> and
+            <code>tyro</code> into the actual RL venv. Gate on importing <em>both</em>
+            <code>torchtitan.distributed.expert_parallel</code> and
+            <code>skyrl_train.models.layers.moe</code> — a plain <code>import skyrl_train</code> is
+            insufficient.
+          </p>
+        </div>
+      </details>
+
+      <details class="cave" data-sev="med">
+        <summary><span class="pill p-wait">Looks like a hang</span> <span>A 90-minute "hang" that is a failed CUTLASS kernel build</span></summary>
+        <div class="cave-body">
+          <p>
+            On Qwen3-30B-A3B, vLLM 0.22 with <code>moe_backend=auto</code> selects a FlashInfer CUTLASS
+            MoE path that JIT-compiles <strong>183 nvcc units</strong> at engine start with
+            <code>--threads=1</code>. The build failed at 182/183 and the worker went down; the engine
+            sat in <code>shm_broadcast</code> until walltime.
+          </p>
+          <p class="fix">
+            <b class="tag">Fix</b> <code>moe_backend="triton"</code> — engine up in ~4 min. Related and
+            opposite: a 30B Megatron job silent for 10+ minutes is usually just FlashInfer MoE autotuning.
+            <strong>Do not call a big job wedged too early.</strong>
+          </p>
+        </div>
+      </details>
+
+      <details class="cave" data-sev="med">
+        <summary><span class="pill p-wait">Startup stall</span> <span>Offline W&amp;B still hangs when actors force <code>mode="shared"</code></span></summary>
+        <div class="cave-body">
+          <p>
+            The driver says <code>WANDB_MODE=offline</code>, then model construction stalls ~90 seconds
+            while per-node W&amp;B actors attempt an online shared run. MarinSkyRL's distributed tracking
+            path hard-coded <code>mode="shared"</code>, ignoring the driver.
+          </p>
+          <p class="fix">
+            <b class="tag">Fix</b> Derive the mode once; in offline/disabled mode initialize only the local
+            run and create no per-node actors. Verified corrected on <code>1141941</code>.
+          </p>
+        </div>
+      </details>
+
+      <details class="cave" data-sev="med">
+        <summary><span class="pill p-wait">Environment</span> <span>Cluster dotenv silently overwrites explicit launch paths</span></summary>
+        <div class="cave-body">
+          <p>
+            A generated Jupiter job started in another user's scratch tree and activated their Miniforge
+            even though owned <code>DCFT</code>, <code>SCRATCH</code> and venv paths were supplied —
+            <code>hpc.set_environment</code> and the generated sbatch sourced dotenv values <em>after</em>
+            the caller's environment, treating site defaults as overrides.
+          </p>
+          <p class="fix">
+            <b class="tag">Fix</b> Dotenv entries are defaults only (<code>${NAME:-default}</code>), and RL
+            jobs skip the generic cluster Conda activation. Regression-test the <em>generated sbatch</em>,
+            not just the Python config.
+          </p>
+        </div>
+      </details>
+
+      <details class="cave" data-sev="high">
+        <summary><span class="pill p-stop">Project-wide</span> <span>Never <code>find</code> or <code>du</code> on GPFS</span></summary>
+        <div class="cave-body">
+          <p>
+            Inode quota is the binding constraint, and caps are ~3M files for <em>all</em> users of a
+            compute project — hitting it locks the project for everyone. Two cancelled Apptainer builds
+            already took <code>/p/scratch</code> to 100% inode use.
+          </p>
+          <p class="fix">
+            <b class="tag">Fix</b> Unpack and build on <code>${LOCALSCRATCH:-${TMPDIR:-/tmp}}</code> and
+            atomically copy only completed SIFs to GPFS. Remove leftover temp trees single-threaded. Watch
+            <code>jutil project dataquota</code>. This is the one failure mode that genuinely harms other
+            users.
+          </p>
+        </div>
+      </details>
+
+      <details class="cave">
+        <summary><span class="pill p-flat">Expected</span> <span>A checkpoint appears despite a huge <code>ckpt_interval</code></span></summary>
+        <div class="cave-body">
+          <p>
+            SkyRL always writes a final checkpoint and HF export at clean termination. Not a bug — just
+            account for the disk. Relatedly, a <code>WorkerCrashedError</code> right after "Successfully
+            saved model weights" is node memory pressure <em>during save</em>: check the artifacts before
+            concluding the run lost work.
+          </p>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <section>
+    <h2>The paired measurement, and how it will be reported</h2>
+    <p class="prose">
+      Both arms use the same pinned 100 tasks and the same evaluation file: <strong>OpenCode
+      1.18.8</strong>, one attempt, <code>77,824 input + 4,096 output = 81,920</code> tokens,
+      <strong>compaction off</strong>. Jupiter serving is identical in both: BF16 weights, FP8 KV cache,
+      DP4 × TP1 on one GH200 node, a stable served model ID, <code>qwen3_coder</code> tool parser and
+      <code>qwen3</code> reasoning parser. JURECA runs only the x86_64 sandboxes.
+    </p>
+    <p class="prose">
+      Training rollouts also use <strong>OpenCode, not Terminus-2</strong>. That began as a workaround
+      for a known Terminus2 issue, but it removes a real confound: training against one interaction
+      format and measuring under another is a train/eval mismatch. Same agent on both sides is strictly
+      better science.
+    </p>
+    <div class="insight i-warn">
+      <span class="lbl">The allowlist trap this exposed</span>
+      <p>
+        <code>harbor_config.py</code> builds <code>AgentConfig(name=…, kwargs=…)</code> through an
+        <strong>allowlist</strong> of <code>FieldMapping</code>s. Keys absent from that table are
+        <em>silently dropped</em> — which is how <code>strict_json_parser</code> spent an entire
+        workstream as dead configuration. Contract tests now verify the OpenCode fields actually arrive.
+        <strong>Assume any new Harbor field is dropped until a test proves otherwise.</strong>
+      </p>
+    </div>
+    <p class="prose">
+      The pre-GRPO arm runs against the immutable staged checkpoint; the post arm against a selected HF
+      export. The report must carry <strong>raw resolved counts and rates, the absolute
+      percentage-point delta, per-task transitions, a paired-bootstrap 95% interval, and an exact
+      McNemar p-value</strong> — not a bare delta. The model card's SWE-Bench score is <em>not</em> a
+      baseline.
+    </p>
+    <div class="insight">
+      <span class="lbl">The baseline doubles as a harness check — with the threshold stated in advance</span>
+      <p>
+        Compare our baseline against Qwen's published SWE-Bench Verified figure, not to reproduce it but
+        to catch a broken harness before blaming the model. It is a <em>band</em>, not a reproduction:
+        different scaffold, n=100 vs 500 (binomial SE ≈ ±5 pp), one attempt, no compaction. A gap under
+        ~10 pp is indistinguishable from sampling plus harness differences.
+        <strong>If we land more than ~15 pp below the published figure, stop and audit the
+        harness.</strong>
+      </p>
+      <p>
+        The precedent: the gsm8k <code>pass_at_1 ≈ 0.45</code> plateau was a <em>format artifact</em>, not
+        math ability. Paired re-scoring of one generation pass showed <code>strict@1024 = 41.6%</code> vs
+        <code>flexible@4096 = 90.67%</code> — the model answers in <code>\boxed{N}</code> and never emits
+        <code>####</code>. Formatting cost 37.7 points, truncation 11.3. A number that looks like
+        capability is often the harness.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where the code lives</h2>
+    <p class="prose">
+      <code>lukedhlee/qwen3-6-r2egym-grpo</code> is the execution branch, cut fresh on 2026-07-31 from
+      <code>origin/penfever/working</code> @ <code>32416f6e</code> — the canonical OT-Agent branch, not
+      <code>main</code>. Fourteen commits, <strong>37 files / +3,407 / −30</strong>, 12 focused tests
+      green, and no <code>ai_memory</code>, Vista, or gsm8k content.
+    </p>
+    <div class="scroll">
+      <table>
+        <caption>Execution refs — local clones are ground truth, clusters never diverge</caption>
+        <thead><tr><th>Repo</th><th class="mono2">Branch</th><th class="mono2">Head</th><th>Pushed</th></tr></thead>
+        <tbody>
+          <tr><td>OpenThoughts-Agent</td><td class="mono2">lukedhlee/qwen3-6-r2egym-grpo</td><td class="mono2">fc262339</td><td><span class="pill p-ok">yes</span></td></tr>
+          <tr><td>MarinSkyRL</td><td class="mono2">lukedhlee/apptainer-bridge-rl</td><td class="mono2">c0a7098</td><td><span class="pill p-ok">yes</span></td></tr>
+          <tr><td>Harbor</td><td class="mono2">lukedhlee/apptainer-opencode-bridge</td><td class="mono2">6b25eb16</td><td><span class="pill p-ok">yes</span></td></tr>
+          <tr><td>OpenThoughts-Agent <em>(archive)</em></td><td class="mono2">lukedhlee/archive/r2egym-integration-20260731</td><td class="mono2">647d7cc1</td><td><span class="pill p-flat">no</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose">
+      The archive branch preserves all 83 original files. <strong>Never merge it forward</strong> — it is
+      based on a 07-18 commit now ~45 behind upstream. Jupiter checkouts were reconciled by fetch + hard
+      reset, never <code>git pull</code>; historical dirty trees stay historical and are never executed.
+    </p>
+    <div class="scroll">
+      <table>
+        <caption>The artifacts that define this run</caption>
+        <thead><tr><th>File</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td class="file">hpc/skyrl_yaml/jupiter/6node_qwen3_6_35b_a3b_r2egym_grpo.yaml</td><td>The whole contract — geometry, algorithm, Harbor, exception routing, 40 env vars</td></tr>
+          <tr><td class="file">hpc/skyrl_standard/jupiter/run_r2egym_qwen3_6_35b_grpo.sh</td><td>Preflight + launch wrapper; every assertion listed above</td></tr>
+          <tr><td class="file">hpc/skyrl_standard/jupiter/prepare_qwen3_6_flashqla.sh</td><td>Builds the pinned five-wheel ARM64 kernel layer</td></tr>
+          <tr><td class="file">hpc/sbatch_rl/jupiter_qwen3_6_flashqla_smoke.sbatch</td><td>The GH200 autograd gate (job 1139108)</td></tr>
+          <tr><td class="file">hpc/harbor_yaml/eval/configs/eval_opencode_apptainer_qwen3_6_swebench100_ctx80k.yaml</td><td>The single eval file both arms share</td></tr>
+          <tr><td class="file">hpc/datagen_yaml/qwen3_6_35b_a3b_swebench80k_jupiter.yaml</td><td>Serving config for the eval arms</td></tr>
+          <tr><td class="file">scripts/analysis/compare_paired_swebench.py</td><td>Paired bootstrap CI + exact McNemar</td></tr>
+          <tr><td class="file">scripts/analysis/audit_r2egym_swebench_overlap.py</td><td>The contamination audit</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="insight i-warn">
+      <span class="lbl">Config convention, so this doesn't sprawl again</span>
+      <p>
+        One config per <em>(cluster × model-family × task)</em>. Never fork a config for something the
+        launcher already parameterizes — <code>--num_nodes</code>, <code>--model</code>,
+        <code>--skyrl_override</code>. The four Vista YAMLs were 84% identical and should have been one.
+        Retire configs when a workstream concludes.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>What is proven, and what is still belief</h2>
+    <div class="cols">
+      <div class="track" style="border-top-color: var(--ok)">
+        <span class="track-h" style="color: var(--ok)">Measured</span>
+        <ul class="stack">
+          <li><span class="mark y">✓</span><span>FlashQLA 0.1.2 BF16 forward + backward on GH200 (<code>1139108</code>).</span></li>
+          <li><span class="mark y">✓</span><span>All 7 r2egym SIFs built; pristine oracle scores 1, deliberate no-op scores 0.</span></li>
+          <li><span class="mark y">✓</span><span><strong>128/128</strong> concurrent oracle rollouts in 96 s — zero exceptions, retries, or connection errors.</span></li>
+          <li><span class="mark y">✓</span><span>SWE-Bench-100 oracle coverage <strong>100/100</strong> on the air-gapped partition.</span></li>
+          <li><span class="mark y">✓</span><span>Real Terminus2/Qwen3-8B rollout produced a <em>genuine</em> verifier failure, not an infrastructure one.</span></li>
+          <li><span class="mark y">✓</span><span>Contamination audit across all 3,328 × 100 pairs: zero direct matches.</span></li>
+          <li><span class="mark y">✓</span><span>Eight plain-BF16 vLLM engines load Qwen3.6 at ~64.69 GiB each with <code>quantization=None</code>.</span></li>
+          <li><span class="mark y">✓</span><span>Bridge cumulative: <strong>1,442/1,442</strong> jobs, zero job errors.</span></li>
+        </ul>
+      </div>
+      <div class="track" style="border-top-color: var(--warn)">
+        <span class="track-h" style="color: var(--warn)">Unproven</span>
+        <ul class="stack">
+          <li><span class="mark q">?</span><span><strong>Any GRPO step on this model.</strong> No rollout, reward, or update result exists.</span></li>
+          <li><span class="mark q">?</span><span>Policy-model FlashQLA binding and the first training backward through a 35B MoE.</span></li>
+          <li><span class="mark q">?</span><span>Forced tunnel disconnect and recovery — gate 5, at <code>ServerAliveInterval=1</code>.</span></li>
+          <li><span class="mark q">?</span><span>Whether raw r2egym produces reward variance for <em>this</em> model.</span></li>
+          <li><span class="mark n">○</span><span>TorchTitan provisioning is repaired but <strong>not encoded as a launcher preflight</strong>; a fresh env reproduces <code>1141941</code>.</span></li>
+          <li><span class="mark n">○</span><span>Auto-chain has never crossed a real walltime boundary — every smoke ran <code>MAX_CHAIN=0</code>. Off the critical path only because workers now request the 24 h maximum.</span></li>
+          <li><span class="mark n">○</span><span><code>TP &gt; 1</code> in the RL loop on Jupiter. Believed possible, never run.</span></li>
+          <li><span class="mark n">○</span><span>What fraction of r2egym failures are non-substantive — malformed patch, out of budget — rather than capability. Must be measured before <code>avg_raw_reward</code> is fully trusted.</span></li>
+          <li><span class="mark n">○</span><span>Weight sync is still ~43% of a step. Unclaimed.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Standing constraints</h2>
+    <ul class="stack">
+      <li><span class="mark n">·</span><span><strong>≤ 16 combined JSC nodes</strong> active or pending for this work. Currently 8.</span></li>
+      <li><span class="mark n">·</span><span><strong>Never <code>scancel</code> a RUNNING job</strong> without explicit permission; never anyone else's.</span></li>
+      <li><span class="mark n">·</span><span><strong>Never <code>find</code>/<code>du</code> on GPFS or JURECA scratch.</strong></span></li>
+      <li><span class="mark n">·</span><span><strong>Listeners bind internal interfaces only</strong> — never <code>0.0.0.0</code>, never a public IP. A stale scratch copy of the tunnel script still attempts a public reverse bind; use the reviewed internal-only path.</span></li>
+      <li><span class="mark n">·</span><span><strong>Login-node processes stay small and idle-cheap.</strong> No bulk image pulls or builds there — they are CPU-bound (<code>user 6m51</code> vs <code>real 2m47</code>). Heavy work goes to compute. Tear services down when idle.</span></li>
+      <li><span class="mark n">·</span><span><strong>Private key on Jupiter: passphrase-protected, <code>chmod 600</code>.</strong> Not a policy question.</span></li>
+      <li><span class="mark n">·</span><span><strong>Compute nodes have no internet</strong> on every JSC system — <code>HF_HUB_OFFLINE=1</code>, W&amp;B offline, sync from login.</span></li>
+      <li><span class="mark n">·</span><span><strong>Never push or open a PR without an explicit ask in that turn</strong>, and only to <code>lukedhlee</code>-owned repos.</span></li>
+      <li><span class="mark n">·</span><span><code>enable_db_registration: false</code>; ≤ 6 RUNNING RL jobs per cluster.</span></li>
+      <li><span class="mark n">·</span><span>Do not "fix" MoE weight sync by disabling <code>SKYRL_W13_RELOAD_BRACKET</code> — it produces token salad.</span></li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>ot-agent · qwen3.6-35b-a3b paired grpo</span>
+    <span>updated 2026-08-04 09:30 kst</span>
+    <span>canary 1229343 running · route gate passed</span>
+    <span>source: ai_memory/{handoff,gotchas,decisions}.md + live cluster probe</span>
+  </footer>
+
+</div>
