@@ -1440,3 +1440,44 @@ the agent's own interpreter against the endpoint —
 Tooling: `/e/fscratch/reformo/lee27/insandbox.py <port>` creates one env, runs DNS/curl/python probes
 inside it, and stops it. `APIConnectionError` in `exception_info` is the signature; note the message is
 just "Connection error." and names no URL, so the traces alone will not tell you this.
+
+## Thinking mode makes every agent turn exceed terminus-2's request timeout (2026-08-04)
+
+With the endpoint-by-IP fix in place, connections succeeded and the failure mode changed from
+`APIConnectionError` ("Connection error.") to **"Request timed out."** on every trial. Measured through
+the tunnel against the 8B while shards were live:
+
+| request | result |
+|---|---|
+| 256 max_tokens | HTTP 200 in **5.0 s** |
+| 4096 max_tokens (thinking) | HTTP 200 in **59.8 s** for 2,611 completion tokens (~44 tok/s) |
+
+So a full 4,096-token thinking turn is ~93 s, and terminus-2's per-request timeout fires first. The
+endpoint was never unhealthy — a 256-token completion answered in 5 s throughout.
+
+`timeout` IS a passthrough kwarg in `harbor/llms/lite_llm.py` (two allow-lists, ~L149 and ~L186), so
+raising it is plausible — but adding an unverified key is the accepted-but-ignored trap that has already
+produced five bugs, so the durable fix is to stop generating thousands of tokens per turn:
+
+```yaml
+interleaved_thinking: false
+extra_body: { chat_template_kwargs: { enable_thinking: false } }
+```
+
+A non-thinking terminus-2 turn only has to emit a JSON tool call — tens of tokens — so turns drop from
+~60–90 s to a few seconds, which also makes a 1,664-trial shard fit a 3 h wall.
+
+**⚠ The band is a property of the (model, agent, config) triple, not of the dataset.** Measuring with
+thinking off measures the band for thinking-off `g1_8b`. A thinking model solves more tasks, so the
+always-solved bucket grows and the band shifts. Ask the co-lead whether her band run had thinking enabled
+before comparing fractions to her ~35%.
+
+### The three-deep chain this sat behind
+Each fix revealed the next, and all three produced **null rewards while every progress counter looked
+healthy**:
+1. `apptainer overlay create` timing out on shared `/p/scratch` → `BridgeOperationError`
+2. `jrlogin05i` resolving differently for Python than curl inside the sandbox → `APIConnectionError`
+3. thinking-mode turns exceeding the request timeout → `Request timed out.`
+
+The lesson is not any one of them: it is that **`scored=N` counts files, not rewards**, and a probe must
+gate on a non-null reward before it is allowed to consume a wall.
