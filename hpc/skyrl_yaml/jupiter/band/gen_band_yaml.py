@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Generate learnable-band p@4 probe configs from the 8B r2egym GRPO config.
+
+The probe is PURE ROLLOUT: `main_tbench_generate` builds vLLM engines and calls
+generator.generate() once over every prompt. No policy/ref model, no optimizer,
+no FSDP, no weight sync, no checkpoint -- which removes most of the failure
+chain that has cost us nine runs. `policy_strict_spread_pg` is forced off so
+get_policy_pg() returns None and no GPUs are reserved away from the engines.
+
+Sharded because generate() has NO resume: one shard = one allocation's worth of
+work, and a shard that dies only loses its own tasks. Completed trials are
+already durable per-trial as trace_jobs/<task>/result.json, so a re-run skips
+nothing but costs only the lost shard.
+
+usage: gen_band_yaml.py <out_dir> <task_names_file> <tasks_root> <n_shards> \
+           <rollout_nodes> <endpoint_port_base> [shard_index_to_emit ...]
+"""
+import sys, os, copy, yaml
+
+OUT, NAMES, ROOT, NSHARD, NODES, PORTBASE = sys.argv[1:7]
+NSHARD, NODES, PORTBASE = int(NSHARD), int(NODES), int(PORTBASE)
+only = set(int(x) for x in sys.argv[7:]) if len(sys.argv) > 7 else None
+
+SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "base8b.yaml")
+with open(SRC) as f:
+    base = yaml.safe_load(f)
+
+names = [l.strip() for l in open(NAMES) if l.strip()]
+shards = [names[i::NSHARD] for i in range(NSHARD)]  # round-robin: even mix of envs
+
+FSCRATCH = "/e/fscratch/reformo/lee27"
+
+for i, shard in enumerate(shards):
+    if only is not None and i not in only:
+        continue
+    c = copy.deepcopy(base)
+    c["entrypoint"] = "examples.terminal_bench.entrypoints.main_tbench_generate"
+
+    m = f"{FSCRATCH}/models/g1_diverse_tezos_100k_8b"
+    c["trainer"]["policy"]["model"]["path"] = m
+    c["trainer"]["ref"]["model"]["path"] = m
+    # No policy placement group: the generate path has no policy worker, and a
+    # strict-spread PG would reserve whole nodes away from the vLLM engines.
+    c["trainer"]["placement"]["policy_strict_spread_pg"] = False
+    c["trainer"]["train_batch_size"] = min(32, len(shard))
+    c["trainer"]["policy_mini_batch_size"] = min(32, len(shard))
+    c["trainer"]["eval_before_train"] = False
+    c["trainer"]["eval_interval"] = 999999
+    c["trainer"]["ckpt_interval"] = 999999
+    c["trainer"]["hf_save_interval"] = 999999
+    c["trainer"]["resume_mode"] = "none"
+    c["trainer"]["project_name"] = "jupiter-r2egym-band-probe-8b"
+
+    g = c["generator"]
+    g["n_samples_per_prompt"] = 4          # p@4 -- the band filter itself
+    g["num_inference_engines"] = 4 * NODES  # TP1, one engine per GH200
+    # 8B in bf16 is ~16GB of a 96GB GH200, so KV has room the 35B never had.
+    # This is the lever that lifts concurrency from 32 to the hundreds.
+    g["max_num_seqs"] = 64
+
+    tb = c["terminal_bench"]["harbor"]
+    # Hardcode, do NOT leave as ${oc.env:APPTAINER_BRIDGE_URL,...:9920}: if the
+    # env var is unset at hydra-resolution time the default silently attaches the
+    # probe to the 9920 bridge serving the 35B run. Same accepted-but-ignored
+    # failure class as strict_json_parser / compaction.reserved.
+    tb["bridge_url"] = "http://10.128.1.2:9921"
+    # Sandbox supply is 48/node on the JURECA dc-cpu fleet; keep the driver's
+    # concurrency at the engine working set so trials are not queued behind vLLM.
+    tb["n_concurrent_trials"] = 4 * NODES * 16
+    # Learned on 1229488: one unenumerated exception aborted 68 honest trials.
+    tb["fail_on_infrastructure_error"] = False
+    if "AddTestsDirError" not in tb["mask_exceptions"]:
+        tb["mask_exceptions"].append("AddTestsDirError")
+    if "NonZeroAgentExitCodeError" not in tb["passthrough_exceptions"]:
+        tb["passthrough_exceptions"].append("NonZeroAgentExitCodeError")
+
+    e = c["container"]["extra_env"]
+    # Each shard gets its own reverse-forward port so shards can run concurrently
+    # without fighting over one tunnel.
+    e["SKYRL_ROLLOUT_HTTP_ENDPOINT_HOST"] = "jrlogin05i"
+    e["SKYRL_ROLLOUT_HTTP_ENDPOINT_PORT"] = str(PORTBASE + i)
+    # Probe bridge, NOT the 9920 bridge serving the 35B milestone run.
+    e["APPTAINER_BRIDGE_URL"] = "http://10.128.1.2:9921"
+    e["WANDB_DIR"] = f"{FSCRATCH}/wandb"
+    e["WANDB_MODE"] = "offline"
+    # /e/scratch is inode-exhausted and cannot create files; it killed 1229643
+    # via exactly this path.
+    e["RAY_object_spilling_config"] = (
+        '{"type":"filesystem","params":{"directory_path":"%s/ray_spill"}}' % FSCRATCH
+    )
+
+    c["data"]["train_data"] = [os.path.join(ROOT, n) for n in shard]
+    c["data"]["val_data"] = []
+
+    p = os.path.join(OUT, f"band_probe_8b_p4_shard{i:02d}of{NSHARD:02d}.yaml")
+    with open(p, "w") as f:
+        yaml.safe_dump(c, f, default_flow_style=False, sort_keys=False, width=10**6)
+    print(f"{p}  tasks={len(shard)} trials={len(shard)*4} engines={4*NODES} conc={tb['n_concurrent_trials']} port={PORTBASE+i}")

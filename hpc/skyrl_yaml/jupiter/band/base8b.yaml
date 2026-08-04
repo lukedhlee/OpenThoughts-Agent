@@ -1,0 +1,272 @@
+entrypoint: examples.terminal_bench.entrypoints.main_tbench_generate
+
+# Qwen3-8B (dense) FSDP2 + GRPO on r2egym, Jupiter/booster, disaggregated.
+# Validation is OFFLINE on saved checkpoints (SWE-bench-100 via the JURECA
+# apptainer bridge), so eval_interval is pinned off and val_data is empty.
+# Native ctx of Qwen3-8B is 40960 => the 32768 training regime needs no YARN.
+
+config_groups:
+  terminal_bench_config: terminal_bench
+
+terminal_bench:
+  trials_dir: null
+  harbor:
+    name: terminus-2
+    max_episodes: 999999
+    enable_summarize: false
+    store_all_messages: true
+    trajectory_config:
+      raw_content: true
+    enable_episode_logging: false
+    record_terminal_session: false
+    enable_pane_logging: false
+    strict_json_parser: true
+    interleaved_thinking: true
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: true
+    override_timeout_sec: 1800
+    override_cpus: 2
+    override_memory_mb: 4096
+    override_storage_mb: 4096
+    # Sandboxes run on JURECA through the internal Jupiter bridge. The worker
+    # cache already contains all seven r2egym SIFs, so Daytona snapshots and
+    # runtime image builds must stay disabled.
+    environment_type: apptainer
+    bridge_url: ${oc.env:APPTAINER_BRIDGE_URL,http://10.128.1.2:9920}
+    sif_cache: /p/scratch/synthlaion/lee27/r2egym_sif
+    auto_snapshot: false
+    verifier_override_timeout_sec: 120
+    max_retries: 3
+    min_wait_sec: 60.0
+    max_wait_sec: 600.0
+    wait_multiplier: 2.0
+    exclude_exceptions:
+      - VerifierTimeoutError
+      - VerifierRuntimeError
+      - RewardFileNotFoundError
+      - RewardFileEmptyError
+      - VerifierOutputParseError
+      - BridgeOutageError
+      - BridgeOperationError
+      - BridgeOperationTimeoutError
+      - VerifierInfrastructureError
+    n_concurrent_trials: 32
+    log_level: INFO
+    enable_reward_shaping: false
+    collect_rollout_details: true
+    enable_error_classification: true
+    fail_on_infrastructure_error: true
+    mask_exceptions:
+      - DaytonaError
+      - EnvironmentStartTimeoutError
+      - BridgeOutageError
+      - BridgeOperationError
+      - BridgeOperationTimeoutError
+      - VerifierInfrastructureError
+      - NetworkError
+      - ConnectionError
+      - RewardFileNotFoundError
+      - RewardFileEmptyError
+      - AgentEnvironmentTimeoutError
+      - ContextLengthExceededError
+    default_error_treatment: mask
+    passthrough_exceptions:
+      - AgentTimeoutError
+      - ContextLengthExceededError
+  model_info:
+    max_input_tokens: 28672
+    max_output_tokens: 4096
+  archiving:
+    enabled: false
+  trace_upload:
+    enabled: false
+
+trainer:
+  strategy: fsdp2
+  # flash-attn is absent from envs/rl-megatron and the known aarch64 wheel
+  # targets torch 2.9/cu130, not this env's 2.11/cu128 => SDPA. Throughput
+  # lever only; 8B @ 28k prompt + grad ckpt fits GH200 96GB comfortably.
+  flash_attn: false
+  # REQUIRED with flash_attn: false. resolve_attn_implementation() maps
+  # attn_backend="auto" + use_flash_attention_2=False -> "eager", NOT sdpa.
+  # Eager attention at 28,672-token prompts is quadratic-memory and glacial, so
+  # leaving the default would have quietly produced a technically-working but
+  # unusable run. Ask for sdpa explicitly.
+  attn_backend: sdpa
+  # REQUIRED with flash_attn: false. model_wrapper.py asserts
+  # attn_implementation == "flash_attention_2" whenever use_sample_packing is on
+  # (default true), so packing and SDPA are mutually exclusive here.
+  # Cost is near-zero for this config: micro_train_batch_size_per_gpu=1 means
+  # there is nothing to pack together anyway.
+  use_sample_packing: false
+  gradient_checkpointing: true
+  gradient_checkpointing_use_reentrant: true
+  algorithm:
+    advantage_estimator: grpo
+    use_kl_loss: false
+    kl_loss_coef: 0.0
+    eps_clip_low: 0.2
+    eps_clip_high: 0.2
+    loss_reduction: sequence_mean
+    use_tis: true
+    tis_imp_ratio_cap: 2.0
+  epochs: 1
+  max_steps: 50
+  update_epochs_per_batch: 1
+  train_batch_size: 32
+  policy_mini_batch_size: 32
+  eval_batch_size: 32
+  micro_forward_batch_size_per_gpu: 1
+  micro_train_batch_size_per_gpu: 1
+  max_prompt_length: 28672
+  # colocate_all: false AUTO-SELECTS FullyAsyncRayPPOTrainer (main_tbench.py
+  # get_trainer keys purely off that flag), which imposes its own constraint set:
+  #   train_batch_size == policy_mini_batch_size          (32 == 32, ok)
+  #   dynamic_sampling.type is None                       (default, ok)
+  #   NOT generator.batched                               <- must be false
+  #   generator.async_engine                              (true, ok)
+  #   NOT colocate_all                                    (ok)
+  #   policy_mini_batch_size <= num_parallel_generation_workers
+  # Since the disaggregated-only decision fixes colocate_all=false, the fully-async
+  # trainer is not optional here and these are hard requirements, not preferences.
+  fully_async:
+    # Default is 768, which is badly oversized for this run: generation concurrency
+    # is capped by the engine working set (num_inference_engines * max_num_seqs /
+    # n_samples_per_prompt = 8*8/4 = 16 groups), NOT by worker count. A large worker
+    # pool only lets a stale backlog accumulate and pins head-node memory -- the
+    # documented 80B head-plasma overflow. 32 is the floor (== policy_mini_batch_size)
+    # and already exceeds the working set.
+    num_parallel_generation_workers: 32
+  eval_interval: 999999
+  eval_before_train: false
+  ckpt_interval: 5
+  resume_mode: latest
+  hf_save_interval: 5
+  hf_upload_mode: all
+  hf_hub_repo_id: null
+  hf_hub_private: false
+  hf_hub_revision: main
+  enable_db_registration: false
+  project_name: jupiter-r2egym-grpo-8b
+  log_level: INFO
+  tracker_commit_each_step: true
+  logger: wandb
+  run_name: null
+  ckpt_path: null
+  export_path: null
+  policy:
+    model:
+      path: Qwen/Qwen3-8B
+    optimizer_config:
+      lr: 1.0e-6
+      weight_decay: 0.0
+      adam_betas: [0.9, 0.999]
+      max_grad_norm: 1.0
+    fsdp_config:
+      cpu_offload: false
+      reshard_after_forward: true
+      fsdp_size: 4
+  ref:
+    model:
+      path: Qwen/Qwen3-8B
+    fsdp_config:
+      cpu_offload: false
+      reshard_after_forward: true
+      fsdp_size: 4
+  placement:
+    colocate_all: false
+    colocate_policy_ref: true
+    policy_num_nodes: 1
+    ref_num_nodes: 1
+    policy_num_gpus_per_node: 4
+    ref_num_gpus_per_node: 4
+    critic_num_nodes: 1
+    critic_num_gpus_per_node: 4
+    policy_strict_spread_pg: true
+    policy_per_gpu_bundles: true
+    policy_force_cvd_mask: true
+
+generator:
+  backend: vllm
+  timeout_multiplier: 1.0
+  model_dtype: bfloat16
+  enforce_eager: true
+  inference_engine_tensor_parallel_size: 1
+  num_inference_engines: 8
+  inference_engine_expert_parallel_size: 1
+  n_samples_per_prompt: 4
+  eval_n_samples_per_prompt: 1
+  gpu_memory_utilization: 0.85
+  max_num_seqs: 8
+  max_num_batched_tokens: 4096
+  enable_prefix_caching: true
+  enable_chunked_prefill: true
+  run_engines_locally: true
+  weight_sync_backend: nccl
+  async_engine: true
+  # MUST be false: FullyAsyncRayPPOTrainer asserts `not generator.batched`, and
+  # colocate_all=false forces that trainer. Batched generation is incompatible with
+  # per-trajectory async rollout by design, and agentic multi-turn rollouts are
+  # per-trajectory anyway. (The 30B r2egym config still pairs batched=true with
+  # colocate_all=false and would fail this same assert.)
+  batched: false
+  enable_http_endpoint: true
+  enable_ray_prometheus_stats: false
+  vllm_stats_interval: 1
+  append_eos_token_after_stop_str_in_multi_turn: true
+  max_turns: 999999
+  sampling_params:
+    max_generate_length: 4096
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 20
+  engine_init_kwargs:
+    max_model_len: 32768
+    custom_chat_template_chat_completion_path: ./chat_templates/qwen3_thinking_acc.jinja2
+
+data:
+  train_data: []
+  val_data: []
+
+rollout:
+  fanout:
+    enabled: true
+    num_coordinators: 4
+    cpus_per_coordinator: 8
+
+container:
+  extra_env:
+    # MUST be set: rl_launch_utils.py:780 does `RL_ENV_DIR="${RL_ENV_DIR:-$WORKDIR/envs/rl}"`
+    # and then tests `-d`. envs/rl EXISTS but its vllm _C.so needs libcudart.so.12
+    # while Jupiter only ships CUDA/13 => the -d test passes and it activates a
+    # broken env, and the DCFT_RL_ENV fallback in the elif is never reached.
+    # universal_rl.sbatch emits container.extra_env BEFORE activation for exactly this.
+    RL_ENV_DIR: /e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron
+    # MUST also override LD_LIBRARY_PATH. Jupiter's hpc.py env_vars carries a
+    # machine-local hardcoded LD_LIBRARY_PATH pointing at envs/rl, and it is
+    # emitted WITHOUT a ${LD_LIBRARY_PATH} suffix -- so it (a) puts the broken
+    # env's torch/lib ahead of rl-megatron's on the search path, and (b) WIPES
+    # the CUDA/13 module paths where libcudart.so.13 actually lives. Both are
+    # fatal. container.extra_env is emitted AFTER that line, so this wins; the
+    # Ray srun env list also ends with LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-},
+    # and last-assignment-wins in `env`, so workers inherit this too.
+    LD_LIBRARY_PATH: "/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cu13/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cublas/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cuda_cupti/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cudnn/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cufft/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cufile/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/curand/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cusolver/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cusparse/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/cusparselt/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nccl/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nvjitlink/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nvshmem/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/nvidia/nvtx/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/lib/python3.12/site-packages/torch/lib:${CUDA_HOME}/lib64"
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    NCCL_DEBUG: WARN
+    SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
+    VLLM_FORCE_IPV4: "1"
+    GLOO_USE_IPV6: "0"
+    NCCL_SOCKET_FAMILY: AF_INET
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+    WANDB_PROJECT: jupiter-r2egym-grpo-8b
+    WANDB_MODE: offline
+    WANDB_DIR: /e/scratch/reformo/lee27/wandb
+    DC_AGENT_SECRET_ENV: /e/scratch/reformo/lee27/keys/secrets.env
+    APPTAINER_BRIDGE_URL: ${oc.env:APPTAINER_BRIDGE_URL,http://10.128.1.2:9920}
+    RL_REPO_DIR: /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge
+    SKYRL_HOME: /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge
+    CONDA_EXE: /e/scratch/reformo/lee27/miniforge3/bin/conda
+    RL_PYTHON: /e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/bin/python
+    PYTHONPATH: /e/scratch/reformo/lee27/harbor-apptainer-bridge/src:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-train:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-gym:/e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge
