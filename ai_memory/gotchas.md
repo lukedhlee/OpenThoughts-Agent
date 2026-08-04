@@ -1284,3 +1284,52 @@ A guard whose diagnostics can prevent its own action is worse than the gap it wa
 ⚠ **And the reason this was caught at all:** the watcher's *result* was verified rather than its
 existence. Same habit that caught the silent `pkill` self-kill an hour earlier. `exit 1` in a detached
 watcher is invisible unless you go and read its log.
+
+## The 32-way rollout ceiling was never a JURECA limit (2026-08-04)
+
+For weeks the working assumption was that sandbox supply capped us at 32 concurrent trials. It did not.
+Three independent limits were stacked, and only one of them was real:
+
+| limit | value | what it actually is |
+|---|---|---|
+| `generator.max_num_seqs` × `num_inference_engines` | 8 × 4 = **32** | the real ceiling — vLLM KV budget on the 35B |
+| `harbor.n_concurrent_trials` | 32 | sized *downstream* to match the above |
+| `worker.py --num-workers` | **default 16**/node, fleet was 2 nodes = 32 | a CLI default, not a limit |
+
+`max_num_seqs: 8` on Qwen3.6-35B-A3B is not timid tuning: ~70 GB of weights on a 96 GB GH200 at
+`gpu_memory_utilization: 0.85` leaves almost nothing for KV at `max_model_len: 32768`. So for the **35B**,
+adding JURECA nodes buys nothing — Jupiter is the wall. For an **8B** (~16 GB bf16, ~65 GB left for KV),
+`max_num_seqs` of 64+ is fine and the sandbox fleet becomes the binding constraint instead.
+
+**Measured on an isolated bridge (port 9921) against a 4→36-node `dc-cpu` fleet at `WORKERS_PER_NODE=48`:**
+
+| concurrent env creates | reached `ready` | p50 time-to-ready | p90 |
+|---|---|---|---|
+| 8 | 8/8 | 8s | 8s |
+| 48 | 48/48 | 22s | 24s |
+| 192 | 192/192 | 56s | 60s |
+| 384 | 384/384 | 68s | 82s |
+| 768 | 766/768 | 102s | 164s |
+
+Sub-linear, and the two 768 failures were `stopped`, 0.26%. `BRIDGE_START_CONCURRENCY` (default 8/node)
+throttles *starts*, not *running* instances — the code documents `starter-suid exit 255` above ~16
+concurrent starts, so it paces ramp-up and nothing else.
+
+### The bridge scales better than its architecture suggests
+It is a stdlib `ThreadedHTTPServer` with one global `_lock`, which sounds like a bottleneck at scale. It
+isn't, because **each node runs ONE dispatcher that batch-polls** and local workers consume its queue
+("reduces SSH tunnel traffic from N workers polling to 1 dispatcher polling"). At 32 nodes the bridge sees
+32 pollers, not 1,536.
+
+### `workers_alive: false` is a bookkeeping artifact, not a dead fleet
+`_last_worker_poll` is updated only by the **singular** `/worker/get_job` endpoint. Dispatchers use the
+**batch** `/worker/get_jobs`, which updates neither it nor `worker_polls`. A fully healthy 32-node fleet
+therefore reports `workers_alive: false` and `worker_polls: 0` while idle. Verify by creating an env and
+watching it reach `ready` — never by trusting that flag. Same family as the fleet-sufficiency bug: a
+liveness field doing duty it was never wired for.
+
+### Reverse-forward backlog depends on how you bind
+The long-lived bridge forward showed `LISTEN 0 5 0.0.0.0:9920` — backlog **5**, and bound to `0.0.0.0`
+against the internal-interface rule. Adding a forward with an explicit internal bind address
+(`-R 10.14.0.46:9923:...`) yields `LISTEN 0 128 10.14.0.46:9923`. Bind explicitly: it is both the correct
+security posture and a 25× deeper accept queue.
