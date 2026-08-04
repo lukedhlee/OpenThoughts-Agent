@@ -521,7 +521,40 @@ UNAPPROVED and unresolved — `/p/scratch` routes around the problem rather than
 | `1225422` | 16×8, 1800s | FAILED 3h12m, **zero rewards** — reverse tunnel still pointed at the previous head; my omission |
 | `1229343` | 16×8, 1800s | FAILED 58m on the `/e/scratch` quota — but produced **18 honest rewards**, the data above |
 | `1229438` | 16×8, **6h** | cancelled — 6h could not fit before a hidden maintenance window, deferred to Aug 5 12:00 CEST |
-| `1229446` | 16×8, **4h** | **PD `(Priority)`** — the 4h walltime cleared the maintenance block |
+| `1229446` | 16×8, **4h** | superseded before running; relaunched as the `…20260804f` run below |
+| `1229488` | 16×8, 4h, all paths on `/e/fscratch` | **RAN CLEANLY** — see § "Run `1229488`" below |
+
+### Run `1229488` — 2026-08-04, the cleanest run so far (in progress at last update)
+
+Allocated 10:43:42 KST on 5 nodes `jpbo-026-[36,40,44-45,47]`, head `jpbo-026-36` / `10.128.25.20`.
+**Startup, allocation → weight-sync-ready: 31 min**, no `110-minute` regression (2nd consecutive clean run):
+
+| phase | duration |
+|---|---|
+| 26 shards × 4 engines from `/e/fscratch` | **~65s** (vs `701.12s` on `/e/scratch`) |
+| vision-tower profiling + KV + warmup | ~16 min ⇒ now **~95% of startup**; `MM_LIMIT=0` still UNSET/unmeasured |
+| `load_checkpoints` (`resume_mode=latest`, nothing to resume) | 0.00s |
+| `init_weight_sync_state` | 15.35s |
+| `sync_weights_to_inference_engines` (35B MoE) | **300.73s** — the historical 5.9s was Qwen3-8B, not a regression |
+
+✅ **Compute-node route gate PASSED** — a real `/v1/chat/completions` from a compute node returning
+`"model": "995ad96e…"`. This is the step whose omission killed `1225422`; the watcher now automates it.
+
+**⛔ REWARD RESULT — the band conclusion is now much stronger.** At 32 honest trials / 8 groups,
+**0 varied**, and `r2egym-v1-05999` produced the project's **first COMPLETE n=8 group: `0,0,0,0,0,0,0,0`**.
+Every earlier claim rested on partial groups of 2–5; this is the full group size we train at. Outcomes
+also reproduced across three independent runs (`01068`/`04114` → 1, `05999`/`06360`/`07753` → 0).
+A new 7th/8th task (`06171`, `00222`) scored 0, extending the set slightly beyond the original six.
+⚠ Still a small task sample — the ~384-task `p@4` probe is what turns this into a population claim.
+
+**Bridge errors are NOT a training-impact signal.** `jobs_errors` rose +89 over baseline in two bursts,
+each coinciding with `active` env count dropping (teardown), while **32/32 trials scored honestly with
+ZERO infrastructure exceptions**. Only `NonZeroAgentExitCodeError` ×6 appeared, which is `passthrough`
+by design. Read the counter as a DELTA and cross-check against `exception_info`, never alone.
+
+**Other measurements:** 44% of trials ran past 599s (up from 31% at n=16) — the timeout fix keeps
+earning; `n_cache_tokens: sum=0` across all 32 trials at ~130k input tokens each; rollout throughput
+**0.95 trials/min** at 32-way concurrency, and dispatch fills **8 groups at once**, not 4.
 
 ### Shipped this session
 
@@ -542,9 +575,14 @@ feature size"*) for a tower SkyRL unwraps and no rollout uses — `MM_LIMIT=0` i
 
 ### Live resources
 
-- **Jupiter:** `1229446` PD `(Priority)`, 5 nodes, 4h wall.
-- **JURECA:** `15494122` R (~13h left) + `15495516` PD (24h), 2 nodes × 16 each. Two fleets deliberately
-  overlap so any start time between now and ~10:15 KST tomorrow is covered.
+- **Jupiter:** `1229488` **RUNNING**, 5 nodes, 4h wall (10:43:42 → 14:43:43 KST).
+- **JURECA:** `15494122` **R** + `15495516` **R** (both running, 2 nodes × 16 each). Both outlive
+  `1229488` by 8h+, so fleet sufficiency is verified for this run rather than assumed.
+- **Two independent Jupiter ControlMasters** (`login02` pid 55008, `login01` pid 68552), both
+  `BatchMode`-usable. Poll from **login01** and keep interactive calls on **login02** — JSC allows ~one
+  session channel per mux, and sharing one node's channel caused two `Session open refused by peer`
+  lockouts. The bridge at `10.128.1.2:9920` answers from BOTH login nodes (verified 200 from login01),
+  so a dead login02 *mux* is recoverable; a dead login02 *node* is not (the bridge process lives there).
 - **Bridge** `10.128.1.2:9920` clean (`ready: 0`). Lifetime `jobs_errors: 176` are all from the two
   aborted runs. 55 orphaned sandboxes were reclaimed across two sweeps.
 - **ControlMaster** pid 185890 alive 30h+. Reach JURECA ONLY as

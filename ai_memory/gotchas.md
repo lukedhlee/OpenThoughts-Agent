@@ -1104,3 +1104,33 @@ HF export there is unguaranteed — the hub upload (`hf_save_interval: 1`, `hf_u
 real durability, not the on-disk copy.
 **Generalizable:** verify a filesystem from a **compute** node before trusting it, exactly as with
 bandwidth. Login-node visibility is not mount coverage.
+
+### 2026-08-04 (later) · FIFTH accepted-but-ignored-key bug: `hf_upload_mode` is dead without `hf_hub_repo_id`
+**Symptom:** run `1229488` carries `trainer.hf_upload_mode=all`, `++trainer.hf_hub_private=false`,
+`++trainer.hf_hub_revision=main` and `trainer.hf_save_interval=1`, which reads like "export every step
+and push it to the Hub." No upload happens, and nothing warns.
+**Cause:** `callbacks/builtin.py:977` gates the entire `HFHubUploadCallback` on
+`hf_hub_repo_id = getattr(cfg.trainer, "hf_hub_repo_id", None)`:
+
+```python
+hf_hub_repo_id = getattr(cfg.trainer, "hf_hub_repo_id", None)
+if hf_hub_repo_id and hf_save_interval > 0:   # <- both required
+```
+
+`hf_hub_repo_id` is **absent from our hydra args AND absent from `ppo_base_config.yaml` entirely**, so
+it resolves to `None`, the callback is never registered, and the three `hf_*` keys above are inert.
+`HFModelSaveCallback` (gated only on `hf_save_interval > 0`) still registers, so the **local** export to
+`trainer.export_path` IS written — the artifact exists, it just never leaves the cluster.
+**This is instance #5** of the signature class (cf. `strict_json_parser`, `compaction.reserved`,
+`store_all_messages`, `override_timeout_sec`). New wrinkle worth generalizing: here the key is not
+ignored by its consumer — the consumer is **never constructed**, because a DIFFERENT, unset key gates
+it. Grep for the `if <other_key> and ...` guard, not just for the key you set.
+**Silver lining:** on Jupiter this is better than working. Compute nodes are air-gapped
+(`huggingface.co:443` BLOCKED, `proxychains_binary: None`), so a registered upload callback would have
+failed anyway — though harmlessly, since `_ensure_repo_exists` and `upload_folder` are both
+try/except-guarded and only log.
+**Consequence — the one that matters:** a checkpoint/HF export produced on Jupiter lives ONLY on
+`/e/fscratch`, whose retention/purge policy is UNDOCUMENTED. Do not assume a hub copy exists. To
+publish, upload from a **login** node (which does have internet) as a deliberate follow-up step, and
+verify the export STRUCTURALLY first (`config.json` architecture, safetensors index, shard presence,
+unwrapped text-tower key set with the vision tower absent).
