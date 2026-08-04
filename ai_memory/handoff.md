@@ -1243,3 +1243,24 @@ So **terminus-2 is the correct agent**, and its `Request timed out.` is the one 
 2. `agent/trajectory.json` → **median steps > 1**
 3. median trial duration in minutes, not seconds
 4. only then trust the band numbers
+
+### Last action of the night — terminus-2 + timeout=900, shard 0 only
+Job **1236881**, port **18170**, 2 h wall, agent **terminus-2** (thinking off), with `timeout: 900` set on
+the harbor block as a test of the `lite_llm.py` passthrough. Generation began 20:25:48 cluster time.
+Fleet 15498197 still up (~21 h).
+
+**Read the gate first, it decides everything:**
+```bash
+python3 /e/fscratch/reformo/lee27/trajcheck.py    # median_steps > 1  => GATE PASS
+python3 /e/fscratch/reformo/lee27/rewardcheck.py
+```
+- **GATE PASS** → the timeout passthrough is honoured and terminus-2 works. Launch the other 7 shards:
+  `bash /e/fscratch/reformo/lee27/launch_band_shards.sh 1 7 04:00:00` (bump the port base to 18180 first
+  in that script; 18100–18170 are burned), then forward with
+  `setsid nohup bash /e/fscratch/reformo/lee27/fwd_all.sh &`.
+- **GATE FAIL with "Request timed out."** → the passthrough is NOT honoured; that is a sixth
+  accepted-but-ignored key. Next candidate is threading the timeout through the generator's
+  `timeout_multiplier`, or setting it inside the sandbox via litellm env (`LITELLM_REQUEST_TIMEOUT`).
+- **GATE FAIL with one-step trajectories** → same failure as OpenCode; the agent is not driving the model
+  at all, and the next move is to check what terminus-2's `strict_json_parser` does with this checkpoint's
+  output format.
