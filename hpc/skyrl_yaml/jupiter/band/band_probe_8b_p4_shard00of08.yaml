@@ -40,7 +40,7 @@ terminal_bench:
     - BridgeOperationError
     - BridgeOperationTimeoutError
     - VerifierInfrastructureError
-    n_concurrent_trials: 32
+    n_concurrent_trials: 48
     log_level: INFO
     enable_reward_shaping: false
     collect_rollout_details: true
