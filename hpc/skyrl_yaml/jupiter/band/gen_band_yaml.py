@@ -108,6 +108,16 @@ for i, shard in enumerate(shards):
     e["SKYRL_ROLLOUT_HTTP_ENDPOINT_PORT"] = str(PORTBASE + i)
     # Probe bridge, NOT the 9920 bridge serving the 35B milestone run.
     e["APPTAINER_BRIDGE_URL"] = "http://10.128.1.2:9921"
+    # hpc.py points this at /e/data1/.../ot-baf/experiments/_ray_logs, another
+    # project's tree that we cannot write: ray_utils._start_node mkdir's it and
+    # dies with EACCES 52s into the job. /tmp is node-local, which is correct --
+    # Ray logs are per-node anyway.
+    e["OT_AGENT_RAY_LOG_DIR"] = "/tmp/ray_logs"
+    # MUST be set. The default is 600s, which is SHORTER than the 1800s agent
+    # cap, so the bridge kills the exec mid-task. Measured on the 35B canary:
+    # 76% of trials cut off mid-task, which flattens reward to 0 and would make
+    # a saturated-looking band out of tasks the model never got to finish.
+    e["BRIDGE_EXEC_TIMEOUT"] = "2100"
     e["WANDB_DIR"] = f"{FSCRATCH}/wandb"
     e["WANDB_MODE"] = "offline"
     # /e/scratch is inode-exhausted and cannot create files; it killed 1229643
