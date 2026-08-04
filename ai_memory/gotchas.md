@@ -960,3 +960,60 @@ the canary sbatch (`8ac43278`). ⚠ Scaling sequences only helps if sandbox work
 experimental` for `Qwen3_5MoeForConditionalGeneration`. Do NOT assume it is effective for the GDN
 layers — and do NOT read the agent's `n_cache_tokens: 0` as proof either way; that field is simply
 not populated (measured 0 across all 25 trials while the server had APC on).
+
+### 2026-08-04 · `/e/scratch` cannot create ANY new file — and it breaks `git fetch` too
+**Symptom:** `OSError: [Errno 122] Disk quota exceeded: '/e/scratch/.../experiments/...'` mid-rollout,
+killing `1221005` and then `1229343` (the latter at 58 min, after producing 18 honest rewards). Then
+`git fetch` on a cluster checkout died with `error: unable to create temporary file: Disk quota
+exceeded` / `fatal: unpack-objects failed`, so **nothing could even be deployed.**
+**Cause:** INODES, not bytes. The soft limit is a **project-wide 8M shared by 26 users** and it is
+exhausted. Precisely characterised:
+
+| operation | result |
+|---|---|
+| `touch` a NEW file on `/e/scratch` | **Errno 122** |
+| overwrite an EXISTING file | **OK** |
+| `touch` on `/p/scratch` or `/e/fscratch` | OK |
+
+⚠ Because overwrites still work, the filesystem looks healthy until something needs a *new* inode —
+which is why it presents as a mid-run crash rather than a clean startup failure. And per the 08-03
+measurement our own footprint is only ~8% of the 6.1M, so **deleting our own trees may not fix it.**
+**Fix:** put the experiments tree AND the execution checkout on **`/p/scratch`** (OT-Agent `45572f93`).
+Three reasons it beats `/e/fscratch` for this tree: ~3.0M free inodes (25% of 4M); **accounting is
+FRESH** (`/e/scratch`'s counter was 11 days stale and read 77% while the filesystem was actually
+full — trustworthy accounting is itself the feature); and **retention is DOCUMENTED**, which matters
+because this tree holds the checkpoint and HF export.
+Keep the read-only 67 GiB model on `/e/fscratch`: that is a per-stream BANDWIDTH problem and this is
+an INODE problem, and they want different filesystems. The model copy is reproducible in ~43 s so
+fscratch's undocumented purge costs nothing there.
+
+### 2026-08-04 · `ReqNodeNotAvail, Reserved for maintenance` while 3,848 nodes sit idle
+**Symptom:** a 5-node job pends with `Reason=ReqNodeNotAvail,_Reserved_for_maintenance` and
+`StartTime=Unknown`, while `sinfo -p booster` shows **3,848 idle** nodes and `scontrol show res`
+exposes no cluster-wide or MAINT reservation (only `develbooster`, `parastation-test`,
+`ahf_image_test`, all node-set scoped).
+**Cause:** a maintenance reservation we cannot see, and the job's **WALLTIME cannot finish before it
+starts**. Slurm therefore defers the job past the whole window instead of running it.
+**Fix / diagnostic:** ask the scheduler with `sbatch --test-only -t <T> <sbatch>` — free, no submit,
+and it prints the estimated start. Measured:
+
+| walltime | estimated start |
+|---|---|
+| 06:00:00 | 2026-08-05T12:00:00 (next day, after the window) |
+| 04:00:00 and below | 2026-08-04T20:53:47 (same evening) |
+
+Resubmitting at 4 h changed the pending reason from `ReqNodeNotAvail` to plain `(Priority)`.
+**Always probe with `--test-only` before assuming a pend is queue congestion** — and note that every
+walltime at or below the threshold gave the SAME start, so shortening further buys nothing.
+⚠ **Coupling worth remembering:** when a Jupiter job is deferred, the JURECA sandbox fleet may expire
+BEFORE it starts. `15494122` would have died ~4 h before a 20:53 CEST start. Submit a fresh 24 h fleet
+whenever a run slips, or the job allocates into a world with no sandboxes and every rollout fails.
+
+### 2026-08-04 · `pkill -f <pattern>` over SSH kills your own shell
+**Symptom:** a compound remote command silently did nothing — no output from the `scancel` and `echo`
+that followed the `pkill`, and the file it was meant to write never appeared.
+**Cause:** `pkill -f "retarget.sh"` matches on the FULL command line, and the `ssh` invocation's own
+command string contained `retarget.sh`, so it killed the very shell running it.
+**Fix:** kill by pid (`pgrep` then filter out `$$`), or match a pattern that cannot appear in your own
+argv. Better still: don't kill watchers at all — write them to exit on their own when the job they
+poll leaves the queue.
