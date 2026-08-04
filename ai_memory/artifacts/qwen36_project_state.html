@@ -322,6 +322,11 @@
   /* ---------- tables ---------- */
   .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px;
             background: var(--surface); margin-bottom: var(--s4); }
+  /* Log excerpts. Inside .scroll so a long line scrolls its own container
+     rather than the page body. min-width:0 lets the flex/grid parent shrink. */
+  .scroll > pre { margin: 0; padding: var(--s3) var(--s4); min-width: 0;
+                  font-family: var(--mono); font-size: 12px; line-height: 1.55;
+                  color: var(--text-2); white-space: pre; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 540px; }
   th, td { text-align: left; padding: var(--s2) var(--s4);
            border-bottom: 1px solid var(--line-soft); vertical-align: top; }
@@ -407,9 +412,12 @@
       value is the value it is.
     </p>
     <p class="sub" style="margin-top: var(--s3)">
-      → <a href="#overnight"><strong>While you were away</strong></a> is the overnight log: what broke,
-      what was fixed, and which earlier conclusions turned out to be wrong. Everything below it is the
-      standing implementation reference and is unchanged except where the overnight section says so.
+      → <a href="#today"><strong>Since you left</strong></a> is the newest log (04 Aug 11:00 → 13:05 KST):
+      two runs died, both root-caused and fixed, and the band question got its definitive answer.
+      <strong>Read this one first.</strong>
+      <a href="#overnight">While you were away</a> is the previous window (03 Aug 23:20 → 04 Aug 09:30)
+      and is kept for history. Everything below both is the standing implementation reference, unchanged
+      except where these sections say so.
     </p>
     <p class="sub" style="margin-top: var(--s3)">
       → For the from-scratch explanation — the build spec, the worked arithmetic, and nineteen questions
@@ -422,43 +430,249 @@
   <div class="live">
     <div class="tile t-wait">
       <span class="k">GRPO canary · jupiter</span>
-      <span class="v">1229343</span>
-      <span class="n">RUNNING 37 m, 5 h 22 m left · 5 nodes <code>jpbo-004-[19,23-26]</code> · 16 × 8 = 128 trajectories. Route gate <strong>passed</strong>.</span>
+      <span class="v">1229649</span>
+      <span class="n"><strong>PENDING (Priority)</strong> · 5 nodes · <strong>3 h</strong> wall · <strong>16 × 4 = 64</strong> trajectories. Both of today's failure causes are fixed and deployed. Tunnel watcher + monitor armed.</span>
     </div>
-    <div class="tile t-ok">
-      <span class="k">Sandbox bridge</span>
-      <span class="v">32 / 32</span>
-      <span class="n">Envs ready and jobs active — rollouts genuinely in flight. <code>workers_alive: true</code>. The 134 lifetime errors are all from the aborted <code>1225422</code>.</span>
+    <div class="tile t-stop">
+      <span class="k">Booster capacity</span>
+      <span class="v">1 idle</span>
+      <span class="n"><strong>147 nodes <code>drain*</code>, 8 <code>down*</code>, 1 <code>idle*</code>.</strong> Not maintenance — starvation. <code>--test-only</code> gave the SAME estimate for every wall from 30 m to 3 h, so shortening buys nothing.</span>
     </div>
     <div class="tile t-ok">
       <span class="k">JURECA workers</span>
-      <span class="v">15494122</span>
-      <span class="n">RUNNING 10 h 05 m, <strong>13 h 54 m left</strong> · 2 nodes × 16 = 32 sandbox slots. Submitted overnight to replace the expiring fleet.</span>
+      <span class="v">2 fleets</span>
+      <span class="n"><code>15495516</code> (~21 h left) + <code>15494122</code> (~10 h left) · 2 nodes × 16 each. The watcher now asserts fleet TTL <strong>&gt; remaining walltime</strong>, not just liveness.</span>
     </div>
     <div class="tile">
       <span class="k">JSC node budget</span>
-      <span class="v">7 / 16</span>
-      <span class="n">5 Jupiter GPU + 2 JURECA CPU. The 16-node ceiling is a hard operator constraint.</span>
+      <span class="v">9 / 16</span>
+      <span class="n">5 Jupiter GPU + 4 JURECA CPU. The 16-node ceiling is a hard operator constraint.</span>
     </div>
   </div>
 
   <div class="blocker">
-    <span class="lbl">Where things stand · 2026-08-04 09:30 KST</span>
+    <span class="lbl">Where things stand · 2026-08-04 13:05 KST</span>
     <p>
-      <strong>Still no honest GRPO step — but the reason changed completely.</strong> The blocker was
-      never the data. The agent was being killed at <strong>600 seconds</strong> instead of the
-      configured 1800, on 76% of trials, which flattened exactly the within-group reward variance GRPO
-      consumes. That is fixed, proven live, and <code>1229343</code> is the first run with both the
-      restored budget and a verified route to the model.
+      <strong>The band question is settled, and the milestone is still unreached.</strong>
+      <code>1229488</code> produced the cleanest run yet — 31-minute startup, route gate passed, 68
+      honest trials — and then died at 1 h 46 m because <em>one</em> unenumerated exception aborted the
+      whole batch. Its reward data answers the question three prior runs only circled:
+      <strong>three COMPLETE uniform n=8 groups</strong> across 11 distinct tasks, 0 with within-group
+      variance. Every earlier zero-variance claim rested on partial groups of 2–5.
     </p>
     <p>
-      The milestone is unchanged and unreached: <strong>one finite optimizer update</strong>. It has
-      still never executed with this model.
+      So <strong>a learnable band (or DAPO dynamic sampling) is now a precondition for any real training
+      run</strong>, not an optimisation. Two failures today were both infrastructure, both root-caused,
+      both fixed and deployed — and neither reached the update.
+    </p>
+    <p>
+      The milestone is unchanged and unreached: <strong>one finite optimizer update</strong>, plus the
+      checkpoint and HF export. It has still never executed with this model — and the export has never
+      executed on <em>any</em> MoE on this cluster.
     </p>
   </div>
 
+  <section id="today">
+    <h2>Since you left <span class="pill p-wait">04 Aug 11:00 → 13:05 KST</span></h2>
+    <p class="lede">
+      <strong>In one paragraph.</strong> <code>1229488</code> was the best run this project has had —
+      31-minute startup, compute-node route gate passed, 68 honest trials, zero infrastructure
+      exceptions — and it died at 1 h 46 m because a single unenumerated exception type aborted the
+      entire batch. Its reward data <strong>settles the band question</strong>: three COMPLETE uniform
+      n=8 groups across 11 distinct tasks, none varying. The retry, <code>1229643</code>, died 111
+      seconds in because Ray's object-spill directory was still on the inode-dead filesystem. Both causes
+      are fixed, deployed and verified on-cluster; <code>1229649</code> is queued. <strong>The milestone
+      — one finite optimizer update, checkpoint, HF export — still has not executed</strong>, and both of
+      today's losses were infrastructure, not science.
+    </p>
+
+    <div class="cols" style="margin-bottom: var(--s5)">
+      <div class="track" style="border-top-color: var(--ok)">
+        <span class="track-h" style="color: var(--ok)">What's good</span>
+        <ul class="stack">
+          <li><span class="mark y">✓</span><span><strong>The band question is ANSWERED, not argued.</strong> Three <em>complete</em> n=8 groups — <code>01068</code> and <code>01755</code> saturated at 1, <code>05999</code> at 0 — across 11 distinct tasks with 0 varying. Every prior claim rested on partial groups of 2–5, which is exactly why it stayed contestable.</span></li>
+          <li><span class="mark y">✓</span><span><strong>The fscratch + timeout fixes are holding under load.</strong> 26 shards × 4 engines in <strong>~65 s</strong> (was 701 s); 31 min allocation → weight-sync-ready; <strong>44%</strong> of trials now run past 599 s, none near the 1800 s ceiling.</span></li>
+          <li><span class="mark y">✓</span><span><strong>The milestone does not depend on variance.</strong> Read from the code: our estimator is <code>grpo</code>, which maps a uniform group to advantage exactly 0 rather than dropping it, and the save path is gated only on step intervals — so a zero-gradient step still writes the checkpoint and export.</span></li>
+          <li><span class="mark y">✓</span><span><strong>Two mysteries closed by reading source, not guessing.</strong> The bridge's <code>cleanup_loop</code> explains both the alarming <code>jobs_errors</code> growth (reaper bookkeeping, never reached the trainer) and the automatic reclaim of orphaned envs after a crash.</span></li>
+          <li><span class="mark y">✓</span><span><strong>A latent trap removed before it fired.</strong> The takeover docs told the next session to launch with <code>DCFT=/p/scratch/…</code> — but <code>/p/scratch</code> is <em>not mounted on Jupiter compute</em>. That would have broken the next launch.</span></li>
+          <li><span class="mark y">✓</span><span><strong>Access is no longer a single point of failure</strong> for observation: two independent login masters, with polling on <code>login01</code> and interactive work on <code>login02</code>.</span></li>
+        </ul>
+      </div>
+      <div class="track" style="border-top-color: var(--stop)">
+        <span class="track-h" style="color: var(--stop)">What's bad</span>
+        <ul class="stack">
+          <li><span class="mark n">✕</span><span><strong>The milestone still has not moved.</strong> No optimizer update, no checkpoint, no HF export — unchanged since 07-31. Two more allocations spent on infrastructure findings.</span></li>
+          <li><span class="mark n">✕</span><span><strong>A hazard we had written down word-for-word killed a nearly-complete run.</strong> Predicting a failure mode is not mitigating it; the fix was one config line that could have been made any time this week.</span></li>
+          <li><span class="mark n">✕</span><span><strong><code>/e/scratch</code> struck a fourth time</strong>, through a path the migration missed because it hides inside a JSON blob (<code>RAY_object_spilling_config</code>). Ray mints a new spill dir per run, so every launch needs a fresh inode.</span></li>
+          <li><span class="mark n">✕</span><span><strong>MarinSkyRL fork fixes cannot be deployed at all.</strong> Its checkout is on <code>/e/scratch</code>, so <code>git fetch</code> fails outright. One fix (<code>fafab77</code>) is pushed but stranded.</span></li>
+          <li><span class="mark n">✕</span><span><strong>Booster is starved</strong> — 1 idle node of thousands. 3 h is the largest wall that starts tonight, which forced the canary down to 16 × 4.</span></li>
+          <li><span class="mark q">?</span><span><strong>The HF export has never run on any MoE here</strong> — every <code>exports/</code> dir across the 30 B GSM8K runs holds only <code>dumped_evals</code>. It is the one genuinely unvalidated step, and for Qwen3.6 it also exercises the text-tower unwrap with no precedent.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="insight i-stop">
+      <span class="lbl">The headline — one trial killed 128, and we had predicted it</span>
+      <p>
+        <code>1229488</code> failed with <code>ray.exceptions.WorkerCrashedError</code>, which is a red
+        herring: the raylet lines are teardown <em>consequence</em>. The cause is three log lines:
+      </p>
+      <div class="scroll" style="margin-top: var(--s3)">
+<pre class="mono2">05:29:11 DEBUG    _classify_exception:1296  Exception AddTestsDirError not in config,
+                                           using default treatment: MASK
+05:29:11 WARNING  _process_trial_result     failed with Harbor exception:
+                                           Failed to add tests directory to &lt;env&gt;
+05:29:11 CRITICAL _raise_if_fail_loud:1247  INFRASTRUCTURE FAILURE [AddTestsDirError]</pre>
+      </div>
+      <p>
+        <code>AddTestsDirError</code> matched neither <code>mask_exceptions</code> nor
+        <code>passthrough_exceptions</code>, fell through to <code>default_error_treatment: mask</code>,
+        and because <code>mask</code> means <em>infrastructure</em> under
+        <code>fail_on_infrastructure_error: true</code>, it aborted all 128 trajectories. It hit
+        <strong>two trials on two different coordinators within one second</strong> — a correlated
+        JURECA-side blip, so every run was equally exposed.
+      </p>
+      <p>
+        The uncomfortable part: <code>gotchas.md</code> already said <em>"<code>mask</code> =
+        infrastructure ⇒ ABORTS the whole batch… any new exception subclass must be enumerated or it
+        silently falls through."</em> It was documented, understood, and unmitigated.
+      </p>
+    </div>
+
+    <div class="insight i-warn">
+      <span class="lbl">Why the fix is <code>mask</code> + no-abort, and explicitly NOT passthrough</span>
+      <p>
+        <code>fail_on_infrastructure_error</code> is now <strong>false</strong>, and
+        <code>AddTestsDirError</code> is enumerated in <code>mask_exceptions</code>. The reason
+        <code>true</code> existed — stop infrastructure failures becoming training signal — is
+        <em>already</em> served by <code>default_error_treatment: mask</code>: a masked trial is excluded
+        from the RLOO baseline and gets advantage 0, so it cannot pollute the gradient. All
+        <code>true</code> added was making one bad trial fatal to 128.
+      </p>
+      <p>
+        <strong>Putting it in <code>passthrough_exceptions</code> would have been actively harmful.</strong>
+        Passthrough scores the trial as a real trajectory — a 0. On a task that otherwise scores 1, a
+        spurious 0 <em>fabricates</em> within-group variance, which would make a zero-gradient run look
+        like it had learning signal. That is the one failure mode worse than aborting.
+      </p>
+      <p>
+        The cost of <code>false</code>, stated plainly: infrastructure failures now <em>degrade quietly</em>
+        instead of shouting. If enough trials mask out, groups fall under <code>rloo_n_min_group_size</code>
+        and contribute zero advantage while still presenting as a valid batch. Per-run exception counts
+        have to be watched.
+      </p>
+    </div>
+
+    <h3 class="sub-h">The band question, finally settled</h3>
+    <div class="scroll">
+      <table>
+        <caption>Complete n=8 groups from <code>1229488</code> — the group size we actually train at</caption>
+        <thead><tr><th>Task</th><th>n</th><th>Rewards</th><th>Varies?</th></tr></thead>
+        <tbody>
+          <tr><td class="mono2">01068</td><td class="num">8</td><td class="mono2">1, 1, 1, 1, 1, 1, 1, 1</td><td><span class="mark n">✕</span> no</td></tr>
+          <tr><td class="mono2">01755</td><td class="num">8</td><td class="mono2">1, 1, 1, 1, 1, 1, 1, 1</td><td><span class="mark n">✕</span> no</td></tr>
+          <tr><td class="mono2">05999</td><td class="num">8</td><td class="mono2">0, 0, 0, 0, 0, 0, 0, 0</td><td><span class="mark n">✕</span> no</td></tr>
+          <tr><td class="mono2">04114</td><td class="num">7</td><td class="mono2">1 × 7</td><td><span class="mark n">✕</span> no</td></tr>
+          <tr><td class="mono2">06171</td><td class="num">7</td><td class="mono2">0 × 7</td><td><span class="mark n">✕</span> no</td></tr>
+          <tr><td class="mono2">03150</td><td class="num">6</td><td class="mono2">1 × 6</td><td><span class="mark n">✕</span> no</td></tr>
+          <tr><td class="mono2">05359 · 06360 · 07753</td><td class="num">5</td><td class="mono2">0 × 5</td><td><span class="mark n">✕</span> no</td></tr>
+          <tr><td class="mono2">00222</td><td class="num">3</td><td class="mono2">0, 0, 0</td><td><span class="mark n">✕</span> no</td></tr>
+          <tr><td class="mono2">02033</td><td class="num">1</td><td class="mono2">1</td><td><span class="mark q">?</span> n/a</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose">
+      Two groups saturated at 1 and one at 0 — both extremes of the failure mode, at full group size.
+      Outcomes also reproduced across three independent runs at two different agent budgets, and the
+      invariance now spans <strong>11 distinct tasks</strong> rather than the original six. The remaining
+      honest caveat is unchanged in <em>kind</em> but much weaker in <em>degree</em>: this is still a
+      small task sample, so the <code>p@4</code> probe is now about <strong>sizing</strong> the in-band
+      set, not about testing whether one is needed.
+    </p>
+
+    <h3 class="sub-h">The second failure — <code>/e/scratch</code>, a fourth time</h3>
+    <div class="insight i-stop">
+      <span class="lbl"><code>1229643</code> · died in 1 m 51 s, before Ray finished starting</span>
+      <div class="scroll">
+<pre class="mono2">OSError: [Errno 122] Disk quota exceeded:
+  '/e/scratch/reformo/lee27/ray_spill/ray_spilled_objects_e1802434...'
+  ray/_private/node.py:1792 validate_external_storage → external_storage.py:310 os.makedirs</pre>
+      </div>
+      <p>
+        The visible error was <code>RuntimeError: Ray head process exited prematurely</code>, pointing at
+        a log path <strong>that does not exist</strong>. The real cause was three directories away.
+      </p>
+      <p>
+        Ray mints a <strong>new session-hashed spill directory per run</strong>, so every launch needs a
+        fresh inode from an exhausted project-wide cap shared by 26 users. <code>1229488</code> won that
+        lottery at 03:43; <code>1229643</code> lost it. <strong>An intermittent <code>/e/scratch</code>
+        failure is not a flake — it is the wall, sampled.</strong>
+      </p>
+      <p>
+        Why the earlier migration missed it: <code>ray_spill</code> is configured inside a JSON blob
+        (<code>RAY_object_spilling_config</code>), so it never matched a grep for the obvious path keys.
+        <strong>After a filesystem migration, grep for the OLD path string repo-wide</strong>, not for the
+        things you remember configuring. Still on <code>/e/scratch</code> and fragile: the
+        <code>rl-megatron</code> venv, harbor, MarinSkyRL, FlashQLA, <code>TILELANG_CACHE_DIR</code>.
+      </p>
+    </div>
+
+    <h3 class="sub-h">Shipped, tested, deployed, verified on-cluster</h3>
+    <div class="scroll">
+      <table>
+        <caption>All pushed to <code>lukedhlee</code> forks; each verified by reading the file on the cluster, not by trusting the commit</caption>
+        <thead><tr><th>Commit</th><th>Repo</th><th>Change</th><th>State</th></tr></thead>
+        <tbody>
+          <tr><td class="mono2">c15ac55f</td><td>OT-Agent</td><td><code>fail_on_infrastructure_error: false</code> + <code>AddTestsDirError</code> masked — one bad trial no longer aborts the batch</td><td><span class="pill p-ok">deployed</span></td></tr>
+          <tr><td class="mono2">be949008</td><td>OT-Agent</td><td>canary 16 × 8 → <strong>16 × 4</strong> to fit the 3 h wall the starved cluster allows</td><td><span class="pill p-ok">deployed</span></td></tr>
+          <tr><td class="mono2">aab498d7</td><td>OT-Agent</td><td><code>ray_spill</code> → <code>/e/fscratch</code>; same fix in the 6-node config; pinning test updated</td><td><span class="pill p-ok">deployed</span></td></tr>
+          <tr><td class="mono2">fafab77</td><td>MarinSkyRL</td><td>null-content partial response (<code>accum.content += None</code> → <code>TypeError</code>, opaque 500 to the agent)</td><td><span class="pill p-stop">cannot deploy</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose">
+      That last row is a real blocker, not a nit: <code>/e/scratch</code> cannot create files, so
+      <code>git fetch</code> inside the MarinSkyRL checkout fails with
+      <code>Disk quota exceeded</code>. <strong>No MarinSkyRL fork fix can reach the cluster until that
+      checkout is relocated to <code>/e/fscratch</code></strong> — which matters far more the next time a
+      SkyRL-side fix is on the critical path.
+    </p>
+
+    <h3 class="sub-h">Two corrections to things I had told you earlier</h3>
+    <ul class="stack">
+      <li><span class="mark n">✕</span><span><strong>"The hub copy is the real durability, and that is fine" — wrong on both halves.</strong> <code>HFHubUploadCallback</code> is gated on <code>hf_hub_repo_id</code>, which is absent from our args <em>and</em> from <code>ppo_base_config.yaml</code> entirely. So <code>hf_upload_mode</code>, <code>hf_hub_private</code> and <code>hf_hub_revision</code> are all <strong>dead config</strong> — the fifth accepted-but-ignored-key bug, and this time the consumer is never even constructed. The export will be <strong>local-only</strong>, on a filesystem whose retention policy is undocumented.</span></li>
+      <li><span class="mark n">✕</span><span><strong>"Bridge <code>jobs_errors</code> is the failure mode to watch" — misleading emphasis.</strong> It grew by +184 across <code>1229488</code> while <strong>68 of 68</strong> trials scored honestly with zero infrastructure exceptions. It is reaper bookkeeping from <code>cleanup_loop</code>, not rollout failure. Read it as a delta and cross-check <code>exception_info</code>.</span></li>
+      <li><span class="mark n">✕</span><span><strong>"The relaunch option expires at 06:00" — wrong framing.</strong> I treated this as one-shot when there were hours of slack for a full second attempt. That reasoning would have led me to kill a healthy run.</span></li>
+    </ul>
+
+    <div class="insight i-warn">
+      <span class="lbl">Method notes worth keeping — three ways to be wrong that came up today</span>
+      <p>
+        <strong>1. A flat <code>--test-only</code> estimate means starvation, not a window.</strong> Every
+        wall from 30 min to 3 h returned the same start time; if a maintenance window were the constraint,
+        <em>shorter</em> walls would start sooner. Probe two very different walltimes to tell them apart,
+        then check <code>sinfo</code> states. And the estimate is conservative —
+        <code>1229643</code> was estimated 23:19 and actually started in <strong>6 minutes</strong> via
+        backfill, so queue rather than wait.
+      </p>
+      <p>
+        <strong>2. Extrapolate from the right unit.</strong> I projected generation from trials/min and
+        got 06:34; the buffer is gated by <em>group</em> completion (the straggler in each group of 8), and
+        the timestamped buffer log gave ~590 s/group ⇒ 07:17. Both bracketed a survivable answer, but the
+        two methods disagreed by 45 minutes.
+      </p>
+      <p>
+        <strong>3. Verify the thing you started is running.</strong> <code>pkill -f "retarget_g.sh"</code>
+        matched the SSH command line containing that same string and killed the shell mid-command, so the
+        watcher launch that followed never ran — and it presented as <em>silent success</em>. Also:
+        <code>nohup … &amp;</code> over SSH does not detach; it holds the login node's single session
+        channel. <code>tmux new-session -d</code> is the pattern that works.
+      </p>
+    </div>
+  </section>
+
   <section id="overnight">
-    <h2>While you were away <span class="pill p-wait">03 Aug 23:20 → 04 Aug 09:30 KST</span></h2>
+    <h2>While you were away <span class="pill p-flat">previous window · 03 Aug 23:20 → 04 Aug 09:30 KST</span></h2>
     <p class="lede">
       <strong>In one paragraph.</strong> The reason GRPO showed no gradient was found, and it was not
       the training data: the agent was being killed at <strong>600 seconds</strong> instead of the
@@ -487,28 +701,48 @@
           <li><span class="mark n">✕</span><span><strong>The milestone did not move.</strong> No finite optimizer update, no checkpoint, no HF export — unchanged since 07-31.</span></li>
           <li><span class="mark n">✕</span><span><strong>Two of three allocations produced zero reward data.</strong> Roughly 20 node-hours for infrastructure findings, not science.</span></li>
           <li><span class="mark n">✕</span><span><strong><code>1225422</code> was my error</strong>, not bad luck. The tunnel retarget and route gate are both written down; I ran neither, costing 3 h 12 m and 29 orphaned sandboxes.</span></li>
-          <li><span class="mark q">?</span><span><strong>The variance question is still open</strong> after two attempts aimed squarely at it.</span></li>
+          <li><span class="mark n">✕</span><span><strong>Variance did not appear even at 1800 s.</strong> 0 of 6 groups varied, and the same tasks scored identically to the capped run — so the band is needed after all, and my earlier "hold the band" call was wrong.</span></li>
+          <li><span class="mark n">✕</span><span><strong><code>/e/scratch</code> can no longer create files at all</strong> — <code>Errno 122</code> on a project-wide inode cap shared by 26 users. It killed <code>1229343</code> at 58 min exactly as it killed <code>1221005</code>, and I had moved only the model to fscratch, not <code>trace_jobs</code>.</span></li>
           <li><span class="mark q">?</span><span><strong>The 110-minute policy-init regression is untouched</strong>, and prefix-caching effectiveness is unknown — it is experimental for this architecture, and <code>n_cache_tokens</code> is not a usable signal.</span></li>
         </ul>
       </div>
     </div>
 
-    <div class="insight">
-      <span class="lbl">So what — the implication</span>
+    <div class="insight i-warn">
+      <span class="lbl">So what — the implication, now that 1229343 has reported</span>
       <p>
-        <strong>The learnable band is probably no longer the next thing to build.</strong> Its entire
-        justification was the zero-variance measurement, and that measurement is now known to have been
-        taken through a truncated agent. Independently, your co-lead's own result says the band buys
-        convergence speed and ~20% compute — <em>not</em> quality — so for a pipeline-validation goal it
-        was never the prize it looked like.
+        <strong>The band is required after all. This reverses the reading I published two hours
+        earlier.</strong> The restored 1800 s budget was a real and necessary fix — <strong>39% of
+        trials now run past 600 s and score honestly</strong>, where before they were killed. But it did
+        <em>not</em> create within-group variance: <strong>0 of 6 groups</strong> varied, and the same
+        tasks returned the <em>same</em> outcomes as under the 600 s cap.
+      </p>
+      <div class="scroll" style="margin-top: var(--s3)">
+        <table>
+          <caption>Same tasks, two runs, 3× different agent budget</caption>
+          <thead><tr><th>Task</th><th>Under 600 s cap (1221005)</th><th>Under 1800 s (1229343)</th></tr></thead>
+          <tbody>
+            <tr><td class="mono2">04114</td><td class="mono2">1, 1, 1, 1</td><td class="mono2">1, 1, 1, 1, 1</td></tr>
+            <tr><td class="mono2">01068</td><td class="mono2">1, 1, 1, 1</td><td class="mono2">1, 1, 1</td></tr>
+            <tr><td class="mono2">01755</td><td class="mono2">1, 1, 1</td><td class="mono2">1, 1</td></tr>
+            <tr><td class="mono2">05999</td><td class="mono2">0, 0, 0, 0</td><td class="mono2">0</td></tr>
+            <tr><td class="mono2">06360</td><td class="mono2">0, 0, 0, 0</td><td class="mono2">0, 0, 0</td></tr>
+            <tr><td class="mono2">07753</td><td class="mono2">— (no rewards)</td><td class="mono2">0, 0, 0, 0</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Five tasks agree <strong>perfectly</strong> across independent runs at 3× the budget, and agent
+        times now span 140–862 s with <strong>nothing at the 1800 s ceiling</strong>. So the agent is no
+        longer time-starved, and the near-determinism is a property of these tasks, not an artifact of
+        truncation. Both things are true at once: the measurement <em>was</em> invalid, and the
+        conclusion it pointed at happens to survive.
       </p>
       <p>
-        <strong>Conclusion: hold the band until <code>1229343</code> reports.</strong> If variance
-        appears at the restored budget, the path to a finite update is short and the band demotes to an
-        optimisation for later. If it does not, we will at last have honest pass rates under a real
-        budget — which is exactly what is needed to size a ~384-task <code>p@4</code> probe properly
-        instead of guessing at it. Either way the next decision is <strong>gated on data rather than on
-        inference</strong>, which was not true twelve hours ago.
+        <strong>Conclusion: build the band.</strong> A ~384-task <code>p@4</code> probe (1,536 rollouts,
+        ~2.7 h on 4 + 8 nodes) is now the shortest path to a gradient. Caveat kept honest: these are 6
+        <em>partial</em> groups on the same 6 task ids both runs sampled, so this is strong evidence
+        about <em>these</em> tasks, not a population estimate — which is precisely what the probe is for.
       </p>
     </div>
 
