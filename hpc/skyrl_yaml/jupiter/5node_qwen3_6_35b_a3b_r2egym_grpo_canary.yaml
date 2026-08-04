@@ -278,7 +278,26 @@ generator:
   #
   # This raises the canary to 16 x 8 = 128 trajectories (was 64), so budget
   # roughly double the rollout wall clock.
-  n_samples_per_prompt: 8
+  #
+  # ⚠ 2026-08-04, AFTER 1229488: temporarily 4, NOT 8. The n=8 reasoning above is
+  # sound and should be restored for any run whose purpose is measuring variance.
+  # It is not needed now, because 1229488 ANSWERED that question at n=8: three
+  # COMPLETE uniform n=8 groups (01068 all-1, 01755 all-1, 05999 all-0) and 0 of
+  # 11 groups with within-group variance. More n=8 samples would re-measure a
+  # settled result.
+  # What forced the change is the WALL, not the science. Jupiter booster is
+  # starved (147 nodes drain*, 1 idle*), and `sbatch --test-only` shows ANY
+  # walltime >= 3h30m defers to 2026-08-05T12:00, while <= 3h starts the same
+  # night. Inside a 3h wall the 16x8 geometry leaves only ~9 min of margin
+  # (36 min startup + ~125 min generation at the measured 1.03 trials/min +
+  # ~10 min tail = 2h51m), which is not a margin at all. 16x4 = 64 trials fits
+  # in ~1h48m, leaving ~72 min.
+  # The remaining milestone is the optimizer update / checkpoint / HF export,
+  # none of which cares about group size: uniform groups map to advantage 0
+  # under `grpo` either way, so the update still executes and still exercises
+  # the never-run save path.
+  # RESTORE TO 8 once the node starvation clears or a >=4h wall is obtainable.
+  n_samples_per_prompt: 4
   eval_n_samples_per_prompt: 1
   gpu_memory_utilization: 0.85
   max_num_seqs: 8
