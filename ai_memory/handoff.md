@@ -1066,3 +1066,50 @@ Cumulative across all runs: **~18 distinct tasks with a complete group, 0 with w
 Still a non-random sample (deterministic dataloader keeps re-drawing the same task ids), so this supports
 "these tasks are saturated or impossible" and still does NOT license any estimate of the dataset's in-band
 fraction. The 8B p@4 probe is what would license that.
+
+## Live state — 2026-08-04 18:15 CEST / 05 Aug 01:15 KST
+
+### Running: the learnable-band p@4 probe, 8 shards
+| shard | job | port | nodes |
+|---|---|---|---|
+| 0–7 | `1235927 1235928 1235929 1235930 1235931 1235932 1235934 1235935` | 18130–18137 | 2 each (1 policy + 1 rollout) |
+
+Started 18:11:46, **wall ends 22:11:46 CEST**. Model `g1_diverse_tezos_100k_8b` (Qwen3-8B SFT, the exact
+checkpoint the co-lead's band/raw comparison used). Agent `terminus-2`. 416 tasks per shard × p@4 =
+1,664 trials per shard, 13,312 total. 48 concurrent trials per shard = 384 total.
+Sandboxes: JURECA fleet **15498197** — 32 × `dc-cpu`, `WORKERS_PER_NODE=16`,
+`STAGING_BASE=/tmp/apptainer_staging`, on the **isolated bridge 9921** (NOT 9920).
+
+### How to read the result
+```bash
+bash /e/fscratch/reformo/lee27/band_report.sh        # band fraction + per-shard trial counts
+python3 /e/fscratch/reformo/lee27/rewardcheck.py     # rewards_ok / null + top exception types
+# band task ids land in /e/fscratch/reformo/lee27/BAND_TASKS.txt
+```
+**Check `rewardcheck.py` FIRST.** Trials are durable per-trial, so the report is meaningful at any point —
+but `scored=N` counts `result.json` files, not rewards. The first launch had 74 trials and **zero
+rewards** (see the overlay-timeout entry in `gotchas.md`); trial counts looked perfectly healthy.
+
+### Verified by behaviour before launch, not by existence
+- vLLM serving on a shard head (`/health` 200 from the login node)
+- JURECA **compute** node `jrc0462` → tunnel → shard: 200 on ports 18130/18131
+- a real `/v1/chat/completions` with the exact served name `g1_diverse_tezos_100k_8b`, model generating
+- 384 concurrent sandbox creates on the tmpfs fleet: **384/384 ready, p50 20s** (was p50 68s on `/p/scratch`)
+
+### If a shard dies
+Nothing special is needed — losing a shard costs only its own tasks, and completed trials are already on
+disk. Relaunch one with:
+```bash
+cd /e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next
+SHARD=band_probe_8b_p4_shard0Nof08 NUM_NODES=2 TIME_LIMIT=04:00:00 JOB_NAME=band_p4_sN \
+  bash hpc/skyrl_standard/jupiter/run_r2egym_band_probe_8b.sh
+```
+then forward its port — **use a NEW port**, never a used one (`ssh -O cancel -R` cannot reclaim a port
+left by a dead job; 18100 and 18120–18127 are burned).
+
+### Not running / not done
+- **The milestone.** `1229649` FAILED at 2:18:36 having reached the update and OOM'd in the backward
+  (30.57 GiB alloc). Next step is a config fix on the logits memory, not more infrastructure work.
+- `main_tbench_generate` (pure-rollout entrypoint) is broken in this fork — worth fixing in daylight,
+  it would delete the policy/optimizer/FSDP/weight-sync from probe runs entirely.
+- The MarinSkyRL `/e/fscratch` relocation is still undone, so `fafab77` (null-content fix) is stranded.
