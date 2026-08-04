@@ -1159,3 +1159,32 @@ failures.
    the same index, so it intersects directly — one message versus ~10 h of generation.
 2. Did her band run have **thinking enabled**, and which agent? The band is a property of the
    (model, agent, config) triple, so her ~35% is only comparable to ours if those match.
+
+## FIRST REAL BAND DATA — 2026-08-04 21:40 CEST (shard 0 partial, OpenCode)
+
+`rewards_ok=141, null=0` — the first probe trials in this project with readable rewards.
+
+| bucket | tasks | share |
+|---|---|---|
+| always-solved (4/4) | 7 | 21.2% |
+| never-solved (0/4) | 26 | 78.8% |
+| **band (0<s<4)** | **0** | **0.0%** |
+
+148 trials, 0 unreadable, **33 tasks with a complete k=4 group**, pass@4 = 7/33 = 21%.
+
+**Why this is more than another zero.** Every prior zero rested on ≤11 tasks and was easy to dismiss as a
+small non-random sample. At 33 tasks the contrast with the co-lead's ~35% becomes quantitative: if the
+true in-band fraction were 0.35, then P(0 of 33 in band) ≈ 0.65^33 ≈ **6e-7**. So the band is genuinely
+near-zero **for this (model, agent, config) triple** — 8B + OpenCode 1.18.8 + 20480 client window on
+`r2egym-patched-full-oracle` — and ~35% is therefore NOT a property of r2egym alone.
+
+**What that implies, stated carefully.** r2egym rewards are binary on the test suite, and at temperature
+1.0 a task with genuine partial difficulty should sometimes vary across 4 samples. Seeing none says these
+tasks are decisively easy or decisively hard *for this configuration*. Two readings remain open and the
+probe cannot separate them yet:
+1. the co-lead's band comes from a materially different agent/harness (her arm is terminus-structured,
+   possibly with thinking and different windows), so her p@4 lands on a different difficulty curve; or
+2. our harness truncates or mis-scores marginal attempts in a way that pushes them to a clean 0.
+
+Caveat that still stands: shard 0 is a round-robin slice of a deterministic order, not a random sample.
+The remaining 7 shards will take this to ~2,000+ tasks, which settles it.
