@@ -523,7 +523,8 @@ UNAPPROVED and unresolved — `/p/scratch` routes around the problem rather than
 | `1229438` | 16×8, **6h** | cancelled — 6h could not fit before a hidden maintenance window, deferred to Aug 5 12:00 CEST |
 | `1229446` | 16×8, **4h** | superseded before running; relaunched as the `…20260804f` run below |
 | `1229488` | 16×8, 4h, all paths on `/e/fscratch` | **FAILED at 1h46m** on an unenumerated `AddTestsDirError` — cleanest run yet, killed by the fail-loud footgun. See below. |
-| `1229612`… | 16×**4**, 3h | queued behind node starvation; the milestone retry |
+| `1229643` | 16×**4**, 3h | **FAILED at 1m51s** — Ray's `ray_spill` dir still on inode-dead `/e/scratch`. Fixed `aab498d7`. |
+| `1229649` | 16×**4**, 3h | **the live milestone retry** — both fixes in, watcher + monitor armed |
 
 ### Run `1229488` — 2026-08-04. Best startup + best reward data yet, then aborted by one bad trial
 
@@ -549,11 +550,29 @@ Allocated 10:43:42 KST on 5 nodes `jpbo-026-[36,40,44-45,47]`, head `jpbo-026-36
 ✅ **Compute-node route gate PASSED** — a real `/v1/chat/completions` from a compute node returning
 `"model": "995ad96e…"`. This is the step whose omission killed `1225422`; the watcher now automates it.
 
-**⛔ REWARD RESULT — the band conclusion is now much stronger.** At 32 honest trials / 8 groups,
-**0 varied**, and `r2egym-v1-05999` produced the project's **first COMPLETE n=8 group: `0,0,0,0,0,0,0,0`**.
-Every earlier claim rested on partial groups of 2–5; this is the full group size we train at. Outcomes
-also reproduced across three independent runs (`01068`/`04114` → 1, `05999`/`06360`/`07753` → 0).
-A new 7th/8th task (`06171`, `00222`) scored 0, extending the set slightly beyond the original six.
+**⛔ REWARD RESULT — the band question is now ANSWERED, not merely evidenced.** Final state at abort:
+**68 honest trials, 11+ groups, 0 with within-group variance**, and — the part that settles it — **THREE
+COMPLETE n=8 groups, all perfectly uniform**, at the exact group size we train at:
+
+| task | complete n=8 group |
+|---|---|
+| `01068` | `1,1,1,1,1,1,1,1` |
+| `01755` | `1,1,1,1,1,1,1,1` |
+| `05999` | `0,0,0,0,0,0,0,0` |
+
+Every earlier zero-variance claim rested on PARTIAL groups of 2–5, which is why it was always arguable.
+Two saturated at 1 and one at 0 — both extremes of the failure mode. Outcomes also reproduced across
+three independent runs at two different agent budgets, and the invariance now spans **11 distinct tasks**
+(new: `00222`, `02033`, `03150`, `05359`, `06171`) rather than the original six.
+⇒ **A band (or DAPO `dynamic_sampling`) is a PRECONDITION for any real training run, not an
+optimisation.** The 384-task `p@4` probe is now about sizing the in-band set, not about testing whether
+one is needed.
+
+**Other measurements from `1229488`:** 44% of trials ran past 599s (up from 31% at n=16) — the timeout
+fix keeps earning; `n_cache_tokens: sum=0` across all 32/68 trials sampled at ~130k input tokens each
+(consistent with prefix caching inactive, still not proof); rollout throughput **0.95–1.03 trials/min**
+at 32-way concurrency; dispatch fills **8 groups at once**, not 4; input tokens saturate ~145k with one
+runaway trial at **452k** (3×), which is the likely source of the 9 context overflows.
 ⚠ Still a small task sample — the ~384-task `p@4` probe is what turns this into a population claim.
 
 **Bridge errors are NOT a training-impact signal.** `jobs_errors` rose +89 over baseline in two bursts,
@@ -576,6 +595,20 @@ earning; `n_cache_tokens: sum=0` across all 32 trials at ~130k input tokens each
 | `45572f93` | OT-Agent | experiments tree → `/p/scratch` (the inode fix) |
 | ai_memory | local only | corrections + gotchas, not pushed |
 
+**Shipped 2026-08-04 afternoon (all pushed to `lukedhlee` forks, deployed + verified on-cluster):**
+
+| commit | repo | change |
+|---|---|---|
+| `c15ac55f` | OT-Agent | `fail_on_infrastructure_error: false` + `AddTestsDirError` masked — one bad trial no longer aborts the batch |
+| `be949008` | OT-Agent | canary 16×8 → **16×4** to fit the 3h wall the starved cluster allows |
+| `aab498d7` | OT-Agent | `ray_spill` → `/e/fscratch` (killed `1229643`); same fix in the 6-node config; test updated |
+| `fafab77` | MarinSkyRL | null-content partial response (`accum.content += None`) → **⛔ CANNOT DEPLOY**, see below |
+
+⛔ **MarinSkyRL fork fixes cannot reach the cluster.** Its checkout is on `/e/scratch`, so `git fetch`
+fails with `unable to create temporary file: Disk quota exceeded`. **Relocate
+`/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge` to `/e/fscratch` before any MarinSkyRL fix is
+needed on a critical path.** Deployed MarinSkyRL is still `8ee69f3`; harbor is `f44a1170`.
+
 **Measured:** `Loading weights` **701.12s → 38.03s** (1 GPU, 18.4×) / **61.6s** in-job (11.4×) by
 staging on `/e/fscratch`. `/e/scratch` 0.056 GiB/s per stream vs fscratch 2.51 (`O_DIRECT`, compute
 `jpbo-018-14`, job `1224678`); vLLM reads the 26 shards **sequentially in one stream**, so it sat on
@@ -584,16 +617,36 @@ feature size"*) for a tower SkyRL unwraps and no rollout uses — `MM_LIMIT=0` i
 
 ### Live resources
 
-- **Jupiter:** `1229488` **RUNNING**, 5 nodes, 4h wall (10:43:42 → 14:43:43 KST).
-- **JURECA:** `15494122` **R** + `15495516` **R** (both running, 2 nodes × 16 each). Both outlive
-  `1229488` by 8h+, so fleet sufficiency is verified for this run rather than assumed.
+*(updated 2026-08-04 13:05 KST / 06:05 CEST)*
+
+- **Jupiter:** `1229649` **PENDING `(Priority)`**, 5 nodes, **3h** wall, **16×4 = 64 trajectories**.
+  `1229488` (FAILED 1h46m) and `1229643` (FAILED 1m51s) are both closed — see the run ledger.
+- **⛔ booster is RESOURCE-STARVED, not maintenance-blocked.** `sinfo`: **147 nodes `drain*`, 8 `down*`,
+  1 `idle*`**. `sbatch --test-only` returned the SAME estimate (`2026-08-04T23:19`) for every walltime
+  from 30 min to 3h, and `2026-08-05T12:00` for ≥3h30m ⇒ **3h is the largest wall that starts tonight**,
+  which is why the geometry is 16×4. A FLAT estimate across walltimes means no free nodes; shortening
+  buys nothing. ⚠ The estimate is conservative — `1229643` was estimated 23:19 and actually started in
+  **6 minutes** via backfill, so QUEUE rather than wait.
+- **JURECA:** `15494122` **R** (expires ~16:25 CEST) + `15495516` **R** (expires ~03:16 CEST Aug 5),
+  2 nodes × 16 each. ⚠ **Re-verify fleet TTL against the job's ACTUAL start, not submission time** —
+  the watcher now asserts `fleet TIME_LEFT > job remaining walltime` and warns loudly if none qualifies.
+- **Watchers/monitors armed:** `/e/fscratch/reformo/lee27/retarget_job.sh <jobid>` (parameterized; does
+  the tunnel retarget + compute-node route gate + fleet-sufficiency assert automatically) → pid 1309824
+  on `1229649`, logging to `retarget_1229649.log`.
 - **Two independent Jupiter ControlMasters** (`login02` pid 55008, `login01` pid 68552), both
   `BatchMode`-usable. Poll from **login01** and keep interactive calls on **login02** — JSC allows ~one
   session channel per mux, and sharing one node's channel caused two `Session open refused by peer`
   lockouts. The bridge at `10.128.1.2:9920` answers from BOTH login nodes (verified 200 from login01),
   so a dead login02 *mux* is recoverable; a dead login02 *node* is not (the bridge process lives there).
-- **Bridge** `10.128.1.2:9920` clean (`ready: 0`). Lifetime `jobs_errors: 176` are all from the two
-  aborted runs. 55 orphaned sandboxes were reclaimed across two sweeps.
+- **Bridge** `10.128.1.2:9920` idle (`ready: 0`) at `1229649`'s launch — the preflight HARD-REQUIRES an
+  idle bridge and refused an earlier attempt (`envs.ready=7, active_jobs=6`). **Do not set
+  `REQUIRE_CLEAN_BRIDGE=0`** to get past it; the bridge's own `cleanup_loop` reaps orphaned envs after
+  `BRIDGE_STALE_READY_SEC` (900s), so after a crash just WAIT ~15 min.
+  ⚠ `jobs_errors` is **not** a training-impact signal: it reached +184 over `1229488` while 68/68 trials
+  scored honestly with ZERO infrastructure exceptions, because the same `cleanup_loop` increments it as
+  bookkeeping. Read it as a DELTA and cross-check `exception_info` in the trial results.
+  ⚠ The bridge keeps **NO persistent log** — its stdout is a tmux pane (`readlink /proc/950979/fd/1` →
+  `/dev/pts/2`), so bridge error history is unauditable. Fix at a restart with no envs attached.
 - **ControlMaster** pid 185890 alive 30h+. Reach JURECA ONLY as
   `ssh -S ~/.ssh/cm_jureca/qwen36 jureca.fz-juelich.de`.
 - **Watcher:** `/p/scratch/reformo/lee27/retarget.sh` polls `1229446`, then on allocation retargets the
