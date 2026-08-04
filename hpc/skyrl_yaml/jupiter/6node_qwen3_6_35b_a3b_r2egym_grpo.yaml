@@ -291,7 +291,7 @@ container:
     # collects them into the experiment directory. Spill large objects to our
     # writable project scratch instead of a stale user namespace.
     OT_AGENT_RAY_LOG_DIR: /tmp/ray_logs
-    RAY_object_spilling_config: '{"type":"filesystem","params":{"directory_path":"/e/scratch/reformo/lee27/ray_spill"}}'
+    RAY_object_spilling_config: '{"type":"filesystem","params":{"directory_path":"/e/fscratch/reformo/lee27/ray_spill"}}'
     DC_AGENT_SECRET_ENV: /e/scratch/reformo/lee27/keys/secrets.env
     # container.extra_env is rendered as Bash exports before Hydra starts, so
     # OmegaConf interpolation syntax is invalid here. The Hydra-side bridge_url

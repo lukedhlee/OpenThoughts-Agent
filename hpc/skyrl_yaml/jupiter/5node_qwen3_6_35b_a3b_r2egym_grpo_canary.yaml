@@ -41,8 +41,15 @@ context_budget:
 # jpbo-018-14, job 1224678) and /e/fscratch 2.51 GiB/s. Measured end to end on
 # the same 1-GPU canary: "Loading weights took 701.12s" from /e/scratch
 # (1217900) vs 38.03s from /e/fscratch (1224804) -- 18.4x, ~11 min saved per
-# engine. Checkpoints and HF exports stay on /e/scratch: fscratch retention and
-# purge policy is UNDOCUMENTED, so only the read-only model is staged there.
+# engine.
+# ⚠ CORRECTED: checkpoints and HF exports do NOT stay on /e/scratch. That was the
+# plan while only the read-only model was staged on fscratch, but /e/scratch is
+# inode-exhausted and cannot create files at all (it killed 1221005, 1229343 and
+# -- via Ray's spill dir -- 1229643), and /p/scratch is NOT MOUNTED on Jupiter
+# compute. So the experiments tree, checkpoints, HF exports, WANDB_DIR and the
+# Ray spill dir are ALL on /e/fscratch now (ae180c37, 31cd646d).
+# fscratch retention/purge policy remains UNDOCUMENTED, so the on-disk export is
+# NOT durable -- publishing is a deliberate follow-up step, not a side effect.
 
 config_groups:
   terminal_bench_config: terminal_bench
@@ -382,7 +389,7 @@ container:
     # collects them into the experiment directory. Spill large objects to our
     # writable project scratch instead of a stale user namespace.
     OT_AGENT_RAY_LOG_DIR: /tmp/ray_logs
-    RAY_object_spilling_config: '{"type":"filesystem","params":{"directory_path":"/e/scratch/reformo/lee27/ray_spill"}}'
+    RAY_object_spilling_config: '{"type":"filesystem","params":{"directory_path":"/e/fscratch/reformo/lee27/ray_spill"}}'
     DC_AGENT_SECRET_ENV: /e/scratch/reformo/lee27/keys/secrets.env
     # container.extra_env is rendered as Bash exports before Hydra starts, so
     # OmegaConf interpolation syntax is invalid here. The Hydra-side bridge_url

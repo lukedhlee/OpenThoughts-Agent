@@ -56,7 +56,17 @@ def test_qwen36_rl_uses_only_operator_owned_ray_paths_and_no_proxy() -> None:
     hpc_source = (ROOT / "hpc/hpc.py").read_text()
 
     assert "OT_AGENT_RAY_LOG_DIR: /tmp/ray_logs" in config
-    assert "/e/scratch/reformo/lee27/ray_spill" in config
+    # Operator-owned AND on a filesystem that can still create inodes. This was
+    # /e/scratch until 1229643, which died 1m51s in when Ray's
+    # validate_external_storage could not os.makedirs the spill dir:
+    #   OSError: [Errno 122] Disk quota exceeded:
+    #     '/e/scratch/reformo/lee27/ray_spill/ray_spilled_objects_<hash>'
+    # Ray mints a NEW session-hashed leaf dir per run, so every launch needs a
+    # fresh inode from an exhausted project-wide cap.
+    assert "/e/fscratch/reformo/lee27/ray_spill" in config
+    assert "/e/scratch/reformo/lee27/ray_spill" not in config
+    # still nobody else's tree
+    assert "jureap59" not in config
     assert 'proxychains_binary=""' in hpc_source
 
 
