@@ -1405,3 +1405,38 @@ real I/O against the same filesystem, the create path loses.
 **Standing lesson:** for any probe whose output is a dataset property, verify a **non-null reward** on the
 first few trials before trusting trial counts. `ls result.json | wc -l` is a liveness metric, not a data
 metric — the same "existence is not function" trap as the route gate and `workers_alive`.
+
+## Address the rollout endpoint by IP: curl and Python resolve it differently inside the sandbox (2026-08-04)
+
+512 band-probe trials died as `APIConnectionError` ("Connection error.") with null rewards. Every
+host-level check passed — `/health` 200 from the Jupiter login node, 200 from a JURECA **compute** node,
+a real `/v1/chat/completions` with the correct served model name returning a completion, and 64 parallel
+connections through the tunnel all succeeding. The failure was only *inside* the Apptainer sandbox, and
+only for the agent.
+
+Measured in a single sandbox, seconds apart, via the bridge's `/env/exec`:
+
+| probe | result |
+|---|---|
+| `curl http://jrlogin05i:PORT/health` | **200** |
+| `python urllib http://jrlogin05i:PORT/health` | **[Errno 111] Connection refused** |
+| `python urllib http://10.14.0.46:PORT/health` | **200** |
+| `getent hosts jrlogin05i` | `10.14.0.46 jrlogin05i.jureca` |
+| `getent ahostsv6 jrlogin05i` | *empty* |
+
+So it is **not** IPv6-first. Python's `getaddrinfo` selects a different A record than curl does under
+`search jureca`, and the `ssh -R` forward binds **only** `10.14.0.46`.
+
+**Why it never bit the 35B canary:** OpenCode is Node.js and its resolver picks the working address.
+terminus-2 is Python/httpx and does not. **Swapping the agent can silently break the rollout transport
+while every existing gate passes** — the route gate tests the host, not the agent's HTTP stack, and not
+from inside the container.
+
+**Fix:** set `SKYRL_ROLLOUT_HTTP_ENDPOINT_HOST` to the IP literal `10.14.0.46`, never `jrlogin05i`.
+
+**New gate to run before trusting any agentic run through the tunnel:** exec, *inside a real sandbox*,
+the agent's own interpreter against the endpoint —
+`/testbed/.venv/bin/python3 -c "import urllib.request; print(urllib.request.urlopen('<api_base>/health').status)"`.
+Tooling: `/e/fscratch/reformo/lee27/insandbox.py <port>` creates one env, runs DNS/curl/python probes
+inside it, and stops it. `APIConnectionError` in `exception_info` is the signature; note the message is
+just "Connection error." and names no URL, so the traces alone will not tell you this.
