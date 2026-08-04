@@ -116,6 +116,17 @@ for i, shard in enumerate(shards):
     g["max_num_seqs"] = 64
 
     tb = c["terminal_bench"]["harbor"]
+    # THINKING OFF. Measured through the tunnel on this 8B: 2,611 completion
+    # tokens took 59.8s (~44 tok/s), so a 4,096-token thinking turn is ~93s and
+    # terminus-2's per-request timeout fires first -- every trial died with
+    # "Request timed out." after the connection issue was fixed.
+    # A non-thinking terminus-2 turn only has to emit a JSON tool call, which is
+    # tens of tokens, so turns drop from ~60-90s to a few seconds.
+    # ⚠ This makes the band a property of the (model, agent, THINKING-OFF) triple.
+    # Worth asking the co-lead whether her band run had thinking enabled, because
+    # a thinking model solves more tasks and the band shifts accordingly.
+    tb["interleaved_thinking"] = False
+    tb.setdefault("extra_body", {}).setdefault("chat_template_kwargs", {})["enable_thinking"] = False
     # Hardcode, do NOT leave as ${oc.env:APPTAINER_BRIDGE_URL,...:9920}: if the
     # env var is unset at hydra-resolution time the default silently attaches the
     # probe to the 9920 bridge serving the 35B run. Same accepted-but-ignored
