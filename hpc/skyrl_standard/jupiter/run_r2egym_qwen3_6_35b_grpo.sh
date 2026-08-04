@@ -29,13 +29,40 @@ shopt -s nullglob
 # end on the same 1-GPU canary: "Loading weights took 701.12s" from /e/scratch
 # (1217900) vs 38.03s from /e/fscratch (1224804) -- 18.4x.
 #
-# Only the READ-ONLY model lives here; fscratch retention/purge policy is
-# UNDOCUMENTED. Checkpoints, exports and experiments stay on /e/scratch. Set
-# MODEL_PATH explicitly to fall back to /e/scratch if fscratch is ever purged.
+# Only the READ-ONLY model lives here, precisely BECAUSE fscratch's
+# retention/purge policy is UNDOCUMENTED: this copy is reproducible from the hub
+# in ~43s, so losing it costs nothing. Everything that must SURVIVE -- the
+# experiments tree, the checkpoint, the HF export -- lives on /p/scratch, which
+# has a documented retention policy (see EXPERIMENTS_DIR below).
+# Set MODEL_PATH explicitly to fall back to /e/scratch if fscratch is purged.
 : "${MODEL_FS_ROOT:=/e/fscratch/reformo/lee27}"
 : "${MODEL_PATH:=$MODEL_FS_ROOT/models/Qwen3.6-35B-A3B/$MODEL_REVISION}"
 : "${TASKS_DIR:=$JSC_SCRATCH/tasks/r2egym-patched-full-oracle}"
-: "${EXPERIMENTS_DIR:=$JSC_SCRATCH/experiments}"
+# Experiments tree lives on /p/scratch (JUST), NOT /e/scratch.
+#
+# /e/scratch cannot create new files at all: its inode soft limit is a
+# PROJECT-WIDE 8M shared by 26 users and it is exhausted. Measured 2026-08-04 --
+# `touch` fails with Errno 122 while overwriting an existing file still
+# succeeds. It killed 1221005 and 1229343 mid-rollout with
+# `OSError: [Errno 122] Disk quota exceeded: '.../experiments/...'`, and it would
+# also break `git fetch` (new objects are new files) and the job's own log and
+# config writes.
+#
+# Why /p/scratch and not /e/fscratch for this tree:
+#   - inodes:     1.00M / 4M (25%), ~3.0M free
+#   - accounting: FRESH (2026-08-04 01:21) -- /e/scratch's counter was 11 days
+#                 stale and read 77% while the filesystem was actually full, so
+#                 trustworthy accounting is itself the feature here
+#   - retention:  DOCUMENTED, unlike /e/fscratch whose purge policy is not --
+#                 and this tree holds the checkpoint and the HF export, which
+#                 are the milestone artifacts and must survive
+#
+# The read-only 67 GiB model stays on /e/fscratch (see MODEL_PATH): that is a
+# per-stream BANDWIDTH problem, this is an INODE problem, and they want
+# different filesystems. /p/scratch is not Jupiter-native so small-file writes
+# are slower, but trace writes are a few hundred KB per trial and were never the
+# bottleneck.
+: "${EXPERIMENTS_DIR:=/p/scratch/reformo/lee27/experiments}"
 : "${RL_CONFIG:=$DCFT/hpc/skyrl_yaml/jupiter/6node_qwen3_6_35b_a3b_r2egym_grpo.yaml}"
 : "${PARTITION:=booster}"
 : "${ACCOUNT:=reformo}"
