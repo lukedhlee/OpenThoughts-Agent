@@ -1113,3 +1113,49 @@ left by a dead job; 18100 and 18120–18127 are burned).
 - `main_tbench_generate` (pure-rollout entrypoint) is broken in this fork — worth fixing in daylight,
   it would delete the policy/optimizer/FSDP/weight-sync from probe runs entirely.
 - The MarinSkyRL `/e/fscratch` relocation is still undone, so `fafab77` (null-content fix) is stranded.
+
+## Live state — CORRECTED, 2026-08-04 21:05 CEST / 05 Aug 04:05 KST
+
+The 18:15 block above is superseded. Three relaunches happened after it, each fixing a distinct cause of
+**null rewards** (full chain in `gotchas.md`): overlay-create timeouts on shared `/p/scratch` → Python vs
+curl resolving the tunnel host differently inside the sandbox → thinking-mode turns exceeding
+terminus-2's request timeout. terminus-2 was then abandoned for the night.
+
+### Running now
+| shard | job | port |
+|---|---|---|
+| 0–7 | `1236536 1236557 1236558 1236559 1236560 1236561 1236562 1236563` | 18160–18167 |
+
+3 h wall (ends ~00:05 CEST). **Agent is OpenCode 1.18.8**, the canary's block verbatim — the only agent
+configuration proven to run for hours against this bridge and tunnel. `n_concurrent_trials: 32` per shard
+(what the 35B canary actually sustained), `client_window_tokens: 20480`, endpoint addressed as
+`10.14.0.46` (IP, never `jrlogin05i`), bridge 9921, fleet **15498197** (32 × dc-cpu, 16 workers/node,
+tmpfs staging).
+
+### Check this FIRST, before anything else
+```bash
+python3 /e/fscratch/reformo/lee27/rewardcheck.py    # MUST show rewards_ok > 0
+bash    /e/fscratch/reformo/lee27/band_report.sh    # band fraction, once rewards exist
+```
+If `rewards_ok=0` and `null>0`, read the top exception type it prints — every failure tonight was visible
+there and nowhere else. `scored=N` counts files, not rewards, and looked healthy through all three
+failures.
+
+### Known-good facts to reuse rather than re-derive
+- Endpoint must be the **IP** `10.14.0.46`. Python and curl resolve `jrlogin05i` differently *inside* the
+  sandbox, and it varies BY NODE.
+- Sandbox staging must be node-local (`STAGING_BASE=/tmp/apptainer_staging`): overlay create is 3.57 s
+  there vs 18.06 s on `/p/scratch`, against a **hardcoded 60 s** timeout in `worker.py`.
+- JURECA ports are **single-use**. Burned so far: 18100, 18120–18127, 18130–18137, 18140–18147,
+  18150–18157.
+- OpenCode requires `engine_init_kwargs: {enable_auto_tool_choice: true, tool_call_parser: qwen3_coder}`
+  or vLLM rejects every agent request before generation.
+- **Never `pkill -f` over SSH.** It killed my own session mid-chain tonight, which silently skipped a repo
+  sync and a port bump and launched 8 shards on a stale config against poisoned ports — 16 jobs ran at
+  once before I caught it. Use `tmux kill-session`, or `pgrep` to look without killing.
+
+### Two questions for the co-lead, both cheap and both decision-changing
+1. Her band task-ID list (V1 indices or docker_images). Our 3,328 is a 73% subset of her 4,578 keyed by
+   the same index, so it intersects directly — one message versus ~10 h of generation.
+2. Did her band run have **thinking enabled**, and which agent? The band is a property of the
+   (model, agent, config) triple, so her ~35% is only comparable to ours if those match.
