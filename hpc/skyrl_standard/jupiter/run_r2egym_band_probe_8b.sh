@@ -14,7 +14,11 @@
 #   --train_data  : rl_launch_utils overwrites data.train_data from the CLI, which
 #                   would replace the shard's explicit task list with the whole
 #                   3,328-dir tree. The shard list lives in the YAML; keep it.
-#   --model_path  : same trap in the other direction (it overrides the YAML path).
+# --model_path IS passed, and must be: construct_rl_sbatch_script does
+#   exp_args.get("model_path") or parsed.model.get(...)
+# and ParsedRLConfig has no `.model` attribute, so omitting it is an AttributeError
+# rather than a fallback. It is set to the SAME path the YAML declares, so it
+# overrides nothing in practice.
 set -euo pipefail
 
 : "${JSC_SCRATCH:=/e/scratch/reformo/lee27}"
@@ -37,6 +41,7 @@ set -euo pipefail
 : "${SHARD:?Set SHARD to the shard yaml basename, e.g. band_probe_8b_p4_shard00of416}"
 : "${RL_CONFIG:=$DCFT/hpc/skyrl_yaml/jupiter/band/${SHARD}.yaml}"
 : "${JOB_NAME:=jupiter_band_probe_8b_${SHARD}}"
+: "${MODEL_PATH:=$FSCRATCH/models/g1_diverse_tezos_100k_8b}"
 
 export SCRATCH="$JSC_SCRATCH"
 export DCFT
@@ -70,6 +75,7 @@ cd "$DCFT"
 "$RL_VENV/bin/python" -m hpc.launch \
   --job_type rl \
   --rl_config "$RL_CONFIG" \
+  --model_path "$MODEL_PATH" \
   --num_nodes "$NUM_NODES" \
   --partition "$PARTITION" \
   --account "$ACCOUNT" \
