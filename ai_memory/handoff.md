@@ -992,3 +992,52 @@ launching**) · `notes/jupiter_bringup_and_throughput.md` · `notes/jupiter_mega
 `notes/jureca_agentic_daytona_plan.md` · `notes/jureca_agentic_smoke_recap.md` ·
 `experiments/vista_moe_gsm8k_tracker.md` · `scripts/` (`jureca_from_clause.sh` = JuDoor `from=` line,
 `explore_marianna_jureca.sh`, `jupiter_monitor_r10.sh`, `vista_import_loop.py`).
+
+---
+
+## Overnight 2026-08-04 → 08-05 — the band probe exists and the concurrency ceiling is gone
+
+**What changed strategically.** Marianna's band/raw comparison reframed the band from "a compute-efficiency
+nicety" into **the fix for our actual blocker**. Her top-right panel: the raw pool sits at `avg_pass@8` ≈ 0.5
+with wide scatter, the p@4-filtered band at ≈ 0.95. Ours has been at the tail of the raw pool where every
+group is uniform — 11/11 tasks with named reward evidence, zero within-group variance, and 6 more complete
+n=4 groups from `1229649` tonight (2 solved / 4 unsolved / 0 band). Zero variance is zero advantage is zero
+gradient. The band is not a speed-up for us; it is the difference between a gradient and no gradient.
+
+**Dataset accounting.** Her "4.5k" is `R2E-Gym/R2E-Gym-Subset`/`-Lite` = **4,578**. Ours is
+`DCAgent/r2egym-patched-full-oracle` = **3,328** — a 73% subset of the *same* pool, keyed by V1 index
+(`path` = `r2egym-v1-00005`, `00007`, …; gaps are tasks that failed patching/oracle validation). So a band
+list keyed on V1 index or docker_image **intersects our pool directly**. If her 1.6k is uniformly spread,
+expected overlap ≈ 1,600 × 3,328/4,578 ≈ **1,160 tasks**.
+
+**The 32-way ceiling was never JURECA.** It was `max_num_seqs: 8` × 4 engines on the 35B, with
+`n_concurrent_trials` and a 2-node × 16-worker fleet both sized downstream of it. Full curve and the three
+stacked limits are in `gotchas.md`. Measured tonight on an isolated bridge: **768 concurrent sandboxes,
+766/768 ready, p50 102s**, sub-linear. `--num-workers 48` works fine; the suid limit throttles *starts*, not
+running instances.
+
+**Why the probe is structurally safer than any training run we have attempted.** It uses
+`examples.terminal_bench.entrypoints.main_tbench_generate` — vLLM engines plus one `generate()` call over the
+shard. No policy model, no ref model, no optimizer, no FSDP, no weight sync, no checkpoint. `policy_pg` is
+`None` (`policy_strict_spread_pg: false`), so no GPUs are reserved away from the engines. Critically, **there
+is no batch gate**: each trial writes its own `trace_jobs/<task>/result.json`, so a shard that dies at 80%
+still yields 80% usable band data. Every one of our nine training failures lost everything because the
+optimizer update sat behind a 16-complete-group barrier.
+
+**Two traps caught before they corrupted the band, both worth remembering:**
+1. `BRIDGE_EXEC_TIMEOUT` defaults to **600s**, shorter than the 1800s agent cap, so the bridge kills the exec
+   mid-task — measured at **76% of trials** on the 35B canary. In a *training* run that shows up as bad
+   reward. In a *band probe* it is invisible and corrupting: truncated trials score 0, and tasks the model
+   never got to finish get classified "too hard" and filtered out of the band.
+2. `bridge_url` left as `${oc.env:APPTAINER_BRIDGE_URL,http://10.128.1.2:9920}` would silently attach the
+   probe to the bridge serving the live 35B run if the env var were unset at hydra-resolution time. Hardcoded.
+
+**Launcher bugs hit en route** (all fixed in the committed wrapper/generator, none pre-existing knowledge):
+- `parse_rl_config` rejects the seven derived context fields; `3node_qwen3_8b_r2egym_grpo.yaml` predates that
+  rule, so anything generated from it must declare `context_budget` instead.
+- Omitting `--model_path` is an **AttributeError**, not a fallback: `construct_rl_sbatch_script` does
+  `exp_args.get("model_path") or parsed.model.get(...)` and `ParsedRLConfig` has no `.model`.
+- `OT_AGENT_RAY_LOG_DIR` points at `/e/data1/.../ot-baf/experiments/_ray_logs`, another project's tree;
+  `ray_utils._start_node` mkdir's it and dies EACCES at 52s.
+- `ssh -O cancel -R` needs the **bare `bind:port`** form to clear a previous job's forward; the full spec
+  carries the old head IP and will not match, so the new forward fails with "remote port forwarding failed".
