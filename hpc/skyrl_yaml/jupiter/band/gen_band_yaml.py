@@ -36,6 +36,33 @@ for i, shard in enumerate(shards):
     c = copy.deepcopy(base)
     c["entrypoint"] = "examples.terminal_bench.entrypoints.main_tbench_generate"
 
+    # The launcher accepts exactly ONE context declaration and derives the seven
+    # downstream fields itself; declaring any of them is a hard error. These values
+    # reproduce the 8B config's previous behaviour exactly:
+    #   max_input_tokens = 32768 - 4096 = 28672
+    # client_window_tokens is omitted deliberately: it exists to pull OpenCode's
+    # proactive compaction threshold down below the prompt ceiling, and terminus-2
+    # does not compact.
+    c["context_budget"] = {
+        "request_window_tokens": 32768,
+        "max_new_tokens_per_turn": 4096,
+        "max_turns": 999999,
+    }
+    for path in (("trainer", "max_prompt_length"),
+                 ("generator", "max_turns"),
+                 ("generator", "sampling_params", "max_generate_length"),
+                 ("generator", "engine_init_kwargs", "max_model_len"),
+                 ("terminal_bench", "harbor", "max_episodes"),
+                 ("terminal_bench", "model_info", "max_input_tokens"),
+                 ("terminal_bench", "model_info", "max_output_tokens")):
+        node = c
+        for k in path[:-1]:
+            node = node.get(k) if isinstance(node, dict) else None
+            if node is None:
+                break
+        if isinstance(node, dict):
+            node.pop(path[-1], None)
+
     m = f"{FSCRATCH}/models/g1_diverse_tezos_100k_8b"
     c["trainer"]["policy"]["model"]["path"] = m
     c["trainer"]["ref"]["model"]["path"] = m
