@@ -79,6 +79,14 @@ for i, shard in enumerate(shards):
     c["trainer"]["project_name"] = "jupiter-r2egym-band-probe-8b"
 
     g = c["generator"]
+    # Drop custom_chat_template_chat_completion_path. The 8B config points it at
+    # ./chat_templates/qwen3_thinking_acc.jinja2 relative to skyrl-train, and NO
+    # chat_templates directory exists anywhere in the MarinSkyRL checkout -- vLLM
+    # engine init then stalls with no error in the job log (smoke 1235178 sat 26
+    # min at "Executing command with srun" and never served /health). g1_8b is a
+    # Qwen3-8B finetune and carries its own template in tokenizer_config.json,
+    # which is what the 35B canary relies on too.
+    g.get("engine_init_kwargs", {}).pop("custom_chat_template_chat_completion_path", None)
     g["n_samples_per_prompt"] = 4          # p@4 -- the band filter itself
     g["num_inference_engines"] = 4 * NODES  # TP1, one engine per GH200
     # 8B in bf16 is ~16GB of a 96GB GH200, so KV has room the 35B never had.
