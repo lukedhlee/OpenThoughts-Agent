@@ -12,7 +12,7 @@ shopt -s nullglob
 # old default here and in the 6-node YAML's prompt_template_path, so a run could
 # silently mix configs from one checkout with templates from another. Both are
 # collapsed onto `-next` now; do not reintroduce the bare path.
-: "${DCFT:=$JSC_SCRATCH/OpenThoughts-Agent-r2egym-bridge-next}"
+: "${DCFT:=/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next}"
 : "${RL_VENV:=$RUNTIME_ROOT/envs/rl-megatron}"
 : "${RL_REPO_DIR:=$JSC_SCRATCH/MarinSkyRL-apptainer-bridge}"
 : "${HARBOR_REPO:=$JSC_SCRATCH/harbor-apptainer-bridge}"
@@ -29,40 +29,42 @@ shopt -s nullglob
 # end on the same 1-GPU canary: "Loading weights took 701.12s" from /e/scratch
 # (1217900) vs 38.03s from /e/fscratch (1224804) -- 18.4x.
 #
-# Only the READ-ONLY model lives here, precisely BECAUSE fscratch's
-# retention/purge policy is UNDOCUMENTED: this copy is reproducible from the hub
-# in ~43s, so losing it costs nothing. Everything that must SURVIVE -- the
-# experiments tree, the checkpoint, the HF export -- lives on /p/scratch, which
-# has a documented retention policy (see EXPERIMENTS_DIR below).
+# fscratch's retention/purge policy is UNDOCUMENTED, but this copy is
+# reproducible from the hub in ~43s, so losing it costs nothing. The experiments
+# tree lives here too -- not by preference but because it is the ONLY
+# compute-node-writable option (see EXPERIMENTS_DIR below); the durable home of
+# the export is the HF repo, not any cluster path.
 # Set MODEL_PATH explicitly to fall back to /e/scratch if fscratch is purged.
 : "${MODEL_FS_ROOT:=/e/fscratch/reformo/lee27}"
 : "${MODEL_PATH:=$MODEL_FS_ROOT/models/Qwen3.6-35B-A3B/$MODEL_REVISION}"
 : "${TASKS_DIR:=$JSC_SCRATCH/tasks/r2egym-patched-full-oracle}"
-# Experiments tree lives on /p/scratch (JUST), NOT /e/scratch.
+# Experiments tree lives on /e/fscratch. NOT /e/scratch, and NOT /p/scratch.
 #
-# /e/scratch cannot create new files at all: its inode soft limit is a
-# PROJECT-WIDE 8M shared by 26 users and it is exhausted. Measured 2026-08-04 --
-# `touch` fails with Errno 122 while overwriting an existing file still
-# succeeds. It killed 1221005 and 1229343 mid-rollout with
-# `OSError: [Errno 122] Disk quota exceeded: '.../experiments/...'`, and it would
-# also break `git fetch` (new objects are new files) and the job's own log and
-# config writes.
+# ⚠ MEASURED FROM A COMPUTE NODE (jpbo-020-39, 2026-08-04) -- the login node
+# lies about this, and trusting it cost a job:
 #
-# Why /p/scratch and not /e/fscratch for this tree:
-#   - inodes:     1.00M / 4M (25%), ~3.0M free
-#   - accounting: FRESH (2026-08-04 01:21) -- /e/scratch's counter was 11 days
-#                 stale and read 77% while the filesystem was actually full, so
-#                 trustworthy accounting is itself the feature here
-#   - retention:  DOCUMENTED, unlike /e/fscratch whose purge policy is not --
-#                 and this tree holds the checkpoint and the HF export, which
-#                 are the milestone artifacts and must survive
+#   /e/fscratch   visible + WRITABLE
+#   /e/scratch    visible, NOT writable   (project-wide 8M inode cap, exhausted;
+#                                          `touch` -> Errno 122, overwrite OK)
+#   /p/scratch    NOT MOUNTED
 #
-# The read-only 67 GiB model stays on /e/fscratch (see MODEL_PATH): that is a
-# per-stream BANDWIDTH problem, this is an INODE problem, and they want
-# different filesystems. /p/scratch is not Jupiter-native so small-file writes
-# are slower, but trace writes are a few hundred KB per trial and were never the
-# bottleneck.
-: "${EXPERIMENTS_DIR:=/p/scratch/reformo/lee27/experiments}"
+# /p/scratch is readable from the Jupiter LOGIN node, which is why it looked like
+# the right answer -- fresh accounting, 3M free inodes, documented retention. But
+# Jupiter compute nodes do not mount it at all. Job 1229446 died 7 seconds after
+# starting because Slurm could not create its --output file there, and `cd
+# "$DCFT"` would have failed for the same reason. Do NOT put anything the JOB
+# touches on /p/scratch; it is login-node staging only.
+#
+# /e/scratch is out of INODES, not bytes, and the cap is shared by 26 users, so
+# deleting our own trees may not recover it. It killed 1221005 and 1229343
+# mid-rollout and breaks `git fetch`.
+#
+# That leaves /e/fscratch as the only writable option for the job. Its
+# retention/purge policy is UNDOCUMENTED, so treat everything here as
+# reproducible and get the real artifact off-cluster: the pipeline already runs
+# with hf_save_interval=1 and hf_upload_mode=all, which makes the HF repo -- not
+# this directory -- the durable home of the export.
+: "${EXPERIMENTS_DIR:=/e/fscratch/reformo/lee27/experiments}"
 : "${RL_CONFIG:=$DCFT/hpc/skyrl_yaml/jupiter/6node_qwen3_6_35b_a3b_r2egym_grpo.yaml}"
 : "${PARTITION:=booster}"
 : "${ACCOUNT:=reformo}"

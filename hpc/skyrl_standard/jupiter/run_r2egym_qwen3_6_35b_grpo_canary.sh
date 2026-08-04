@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # `-next` is the deployed tree; the bare path is the STALE 0f04b250 checkout.
-: "${DCFT:=/e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next}"
+: "${DCFT:=/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next}"
 
 export RL_CONFIG="${RL_CONFIG:-$DCFT/hpc/skyrl_yaml/jupiter/5node_qwen3_6_35b_a3b_r2egym_grpo_canary.yaml}"
 export NUM_NODES=5
