@@ -1333,3 +1333,37 @@ The long-lived bridge forward showed `LISTEN 0 5 0.0.0.0:9920` — backlog **5**
 against the internal-interface rule. Adding a forward with an explicit internal bind address
 (`-R 10.14.0.46:9923:...`) yields `LISTEN 0 128 10.14.0.46:9923`. Bind explicitly: it is both the correct
 security posture and a 25× deeper accept queue.
+
+## The milestone finally failed INSIDE the update, not in scaffolding (1229649, 2026-08-04)
+
+`1229649` is the first run to get generation all the way done and enter the optimizer update. It then
+died in the backward pass:
+
+```
+17:22:51  Finished 'wait_for_generation_buffer'   (16/16 groups, 86 trials scored)
+17:22:51  reward/avg_pass_at_4: 0.375
+17:26:17  Finished 'fwd_logprobs_values_reward'   206s
+17:26:17  Finished 'compute_advantages_and_returns'
+          ray::FSDPPolicyWorkerBase.ppo_train() -> training_step
+          -> fsdp_strategy.backward -> torch.autograd
+torch.OutOfMemoryError: Tried to allocate 30.57 GiB.
+GPU 0 has 95.00 GiB total capacity, 3.97 GiB free.
+```
+
+**⚠ The "Finished: 'policy_train', time cost: 17.14s" line is NOT success.** The timing context manager
+emits `Finished` from `__exit__`, which runs while the exception propagates. Three such lines
+(`policy_train`, `train_critic_and_policy`, `run_training`) all appear AFTER the OOM was already raised.
+Reading them as success is the mistake to avoid — the only trustworthy signal is the absence of a
+subsequent traceback, or a `Saved checkpoint` line.
+
+**Why 30.57 GiB with `micro_train_batch_size_per_gpu: 1`.** It is not the batch; it is the vocabulary.
+One sequence at `max_prompt_length: 28672` against a ~151k-token vocab is ~8.6 GiB of logits in bf16, and
+the backward holds logits + grad + softmax intermediates simultaneously. Gradient checkpointing does not
+help here: it trims transformer-block activations, not the final projection. Candidate fixes, cheapest
+first: chunked/fused cross-entropy over the vocab dimension, a shorter training-time sequence cap, or
+sequence/tensor parallelism across the FSDP group.
+
+**Why this failure is different from the previous nine.** Every earlier failure was scaffolding — a
+filesystem quota, an unenumerated exception, a tunnel, an inode wall. This one is arithmetic in the
+training step itself, reproducible without any of the agentic machinery, and testable on a single node.
+The pipeline up to and including advantage computation is now demonstrated end to end with this model.
