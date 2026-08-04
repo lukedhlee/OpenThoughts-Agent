@@ -1264,3 +1264,19 @@ python3 /e/fscratch/reformo/lee27/rewardcheck.py
 - **GATE FAIL with one-step trajectories** → same failure as OpenCode; the agent is not driving the model
   at all, and the next move is to check what terminus-2's `strict_json_parser` does with this checkpoint's
   output format.
+
+**Bridge congestion caveat for 1236881.** Cancelling 8 shards at once left the 9921 bridge with ~180 envs
+in `stopping` and `active_jobs` pinned near 45 with `ready: 0`. `cleanup_loop` caps reaping per cycle by
+design ("so a sudden flood of zombies doesn't overwhelm workers"), so the drain is slow and the new
+shard's `/env/create` requests queue behind it — which is why 1236881 showed 0 trial dirs ~25 min after
+`Starting batch generation`. It is congestion, not a new fault: `envs_created` kept climbing (7,124 →
+12,076).
+
+If the morning finds 1236881 with no trajectories, check `curl :9921/status` for a large `stopping` count
+before assuming a bug. Cleanest reset when nothing is attached: restart the bridge
+(`tmux kill-session -t bridge_9921`, then relaunch `server.py --host 10.128.1.2 --port 9921`, log to
+`/e/fscratch/.../apptainer_bridge/server_9921.log`). **Do not restart it while a shard is running** — every
+env operation goes through it.
+
+Lesson: mass-cancelling agentic shards has a cost paid by the NEXT run. Cancel, then wait for
+`stopping` to reach ~0 before launching again.
