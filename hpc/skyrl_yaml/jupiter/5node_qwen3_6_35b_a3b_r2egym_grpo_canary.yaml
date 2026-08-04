@@ -108,7 +108,20 @@ terminal_bench:
     enable_reward_shaping: false
     collect_rollout_details: true
     enable_error_classification: true
-    fail_on_infrastructure_error: true
+    # false since 1229488. It was `true` to stop infrastructure failures becoming
+    # training signal -- but that job is already done by `default_error_treatment:
+    # mask` below: a masked trial is EXCLUDED from the RLOO baseline and gets
+    # advantage 0, so it cannot pollute the gradient whether or not we also abort.
+    # What `true` additionally did was make ONE bad trial fatal to all 128.
+    # Measured: 1229488 died at 1h46m holding 68 honest trials because a single
+    # unenumerated `AddTestsDirError` hit two trials in the same second (a
+    # correlated JURECA-side blip). Aborting a nearly-complete batch over a
+    # minority sandbox-setup failure costs far more than it protects.
+    # ⚠ The cost of `false`: infra failures now DEGRADE quietly instead of
+    # shouting. Watch the per-run exception counts (groupvar.py prints them) --
+    # if enough trials mask out, groups fall under rloo_n_min_group_size and
+    # contribute zero advantage while still looking like a valid batch.
+    fail_on_infrastructure_error: false
     mask_exceptions:
       - DaytonaError
       - EnvironmentStartTimeoutError
@@ -122,6 +135,14 @@ terminal_bench:
       - RewardFileEmptyError
       - AgentEnvironmentTimeoutError
       - ContextLengthExceededError
+      # Harbor "Failed to add tests directory to <env>" -- the r2egym verifier
+      # fixture could not be staged into the sandbox. This is infrastructure, so
+      # it belongs HERE and explicitly NOT in passthrough_exceptions: passthrough
+      # would score the trial as a real trajectory (0), and on a task that
+      # otherwise scores 1 that fabricates within-group variance -- making a
+      # zero-gradient run look like it had learning signal. Enumerated rather
+      # than left to the default so the classification is deliberate.
+      - AddTestsDirError
     default_error_treatment: mask
     passthrough_exceptions:
       - AgentTimeoutError
