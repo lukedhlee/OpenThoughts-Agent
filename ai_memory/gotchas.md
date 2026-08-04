@@ -1207,3 +1207,53 @@ fit 16×8 (2h51m needed, 9 min margin). Hence `be949008` dropping the canary to 
 rather than waiting for a better estimate.
 ⚠ **Re-verify JURECA fleet TTL against the DEFERRED start**, not against submission time. This is the
 Open #2 trap: a fleet alive now can easily be dead by the time a deferred job allocates.
+
+### 2026-08-04 · ⛔ `/e/scratch` KILLED A RUN AGAIN — via Ray's object-spill dir, which the migration missed
+**Symptom:** `1229643` died `FAILED` after **1m51s**, before Ray finished starting. The visible error was
+`RuntimeError: Ray head process exited prematurely with code 1` — and it pointed at a log path that
+**does not exist** (`$DCFT/experiments/logs/ray_head_<node>.log`), while the real log went to
+`/tmp/ray_logs/` on the head node and was separately preserved to the experiment dir. The actual cause
+was three directories away from the error message:
+
+```
+OSError: [Errno 122] Disk quota exceeded:
+  '/e/scratch/reformo/lee27/ray_spill/ray_spilled_objects_e1802434...'
+  ray/_private/node.py:1792 validate_external_storage -> external_storage.py:310 os.makedirs
+```
+
+**Cause:** `RAY_object_spilling_config` still pointed at `/e/scratch`, which is inode-exhausted
+project-wide and cannot create ANY new file. Ray mints a **NEW session-hashed leaf directory per run**,
+so every single launch needs a fresh inode. `os.makedirs(..., exist_ok=True)` does not save you: the
+leaf name is unique per session, so it must always be created.
+**Why it looked intermittent:** `1229488` started fine at 03:43 the same morning. The quota is shared by
+26 users and churns, so the previous run simply won the inode lottery and this one lost it. An
+intermittent `/e/scratch` failure is not a flake — it is the wall, sampled.
+**Fix (OT-Agent `aab498d7`):** spill dir → `/e/fscratch/reformo/lee27/ray_spill`, in BOTH the 5-node
+canary and the 6-node production YAML, plus the test that pinned the old path (now asserts the new path
+AND that the old one is gone AND that it is still not another user's tree).
+**The lesson that generalizes:** the `/e/scratch` → `/e/fscratch` migration moved the experiments tree,
+execution checkout, model, checkpoints, exports and `WANDB_DIR` — and still missed a path, because
+`ray_spill` is set in a JSON blob (`RAY_object_spilling_config`) rather than as a plain path key, so it
+did not match a grep for the obvious names. **After any filesystem migration, grep for the OLD path
+string across the whole repo, not for the things you remember configuring.** Survivors at time of
+writing: the `rl-megatron` venv, harbor, MarinSkyRL, FlashQLA and `TILELANG_CACHE_DIR` are all still on
+`/e/scratch` — reads work, any write can fail.
+⚠ **Consequence already biting:** the MarinSkyRL checkout is on `/e/scratch`, so `git fetch` there fails
+with `unable to create temporary file` / `Disk quota exceeded` — meaning **fork fixes cannot be deployed
+to MarinSkyRL at all** until that checkout is relocated to `/e/fscratch`. (Blocked: `fafab77`, the
+null-content partial-response fix.)
+
+### 2026-08-04 · Two SSH self-inflicted wounds, both already documented, both walked into anyway
+1. **`pkill -f "<pattern>"` over SSH kills your own shell** when the pattern appears in your own remote
+   command string. Ran `pkill -f "retarget_g.sh"` inside an ssh command that literally contained
+   `retarget_g.sh` ⇒ the shell died mid-command and the `setsid nohup ./retarget_job.sh` that followed
+   it never ran. It presented as a **silent success** (no output at all), which is the dangerous part.
+   **Verify the thing you tried to start is actually running** — `ps -eo pid,etime,args | grep -E
+   "retarget_job\.sh 1229649" | grep -v grep`, i.e. a pattern that cannot match your own argv.
+2. **`nohup … &` over SSH does NOT detach the channel.** The ssh call hangs holding the login node's one
+   session channel for as long as the remote job lives, which locks out every other call to that node.
+   `setsid` at least makes the child survive when you kill the local ssh (verified: watcher pid 1309824
+   lived through a `TaskStop` of its parent ssh). **The reliable pattern is `tmux new-session -d`** —
+   which is exactly how the long-lived bridge is run.
+   ⚠ Corollary that saved us here: keep TWO login masters (login01 + login02) and dedicate one to
+   polling and one to interactive work. Both lockouts this session were self-contention.
