@@ -484,8 +484,14 @@
       machinery. Separately, the <strong>32-way rollout ceiling turned out never to have been a JURECA
       limit</strong> — it was <code>max_num_seqs: 8</code> × 4 engines on the 35B, with the sandbox fleet
       sized downstream of it. Measured tonight: <strong>768 concurrent sandboxes, 766 ready, p50 102 s</strong>.
-      On the back of that, the <strong>learnable-band p@4 probe now exists and is running</strong> as eight
-      parallel shards over all 3,328 tasks on Marianna's own 8B checkpoint.
+      On the back of that, the <strong>learnable-band p@4 probe was built and finally produced readable
+      rewards</strong> — 976 trials, zero exceptions — after four relaunches that each fixed a distinct
+      cause of silently-null rewards. It then produced a number I am <strong>retracting</strong>: the band
+      read as 0 of 197 tasks, but the trajectories show a <strong>median of ONE agent message</strong>, so
+      the agent never touched a repo. <code>g1_diverse_tezos_100k_8b</code> is terminus-trained and emits
+      reasoning as plain text, never the Qwen3 XML tool calls OpenCode expects. I had picked OpenCode
+      because it was proven <em>on the 35B</em> — proven infrastructure, wrong model. The band question is
+      still open; the blocker is now one specific thing (terminus-2's request timeout) rather than a fog.
     </p>
 
     <div class="cols" style="margin-bottom: var(--s5)">
@@ -506,6 +512,9 @@
           <li><span class="mark n">✗</span><span><strong>The band is still zero, and now visibly bimodal.</strong> Of the tasks reaching k≥4 in <code>1229649</code>: 3 always-solved, 4 never-solved, <strong>0 partial</strong>. A 0.375 pass@4 with a zero band does not mean the model is too weak — it means nothing sits in the middle. That is exactly the distribution the band filter is meant to remove, which is why the band is a gradient prerequisite for us and not a compute saving.</span></li>
           <li><span class="mark n">✗</span><span><strong>21% of trials produced no reward at all</strong> (18 of 86, masked). Under <code>fail_on_infrastructure_error: false</code> that degrades quietly rather than shouting — masked trials do not count toward a group, so groups starve and the buffer stalls. It is why 65 scored trials only yielded 10 complete groups.</span></li>
           <li><span class="mark n">✗</span><span><strong><code>main_tbench_generate</code> does not work in this fork.</strong> The pure-rollout entrypoint would have removed the policy, optimizer, FSDP and weight-sync entirely. Its vLLM engine actors crash-loop inside <code>create_ray_wrapped_inference_engines</code> — GPUs held 4/4 in placement groups, a fresh ~1-minute-old engine process on every inspection across 65 minutes, driver parked in <code>ray.get</code>, and no traceback anywhere. py-spy located it exactly; fixing it is a daylight job. The probe rides <code>main_tbench</code> with <code>lr = 0</code> instead.</span></li>
+          <li><span class="mark n">✗</span><span><strong>I reported a band number before checking that the agent acted.</strong> Rewards were readable and exceptions were zero, which felt like sufficient validation — it was not. The gate that would have caught it is trivial and is now mandatory: <code>agent/trajectory.json</code> must have <em>more than one step</em>, and median trial duration must be in minutes, not the 52 s we saw. Four gates in order: non-null rewards → multi-step trajectory → sane duration → only then the band.</span></li>
+          <li><span class="mark n">✗</span><span><strong>Four relaunches, four distinct causes of null rewards</strong>, each hidden behind the last: <code>apptainer overlay create</code> timing out on shared <code>/p/scratch</code> (18.06 s vs 3.57 s on node-local tmpfs, against a <em>hardcoded</em> 60 s limit); Python and curl resolving the tunnel host differently <em>inside</em> the sandbox, varying by node; thinking-mode turns exceeding terminus-2's request timeout; then the wrong agent entirely. Every one of them left <code>scored=N</code> climbing and looking healthy.</span></li>
+          <li><span class="mark n">✗</span><span><strong><code>pkill -f</code> over SSH killed my own session mid-chain</strong> — a trap already written down in this project's notes. It silently skipped a repo sync and a port bump, so eight shards launched on a stale config against poisoned ports and 16 jobs ran at once before I noticed.</span></li>
           <li><span class="mark n">✗</span><span><strong>A JURECA reverse-forward port cannot be reclaimed.</strong> <code>ssh -O cancel -R</code> fails through the mux in both spec forms, so a port left by a dead job stays bound and routes to a node that no longer exists. Restarting the ControlMaster would fix it and would also drop the tunnel a live run depends on. Ports are now single-use; 18100 is permanently poisoned.</span></li>
         </ul>
       </div>
