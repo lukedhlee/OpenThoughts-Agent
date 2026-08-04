@@ -19,10 +19,15 @@ exhausted. `touch` → `Errno 122`; overwrites still work, so it looks healthy u
 new inode. It killed `1221005` and `1229343` mid-run and **breaks `git fetch`**, so you cannot deploy
 into it. Everything writable moved:
 
+⛔ **CORRECTED 2026-08-04 (later) — `/p/scratch` IS NOT MOUNTED ON JUPITER COMPUTE.** The `/p/scratch`
+rows below were wrong and would fail on compute. `45572f93` moved the tree there; **`ae180c37`
+reverted it to `/e/fscratch`**, and `31cd646d` moved `WANDB_DIR` off `/e/scratch` too (offline W&B
+creates a new run dir per job). Verified live on `1229488`.
+
 | what | where |
 |---|---|
-| experiments tree, checkpoints, HF exports | `/p/scratch/reformo/lee27/experiments` |
-| execution checkout (`DCFT`) | `/p/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next` |
+| experiments tree, checkpoints, HF exports, `WANDB_DIR` | `/e/fscratch/reformo/lee27/experiments` |
+| execution checkout (`DCFT`) | `/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next` |
 | read-only 67 GiB model | `/e/fscratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96e…` |
 
 Still on `/e/scratch` and fragile: the `rl-megatron` venv, harbor, MarinSkyRL, FlashQLA,
@@ -48,8 +53,8 @@ shorter than 4h buys nothing.
 
 ## If you launch anything
 
-1. `DCFT=/p/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next` — **not** the `/e/scratch`
-   path, which is stale at `8ac43278` and cannot be fetched into.
+1. `DCFT=/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next` — **not** `/e/scratch`
+   (stale at `8ac43278`, cannot be fetched into) and **not** `/p/scratch` (not mounted on compute).
 2. `TIME_LIMIT=04:00:00` or less until maintenance passes.
 3. Confirm a JURECA fleet has **more time left than your walltime plus startup**. Preflight does NOT
    check this — see Open #2 below.

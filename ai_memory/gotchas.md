@@ -1017,3 +1017,90 @@ command string contained `retarget.sh`, so it killed the very shell running it.
 **Fix:** kill by pid (`pgrep` then filter out `$$`), or match a pattern that cannot appear in your own
 argv. Better still: don't kill watchers at all — write them to exit on their own when the job they
 poll leaves the queue.
+
+### 2026-08-04 (run `1229488`) · The Apptainer bridge keeps NO persistent log — its history is tmux scrollback
+**Symptom:** `/status` reports a lifetime `jobs_errors: 176` and the run ledger attributes it to the two
+aborted runs, but that attribution cannot be checked. The only bridge log file on disk,
+`/e/scratch/reformo/lee27/apptainer_bridge/server_9920_20260729.log`, is **169 bytes, last written
+Aug 2 14:36** — by an EARLIER process.
+**Cause:** the live server (pid `950979`, started Aug 2 17:57) has `fd1`/`fd2` → `/dev/pts/2`, i.e. a
+tmux pane in session `r2egym_bridge_9920`. Its entire error history is volatile scrollback that dies
+with the pane or the login node. The 169-byte file belongs to the tmux wrapper's original python,
+which was replaced.
+**Consequence:** any post-hoc question about bridge failures during a run is UNANSWERABLE, and every
+`jobs_errors` attribution in the ledger is unfalsifiable. Verify with
+`readlink /proc/<pid>/fd/1`, not by assuming the logfile in the tmux command line is still being written.
+**Fix:** at the next restart with no sandboxes attached, redirect to an append-only file on
+`/e/fscratch`. Do NOT bounce the bridge while envs are attached — it kills the live run.
+**Read the counter as a DELTA, not a level.** `jobs_submitted == jobs_completed + jobs_errors` exactly,
+so a flat `errors` across a run means zero new infrastructure failures regardless of how large it is.
+
+### 2026-08-04 (run `1229488`) · vLLM `/metrics` does NOT exist under SkyRL — the documented way to settle prefix caching is a dead end
+**Symptom:** `curl http://<head>:8000/metrics` → `{"detail":"Not Found"}` (404), and `/v1/models` 404
+too, while `/health` returns 200. Grepping the job log for `Prefix cache hit rate` / `Avg prompt
+throughput` returns NOTHING despite `generator.vllm_stats_interval=1`.
+**Cause:** `:8000` is the **SkyRL** HTTP endpoint (`enable_http_endpoint: true`), not a vLLM OpenAI
+server. SkyRL drives `AsyncLLM` **in-process** with `VLLM_ENABLE_V1_MULTIPROCESSING=0`, so no vLLM
+HTTP server is ever started and there is no Prometheus route to scrape. vLLM's periodic stats logger
+is also not emitting, and `generator.enable_ray_prometheus_stats=false`.
+**Consequence:** [[handoff]] Open #3/#4 propose "read vLLM `/metrics` during rollouts" to settle whether
+prefix caching works under Mamba `align` mode. **That method is not executable here** and the item needs
+a different approach (explicitly enable the vLLM stat logger, or instrument SkyRL directly).
+The only available signal remains OpenCode's `n_cache_tokens`, measured `sum=0` over 7 trials averaging
+~132k input tokens — CONSISTENT WITH inactive, but as the docs already warn, not proof: it could be an
+accounting gap rather than real non-reuse.
+
+### 2026-08-04 (run `1229488`) · Fixing the 600s cap RE-EXPOSED the 32,768 context ceiling
+**Symptom:** six `Input-overflow rejected by vLLM serving (returning 400, non-retryable)` /
+`This model's maximum context length is 32768 tokens`, after `1221005` recorded **zero** overflows
+following the compaction fix `4fb4a158`.
+**Cause (hypothesis, not established):** the overflows are a CONSEQUENCE of our own timeout fix.
+`1221005` killed agents at 600s, truncating trajectories before their context could grow; with the
+budget genuinely restored to 1800s, agents take more turns, accumulate more context, and re-cross the
+32,768 ceiling that compaction at `context_budget.client_window_tokens: 20480` does not fully contain.
+**Testable prediction:** overflow rate should scale with agent runtime — checkable per-trial on this
+run's completed traces. Confirm before treating it as settled.
+**Lesson worth generalizing:** removing a limiter does not just improve a measurement, it moves load
+onto whatever the limiter was hiding. Re-check the ceilings downstream of any budget you raise.
+
+### 2026-08-04 (run `1229488`) · MarinSkyRL crashes on a null-content partial response
+**Symptom:** `TypeError: can only concatenate str (not "NoneType") to str` at
+`inference_engines/inference_engine_client.py:1190`, in
+`_parse_partial_response_and_inplace_update_accum` (`accum.content += new_content`), reached from
+`_chat_completion_with_retry` → the `/chat/completions` handler.
+**Cause:** the retry/accumulate path assumes a partial response always carries string content. When
+vLLM rejects an over-long prompt with a **non-retryable 400**, `content` is `None` and the accumulator
+raises, so the SkyRL HTTP endpoint returns a 500 to OpenCode instead of a clean error. It is triggered
+BY the overflow above, so the two defects are coupled.
+**Severity:** non-fatal as observed (1 occurrence, batch did not abort) but it converts a clean
+rejection into an opaque 500.
+**Fix:** guard with `new_content or ""`. ⚠ **Do NOT deploy mid-run** — the live job reads the cluster
+checkout, so editing it under a running job risks newly-spawned workers loading different code than
+their peers. Deploy in the gap between runs.
+
+### 2026-08-04 (later) · ⛔ `/p/scratch` IS NOT MOUNTED ON JUPITER COMPUTE — the inode fix had to be re-done
+**Symptom:** after `45572f93` moved the experiments tree to `/p/scratch` to escape the `/e/scratch`
+inode wall, jobs could not use it from compute nodes at all.
+**Cause:** `/p/scratch` (the JUST filesystem) is reachable from Jupiter **login** nodes but **is not
+mounted on Jupiter compute nodes**. A login-node `ls` therefore "proves" the path exists while every
+compute-node write fails — the same exists-vs-works trap as the route gate and `workers_alive`.
+**Fix:** `ae180c37` re-pointed the experiments tree at **`/e/fscratch`**, which is inode-cheap
+(80k/8M), fast (2.51 GiB/s single-stream `O_DIRECT`), and mounted on compute. `31cd646d` additionally
+moved `WANDB_DIR` off `/e/scratch`, because offline W&B creates a new run directory per job and so
+burns inodes on every launch.
+⚠ **THE DOC TABLES IN [[handoff]] AND `NEXT_SESSION.md` WERE STALE FOR A WHILE**, telling the next
+session to launch with `DCFT=/p/scratch/...`. That path fails on compute. The correct values are:
+
+| what | correct location |
+|---|---|
+| execution checkout (`DCFT`) | `/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next` |
+| experiments tree, ckpt, HF exports, `WANDB_DIR` | `/e/fscratch/reformo/lee27/experiments/<job>` |
+| read-only 67 GiB model | `/e/fscratch/reformo/lee27/models/Qwen3.6-35B-A3B/995ad96e…` |
+
+**Verified on run `1229488`:** all of the above on `/e/fscratch`, 26 shards × 4 engines loaded in ~65s,
+31 min from allocation to weight-sync-ready.
+⚠ `/e/fscratch` retention/purge policy remains **UNDOCUMENTED**, so the durability of a checkpoint or
+HF export there is unguaranteed — the hub upload (`hf_save_interval: 1`, `hf_upload_mode: all`) is the
+real durability, not the on-disk copy.
+**Generalizable:** verify a filesystem from a **compute** node before trusting it, exactly as with
+bandwidth. Login-node visibility is not mount coverage.

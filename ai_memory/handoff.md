@@ -494,11 +494,20 @@ tasks, not a population estimate. That is what the probe is for.
 mid-run crash rather than a startup failure. It killed `1221005` AND `1229343`, and it breaks
 `git fetch` (`unable to create temporary file`), so **deploys into `/e/scratch` are impossible.**
 
+⛔ **CORRECTED 2026-08-04 (later): `/p/scratch` IS NOT MOUNTED ON JUPITER COMPUTE.** `45572f93` moved
+the tree to `/p/scratch`; **`ae180c37` reverted it to `/e/fscratch`** because compute cannot see
+`/p/scratch` at all (login-node visibility ≠ mount coverage — same exists-vs-works trap as the route
+gate). `31cd646d` also moved `WANDB_DIR` off `/e/scratch`: offline W&B creates a new run dir per job.
+Verified live on `1229488`. The table below is the CORRECTED one.
+
 | path | now lives on | why |
 |---|---|---|
-| experiments tree, checkpoints, HF exports | **`/p/scratch/reformo/lee27/experiments`** | 3.0M free inodes, FRESH accounting, DOCUMENTED retention |
-| execution checkout (`DCFT`) | **`/p/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next`** | `git fetch` needs to create objects |
+| experiments tree, checkpoints, HF exports, `WANDB_DIR` | **`/e/fscratch/reformo/lee27/experiments`** | inode-cheap (80k/8M), 2.51 GiB/s, and MOUNTED ON COMPUTE |
+| execution checkout (`DCFT`) | **`/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next`** | `git fetch` needs to create objects |
 | read-only 67 GiB model | `/e/fscratch/reformo/lee27/models/...` | per-stream BANDWIDTH, not inodes |
+
+⚠ `/e/fscratch` retention/purge is UNDOCUMENTED ⇒ the HF hub upload, not the on-disk copy, is what
+makes a checkpoint durable.
 
 ⚠ Still on `/e/scratch` and fragile: the `rl-megatron` venv, harbor, MarinSkyRL, FlashQLA, and
 `TILELANG_CACHE_DIR`. Reads work; any write through them can fail. The 08-03 dead-tree cleanup remains
