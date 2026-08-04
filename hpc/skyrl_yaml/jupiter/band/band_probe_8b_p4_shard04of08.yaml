@@ -621,7 +621,7 @@ container:
     RL_PYTHON: /e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/bin/python
     PYTHONPATH: /e/scratch/reformo/lee27/harbor-apptainer-bridge/src:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-train:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-gym:/e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge
     SKYRL_ROLLOUT_HTTP_ENDPOINT_HOST: jrlogin05i
-    SKYRL_ROLLOUT_HTTP_ENDPOINT_PORT: '18114'
+    SKYRL_ROLLOUT_HTTP_ENDPOINT_PORT: '18124'
     OT_AGENT_RAY_LOG_DIR: /tmp/ray_logs
     BRIDGE_EXEC_TIMEOUT: '2100'
     RAY_object_spilling_config: '{"type":"filesystem","params":{"directory_path":"/e/fscratch/reformo/lee27/ray_spill"}}'
