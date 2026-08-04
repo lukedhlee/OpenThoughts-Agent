@@ -1280,3 +1280,37 @@ env operation goes through it.
 
 Lesson: mass-cancelling agentic shards has a cost paid by the NEXT run. Cancel, then wait for
 `stopping` to reach ~0 before launching again.
+
+## RESULT of the terminus-2 timeout test (1236881) — the key is IGNORED
+
+**`timeout: 900` on the harbor block is NOT honoured.** Trials still failed with:
+```
+exception_type: APITimeoutError
+exception_message: Request timed out.
+```
+That is the **sixth** accepted-but-ignored key in this project (after `strict_json_parser`,
+`compaction.reserved`, `store_all_messages`, `override_timeout_sec`, `hf_upload_mode`). It appears in the
+materialized config and changes nothing.
+
+**And the one-turn no-op is NOT agent-specific.** terminus-2 produced `median_steps=1, max_steps=1` exactly
+like OpenCode — but the single "step" is the **prompt itself**, with no model turn recorded at all. So
+under terminus-2 the trajectory is empty because the LLM call times out, and under OpenCode it was one
+text response with no tool call. Two different mechanisms, same visible symptom. My earlier note saying
+OpenCode was simply "the wrong agent for the model" is therefore only half the story: the timeout blocks
+terminus-2 before the format question can even be asked.
+
+### The one thing to fix first, before any more probe launches
+Make terminus-2's LLM request timeout actually take effect, and **prove it by behaviour**. Established
+facts, do not re-derive:
+- a standalone completion on the same port, same time: **HTTP 200 in 10.5 s, 434 tokens** (thinking off)
+- `/tokenize` and `/v1/models`: **404 in ~1 ms** (SkyRL implements neither; handled gracefully)
+- no short completion timeout is set anywhere in `harbor/llms`
+- `timeout` sits in two passthrough allow-lists in `lite_llm.py` (~L149, ~L186) yet does not reach the client
+
+Candidates, cheapest first: (a) set it inside the sandbox as a litellm env var so it cannot be filtered by
+harbor's kwarg plumbing; (b) trace where `lite_llm` builds the `AsyncOpenAI` client and see whether the
+allow-listed `timeout` is dropped between the agent kwargs and the client; (c) check whether the timeout is
+actually the *streaming* idle timeout rather than a total-request timeout, which would explain a 10 s call
+succeeding while an agent turn dies.
+
+Nothing is running now. Jupiter is clear; JURECA fleet **15498197** is up with ~21 h.
