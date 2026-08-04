@@ -1041,3 +1041,28 @@ optimizer update sat behind a 16-complete-group barrier.
   `ray_utils._start_node` mkdir's it and dies EACCES at 52s.
 - `ssh -O cancel -R` needs the **bare `bind:port`** form to clear a previous job's forward; the full spec
   carries the old head IP and will not match, so the new forward fails with "remote port forwarding failed".
+
+### Band evidence after 1229649 (2026-08-04) — still zero, and now bimodal
+
+`1229649` contributes the cleanest sample yet: 16 complete groups requested, 86 trials written,
+**68 with a readable reward and 18 masked (21% mask rate)**. Of the tasks reaching k>=4:
+
+| bucket | tasks |
+|---|---|
+| always-solved (4/4) | 3 |
+| never-solved (0/4) | 4 |
+| **band (partial)** | **0** |
+
+SkyRL's own metric agrees: `reward/avg_pass_at_4: 0.375`.
+
+**Read this correctly.** A 0.375 pass@4 with a zero band does NOT mean "the model is too weak" — it means
+the tasks are **bimodal**: each one is either reliably solved or reliably not, with nothing in between.
+That is precisely the distribution a learnable-band filter is supposed to remove, and it is why the band
+matters to us as a gradient prerequisite and not merely as a compute saving. A group with 4/4 or 0/4 has
+zero within-group reward variance, hence advantage 0 under `grpo`, hence no gradient — no matter how many
+steps we run.
+
+Cumulative across all runs: **~18 distinct tasks with a complete group, 0 with within-group variance.**
+Still a non-random sample (deterministic dataloader keeps re-drawing the same task ids), so this supports
+"these tasks are saturated or impossible" and still does NOT license any estimate of the dataset's in-band
+fraction. The 8B p@4 probe is what would license that.
