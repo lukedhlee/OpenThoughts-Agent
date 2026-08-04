@@ -615,11 +615,69 @@ staging on `/e/fscratch`. `/e/scratch` 0.056 GiB/s per stream vs fscratch 2.51 (
 that floor. ⚠ Startup is now ~95% **vision-tower profiling** (~920s, *"1 image items of the maximum
 feature size"*) for a tower SkyRL unwraps and no rollout uses — `MM_LIMIT=0` is staged but UNMEASURED.
 
+### Band evidence to date — READ THIS BEFORE CLAIMING ANYTHING ABOUT THE BAND
+
+**There has been NO dedicated `pass@8` (or `p@4`) band probe.** Every number below is a *byproduct* of
+GRPO training rollouts on whatever 16 prompts the dataloader served. Nobody has computed per-problem
+pass@k as a filter. The 384-task probe (Open #1) has never run.
+
+| run | geometry | groups observed | with within-group variance |
+|---|---|---|---|
+| `1219434` | 32 × **2** | 15 | **0** |
+| `1221005` | 16 × 4, 600s cap | 7 | **0** ← INVALID (agent truncated) |
+| `1229343` | 16 × 8 | 6 (18 rewards) | **0** |
+| `1229488` | 16 × 8 | 11 (68 rewards) | **0** |
+
+**Distinct problems with named reward evidence: 11** — of 3,328 tasks, i.e. **0.33%**. Zero varied.
+Three of those were COMPLETE n=8 groups: `01068` all-1, `01755` all-1, `05999` all-0.
+Known task ids: `00222 01068 01755 02033 03150 04114 05359 05999 06171 06360 07753`.
+
+⚠ **Two caveats that matter more than the counts:**
+1. **The sample is NOT random.** The same six ids recur across independent runs because the dataloader is
+   deterministic — that recurrence evidences fixed ordering, NOT broad sampling. We know essentially
+   nothing about the other 99.7% of the dataset.
+2. **`1219434`'s 15 groups were n=2**, where a uniform pair is unremarkable at any p. Those 15 carry far
+   less weight than the raw group count implies.
+
+⇒ Defensible claim: **these particular tasks are saturated (0/11, incl. 3 complete n=8 groups).**
+NOT defensible: any statement about the dataset's in-band fraction. That is exactly what the probe is for.
+
+### Verified 2026-08-04: nothing filters or drops uniform groups on our config
+
+Checked because it decides whether a zero-variance run can still reach the milestone:
+- `advantage_estimator=grpo` → `compute_grpo_outcome_advantage` (`ppo_utils.py:1676`). A uniform group
+  gives `(r − mean)/(std + 1e-6)` = **exactly 0**. Nothing is dropped; batch stays full size.
+- `rloo_n_filter_zero_reward_groups` belongs to the **`rloo_n`** estimator — **not ours**. [[handoff]]'s
+  older BLOCKER 1 text attributing the no-gradient outcome to that filter is wrong for this config.
+- `handle_replace_sampling`'s `bad_uids` (zero-std groups, `trainer_utils.py:378`) is reached only via
+  `handle_dynamic_sampling`, called at `trainer.py:480` **only if `dynamic_sampling.type is not None`** —
+  and `fully_async_trainer.py:348` REQUIRES it to be `None`. So it never runs for us.
+- Saving is gated only on step intervals (`fully_async_trainer.py:801-814`), not on gradient magnitude.
+
+⇒ **A zero-gradient step still executes the update, checkpoint and HF export.**
+⚠ **But it is a WEAK validation:** loss 0 ⇒ grads 0 ⇒ `optimizer.step()` is a numerical no-op, and the
+exported checkpoint would be byte-identical to the input. It does NOT prove gradients flow through the
+MoE experts, that FSDP2 reduces, or that AdamW updates anything.
+⚠ **`n_samples_per_prompt: 1` is NOT a fix** — it passes every `validate_cfg` assertion and yields a
+nonzero advantage (`len==1` → mean 0, std 1 ⇒ advantage = raw score), but a group of one has no
+group-relative baseline, so it is **not GRPO** — it is REINFORCE with no baseline, and on binary rewards
+it only ever reinforces successes. Do not report such a run as a GRPO step or reuse its checkpoint.
+**Better idea on the table (operator call):** validate the update on **GSM8K**, where `p@1 ≈ 0.45` makes
+a uniform n=8 group a ~1% event, so real GRPO with a real nonzero gradient — and being non-agentic it
+removes the bridge, tunnel, JURECA fleet, sandbox and verifier from the failure surface entirely. Needs
+a new YAML (existing GSM8K configs target Qwen3-30B, and the clean branch excludes GSM8K).
+
 ### Live resources
 
-*(updated 2026-08-04 13:05 KST / 06:05 CEST)*
+*(updated 2026-08-04 22:50 KST / 15:50 CEST)*
 
-- **Jupiter:** `1229649` **PENDING `(Priority)`**, 5 nodes, **3h** wall, **16×4 = 64 trajectories**.
+- **Jupiter:** `1229649` **RUNNING** — allocated 15:14 CEST on `jpbo-016-[01,06,09,12-13]`, head
+  `jpbo-016-01` / `10.128.18.209`; 5 nodes, **3h** wall, **16×4 = 64 trajectories**. At 33 min it is
+  through shard load and into RolloutCoordinator startup; `scored=0/64`, generation imminent.
+  ✅ **Tunnel retargeted (MANUALLY) and the compute-node route gate PASSED** — a real
+  `/v1/chat/completions` from JURECA compute node `jrc0502` returning `"model": "995ad96e…"`.
+  ⚠ Slurm's `--test-only` had estimated a 23:19 start; it actually allocated in **~6 minutes** via
+  backfill. Queue, don't wait.
   `1229488` (FAILED 1h46m) and `1229643` (FAILED 1m51s) are both closed — see the run ledger.
 - **⛔ booster is RESOURCE-STARVED, not maintenance-blocked.** `sinfo`: **147 nodes `drain*`, 8 `down*`,
   1 `idle*`**. `sbatch --test-only` returned the SAME estimate (`2026-08-04T23:19`) for every walltime
@@ -627,12 +685,26 @@ feature size"*) for a tower SkyRL unwraps and no rollout uses — `MM_LIMIT=0` i
   which is why the geometry is 16×4. A FLAT estimate across walltimes means no free nodes; shortening
   buys nothing. ⚠ The estimate is conservative — `1229643` was estimated 23:19 and actually started in
   **6 minutes** via backfill, so QUEUE rather than wait.
-- **JURECA:** `15494122` **R** (expires ~16:25 CEST) + `15495516` **R** (expires ~03:16 CEST Aug 5),
-  2 nodes × 16 each. ⚠ **Re-verify fleet TTL against the job's ACTUAL start, not submission time** —
-  the watcher now asserts `fleet TIME_LEFT > job remaining walltime` and warns loudly if none qualifies.
-- **Watchers/monitors armed:** `/e/fscratch/reformo/lee27/retarget_job.sh <jobid>` (parameterized; does
-  the tunnel retarget + compute-node route gate + fleet-sufficiency assert automatically) → pid 1309824
-  on `1229649`, logging to `retarget_1229649.log`.
+- **JURECA (measured 15:47 CEST):** `15495516` **11h55m left** (sufficient — outlives the 2h27m job) +
+  `15494122` **~1h left** (will expire mid-run). 2 nodes × 16 each. When `15494122` dies its 32 workers
+  vanish but `15495516`'s 32 remain, and `n_concurrent_trials: 32` is still satisfiable, so this is
+  survivable rather than fatal. ⚠ **Re-verify fleet TTL against the job's ACTUAL start, not submission
+  time.** ⚠ Do NOT sort `TIME_LEFT` as a string — `1:03:58` sorts above `11:55:35`, which is how the
+  route gate ended up running against the *expiring* fleet instead of the durable one (harmless there,
+  but the wrong fleet).
+- **⛔ THE WATCHER FAILED ON `1229649` AND I RETARGETED BY HAND.** `retarget_job.sh` allocated, then hit
+  `Control socket connect(...cm_jureca/qwen36): Connection refused` → `FATAL: could not add forward` and
+  exited **without retargeting the tunnel** — the exact omission that killed `1225422`, reintroduced by
+  the automation meant to prevent it. **The ControlMaster was healthy throughout** (`ssh -O check` →
+  `Master running (pid=185890)`, up 2d3h; bridge `worker_polls` climbing 145k→215k). The watcher's own
+  fleet-check loop opened one ssh session PER FLEET and exhausted the master's channels.
+  It also printed a FALSE `⛔ no fleet outlives this job` while `15495516` had **11h55m** left — it
+  treated an empty query as insufficiency.
+  **Both bugs fixed and redeployed** (retarget now runs BEFORE diagnostics with 5×20s retries; fleet
+  check is one session and reports "cannot tell" on an empty result). Not currently running — this run's
+  tunnel is already correct. → [[gotchas]] "the watcher BROKE THE THING IT GUARDS".
+  **Lesson: verify a detached watcher's RESULT, not that you launched it.** `exit 1` in a background
+  script is invisible until you read its log.
 - **Two independent Jupiter ControlMasters** (`login02` pid 55008, `login01` pid 68552), both
   `BatchMode`-usable. Poll from **login01** and keep interactive calls on **login02** — JSC allows ~one
   session channel per mux, and sharing one node's channel caused two `Session open refused by peer`
