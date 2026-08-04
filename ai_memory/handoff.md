@@ -1,13 +1,19 @@
 # Handoff — lukedhlee · updated 2026-08-04 (01:00 KST)
 
-> **START HERE: § "Live state — 2026-08-04" in this file.** It supersedes both the 2026-08-03 block
-> below it and `notes/qwen36_resume_brief.md`, whose "LATEST LIVE UPDATE" is now one framing behind.
-> **The blocker was NOT the data — it was a 600s agent timeout** that killed 76% of trials mid-task.
+> **START HERE: § "Live state — 2026-08-04 10:30 KST" in this file.** It supersedes the 2026-08-03
+> block below it and `notes/qwen36_resume_brief.md`, both of which are now two framings behind.
 > Then read [[gotchas]] § 2026-08-04 and [[decisions]] § 2026-08-04.
 >
-> ⚠ Two conclusions carried in this file for a week are RETIRED: "raw r2egym collapses" (it does not)
-> and "Qwen3.6 is deterministic per r2egym task" (trajectories vary widely; only outcomes were
-> invariant, under a truncated budget).
+> **Two things a returning reader must not get wrong:**
+> 1. **The 600s agent timeout was real and is fixed** — but fixing it did NOT produce reward variance.
+>    **The learnable band IS REQUIRED.** An earlier version of this file said the opposite; that
+>    reading was based on the truncated measurement and has been reversed by `1229343`'s data.
+> 2. **`/e/scratch` cannot create any new file** (project-wide inode cap, exhausted). It breaks
+>    `git fetch`, so the experiments tree and the execution checkout now live on **`/p/scratch`**.
+>
+> ⚠ Also RETIRED: "raw r2egym collapses" (it does not — same ~45.5 p@1, 120 steps vs 60) and "Qwen3.6
+> is deterministic per r2egym task" (trajectories vary widely; only OUTCOMES are invariant — which is
+> the real finding, and it is why the band is needed).
 
 ## Objective
 
@@ -444,64 +450,126 @@ harness before attributing a low number to the model.
 - Precedent for why: the GSM8K `pass_at_1 ≈ 0.45` plateau was a **format artifact**, not ability. A
   number that looks like capability is often the harness. → [[gsm8k_format_artifact]]
 
-## Live state — 2026-08-04 (overnight session; times in KST)
+## Live state — 2026-08-04 10:30 KST
 
-**The 2026-08-03 framing below is SUPERSEDED. The blocker was never the data — it was a 600s agent
-timeout.** Read this block, then [[gotchas]] § 2026-08-04, then [[decisions]] § 2026-08-04.
+Supersedes the 2026-08-03 block below AND the earlier 01:00 KST version of this section, whose
+"variance is the next measurement" framing has since been **answered**. Read this, then
+[[gotchas]] § 2026-08-04 and [[decisions]] § 2026-08-04.
 
-### What was found
+### The two headline results
 
-`agent.override_timeout_sec = 1800` was materialized but **unreachable**. OpenCode issues its
-long-running `run` via `exec_as_agent()` with no `timeout_sec`, so it inherited
-`ApptainerEnvironment.exec()`'s hardcoded `timeout_sec or 600`; the trial layer's
-`asyncio.wait_for(agent.run(), 1800)` is an OUTER guard that can only fire if it is shorter. On
-`1221005`, **19 of 25 trials died at exactly 600–601s** and **19 of 19** exceptions carry the literal
-`Command timed out after 600s` / `return_code -1`. **76% of trials were cut off mid-task**, which
-flattens the within-group variance GRPO consumes. Fourth accepted-but-ignored-key bug.
+**1. The 600s agent timeout was real, and is fixed.** `agent.override_timeout_sec = 1800` was
+materialized but unreachable: OpenCode issues its long-running `run` via `exec_as_agent()` with no
+`timeout_sec`, so it inherited `ApptainerEnvironment.exec()`'s hardcoded `timeout_sec or 600`; the
+trial layer's `asyncio.wait_for(agent.run(), 1800)` is an OUTER guard that can only fire if it is
+shorter. On `1221005`, 19 of 25 trials ended at exactly 600–601s and 19 of 19 exceptions carried the
+literal `Command timed out after 600s`. Fourth accepted-but-ignored-key bug. Fixed in harbor
+`f44a1170`; proven in isolation (`sleep 700` returned 0 after 703s) and live — **39% of trials now run
+past 600s and score honestly.**
 
-⇒ **The 0-of-22 zero-variance result is not clean evidence** about r2egym or about the model. And the
-co-lead's own numbers say **raw r2egym does not collapse** (same ~45.5 p@1, 120 steps vs 60); the band
-buys convergence speed and ~20% compute, **no quality**. Both prior conclusions are retired.
+**2. ⛔ THE BAND IS REQUIRED. This REVERSES the 01:00 reading.** With the budget restored, variance
+STILL did not appear. `1229343` produced 18 honest rewards: **0 of 6 groups varied**, and the same
+tasks returned the same outcomes as under the cap —
 
-### Shipped and deployed this session
+| task | 600s cap (`1221005`) | 1800s (`1229343`) |
+|---|---|---|
+| 04114 | 1,1,1,1 | 1,1,1,1,1 |
+| 01068 | 1,1,1,1 | 1,1,1 |
+| 01755 | 1,1,1 | 1,1 |
+| 05999 | 0,0,0,0 | 0 |
+| 06360 | 0,0,0,0 | 0,0,0 |
+| 07753 | — | 0,0,0,0 |
+
+Five tasks agree perfectly across independent runs at 3× the budget; agent times now span 140–862s
+with **nothing at the 1800s ceiling**, so the agent is no longer time-starved. Both things are true at
+once: the old measurement WAS invalid, and its conclusion survives anyway.
+⇒ **Next action is a ~384-task `p@4` probe** (1,536 rollouts, ~1.7h at 4 rollout + 8 JURECA nodes).
+Caveat: 6 PARTIAL groups on the same 6 task ids both runs sampled — strong evidence about *these*
+tasks, not a population estimate. That is what the probe is for.
+
+### ⛔ `/e/scratch` IS FULL — read before touching the cluster
+
+**It cannot create ANY new file.** Project-wide 8M inode soft limit shared by 26 users, exhausted.
+`touch` → `Errno 122`; overwriting an existing file still works, which is why it presents as a
+mid-run crash rather than a startup failure. It killed `1221005` AND `1229343`, and it breaks
+`git fetch` (`unable to create temporary file`), so **deploys into `/e/scratch` are impossible.**
+
+| path | now lives on | why |
+|---|---|---|
+| experiments tree, checkpoints, HF exports | **`/p/scratch/reformo/lee27/experiments`** | 3.0M free inodes, FRESH accounting, DOCUMENTED retention |
+| execution checkout (`DCFT`) | **`/p/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next`** | `git fetch` needs to create objects |
+| read-only 67 GiB model | `/e/fscratch/reformo/lee27/models/...` | per-stream BANDWIDTH, not inodes |
+
+⚠ Still on `/e/scratch` and fragile: the `rl-megatron` venv, harbor, MarinSkyRL, FlashQLA, and
+`TILELANG_CACHE_DIR`. Reads work; any write through them can fail. The 08-03 dead-tree cleanup remains
+UNAPPROVED and unresolved — `/p/scratch` routes around the problem rather than fixing it.
+
+### Run ledger
+
+| run | config | outcome |
+|---|---|---|
+| `1221005` | 16×4, 600s cap | quota abort; 25 rollouts, 0/7 groups varied — **invalid, truncated** |
+| `1225422` | 16×8, 1800s | FAILED 3h12m, **zero rewards** — reverse tunnel still pointed at the previous head; my omission |
+| `1229343` | 16×8, 1800s | FAILED 58m on the `/e/scratch` quota — but produced **18 honest rewards**, the data above |
+| `1229438` | 16×8, **6h** | cancelled — 6h could not fit before a hidden maintenance window, deferred to Aug 5 12:00 CEST |
+| `1229446` | 16×8, **4h** | **PD `(Priority)`** — the 4h walltime cleared the maintenance block |
+
+### Shipped this session
 
 | commit | repo | change |
 |---|---|---|
-| `f44a1170` | harbor | `BRIDGE_EXEC_TIMEOUT` knob; default still 600; 4 tests |
+| `f44a1170` | harbor | `BRIDGE_EXEC_TIMEOUT`; default still 600; 4 tests |
 | `6b76270b` | OT-Agent | vLLM canary reads shards from a chosen filesystem |
-| `2b6defd1` | OT-Agent | exec timeout 2100, n=8, fscratch model, `-next` checkout, 6h wall |
-| `05518eed` | ai_memory | this correction set (local only, not pushed) |
+| `2b6defd1` | OT-Agent | exec timeout 2100, n=8, fscratch model, `-next` checkout |
+| `8ac43278` | OT-Agent | `MM_LIMIT` / `MAX_NUM_SEQS` / `MAX_NUM_BATCHED_TOKENS` knobs, defaults unchanged |
+| `45572f93` | OT-Agent | experiments tree → `/p/scratch` (the inode fix) |
+| ai_memory | local only | corrections + gotchas, not pushed |
 
-Measured wins: **`Loading weights` 701.12s → 38.03s (18.4×)** by staging the checkpoint on
-`/e/fscratch` (`1217900` vs `1224804`); `/e/scratch` is 0.056 GiB/s per stream vs fscratch 2.51
-(`O_DIRECT`, compute `jpbo-018-14`, job `1224678`), and vLLM reads the 26 shards **sequentially in one
-stream**, so it sits on that per-stream floor.
-
-Canary is now **16 × 8 = 128 trajectories**, agent budget 1800s with the exec fallback at 2100 so a
-clean `AgentTimeoutError` (passthrough, trajectory preserved) beats an exec kill, 6h wall.
+**Measured:** `Loading weights` **701.12s → 38.03s** (1 GPU, 18.4×) / **61.6s** in-job (11.4×) by
+staging on `/e/fscratch`. `/e/scratch` 0.056 GiB/s per stream vs fscratch 2.51 (`O_DIRECT`, compute
+`jpbo-018-14`, job `1224678`); vLLM reads the 26 shards **sequentially in one stream**, so it sat on
+that floor. ⚠ Startup is now ~95% **vision-tower profiling** (~920s, *"1 image items of the maximum
+feature size"*) for a tower SkyRL unwraps and no rollout uses — `MM_LIMIT=0` is staged but UNMEASURED.
 
 ### Live resources
 
-- **Jupiter: 0 nodes.** Benchmark `1224678` and fscratch smoke `1224804` both COMPLETED and were freed.
-- **JURECA workers `15494122`** — submitted this session, 2 nodes × 16, **~22h left**. Predecessor
-  `15489111` expired on schedule; continuity was maintained across the handover.
-- **Bridge** `10.128.1.2:9920` pristine, `workers_alive: true`.
-- **ControlMaster** pid 185890 alive (28h+). ⚠ Reach JURECA only via
-  `ssh -S ~/.ssh/cm_jureca/qwen36 jureca.fz-juelich.de` — there is no `~/.ssh/config` on Jupiter, so a
-  bare `ssh jureca` fails on hostname resolution and **looks like a dead tunnel when it isn't**.
+- **Jupiter:** `1229446` PD `(Priority)`, 5 nodes, 4h wall.
+- **JURECA:** `15494122` R (~13h left) + `15495516` PD (24h), 2 nodes × 16 each. Two fleets deliberately
+  overlap so any start time between now and ~10:15 KST tomorrow is covered.
+- **Bridge** `10.128.1.2:9920` clean (`ready: 0`). Lifetime `jobs_errors: 176` are all from the two
+  aborted runs. 55 orphaned sandboxes were reclaimed across two sweeps.
+- **ControlMaster** pid 185890 alive 30h+. Reach JURECA ONLY as
+  `ssh -S ~/.ssh/cm_jureca/qwen36 jureca.fz-juelich.de`.
+- **Watcher:** `/p/scratch/reformo/lee27/retarget.sh` polls `1229446`, then on allocation retargets the
+  reverse listener to the new head and runs the compute-node route gate automatically.
 
-### Still unexplained / still open
+### Scheduling — a hidden maintenance window
 
-1. **The 110-minute** shards-loaded→policy-init on `1221005` (vs ~28 min on `1219434`). Happens after
-   the bytes are in memory; fscratch does not address it. Untouched.
-2. **Whether the restored 1800s budget actually produces within-group variance.** This is the next
-   measurement and it gates whether a band is needed at all.
-3. **Operator decision — DAPO `dynamic_sampling: filter`** would drop all-same-reward groups and
-   resample, targeting the blocker as a flag, but it requires `colocate_all: true` and so collides with
-   the settled disaggregated-only decision. → [[decisions]] 2026-08-04.
-4. **Token fidelity** (`literal.jsonl`) still never enabled; still required before trusting TIS ratios
-   or promoting past a smoke.
-5. **The optimizer update, checkpoint, and HF export have still never executed** with this model.
+`ReqNodeNotAvail,_Reserved_for_maintenance` appeared while **3,848 nodes were idle** and
+`scontrol show res` showed no MAINT reservation. Cause: the walltime could not finish before a window
+we cannot see. `sbatch --test-only -t <T>` is the free diagnostic: **6h → Aug 5 12:00 CEST**,
+**≤4h → same evening**. Every walltime at or below 4h gave the same start, so shortening further buys
+nothing.
+
+### Open
+
+1. **⛔ The band probe** — ~384 tasks at `p@4`. Full set would be 13,312 rollouts ≈ 14.5h at 4+8 nodes
+   (~58h at today's 32-way), so it needs chunking + a done-task manifest; the probe fits one slot.
+2. **Fleet↔job dependency is not robust.** `qwen36_grpo_preflight.py:34` checks `workers_alive` — a
+   LIVENESS check used as a SUFFICIENCY check. It cannot see that a deferred job will outlive its
+   fleet. Fix cheaply by asserting fleet `TIME_LEFT > walltime + margin`; fix durably by validating and
+   enabling the **auto-chain** (`MAX_CHAIN`, `dependency=afterany:` — present in
+   `jureca_workers.sbatch` but has NEVER crossed a real walltime boundary).
+3. **Rollout throughput is prefill-dominated** — 150,223 in vs 3,377 out per trial (44:1).
+   `max_num_seqs: 8` against measured KV headroom of 17× (32k) to ~36× (real 15k). Prefix caching is
+   ON but vLLM warns it is **experimental for Mamba `align` mode**; effectiveness UNMEASURED and
+   `n_cache_tokens: 0` is not evidence either way. Read vLLM `/metrics` during rollouts to settle it.
+4. **Operator decision — DAPO `dynamic_sampling: filter`** targets the blocker as a flag but requires
+   `colocate_all: true`, colliding with disaggregated-only. → [[decisions]] 2026-08-04.
+5. **The 110-minute** shards→policy-init on `1221005` — NOT reproduced on `1229343` (~35 min).
+   Plausibly GPFS metadata contention while `/e/scratch` hit the inode wall. Still unexplained.
+6. **Token fidelity** (`literal.jsonl`) never enabled; required before trusting TIS ratios.
+7. **The optimizer update, checkpoint and HF export have STILL never executed.** The milestone.
 
 ## Superseded live state — 2026-08-03
 
