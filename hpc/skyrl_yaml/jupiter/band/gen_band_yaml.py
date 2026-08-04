@@ -144,7 +144,19 @@ for i, shard in enumerate(shards):
     e = c["container"]["extra_env"]
     # Each shard gets its own reverse-forward port so shards can run concurrently
     # without fighting over one tunnel.
-    e["SKYRL_ROLLOUT_HTTP_ENDPOINT_HOST"] = "jrlogin05i"
+    # IP LITERAL, NOT the hostname. The reverse forward binds ONLY 10.14.0.46
+    # (jrlogin05i's internal iface). Inside the Apptainer sandbox, curl resolves
+    # jrlogin05i to that address and gets 200, but PYTHON's getaddrinfo resolves it
+    # (via `search jureca`) to a different address and gets ECONNREFUSED. Measured
+    # in one sandbox, seconds apart:
+    #   curl   http://jrlogin05i:PORT/health   -> 200
+    #   python http://jrlogin05i:PORT/health   -> [Errno 111] Connection refused
+    #   python http://10.14.0.46:PORT/health   -> 200
+    # There is no IPv6 record, so this is A-record selection, not v6-first.
+    # It never bit the 35B canary because OpenCode is Node and its resolver picks
+    # the working address; terminus-2 is Python/httpx and does not. Cost of missing
+    # it: 512 trials, every one APIConnectionError with a null reward.
+    e["SKYRL_ROLLOUT_HTTP_ENDPOINT_HOST"] = "10.14.0.46"
     e["SKYRL_ROLLOUT_HTTP_ENDPOINT_PORT"] = str(PORTBASE + i)
     # Probe bridge, NOT the 9920 bridge serving the 35B milestone run.
     e["APPTAINER_BRIDGE_URL"] = "http://10.128.1.2:9921"
