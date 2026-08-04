@@ -1188,3 +1188,58 @@ probe cannot separate them yet:
 
 Caveat that still stands: shard 0 is a round-robin slice of a deterministic order, not a random sample.
 The remaining 7 shards will take this to ~2,000+ tasks, which settles it.
+
+## ⚠ RETRACTION AND THE REAL FINDING — 2026-08-04 22:40 CEST
+
+**Retract the "0/197 band" number above as a statement about the dataset.** It is an artifact of the
+agent, not a property of r2egym. Do not quote it.
+
+### What the trajectories actually show
+976 trials completed with **zero exceptions** and readable rewards, so the transport was finally healthy.
+But:
+
+| measure | solved | failed |
+|---|---|---|
+| median trial duration | 56 s | 52 s |
+| **median trajectory messages** | **1** | **1** |
+| median trajectory size | ~1.2 KB | ~1.2 KB |
+
+Against a 1800 s cap, and ~32 min/trial on the 35B canary. One message per trajectory is not an attempt.
+`agent/trajectory.json` shows why:
+
+```json
+"model_name": "vllm/g1_diverse_tezos_100k_8b",
+"steps": [ { "step_id": 1, "message": "<think>\nLet me analyze the task..." } ]
+```
+
+The model emits reasoning as **plain text, never a tool call**. OpenCode gets no tool call, so the episode
+ends after one step and the repo is never touched. The 18.8% "solved" are tasks that pass with no
+meaningful action; the 81% never got a real attempt. **Zero within-group variance follows trivially** —
+outcomes are decided by the task, not by any search — which is exactly why the band read as empty.
+
+### The actual lesson: match the agent to the MODEL, not to the cluster
+`g1_diverse_tezos_100k_8b` is a **DCAgent terminus-trained** checkpoint, so its output format is
+terminus-structured. `tool_call_parser: qwen3_coder` + OpenCode expects Qwen3 XML tool calls it never
+emits. I picked OpenCode because it was proven **on the 35B** — proven infrastructure, wrong model.
+The co-lead's arm is terminus-structured for exactly this reason.
+
+So **terminus-2 is the correct agent**, and its `Request timed out.` is the one real blocker left.
+
+### Next step, narrow and concrete
+1. Run terminus-2 again (config is in git at `a42199f5`, thinking off) and fix the timeout properly. Facts
+   already established, do not re-derive: a standalone completion on the same port took **10.5 s / 434
+   tokens, HTTP 200**; `/tokenize` and `/v1/models` both **404 in ~1 ms**; no short completion timeout is
+   set anywhere in `harbor/llms`; `timeout` IS a passthrough kwarg in `lite_llm.py` (~L149, ~L186) —
+   try threading it through the harbor agent kwargs and **verify by behaviour** that it is honoured.
+2. Confirm terminus-2 produces multi-step trajectories before spending a wall: check
+   `agent/trajectory.json` has **more than one step**. That is now a mandatory gate — it is the only check
+   that would have caught tonight's failure, since rewards were readable and exceptions were zero.
+3. JURECA fleet **15498197** (32 × dc-cpu, 16 workers/node, tmpfs staging, bridge 9921) is left RUNNING
+   with ~21 h and is correctly configured — reuse it, do not resubmit.
+4. Ports burned: 18100, 18120–18167. Start at 18170.
+
+### Gate ladder for any agentic run, in order (each caught a distinct failure tonight)
+1. `rewardcheck.py` → `rewards_ok > 0`, `null` small
+2. `agent/trajectory.json` → **median steps > 1**
+3. median trial duration in minutes, not seconds
+4. only then trust the band numbers
