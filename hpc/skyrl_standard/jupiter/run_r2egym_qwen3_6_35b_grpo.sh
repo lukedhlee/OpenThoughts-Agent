@@ -90,7 +90,11 @@ export DCFT DCFT_RL_ENV="$RL_VENV" RL_ENV_DIR="$RL_VENV"
 export DC_AGENT_SECRET_ENV="${DC_AGENT_SECRET_ENV:-$JSC_SCRATCH/keys/secrets.env}"
 export HF_HOME="${HF_HOME:-$JSC_SCRATCH/cache/hf}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
-export WANDB_DIR="${WANDB_DIR:-$JSC_SCRATCH/wandb}"
+# WANDB_DIR must NOT default under $JSC_SCRATCH (/e/scratch): offline W&B creates
+# a NEW run directory per job, and /e/scratch cannot create anything --
+# `mkdir /e/scratch/.../wandb/<run>` returns Errno 122, which would throw during
+# trainer init. Same inode wall that killed 1221005 and 1229343.
+export WANDB_DIR="${WANDB_DIR:-/e/fscratch/reformo/lee27/wandb}"
 export WANDB_MODE="${WANDB_MODE:-offline}"
 export WANDB_PROJECT="${WANDB_PROJECT:-jupiter-r2egym-grpo-qwen36-35b}"
 export RL_REPO_DIR SKYRL_HOME="$RL_REPO_DIR" APPTAINER_BRIDGE_URL
