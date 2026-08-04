@@ -1,4 +1,4 @@
-entrypoint: examples.terminal_bench.entrypoints.main_tbench_generate
+entrypoint: examples.terminal_bench.entrypoints.main_tbench
 config_groups:
   terminal_bench_config: terminal_bench
 terminal_bench:
@@ -84,10 +84,10 @@ trainer:
     eps_clip_low: 0.2
     eps_clip_high: 0.2
     loss_reduction: sequence_mean
-    use_tis: true
+    use_tis: false
     tis_imp_ratio_cap: 2.0
   epochs: 1
-  max_steps: 50
+  max_steps: 13
   update_epochs_per_batch: 1
   train_batch_size: 32
   policy_mini_batch_size: 32
@@ -117,7 +117,7 @@ trainer:
     model:
       path: /e/fscratch/reformo/lee27/models/g1_diverse_tezos_100k_8b
     optimizer_config:
-      lr: 1.0e-06
+      lr: 0.0
       weight_decay: 0.0
       adam_betas:
       - 0.9
@@ -143,7 +143,7 @@ trainer:
     ref_num_gpus_per_node: 4
     critic_num_nodes: 1
     critic_num_gpus_per_node: 4
-    policy_strict_spread_pg: false
+    policy_strict_spread_pg: true
     policy_per_gpu_bundles: true
     policy_force_cvd_mask: true
 generator:
@@ -152,7 +152,7 @@ generator:
   model_dtype: bfloat16
   enforce_eager: true
   inference_engine_tensor_parallel_size: 1
-  num_inference_engines: 8
+  num_inference_engines: 4
   inference_engine_expert_parallel_size: 1
   n_samples_per_prompt: 4
   eval_n_samples_per_prompt: 1

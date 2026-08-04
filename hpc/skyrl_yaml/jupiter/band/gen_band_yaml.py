@@ -34,7 +34,20 @@ for i, shard in enumerate(shards):
     if only is not None and i not in only:
         continue
     c = copy.deepcopy(base)
-    c["entrypoint"] = "examples.terminal_bench.entrypoints.main_tbench_generate"
+    # PROVEN PATH, deliberately not main_tbench_generate.
+    # main_tbench_generate is unexercised in this fork: on smoke 1235333 the
+    # AsyncVLLMInferenceEngine actors crash-looped inside
+    # create_ray_wrapped_inference_engines (GPUs held 4/4 in placement groups, a
+    # fresh ~1-minute-old engine process on every inspection, driver parked in
+    # ray.get forever) with no traceback in the worker logs. main_tbench is the
+    # path running the 35B right now, so the probe rides it instead.
+    #
+    # lr = 0 is what turns a trainer into a probe: updates fire (which flushes the
+    # generation buffer and lets the run walk the whole shard), but the weights
+    # never move, so every rollout comes from the base policy and p@4 stays a
+    # measurement OF THAT MODEL. Without it, later steps would sample a drifted
+    # policy and the band would be measured against a moving target.
+    c["entrypoint"] = "examples.terminal_bench.entrypoints.main_tbench"
 
     # The launcher accepts exactly ONE context declaration and derives the seven
     # downstream fields itself; declaring any of them is a hard error. These values
@@ -68,9 +81,18 @@ for i, shard in enumerate(shards):
     c["trainer"]["ref"]["model"]["path"] = m
     # No policy placement group: the generate path has no policy worker, and a
     # strict-spread PG would reserve whole nodes away from the vLLM engines.
-    c["trainer"]["placement"]["policy_strict_spread_pg"] = False
-    c["trainer"]["train_batch_size"] = min(32, len(shard))
-    c["trainer"]["policy_mini_batch_size"] = min(32, len(shard))
+    # main_tbench DOES create a policy worker, so keep the working config's
+    # placement: 1 policy node (FSDP4) + 1 rollout node per shard.
+    c["trainer"]["placement"]["policy_strict_spread_pg"] = True
+    TBS = 32
+    c["trainer"]["train_batch_size"] = TBS
+    c["trainer"]["policy_mini_batch_size"] = TBS   # fully-async asserts equality
+    # Walk the entire shard: ceil(tasks / prompts-per-step).
+    c["trainer"]["max_steps"] = -(-len(shard) // TBS)
+    c["trainer"]["policy"]["optimizer_config"]["lr"] = 0.0
+    # use_tis needs sampling_params.logprobs, which is None here, and TIS is
+    # meaningless at lr=0 anyway.
+    c["trainer"]["algorithm"]["use_tis"] = False
     c["trainer"]["eval_before_train"] = False
     c["trainer"]["eval_interval"] = 999999
     c["trainer"]["ckpt_interval"] = 999999
@@ -88,7 +110,7 @@ for i, shard in enumerate(shards):
     # which is what the 35B canary relies on too.
     g.get("engine_init_kwargs", {}).pop("custom_chat_template_chat_completion_path", None)
     g["n_samples_per_prompt"] = 4          # p@4 -- the band filter itself
-    g["num_inference_engines"] = 4 * NODES  # TP1, one engine per GH200
+    g["num_inference_engines"] = 4 * (NODES - 1)  # rollout nodes only; node 1 is policy
     # 8B in bf16 is ~16GB of a 96GB GH200, so KV has room the 35B never had.
     # This is the lever that lifts concurrency from 32 to the hundreds.
     g["max_num_seqs"] = 64
@@ -101,7 +123,7 @@ for i, shard in enumerate(shards):
     tb["bridge_url"] = "http://10.128.1.2:9921"
     # Sandbox supply is 48/node on the JURECA dc-cpu fleet; keep the driver's
     # concurrency at the engine working set so trials are not queued behind vLLM.
-    tb["n_concurrent_trials"] = 4 * NODES * 16
+    tb["n_concurrent_trials"] = 4 * (NODES - 1) * 32
     # Learned on 1229488: one unenumerated exception aborted 68 honest trials.
     tb["fail_on_infrastructure_error"] = False
     if "AddTestsDirError" not in tb["mask_exceptions"]:
