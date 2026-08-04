@@ -522,9 +522,18 @@ UNAPPROVED and unresolved — `/p/scratch` routes around the problem rather than
 | `1229343` | 16×8, 1800s | FAILED 58m on the `/e/scratch` quota — but produced **18 honest rewards**, the data above |
 | `1229438` | 16×8, **6h** | cancelled — 6h could not fit before a hidden maintenance window, deferred to Aug 5 12:00 CEST |
 | `1229446` | 16×8, **4h** | superseded before running; relaunched as the `…20260804f` run below |
-| `1229488` | 16×8, 4h, all paths on `/e/fscratch` | **RAN CLEANLY** — see § "Run `1229488`" below |
+| `1229488` | 16×8, 4h, all paths on `/e/fscratch` | **FAILED at 1h46m** on an unenumerated `AddTestsDirError` — cleanest run yet, killed by the fail-loud footgun. See below. |
+| `1229612`… | 16×**4**, 3h | queued behind node starvation; the milestone retry |
 
-### Run `1229488` — 2026-08-04, the cleanest run so far (in progress at last update)
+### Run `1229488` — 2026-08-04. Best startup + best reward data yet, then aborted by one bad trial
+
+⛔ **OUTCOME: FAILED (exit `1:0`) at 1h46m, holding 68 honest trials and 3 complete uniform n=8 groups.**
+A single unenumerated exception (`AddTestsDirError`) fell through `default_error_treatment: mask` and
+`fail_on_infrastructure_error: true` aborted the entire batch — the hazard § "Remaining structural
+hazards" item 3 predicted word-for-word. Fixed in OT-Agent `c15ac55f`. Full autopsy in
+[[gotchas]] § "THE FAIL-LOUD FOOTGUN MATERIALIZED".
+⚠ **The milestone (update / checkpoint / HF export) STILL has not executed.** Generation was ~53% done
+and on pace to finish with ~75 min of margin, so this was lost to a config footgun, NOT to time.
 
 Allocated 10:43:42 KST on 5 nodes `jpbo-026-[36,40,44-45,47]`, head `jpbo-026-36` / `10.128.25.20`.
 **Startup, allocation → weight-sync-ready: 31 min**, no `110-minute` regression (2nd consecutive clean run):

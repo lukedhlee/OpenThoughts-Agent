@@ -1134,3 +1134,76 @@ try/except-guarded and only log.
 publish, upload from a **login** node (which does have internet) as a deliberate follow-up step, and
 verify the export STRUCTURALLY first (`config.json` architecture, safetensors index, shard presence,
 unwrapped text-tower key set with the vision tower absent).
+
+### 2026-08-04 · ⛔ THE FAIL-LOUD FOOTGUN MATERIALIZED: one unenumerated exception killed a 1h46m run
+**Symptom:** `1229488` died `FAILED` (exit `1:0`) at 1h46m holding **68 honest trials and 3 complete
+uniform n=8 groups**, with `ray.exceptions.WorkerCrashedError` at
+`main_tbench.py:134 ray.get(skyrl_entrypoint.remote(cfg))`. The Ray traceback is a RED HERRING — the
+raylet lines (`the leased worker is killed because the job finished`, `Core worker … unavailable`) are
+teardown CONSEQUENCE, not cause.
+**Cause** — three log lines, one second apart, are the whole story:
+
+```
+05:29:11 DEBUG    _classify_exception:1296  - Exception AddTestsDirError not in config,
+                                             using default treatment: MASK
+05:29:11 WARNING  _process_trial_result    - ... failed with Harbor exception:
+                                             Failed to add tests directory to <env>
+05:29:11 CRITICAL _raise_if_fail_loud:1247 - INFRASTRUCTURE FAILURE [AddTestsDirError]
+```
+
+`AddTestsDirError` (the r2egym verifier fixture could not be staged into the sandbox) matched NEITHER
+`mask_exceptions` NOR `passthrough_exceptions`, fell through to `default_error_treatment: mask`, and
+`mask` = infrastructure ⇒ `_raise_if_fail_loud` aborted the WHOLE batch under
+`fail_on_infrastructure_error: true`. It hit **two trials on two different coordinators within one
+second** (`04114` rep 0, `06360` rep 2) — a correlated JURECA-side blip, so every run was exposed.
+**This is exactly what [[handoff]] § "Remaining structural hazards" item 3 predicted**, verbatim:
+*"`mask` = infrastructure ⇒ ABORTS the whole batch… any new exception subclass must be enumerated or
+it silently falls through."* Predicting a hazard is not mitigating it.
+**Fix (OT-Agent `c15ac55f`):** `fail_on_infrastructure_error: false` + `AddTestsDirError` enumerated in
+`mask_exceptions`. Rationale for `false`: the reason it was `true` (stop infra failures becoming
+training signal) is ALREADY served by `default_error_treatment: mask` — a masked trial is excluded from
+the RLOO baseline and gets advantage 0, so it cannot pollute the gradient. All `true` added was making
+one bad trial fatal to 128.
+⚠ **Why NOT `passthrough_exceptions`:** passthrough scores the trial as a real trajectory (0). On a task
+that otherwise scores 1 that **FABRICATES within-group variance**, making a zero-gradient run look like
+it had learning signal. Never passthrough an infrastructure error on a binary-reward task.
+⚠ **Cost of `false`:** infra failures now DEGRADE quietly. Watch per-run exception counts — if enough
+trials mask out, groups fall under `rloo_n_min_group_size` and contribute zero advantage while still
+presenting as a valid batch.
+
+### 2026-08-04 · The bridge's `cleanup_loop` explains the `jobs_errors` bursts AND auto-reaps orphans
+**Two mysteries, one function** (`apptainer/server.py:518`, runs every 30s):
+1. **`jobs_errors` rising in bursts** (+50, +36, … ~+184 over `1229488`) while **every** trial still
+   scored honestly with zero infrastructure exceptions. The loop marks a running job `error` and
+   increments `_stats["jobs_errors"]` when `workers_dead` or `elapsed > timeout*2 + 120`. The bursts are
+   **reaper bookkeeping**, not rollout failures — which is why they coincided with `active` dropping
+   (env teardown) and never reached the trainer.
+2. **Orphaned envs after a crash.** ENV_READY envs unused for `BRIDGE_STALE_READY_SEC` (default **900s**)
+   get a STOP queued, capped at `BRIDGE_REAP_BATCH_CAP` (50) per cycle. After `1229488` crashed leaving
+   14 ready envs / 13 active jobs, they drained 14→12→10→7→0 with NO manual intervention. This is what
+   "55 orphaned sandboxes reclaimed across two sweeps" actually was.
+**Operational consequence:** after a crash you must WAIT ~15 min before relaunching, because the
+Qwen3.6 preflight hard-requires an idle bridge:
+`ERROR: dedicated smoke requires an idle bridge; stale work found: envs.ready=7, active_jobs=6`.
+**Do NOT set `REQUIRE_CLEAN_BRIDGE=0`** to get past it — that flag is for intentional fleet sharing, and
+launching onto stale envs steals worker slots from your own run. Let the reaper finish.
+**Read `jobs_errors` as a DELTA and always cross-check `exception_info` in the trial results** — the
+counter alone systematically overstates harm.
+
+### 2026-08-04 (evening) · `--test-only` flipped from maintenance-fit to NODE STARVATION — check `sinfo`, not just the estimate
+**Symptom:** at 05:38 CEST every walltime from **30 minutes to 3h** returned the SAME estimated start,
+`2026-08-04T23:19`, while `>= 3h30m` returned `2026-08-05T12:00`. Earlier the same day a ≤4h wall
+started in 91 seconds (`1229488`: submitted 03:42:11, running 03:43:42).
+**Cause:** this is NOT the "walltime cannot finish before a hidden maintenance window" pattern recorded
+earlier — if it were, SHORTER walltimes would start sooner. A flat estimate across a 6× walltime range
+means **there are no free nodes at all**. `sinfo -p booster` confirmed: **147 nodes `drain*`, 8 `down*`,
+1 `idle*`**.
+**Diagnostic rule:** when `--test-only` defers a job, probe at least TWO very different walltimes.
+- estimate VARIES with walltime ⇒ window-fit problem, shorten the wall
+- estimate FLAT across walltimes ⇒ resource starvation, shortening buys NOTHING; check `sinfo` states
+**Consequence for planning:** the largest wall that started the same night was **3h**, which does not
+fit 16×8 (2h51m needed, 9 min margin). Hence `be949008` dropping the canary to 16×4 (~1h48m).
+⚠ **Slurm estimates are conservative** — backfill often starts a queued job earlier — so QUEUE the job
+rather than waiting for a better estimate.
+⚠ **Re-verify JURECA fleet TTL against the DEFERRED start**, not against submission time. This is the
+Open #2 trap: a fleet alive now can easily be dead by the time a deferred job allocates.
