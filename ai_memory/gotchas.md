@@ -1257,3 +1257,30 @@ null-content partial-response fix.)
    which is exactly how the long-lived bridge is run.
    ⚠ Corollary that saved us here: keep TWO login masters (login01 + login02) and dedicate one to
    polling and one to interactive work. Both lockouts this session were self-contention.
+
+### 2026-08-04 · The tunnel watcher BROKE THE THING IT GUARDS — order load-bearing actions first
+**Symptom:** on `1229649` the automated retarget watcher allocated correctly, then printed
+`⛔ WARNING: NO running JURECA fleet outlives this job's walltime`, then
+`Control socket connect(~/.ssh/cm_jureca/qwen36): Connection refused` → `FATAL: could not add forward`
+and exited **without retargeting the tunnel** — the exact omission that killed `1225422`, reintroduced
+by the automation meant to prevent it.
+**Cause — two independent bugs, both mine, both introduced in the same "improvement":**
+1. **Self-inflicted channel exhaustion.** The fleet-sufficiency check (added to close [[handoff]] Open #2)
+   opened one ssh session **per fleet** through the JURECA ControlMaster in a tight loop. The master was
+   completely healthy — `ssh -O check` reported `Master running (pid=185890)` (up 2d3h) and the bridge
+   showed `workers_alive: true` with `worker_polls` climbing 145k→215k throughout — but the rapid session
+   churn exhausted its channels, so the `-O forward` that followed got `Connection refused`.
+   **A control-socket refusal on a live master is TRANSIENT CONTENTION, not death.** Do not treat it as
+   fatal, and do not tear the master down to "retry" (restoring it needs an interactive TOTP only the
+   operator can supply).
+2. **Fail-wrong fleet check.** It treated an EMPTY query result as "no fleet is sufficient" and printed a
+   red alarm. In reality `15495516` had **11h55m** left against a 2h52m job — the query had merely
+   failed. Silence is not data; distinguish "query returned nothing" from "nothing qualifies".
+**Fix (`retarget_job.sh`, redeployed):** the **retarget now runs BEFORE any diagnostics**, with 5 retries
+× 20s on refusal; the fleet check is ONE session parsed by awk, and an empty result reports "cannot tell"
+instead of asserting insufficiency.
+**The generalizable rule:** in a guard script, do the **load-bearing action first** and diagnose after.
+A guard whose diagnostics can prevent its own action is worse than the gap it was written to close.
+⚠ **And the reason this was caught at all:** the watcher's *result* was verified rather than its
+existence. Same habit that caught the silent `pkill` self-kill an hour earlier. `exit 1` in a detached
+watcher is invisible unless you go and read its log.
