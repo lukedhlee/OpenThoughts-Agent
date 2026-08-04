@@ -472,8 +472,48 @@
     </p>
   </div>
 
+  <section id="tonight">
+    <h2>Overnight <span class="pill p-wait">04 Aug 23:30 → 05 Aug 01:40 KST</span></h2>
+    <p class="lede">
+      <strong>In one paragraph.</strong> Two things changed, and the second is bigger than the first.
+      <code>1229649</code> became the first run ever to finish generation and enter the optimizer update —
+      16/16 groups, 86 trials, <code>avg_pass_at_4 0.375</code>, forward logprobs and advantages both
+      computed — and then died of a <strong>CUDA OOM in the backward pass</strong>, trying to allocate
+      30.57 GiB with only 3.97 GiB free. That is the first failure in ten attempts that is <em>not</em>
+      scaffolding: it is arithmetic in the training step, reproducible on one node without any agentic
+      machinery. Separately, the <strong>32-way rollout ceiling turned out never to have been a JURECA
+      limit</strong> — it was <code>max_num_seqs: 8</code> × 4 engines on the 35B, with the sandbox fleet
+      sized downstream of it. Measured tonight: <strong>768 concurrent sandboxes, 766 ready, p50 102 s</strong>.
+      On the back of that, the <strong>learnable-band p@4 probe now exists and is running</strong> as eight
+      parallel shards over all 3,328 tasks on Marianna's own 8B checkpoint.
+    </p>
+
+    <div class="cols" style="margin-bottom: var(--s5)">
+      <div class="track" style="border-top-color: var(--ok)">
+        <span class="track-h" style="color: var(--ok)">What's good</span>
+        <ul class="stack">
+          <li><span class="mark y">✓</span><span><strong>The failure moved out of scaffolding and into the maths.</strong> Generation, reward collection, forward logprobs and advantage computation are now demonstrated end to end with this model. What is left is one OOM with a known shape: ~151k vocab × 28,672 tokens ≈ 8.6 GiB of logits in bf16, and the backward holds several copies at once. Gradient checkpointing does not touch it — it trims transformer blocks, not the final projection.</span></li>
+          <li><span class="mark y">✓</span><span><strong>The concurrency ceiling is diagnosed and lifted.</strong> Three limits were stacked and only one was real. <code>--num-workers</code> defaulted to 16/node and the fleet was 2 nodes; <code>n_concurrent_trials</code> was sized to match vLLM. Curve now measured: 48→p50 22 s, 192→56 s, 384→68 s, 768→102 s, all essentially lossless; 1536 is past the knee at 83%.</span></li>
+          <li><span class="mark y">✓</span><span><strong>The band probe is structurally safer than any training run we have attempted.</strong> It writes one <code>result.json</code> per trial, so there is <em>no batch gate</em>. A shard that dies at 80% still yields 80% usable band data — where all ten training failures lost everything because the update sat behind a 16-complete-group barrier.</span></li>
+          <li><span class="mark y">✓</span><span><strong>Two corrupting traps caught before they ran.</strong> <code>BRIDGE_EXEC_TIMEOUT</code> defaults to 600 s — shorter than the 1800 s agent cap, measured at 76% of trials cut off mid-task. In a band probe that is invisible: truncated trials score 0 and tasks the model never finished would be filtered out as "too hard". And <code>bridge_url</code> left as an <code>oc.env</code> default would have silently attached the probe to the bridge serving the live 35B run.</span></li>
+          <li><span class="mark y">✓</span><span><strong>Marianna's pool and ours are the same pool.</strong> Her 4.5k is R2E-Gym-Subset (4,578); ours is a 73% subset of it keyed by V1 index. So a band list keyed on index or docker_image intersects our 3,328 directly — expected overlap ≈ 1,160 tasks. Asking her for the list is worth one message against ~10 h of generation.</span></li>
+        </ul>
+      </div>
+      <div class="track" style="border-top-color: var(--bad)">
+        <span class="track-h" style="color: var(--bad)">What's not</span>
+        <ul class="stack">
+          <li><span class="mark n">✗</span><span><strong>The milestone is still unmet — attempt ten.</strong> And a warning for reading the log: <code>Finished: 'policy_train', time cost: 17.14s</code> is <em>not</em> success. The timing context manager emits <code>Finished</code> from <code>__exit__</code>, which runs while the exception propagates. Three such lines appear after the OOM had already been raised.</span></li>
+          <li><span class="mark n">✗</span><span><strong>The band is still zero, and now visibly bimodal.</strong> Of the tasks reaching k≥4 in <code>1229649</code>: 3 always-solved, 4 never-solved, <strong>0 partial</strong>. A 0.375 pass@4 with a zero band does not mean the model is too weak — it means nothing sits in the middle. That is exactly the distribution the band filter is meant to remove, which is why the band is a gradient prerequisite for us and not a compute saving.</span></li>
+          <li><span class="mark n">✗</span><span><strong>21% of trials produced no reward at all</strong> (18 of 86, masked). Under <code>fail_on_infrastructure_error: false</code> that degrades quietly rather than shouting — masked trials do not count toward a group, so groups starve and the buffer stalls. It is why 65 scored trials only yielded 10 complete groups.</span></li>
+          <li><span class="mark n">✗</span><span><strong><code>main_tbench_generate</code> does not work in this fork.</strong> The pure-rollout entrypoint would have removed the policy, optimizer, FSDP and weight-sync entirely. Its vLLM engine actors crash-loop inside <code>create_ray_wrapped_inference_engines</code> — GPUs held 4/4 in placement groups, a fresh ~1-minute-old engine process on every inspection across 65 minutes, driver parked in <code>ray.get</code>, and no traceback anywhere. py-spy located it exactly; fixing it is a daylight job. The probe rides <code>main_tbench</code> with <code>lr = 0</code> instead.</span></li>
+          <li><span class="mark n">✗</span><span><strong>A JURECA reverse-forward port cannot be reclaimed.</strong> <code>ssh -O cancel -R</code> fails through the mux in both spec forms, so a port left by a dead job stays bound and routes to a node that no longer exists. Restarting the ControlMaster would fix it and would also drop the tunnel a live run depends on. Ports are now single-use; 18100 is permanently poisoned.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
   <section id="today">
-    <h2>Since you left <span class="pill p-wait">04 Aug 11:00 → 13:05 KST</span></h2>
+    <h2>Earlier <span class="pill p-flat">previous window · 04 Aug 11:00 → 13:05 KST</span></h2>
     <p class="lede">
       <strong>In one paragraph.</strong> <code>1229488</code> was the best run this project has had —
       31-minute startup, compute-node route gate passed, 68 honest trials, zero infrastructure
