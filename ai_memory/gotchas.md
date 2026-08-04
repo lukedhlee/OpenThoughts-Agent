@@ -1367,3 +1367,41 @@ sequence/tensor parallelism across the FSDP group.
 filesystem quota, an unenumerated exception, a tunnel, an inode wall. This one is arithmetic in the
 training step itself, reproducible without any of the agentic machinery, and testable on a single node.
 The pipeline up to and including advantage computation is now demonstrated end to end with this model.
+
+## A band probe can run "healthily" and produce zero reward — the quietest reward-integrity bug yet (2026-08-04)
+
+First launch of the 8 band-probe shards: all 8 RUNNING, trial counts climbing (14/10/1/8/12/9/18), bridge
+showing 170 active and 332 ready envs. Every single one of the 74 completed trials had
+`verifier_result: null` and therefore **no reward at all**. Cause, identical in all 74:
+
+```
+BridgeOperationError: Command '['apptainer','overlay','create','--size','4096',
+  '/p/scratch/.../apptainer_staging/apt_env-<id>/overlay.img']' timed out after 60 seconds
+```
+
+**Why it was silent.** `BridgeOperationError` is in `mask_exceptions`, and `default_error_treatment: mask`
+with `fail_on_infrastructure_error: false` means a masked trial is excluded and the batch continues. For
+*training* that is the right trade (it stops one bad trial killing 128). For a *probe* it is corrupting:
+a band built from that data would have said **every task is unsolvable**, and the run's own progress
+counters would have looked healthy the whole time. `scored=N` counts `result.json` files, not rewards.
+
+**Why the overlay create times out.** Both `--size 4096` and `timeout=60` are HARDCODED in
+`worker.py` (~line 536) — there is no env knob. Measured on an almost-idle 36-node fleet:
+
+| overlay create target | time |
+|---|---|
+| `/p/scratch` (shared GPFS) | **18.06 s** |
+| node-local tmpfs (`/tmp`) | **3.57 s** |
+
+At ~1,024 concurrent sandbox starts the shared path blows 60 s outright. Note the earlier load test
+reached 768 concurrent envs successfully — because it *only* created envs. Once agents are also doing
+real I/O against the same filesystem, the create path loses.
+
+**Fix, no code change:** the fleet's `STAGING_BASE` is an env var. Point it at `/tmp/apptainer_staging`
+(overlays are per-sandbox and node-local by nature — nothing shared needs them) and drop
+`WORKERS_PER_NODE` to 16 so tmpfs cannot starve the node: 16 × 4 GB overlay + 16 × 4 GB sandbox memory
+≈ 128 GB of a 512 GB node.
+
+**Standing lesson:** for any probe whose output is a dataset property, verify a **non-null reward** on the
+first few trials before trusting trial counts. `ls result.json | wc -l` is a liveness metric, not a data
+metric — the same "existence is not function" trap as the route gate and `workers_alive`.
