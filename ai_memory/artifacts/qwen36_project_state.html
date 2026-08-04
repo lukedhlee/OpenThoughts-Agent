@@ -460,9 +460,57 @@
   <section id="overnight">
     <h2>While you were away <span class="pill p-wait">03 Aug 23:20 → 04 Aug 09:30 KST</span></h2>
     <p class="lede">
-      Three runs, one real defect found, one self-inflicted failure, and two conclusions this project
-      had been building on for a week turned out to be wrong. Read the first box and you have the gist.
+      <strong>In one paragraph.</strong> The reason GRPO showed no gradient was found, and it was not
+      the training data: the agent was being killed at <strong>600 seconds</strong> instead of the
+      configured 1800, on 76% of trials. That defect is fixed, unit-tested and proven live; the
+      checkpoint load is 11–18× faster; and three conclusions this project had been building on for a
+      week are now retired. Against that — two of three five-node allocations produced no usable reward
+      data, one of them because I skipped a documented step, and <strong>the milestone is still
+      unreached</strong>: a single finite optimizer update has never executed with this model. A fourth
+      run is in flight and will answer the question the others could not.
     </p>
+
+    <div class="cols" style="margin-bottom: var(--s5)">
+      <div class="track" style="border-top-color: var(--ok)">
+        <span class="track-h" style="color: var(--ok)">What's good</span>
+        <ul class="stack">
+          <li><span class="mark y">✓</span><span><strong>A real defect, properly caught.</strong> The 600 s cap was root-caused across four layers, fixed behind a flag whose default is byte-identical, covered by four tests, and proven in isolation — <code>sleep 700</code> returned 0 after <strong>703 s</strong>.</span></li>
+          <li><span class="mark y">✓</span><span><strong>Loading is 11–18× faster.</strong> 701.12 s → 38.03 s on one GPU, 61.6 s under four contending engines. Measured, not inferred.</span></li>
+          <li><span class="mark y">✓</span><span><strong>Three wrong beliefs retired</strong> — including one of mine — so the next decision rests on better ground than the last one did.</span></li>
+          <li><span class="mark y">✓</span><span><strong>Two acceleration levers found</strong> with numbers behind them: a 19-minute vision-tower profile, and 17–36× KV headroom sitting unused behind <code>max_num_seqs: 8</code>.</span></li>
+          <li><span class="mark y">✓</span><span><strong>The route is now verified end to end</strong> from a compute node, the worker fleet is renewed for 14 h, and the bridge is clean.</span></li>
+        </ul>
+      </div>
+      <div class="track" style="border-top-color: var(--stop)">
+        <span class="track-h" style="color: var(--stop)">What's bad</span>
+        <ul class="stack">
+          <li><span class="mark n">✕</span><span><strong>The milestone did not move.</strong> No finite optimizer update, no checkpoint, no HF export — unchanged since 07-31.</span></li>
+          <li><span class="mark n">✕</span><span><strong>Two of three allocations produced zero reward data.</strong> Roughly 20 node-hours for infrastructure findings, not science.</span></li>
+          <li><span class="mark n">✕</span><span><strong><code>1225422</code> was my error</strong>, not bad luck. The tunnel retarget and route gate are both written down; I ran neither, costing 3 h 12 m and 29 orphaned sandboxes.</span></li>
+          <li><span class="mark q">?</span><span><strong>The variance question is still open</strong> after two attempts aimed squarely at it.</span></li>
+          <li><span class="mark q">?</span><span><strong>The 110-minute policy-init regression is untouched</strong>, and prefix-caching effectiveness is unknown — it is experimental for this architecture, and <code>n_cache_tokens</code> is not a usable signal.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="insight">
+      <span class="lbl">So what — the implication</span>
+      <p>
+        <strong>The learnable band is probably no longer the next thing to build.</strong> Its entire
+        justification was the zero-variance measurement, and that measurement is now known to have been
+        taken through a truncated agent. Independently, your co-lead's own result says the band buys
+        convergence speed and ~20% compute — <em>not</em> quality — so for a pipeline-validation goal it
+        was never the prize it looked like.
+      </p>
+      <p>
+        <strong>Conclusion: hold the band until <code>1229343</code> reports.</strong> If variance
+        appears at the restored budget, the path to a finite update is short and the band demotes to an
+        optimisation for later. If it does not, we will at last have honest pass rates under a real
+        budget — which is exactly what is needed to size a ~384-task <code>p@4</code> probe properly
+        instead of guessing at it. Either way the next decision is <strong>gated on data rather than on
+        inference</strong>, which was not true twelve hours ago.
+      </p>
+    </div>
 
     <div class="insight i-stop">
       <span class="lbl">The headline — the data was never the blocker</span>
