@@ -123,7 +123,14 @@ for i, shard in enumerate(shards):
     tb["bridge_url"] = "http://10.128.1.2:9921"
     # Sandbox supply is 48/node on the JURECA dc-cpu fleet; keep the driver's
     # concurrency at the engine working set so trials are not queued behind vLLM.
-    tb["n_concurrent_trials"] = 4 * (NODES - 1) * 32
+    # 32 per shard = 256 across 8 shards. NOT higher: every sandbox start runs
+    # `apptainer overlay create --size 4096`, whose 60s timeout is HARDCODED in
+    # worker.py. Measured on an idle fleet that create takes 18.06s on /p/scratch
+    # (3.57s on node-local tmpfs), so at ~1024 concurrent starts it blew the
+    # timeout and 74/74 trials died as BridgeOperationError with a null
+    # verifier_result -- masked, so the run looked alive while producing no reward
+    # at all. The fleet now stages on tmpfs; this keeps demand well inside it.
+    tb["n_concurrent_trials"] = 32
     # Learned on 1229488: one unenumerated exception aborted 68 honest trials.
     tb["fail_on_infrastructure_error"] = False
     if "AddTestsDirError" not in tb["mask_exceptions"]:
