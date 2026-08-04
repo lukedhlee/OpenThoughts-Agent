@@ -1,0 +1,4 @@
+request_window_tokens: 32768
+max_new_tokens_per_turn: 4096
+max_turns: 999999
+client_window_tokens: 20480

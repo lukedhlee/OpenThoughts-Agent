@@ -4,25 +4,27 @@ config_groups:
 terminal_bench:
   trials_dir: null
   harbor:
-    name: terminus-2
+    name: opencode
+    version: 1.18.8
+    preinstalled: true
+    prompt_template_path: /e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next/eval/jureca/opencode_swebench_prompt.md.j2
+    opencode_config:
+      autoupdate: false
+      compaction:
+        auto: true
     enable_summarize: false
     store_all_messages: true
     trajectory_config:
       raw_content: true
+    upload_agent_logs: false
     enable_episode_logging: false
     record_terminal_session: false
     enable_pane_logging: false
-    strict_json_parser: true
-    interleaved_thinking: false
-    extra_body:
-      chat_template_kwargs:
-        enable_thinking: false
     override_timeout_sec: 1800
     override_cpus: 2
     override_memory_mb: 4096
     override_storage_mb: 4096
     environment_type: apptainer
-    bridge_url: http://10.128.1.2:9921
     sif_cache: /p/scratch/synthlaion/lee27/r2egym_sif
     auto_snapshot: false
     verifier_override_timeout_sec: 120
@@ -40,12 +42,12 @@ terminal_bench:
     - BridgeOperationError
     - BridgeOperationTimeoutError
     - VerifierInfrastructureError
-    n_concurrent_trials: 48
+    - ContextLengthExceededError
+    - NonZeroAgentExitCodeError
     log_level: INFO
     enable_reward_shaping: false
     collect_rollout_details: true
     enable_error_classification: true
-    fail_on_infrastructure_error: false
     mask_exceptions:
     - DaytonaError
     - EnvironmentStartTimeoutError
@@ -65,6 +67,9 @@ terminal_bench:
     - AgentTimeoutError
     - ContextLengthExceededError
     - NonZeroAgentExitCodeError
+    bridge_url: http://10.128.1.2:9921
+    n_concurrent_trials: 32
+    fail_on_infrastructure_error: false
   model_info: {}
   archiving:
     enabled: false
@@ -173,7 +178,9 @@ generator:
     temperature: 1.0
     top_p: 0.95
     top_k: 20
-  engine_init_kwargs: {}
+  engine_init_kwargs:
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
 data:
   train_data:
   - /e/scratch/reformo/lee27/tasks/r2egym-patched-full-oracle/r2egym-v1-00009
@@ -621,7 +628,7 @@ container:
     RL_PYTHON: /e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron/bin/python
     PYTHONPATH: /e/scratch/reformo/lee27/harbor-apptainer-bridge/src:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-train:/e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge/skyrl-gym:/e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge
     SKYRL_ROLLOUT_HTTP_ENDPOINT_HOST: 10.14.0.46
-    SKYRL_ROLLOUT_HTTP_ENDPOINT_PORT: '18153'
+    SKYRL_ROLLOUT_HTTP_ENDPOINT_PORT: '18163'
     OT_AGENT_RAY_LOG_DIR: /tmp/ray_logs
     BRIDGE_EXEC_TIMEOUT: '2100'
     RAY_object_spilling_config: '{"type":"filesystem","params":{"directory_path":"/e/fscratch/reformo/lee27/ray_spill"}}'
@@ -629,3 +636,4 @@ context_budget:
   request_window_tokens: 32768
   max_new_tokens_per_turn: 4096
   max_turns: 999999
+  client_window_tokens: 20480

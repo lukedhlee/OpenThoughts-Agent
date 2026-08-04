@@ -1,0 +1,63 @@
+name: opencode
+version: 1.18.8
+preinstalled: true
+prompt_template_path: /e/scratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next/eval/jureca/opencode_swebench_prompt.md.j2
+opencode_config:
+  autoupdate: false
+  compaction:
+    auto: true
+enable_summarize: false
+store_all_messages: true
+trajectory_config:
+  raw_content: true
+upload_agent_logs: false
+enable_episode_logging: false
+record_terminal_session: false
+enable_pane_logging: false
+override_timeout_sec: 1800
+override_cpus: 2
+override_memory_mb: 4096
+override_storage_mb: 4096
+environment_type: apptainer
+sif_cache: /p/scratch/synthlaion/lee27/r2egym_sif
+auto_snapshot: false
+verifier_override_timeout_sec: 120
+max_retries: 3
+min_wait_sec: 60.0
+max_wait_sec: 600.0
+wait_multiplier: 2.0
+exclude_exceptions:
+- VerifierTimeoutError
+- VerifierRuntimeError
+- RewardFileNotFoundError
+- RewardFileEmptyError
+- VerifierOutputParseError
+- BridgeOutageError
+- BridgeOperationError
+- BridgeOperationTimeoutError
+- VerifierInfrastructureError
+- ContextLengthExceededError
+- NonZeroAgentExitCodeError
+log_level: INFO
+enable_reward_shaping: false
+collect_rollout_details: true
+enable_error_classification: true
+mask_exceptions:
+- DaytonaError
+- EnvironmentStartTimeoutError
+- BridgeOutageError
+- BridgeOperationError
+- BridgeOperationTimeoutError
+- VerifierInfrastructureError
+- NetworkError
+- ConnectionError
+- RewardFileNotFoundError
+- RewardFileEmptyError
+- AgentEnvironmentTimeoutError
+- ContextLengthExceededError
+- AddTestsDirError
+default_error_treatment: mask
+passthrough_exceptions:
+- AgentTimeoutError
+- ContextLengthExceededError
+- NonZeroAgentExitCodeError

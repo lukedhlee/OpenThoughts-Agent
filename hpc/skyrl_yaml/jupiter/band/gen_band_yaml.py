@@ -109,48 +109,43 @@ for i, shard in enumerate(shards):
     # Qwen3-8B finetune and carries its own template in tokenizer_config.json,
     # which is what the 35B canary relies on too.
     g.get("engine_init_kwargs", {}).pop("custom_chat_template_chat_completion_path", None)
+    # REQUIRED for OpenCode, per the canary: OpenCode always sends
+    # tool_choice="auto", and this checkpoint's template emits Qwen3 XML tool
+    # calls, which vLLM 0.22 parses with qwen3_coder. WITHOUT BOTH FIELDS vLLM
+    # REJECTS EVERY AGENT REQUEST BEFORE GENERATION -- it is part of the rollout
+    # transport contract, not a tuning knob.
+    g.setdefault("engine_init_kwargs", {})["enable_auto_tool_choice"] = True
+    g.setdefault("engine_init_kwargs", {})["tool_call_parser"] = "qwen3_coder"
     g["n_samples_per_prompt"] = 4          # p@4 -- the band filter itself
     g["num_inference_engines"] = 4 * (NODES - 1)  # rollout nodes only; node 1 is policy
     # 8B in bf16 is ~16GB of a 96GB GH200, so KV has room the 35B never had.
     # This is the lever that lifts concurrency from 32 to the hundreds.
     g["max_num_seqs"] = 64
 
+    # ===== PROVEN AGENT BLOCK, lifted from the 35B canary =====
+    # terminus-2 could not be made to work through this tunnel tonight: after
+    # fixing overlay staging and endpoint-by-IP, every trial still died with
+    # "Request timed out." while a standalone completion on the same port took
+    # 10.5s (434 tokens, thinking off, HTTP 200) and /tokenize + /v1/models both
+    # 404'd in ~1ms. No short completion timeout is set anywhere in harbor/llms.
+    # OpenCode 1.18.8 is the configuration that ran for HOURS against this exact
+    # bridge and tunnel on the 35B, so the probe adopts it verbatim rather than
+    # continuing to debug an unproven agent unattended.
+    import yaml as _y, os as _os
+    _hb = _y.safe_load(open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "canary_harbor.yaml")))
+    c["terminal_bench"]["harbor"] = _hb
     tb = c["terminal_bench"]["harbor"]
-    # THINKING OFF. Measured through the tunnel on this 8B: 2,611 completion
-    # tokens took 59.8s (~44 tok/s), so a 4,096-token thinking turn is ~93s and
-    # terminus-2's per-request timeout fires first -- every trial died with
-    # "Request timed out." after the connection issue was fixed.
-    # A non-thinking terminus-2 turn only has to emit a JSON tool call, which is
-    # tens of tokens, so turns drop from ~60-90s to a few seconds.
-    # ⚠ This makes the band a property of the (model, agent, THINKING-OFF) triple.
-    # Worth asking the co-lead whether her band run had thinking enabled, because
-    # a thinking model solves more tasks and the band shifts accordingly.
-    tb["interleaved_thinking"] = False
-    tb.setdefault("extra_body", {}).setdefault("chat_template_kwargs", {})["enable_thinking"] = False
-    # Hardcode, do NOT leave as ${oc.env:APPTAINER_BRIDGE_URL,...:9920}: if the
-    # env var is unset at hydra-resolution time the default silently attaches the
-    # probe to the 9920 bridge serving the 35B run. Same accepted-but-ignored
-    # failure class as strict_json_parser / compaction.reserved.
     tb["bridge_url"] = "http://10.128.1.2:9921"
-    # Sandbox supply is 48/node on the JURECA dc-cpu fleet; keep the driver's
-    # concurrency at the engine working set so trials are not queued behind vLLM.
-    # 48 per shard = 384 across 8 shards, against a 32-node x 16-worker fleet
-    # (512 capacity) -- ~12 sandboxes per node, with headroom for retries.
-    # Sized for the WALL as much as for safety: 1664 trials per shard at 32-way
-    # would need ~8.7h against a 4h limit; 48-way brings a shard within reach. NOT higher: every sandbox start runs
-    # `apptainer overlay create --size 4096`, whose 60s timeout is HARDCODED in
-    # worker.py. Measured on an idle fleet that create takes 18.06s on /p/scratch
-    # (3.57s on node-local tmpfs), so at ~1024 concurrent starts it blew the
-    # timeout and 74/74 trials died as BridgeOperationError with a null
-    # verifier_result -- masked, so the run looked alive while producing no reward
-    # at all. The fleet now stages on tmpfs; this keeps demand well inside it.
-    tb["n_concurrent_trials"] = 48
-    # Learned on 1229488: one unenumerated exception aborted 68 honest trials.
+    # 32 per shard = 256 total. The canary ran 32 concurrent trials for hours;
+    # do not exceed a figure this stack has actually sustained.
+    tb["n_concurrent_trials"] = 32
     tb["fail_on_infrastructure_error"] = False
-    if "AddTestsDirError" not in tb["mask_exceptions"]:
-        tb["mask_exceptions"].append("AddTestsDirError")
-    if "NonZeroAgentExitCodeError" not in tb["passthrough_exceptions"]:
-        tb["passthrough_exceptions"].append("NonZeroAgentExitCodeError")
+    if "AddTestsDirError" not in tb.get("mask_exceptions", []):
+        tb.setdefault("mask_exceptions", []).append("AddTestsDirError")
+    # client_window_tokens 20480 comes with the canary budget: it pulls OpenCode's
+    # proactive compaction threshold far enough below the 28,672 prompt ceiling
+    # that one large tool observation still lands.
+    c["context_budget"] = _y.safe_load(open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "canary_ctx.yaml")))
 
     e = c["container"]["extra_env"]
     # Each shard gets its own reverse-forward port so shards can run concurrently
