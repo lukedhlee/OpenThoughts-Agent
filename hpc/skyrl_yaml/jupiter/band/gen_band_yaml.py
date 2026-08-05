@@ -28,6 +28,31 @@ with open(SRC) as f:
 names = [l.strip() for l in open(NAMES) if l.strip()]
 shards = [names[i::NSHARD] for i in range(NSHARD)]  # round-robin: even mix of envs
 
+# ===== SUBSET / RAMP OVERRIDES =====
+# Every one of these defaults to the value the full-band shards already used, so
+# with none of them set the emitted YAML is byte-identical to the proven config.
+# They exist because the goal is no longer the full band: it is the band on a
+# SUBSET, measured cheaply, then extrapolated. Two of them are correctness fixes
+# rather than tuning:
+#   BAND_TOOL_PARSER{,_PLUGIN} -- g1_diverse_tezos_100k_8b emits tool calls as
+#     BARE JSON (182/182 captured steps, zero XML), so the inherited
+#     `qwen3_coder` XML parser never matches and never logs; OpenCode then sees
+#     plain text, takes one no-op turn, and reward collapses to f(task) with no
+#     within-group variance. Measuring a band that way re-derives the retracted
+#     0/197. The plugin must be IMPORTED (its @register_module decorator runs),
+#     which MarinSkyRL d8bdc79 does in pop_openai_kwargs.
+#   BAND_BRIDGE_PORT -- the fleet's workers poll whichever bridge the FLEET was
+#     launched against. Pointing the job at the other bridge yields a passing
+#     route gate and 100% rollout timeouts. Read the fleet log, do not guess.
+ENV_MAX_TASKS = int(os.environ.get("BAND_MAX_TASKS", "0"))       # 0 = whole shard
+ENV_CONC = int(os.environ.get("BAND_CONC", "32"))
+ENV_MAX_NUM_SEQS = int(os.environ.get("BAND_MAX_NUM_SEQS", "64"))
+ENV_BRIDGE_PORT = os.environ.get("BAND_BRIDGE_PORT", "9921")
+ENV_TOOL_PARSER = os.environ.get("BAND_TOOL_PARSER", "qwen3_coder")
+ENV_TOOL_PARSER_PLUGIN = os.environ.get("BAND_TOOL_PARSER_PLUGIN", "")
+if ENV_MAX_TASKS:
+    shards = [s[:ENV_MAX_TASKS] for s in shards]
+
 FSCRATCH = "/e/fscratch/reformo/lee27"
 
 for i, shard in enumerate(shards):
@@ -115,12 +140,14 @@ for i, shard in enumerate(shards):
     # REJECTS EVERY AGENT REQUEST BEFORE GENERATION -- it is part of the rollout
     # transport contract, not a tuning knob.
     g.setdefault("engine_init_kwargs", {})["enable_auto_tool_choice"] = True
-    g.setdefault("engine_init_kwargs", {})["tool_call_parser"] = "qwen3_coder"
+    g.setdefault("engine_init_kwargs", {})["tool_call_parser"] = ENV_TOOL_PARSER
+    if ENV_TOOL_PARSER_PLUGIN:
+        g["engine_init_kwargs"]["tool_parser_plugin"] = ENV_TOOL_PARSER_PLUGIN
     g["n_samples_per_prompt"] = 4          # p@4 -- the band filter itself
     g["num_inference_engines"] = 4 * (NODES - 1)  # rollout nodes only; node 1 is policy
     # 8B in bf16 is ~16GB of a 96GB GH200, so KV has room the 35B never had.
     # This is the lever that lifts concurrency from 32 to the hundreds.
-    g["max_num_seqs"] = 64
+    g["max_num_seqs"] = ENV_MAX_NUM_SEQS
 
     # ===== PROVEN AGENT BLOCK, lifted from the 35B canary =====
     # terminus-2 could not be made to work through this tunnel tonight: after
@@ -135,10 +162,10 @@ for i, shard in enumerate(shards):
     _hb = _y.safe_load(open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "canary_harbor.yaml")))
     c["terminal_bench"]["harbor"] = _hb
     tb = c["terminal_bench"]["harbor"]
-    tb["bridge_url"] = "http://10.128.1.2:9921"
+    tb["bridge_url"] = f"http://10.128.1.2:{ENV_BRIDGE_PORT}"
     # 32 per shard = 256 total. The canary ran 32 concurrent trials for hours;
     # do not exceed a figure this stack has actually sustained.
-    tb["n_concurrent_trials"] = 32
+    tb["n_concurrent_trials"] = ENV_CONC
     tb["fail_on_infrastructure_error"] = False
     if "AddTestsDirError" not in tb.get("mask_exceptions", []):
         tb.setdefault("mask_exceptions", []).append("AddTestsDirError")
@@ -165,7 +192,7 @@ for i, shard in enumerate(shards):
     e["SKYRL_ROLLOUT_HTTP_ENDPOINT_HOST"] = "10.14.0.46"
     e["SKYRL_ROLLOUT_HTTP_ENDPOINT_PORT"] = str(PORTBASE + i)
     # Probe bridge, NOT the 9920 bridge serving the 35B milestone run.
-    e["APPTAINER_BRIDGE_URL"] = "http://10.128.1.2:9921"
+    e["APPTAINER_BRIDGE_URL"] = f"http://10.128.1.2:{ENV_BRIDGE_PORT}"
     # hpc.py points this at /e/data1/.../ot-baf/experiments/_ray_logs, another
     # project's tree that we cannot write: ray_utils._start_node mkdir's it and
     # dies with EACCES 52s into the job. /tmp is node-local, which is correct --
