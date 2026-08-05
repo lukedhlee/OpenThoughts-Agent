@@ -1713,3 +1713,51 @@ Get the head IP from the FIRST node of `squeue -j <id> -h -o '%N'` (`getent host
 2. re-point the forward to the NEW port AND the NEW head IP
 3. only then run the compute-node route gate
 4. confirm a non-empty `agent/` dir within ~2 min — that is the real proof the route works
+
+---
+
+## The JURECA ControlMaster lives on the JUPITER LOGIN NODE, not on the Mac (2026-08-05)
+
+`~/.ssh/cm_jureca/qwen36` is a path on **jupiter login02**, not on the laptop. Running the forward commands
+from the Mac fails with `Control socket connect(...): No such file or directory` + `Host key verification
+failed`, which reads like a broken tunnel but is just the wrong host.
+
+It *has* to be there: a reverse forward `-R 10.14.0.46:<PORT>:<head>:8000` requires the ssh **client** to be
+able to reach `<head>:8000`, and only a Jupiter node can. So every forward command is double-hopped:
+
+```bash
+ssh -o BatchMode=yes jupiter 'ssh -o BatchMode=yes -S ~/.ssh/cm_jureca/qwen36 jureca05.fz-juelich.de "<cmd>"'
+```
+
+Also: `ssh -o BatchMode=yes jureca ...` **from the Mac** is expected to fail (`Permission denied
+(keyboard-interactive)`) — there is no JuDoor key path for JURECA from here. That is not a fleet outage.
+
+Corollary — the port-re-pointing can be **armed unattended** so a PENDING job's forward lands without a human
+in the loop. Write a script on the Jupiter login node that polls `squeue -j <id> -h -o %T`, and on `RUNNING`
+resolves `scontrol show hostnames "$(squeue -j <id> -h -o '%N')" | head -1` → `getent hosts` → installs the
+forward, then `setsid nohup` it. Cancels can be spec'd loosely (`-O cancel -R 10.14.0.46:<port>:0.0.0.0:8000`)
+because OpenSSH matches a remote-forward cancel on the **listen** side only.
+
+## Resubmitting the JURECA worker fleet is self-serviceable (2026-08-05)
+
+Previously logged as "only the operator can do this". It is not. `dc-cpu` is usually near-empty (368 idle of
+566 on 2026-08-05), so a fresh 32-node / 24 h fleet goes from `sbatch` to `RUNNING` in under a minute, and two
+fleets can overlap harmlessly — workers only make **outbound** calls to the bridge, so there is no port
+conflict and capacity simply adds (32 nodes x 16 workers = 512 slots each).
+
+```bash
+ssh -o BatchMode=yes jupiter 'ssh -o BatchMode=yes -S ~/.ssh/cm_jureca/qwen36 jureca05.fz-juelich.de \
+  "cd /p/project1/synthlaion/lee27/harbor/src/harbor/environments/apptainer && \
+   HARBOR_SRC=/p/project1/synthlaion/lee27/harbor/src \
+   BRIDGE_LOGIN=jrlogin05i BRIDGE_PORT=9923 \
+   STAGING_BASE=/tmp/apptainer_staging WORKERS_PER_NODE=16 \
+   sbatch --nodes=32 --time=24:00:00 jureca_workers.sbatch"'
+```
+
+`BRIDGE_LOGIN`/`BRIDGE_PORT` must match the forward actually installed on the ControlMaster (`jrlogin05i:9923`,
+i.e. the `10.14.0.46:9923` listener) — the sbatch's defaults (`jrlogin03i:9920`) are stale and it will abort
+after 30 bridge probes. Confirm with `grep -c "starting 16 workers"` on the new job's `.out` (expect = nodes).
+
+Never let the fleet become the schedule constraint: a Jupiter GRPO job that is `PENDING (Priority)` can sit for
+hours, and `scontrol update TimeLimit=` **does not help** when the reason is `Priority` rather than `Resources`
+(measured: shrinking 3:00:00 -> 1:30:00 moved the estimated start *later*, not earlier).
