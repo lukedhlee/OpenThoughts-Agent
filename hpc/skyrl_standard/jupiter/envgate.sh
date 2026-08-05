@@ -78,7 +78,21 @@ case "$PATCHED" in
   *) PATCH_STATUS="FAILED: $(echo "$PATCHED" | tr -d '"' | tail -1)" ;;
 esac
 
-apptainer overlay create --size 2048 $W/ov.img >/dev/null 2>&1
+apptainer overlay create --size 4096 $W/ov.img >/dev/null 2>&1 \
+  || { echo "{\"task\":\"$TASK\",\"mode\":\"$MODE\",\"error\":\"overlay_create_failed\"}"; exit 0; }
+
+# Exactly the PATH harbor forces at start and on every exec (worker.py:577,1133).
+# Without it the container inherits the host login PATH and `uv` may be missing,
+# which is the v1 failure by another route.
+HPATH="$BRIDGE_AGENT_TOOLS/bin:$BRIDGE_AGENT_TOOLS/uv_env/.venv/bin:/root/.local/bin:/testbed/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# harbor binds each agent tool to /usr/local/bin/<name> (worker.py:119) so they
+# resolve regardless of PATH. uv in particular is what makes `uv pip install`
+# and `uv run` work inside the verifier.
+TOOLBINDS=()
+for t in uv tmux asciinema rg opencode; do
+  [[ -x "$BRIDGE_AGENT_TOOLS/bin/$t" ]] && TOOLBINDS+=(--bind "$BRIDGE_AGENT_TOOLS/bin/$t:/usr/local/bin/$t:ro")
+done
+mkdir -p $W/tmp $W/logs/agent $W/logs/artifacts $W/setup_files
 
 cleanup() { apptainer instance stop "$INST" >/dev/null 2>&1; rm -rf "$W"; }
 trap cleanup EXIT
@@ -92,12 +106,27 @@ trap cleanup EXIT
 # "Prevent host home mount - it causes quota issues and overwrites container's
 # /root/.bashrc with the host's (which has broken conda)."
 # This is the prime suspect for the v2 smoke stalling out the full 25-min wall.
-apptainer instance start --overlay $W/ov.img \
+# --cleanenv is REQUIRED and its absence is the best mechanical explanation for
+# the 25-min stall. worker.py:559 sets it at start and worker.py:1131 repeats it
+# on EVERY exec, because (worker.py:1125-1130) an instance's start-time
+# --cleanenv does NOT apply to later `exec instance://` calls, and without it
+# "Slurm/PMI state from the worker step leaks into every agent and verifier
+# process ... old Python runtimes can fail to spawn subprocesses while that
+# launcher state is present." This gate runs inside an srun step, so SLURM_*,
+# PMI_*, PSP_*, PYTHONPATH and CONDA_* would all leak into images whose Python
+# is 3.5-3.9.
+apptainer instance start --cleanenv --overlay $W/ov.img \
   --no-home \
   --bind $W/tests:/tests:rw \
   --bind $W/logs/verifier:/logs/verifier:rw \
+  --bind $W/logs/agent:/logs/agent:rw \
+  --bind $W/logs/artifacts:/logs/artifacts:rw \
+  --bind $W/setup_files:/setup_files:rw \
+  --bind $W/tmp:/tmp:rw \
   --bind $W/ws:/workspace:rw \
   --bind $BRIDGE_AGENT_TOOLS:$BRIDGE_AGENT_TOOLS:ro \
+  "${TOOLBINDS[@]}" \
+  --env "PATH=$HPATH" --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 \
   "$SIF" "$INST" >$W/start.log 2>&1
 if [[ $? -ne 0 ]]; then
   echo "{\"task\":\"$TASK\",\"mode\":\"$MODE\",\"error\":\"instance_start_failed\",\"detail\":\"$(tail -1 $W/start.log | tr -d '"'"'"'"\\')\"}"
@@ -105,8 +134,8 @@ if [[ $? -ne 0 ]]; then
 fi
 
 # HEAD before we touch anything, and the expected buggy-parent value.
-HEAD0=$(apptainer exec instance://$INST git -C /testbed rev-parse HEAD 2>/dev/null)
-PARENT=$(apptainer exec instance://$INST git -C /testbed rev-parse ${BASE}^ 2>/dev/null)
+HEAD0=$(apptainer exec --cleanenv instance://$INST git -C /testbed rev-parse HEAD 2>/dev/null)
+PARENT=$(apptainer exec --cleanenv instance://$INST git -C /testbed rev-parse ${BASE}^ 2>/dev/null)
 
 PRE="true"
 if [[ "$MODE" == "oracle" ]]; then
@@ -120,9 +149,19 @@ fi
 # 25 min srun limit and produced zero output, while real rollout trials finish in
 # ~3.4 min median). With our own timeout we always emit JSON, and `tail` shows
 # the last thing the container printed before it stalled.
-timeout -k 10 "${EG_TIMEOUT:-1500}" \
-  apptainer exec instance://$INST bash -c \
-  "export HOME=/root; $PRE; cd /root 2>/dev/null || cd /; bash /tests/test.sh" \
+# cwd: harbor uses the Dockerfile WORKDIR, else /workspace (worker.py:1078).
+# r2egym images declare WORKDIR /testbed, and test.sh's relative
+# `find . -name '*.pyc' -delete` only makes sense in the repo -- /root was wrong.
+# Execution mirrors harbor: /usr/bin/bash -lc (a LOGIN shell, so /etc/profile.d
+# conda init runs) and the script invoked directly via its shebang, not
+# `bash <path>` (utils/scripts.py:151).
+timeout -k 10 "${EG_TIMEOUT:-${BRIDGE_EXEC_TIMEOUT:-2100}}" \
+  apptainer exec --cleanenv \
+  --env "PATH=$HPATH" --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 \
+  --pwd "${R2E_WORKDIR:-/testbed}" \
+  instance://$INST /usr/bin/bash -lc \
+  "export HOME=/root XDG_DATA_HOME=/root/.local/share XDG_CACHE_HOME=/root/.cache XDG_CONFIG_HOME=/root/.config; \
+   export PATH=$HPATH; $PRE; chmod +x /tests/test.sh 2>/dev/null; (/tests/test.sh) 2>&1" \
   >$W/out.txt 2>&1
 RC=$?
 TIMED_OUT=false

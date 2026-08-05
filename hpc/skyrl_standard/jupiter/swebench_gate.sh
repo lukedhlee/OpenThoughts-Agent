@@ -53,8 +53,10 @@ SIF=$SIF_CACHE/build_${TASK}-${HASH}.sif
 W=$(mktemp -d $ROOT/sg.XXXXXXXX)
 INST="sg_$(echo "${TASK}_${MODE}_$$" | tr -cd 'a-zA-Z0-9_')"
 mkdir -p $W/tests $W/logs/verifier $W/sol
-cp $STAGE/tests/test.sh $W/tests/test.sh
-cp $STAGE/tests/config.json $W/tests/config.json
+# Copy the WHOLE tests dir, as harbor uploads every test source dir to /tests
+# (verifier.py:182). Cherry-picking files silently drops anything else the task
+# ships.
+cp -a $STAGE/tests/. $W/tests/
 cp $STAGE/solution/solve.sh $W/sol/solve.sh
 chmod +x $W/tests/test.sh $W/sol/solve.sh
 
@@ -77,32 +79,57 @@ case "$PATCHED" in
   *) PATCH_STATUS="FAILED: $(echo "$PATCHED" | tr -d '"' | tail -1)" ;;
 esac
 
-apptainer overlay create --size 4096 $W/ov.img >/dev/null 2>&1
+apptainer overlay create --size 4096 $W/ov.img >/dev/null 2>&1 \
+  || emit_err overlay_create_failed
 cleanup() { apptainer instance stop "$INST" >/dev/null 2>&1; rm -rf "$W"; }
 trap cleanup EXIT
 
-# --no-home is REQUIRED: Apptainer mounts the host $HOME by default, which
-# shadows the image's /root and its conda init. worker.py:584 does the same.
-apptainer instance start --overlay $W/ov.img \
+HPATH="$BRIDGE_AGENT_TOOLS/bin:$BRIDGE_AGENT_TOOLS/uv_env/.venv/bin:/root/.local/bin:/testbed/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+TOOLBINDS=()
+for t in uv tmux asciinema rg opencode; do
+  [[ -x "$BRIDGE_AGENT_TOOLS/bin/$t" ]] && TOOLBINDS+=(--bind "$BRIDGE_AGENT_TOOLS/bin/$t:/usr/local/bin/$t:ro")
+done
+mkdir -p $W/tmp $W/logs/agent $W/logs/artifacts $W/setup_files $W/ws
+
+# --cleanenv (worker.py:559 at start, :1131 on EVERY exec -- the start-time flag
+# does NOT carry over) keeps Slurm/PMI launcher state out of the container;
+# harbor notes old Python runtimes can fail to spawn subprocesses with it
+# present. --no-home stops the host $HOME shadowing the image's /root + conda.
+# NB: /testbed was measured drwxrwxrwx and owned by our own uid inside these
+# SIFs, so harbor's writable-workdir bind is NOT needed here.
+apptainer instance start --cleanenv --overlay $W/ov.img \
   --no-home \
   --bind $W/tests:/tests:rw \
   --bind $W/logs/verifier:/logs/verifier:rw \
-  --bind $W/sol:/sol:ro \
+  --bind $W/logs/agent:/logs/agent:rw \
+  --bind $W/logs/artifacts:/logs/artifacts:rw \
+  --bind $W/setup_files:/setup_files:rw \
+  --bind $W/tmp:/tmp:rw \
+  --bind $W/ws:/workspace:rw \
+  --bind $W/sol:/solution:ro \
   --bind $BRIDGE_AGENT_TOOLS:$BRIDGE_AGENT_TOOLS:ro \
+  "${TOOLBINDS[@]}" \
+  --env "PATH=$HPATH" --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 \
   "$SIF" "$INST" >$W/start.log 2>&1 \
   || emit_err "instance_start_failed"
 
 PRE="true"
-[[ "$MODE" == "oracle" ]] && PRE="bash /sol/solve.sh"
+# harbor's oracle agent runs (/solution/solve.sh) directly via its shebang
+# (agents/oracle.py:88-102), not `bash <path>`.
+[[ "$MODE" == "oracle" ]] && PRE="chmod +x /solution/solve.sh 2>/dev/null; (/solution/solve.sh)"
 
 # Bound it ourselves so an srun wall-clock kill can never leave us with no
 # record; on timeout the tail still shows where it stalled. HOME is exported
 # inside the exec because Apptainer rejects HOME in --env for instance execs
 # on JURECA (worker.py:1076).
-timeout -k 10 "${SG_TIMEOUT:-1800}" \
-  apptainer exec instance://$INST bash -c \
-  "export HOME=/root; export PATH=$BRIDGE_AGENT_TOOLS/bin:\$PATH; \
-   cd /testbed && $PRE && bash /tests/test.sh" >$W/out.txt 2>&1
+timeout -k 10 "${SG_TIMEOUT:-${BRIDGE_EXEC_TIMEOUT:-2100}}" \
+  apptainer exec --cleanenv \
+  --env "PATH=$HPATH" --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 \
+  --pwd /testbed \
+  instance://$INST /usr/bin/bash -lc \
+  "export HOME=/root XDG_DATA_HOME=/root/.local/share XDG_CACHE_HOME=/root/.cache XDG_CONFIG_HOME=/root/.config; \
+   export PATH=$HPATH; cd /testbed && { $PRE; } && chmod +x /tests/test.sh 2>/dev/null; (/tests/test.sh) 2>&1" \
+  >$W/out.txt 2>&1
 RC=$?
 TIMED_OUT=false
 [[ $RC -eq 124 || $RC -eq 137 ]] && TIMED_OUT=true
