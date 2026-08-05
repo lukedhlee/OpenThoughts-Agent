@@ -1,7 +1,7 @@
 # Fresh-session kickoff prompt — paste the block below
 
 Volatile numbers go stale fast. Re-probe before trusting them; the durable state is in `handoff.md`.
-Last refreshed **2026-08-05 23:00 KST**.
+Last refreshed **2026-08-06 03:10 KST**.
 
 ⚠ **This file is the bootstrap, so a stale claim here costs more than anywhere else.** On 08-05 it sat for
 three hours still asserting "A LEARNABLE BAND EXISTS" and the "~6x concurrency bump" *after* both had been
@@ -49,16 +49,26 @@ our absolute % may legitimately differ. The pass/fail criterion is therefore
 "is there real within-group variance at all", not "does it equal 36%").
 Stay inference-only: it removes training-side concerns and debugs ~10x faster.
 
-STOP-THE-LINE, 08-05 23:40 KST: THE REWARD IS A PER-TASK CONSTANT. On 1248713
-(OpenCode, 8B, r2egym-patched-full-oracle) 62.6% of trials scored 1.0 while
-0 of 30 fully-sampled groups showed ANY within-group variance. At a 62.6% pass
-rate ~83% of 4-sample groups should be in band, so 0/30 has probability
-~0.17^30 ~ 1e-23. The reward is not measuring the model. Corroborating: a trial
-scored 1.0 with ZERO agent steps, and trials that never edited a file passed MORE
-often (76% of passes made no edit) than trials that did. Prime suspect: the
-"-patched-" in r2egym-patched-full-oracle means the fix ships pre-applied, so the
-tests already pass and editing only breaks them. DO NOT tune throughput, scale
-nodes, or believe any band number until this is resolved.
+ROOT-CAUSED AND FIXED 08-06: THE r2egym REWARD WAS A PER-TASK CONSTANT and never
+measured the model. On 1248713 (OpenCode, 8B, r2egym-patched-full-oracle) 61% of
+trials scored 1.0 while 0 of 75 fully-sampled groups showed ANY within-group
+variance -- at a 61% pass rate ~84% of 4-sample groups should be in band, so 0/75
+is ~0.16^75, i.e. never. Also: a trial scored 1.0 with ZERO agent steps, and only
+24% of PASSING trials ever edited a file vs 49% of failing ones.
+  CAUSE: DCAgent/r2egym-patched-full-oracle was flattened (our own
+  data/r2egym/PATCHING.md) to collapse 8,101 Daytona snapshots into 3, replacing
+  each task's prebuilt image FROM namanjain12/<repo>_final:<sha> (whose /testbed
+  holds the repo at the buggy commit) with a generic python:X.Y base plus an
+  instruction telling the AGENT to git clone the repo. Sandboxes have no network,
+  so /testbed stayed EMPTY and the verifier graded the stock pip-installed wheel.
+  FIX: use Marianna's UNPATCHED dataset + her prebuilt SIFs, both readable:
+    /p/scratch/transfernetx/nezhurina1/r2egym_apptainer_dataset  (4,578 tasks)
+    /p/scratch/transfernetx/nezhurina1/sif_cache/build_r2egym-*.sif (4,568)
+  Our copy: /e/fscratch/reformo/lee27/tasks/r2egym-raw (4,578, built).
+  Zero Docker pulls, zero SIF builds. 4,578 is EXACTLY her band pool, so our
+  number is directly comparable to her ~1.6k/4.5k = ~36%.
+  READ ai_memory/NEXT_SESSION.md sections 0-2 before touching anything.
+DO NOT tune throughput or scale nodes until a group shows both a 0.0 and a 1.0.
 
 FIRST, non-negotiable: the 8B emits BARE-JSON tool calls (182/182 steps, zero
 XML) while vLLM ran --tool-call-parser qwen3_coder (XML-only), so it never
