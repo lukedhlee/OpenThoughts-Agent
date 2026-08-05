@@ -2396,3 +2396,25 @@ The wheels added (`87 -> 95`), fetched on a networked host with
 `No matching distribution found for <pkg>` / `Installing build dependencies: finished with status 'error'`,
 that is a **wheel-cache gap, not a broken environment**. Read the missing package out of the tail and stage
 it. Expect a new set per repo family as coverage widens beyond these 8.
+
+## The "dead then working" rollout forward was probably just vLLM not up yet (2026-08-06)
+
+An earlier entry recorded, as **unexplained**, that on job 1251403 an `ssh -R` forward with a byte-identical
+spec probed `HTTP=000` from a compute node and then worked after a cancel + reinstall.
+
+Job 1252276 reproduces the first half with a mundane cause: `arm_rollout_forward.sh 1252276 18300 15500584`
+run **immediately after submit** reports `HTTP=000`, because the job had just started and **vLLM needs
+several minutes to load the 8B and bind `:8000`**. `ssh -R` binds the listener regardless of whether the
+target is serving, so the listener is up while connections are refused. There is nothing to forward *to*
+yet — the route is not broken.
+
+**Consequences for the runbook:**
+- **Do NOT cancel + reinstall on an early `HTTP=000`.** The reinstall on 1251403 probably did nothing; the
+  real change was that vLLM had finished starting in the meantime. Treating it as a fix invented a
+  cargo-cult step and left a "mystery" in the docs.
+- **Probe AFTER vLLM logs startup** (`Application startup complete` / `Uvicorn running`), not at submit time.
+  Arming early is still right — only the *verdict* has to wait.
+- The 2100 s `BRIDGE_EXEC_TIMEOUT` is the real deadline, so there is ample room to wait for a true reading.
+
+Confirmed same run: `~/.rollout_forwards` **does** now exist and records correctly (`18300 10.128.59.161`),
+so the exact-spec cancel safety net works — that half of the old entry is resolved too.
