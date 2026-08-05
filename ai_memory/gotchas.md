@@ -2418,3 +2418,25 @@ yet — the route is not broken.
 
 Confirmed same run: `~/.rollout_forwards` **does** now exist and records correctly (`18300 10.128.59.161`),
 so the exact-spec cancel safety net works — that half of the old entry is resolved too.
+
+## SWE-bench SIF build: `mksquashfs ... Failed to create thread` under parallelism (2026-08-06)
+
+At `parallel=6` on the JURECA login node, ~6% of `apptainer pull` builds fail with:
+
+```
+FATAL: While making image from oci registry: ... while creating squashfs:
+  /usr/libexec/apptainer/bin/mksquashfs command failed: exit status 1:
+  FATAL ERROR: Failed to create thread
+FATAL ERROR: frag_thrd: can't open destination for reading
+```
+
+This is **thread/resource exhaustion from concurrent `mksquashfs`, not a bad image** — `mksquashfs`
+defaults to one thread per CPU, so N concurrent pulls on a many-core login node multiply out past limits.
+The affected tasks build fine on a retry.
+
+**Handling:** `swebench_build_sifs.sh` skips any task whose SIF already exists, so simply **re-run the same
+command as a second pass** to pick up failures (optionally at lower parallelism). Do not lower parallelism
+for the whole run on account of a few percent — measured throughput at P=6 is ~1.4 SIFs/min
+(~500 in ~6 h, ~625 GB).
+Note the build must run on the **login node**: compute nodes have no internet, which is the whole premise
+of the offline wheel cache.
