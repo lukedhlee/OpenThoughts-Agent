@@ -81,15 +81,24 @@ if gate_pass:
 print()
 
 # --- 3. ceiling --------------------------------------------------------------
-oracles = [m[k] for m in by_task.values() for k in m if k in ORACLE]
+all_oracles = [m[k] for m in by_task.values() for k in m if k in ORACLE]
+# Denominator counts only oracle runs that actually PRODUCED a reward. A run
+# that timed out or errored tells us nothing about solvability, and counting it
+# as "not solvable" silently understates the ceiling -- the same
+# wrong-denominator mistake that produced bogus band numbers before.
+oracles = [r for r in all_oracles if r.get("reward") is not None]
+unusable = len(all_oracles) - len(oracles)
 solved = [r for r in oracles if r.get("reward") == 1.0]
 print("[3] CEILING  (oracle reaches 1.0 -> task is solvable at all)")
 if oracles:
-    print(f"    {len(solved)}/{len(oracles)} = {100*len(solved)/len(oracles):.1f}% of tasks are solvable")
-    print("    tasks whose oracle does NOT reach 1.0 can never be solved by any")
+    print(f"    {len(solved)}/{len(oracles)} = {100*len(solved)/len(oracles):.1f}% of tasks with a"
+          f" usable oracle result are solvable")
+    print(f"    ({unusable} further oracle run(s) produced no reward and are EXCLUDED,")
+    print("     not counted as unsolvable -- they are unknown, not zero.)")
+    print("    Tasks whose oracle does NOT reach 1.0 can never be solved by any")
     print("    model and are dead weight in the band.")
 else:
-    print("    no oracle runs yet")
+    print(f"    no usable oracle results yet ({unusable} run(s) produced no reward)")
 print()
 
 # --- stall forensics ---------------------------------------------------------
