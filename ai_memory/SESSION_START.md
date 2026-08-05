@@ -60,12 +60,12 @@ THE RATE PROBLEM (measured with agentstall.py over 7 trials: 7/7 ripgrep errors,
     dict {opencode,tmux,asciinema,uv}. Fix = stage a static musl rg into
     $BRIDGE_AGENT_TOOLS/bin/rg AND add "rg" to that dict. Needs a FLEET RESTART.
   thinking is ON -- config.json shows interleaved_thinking=True AND
-    enable_thinking=True (set by BAND_HARBOR_THINK=1). The parser is NOT broken; real
+    enable_thinking=True. NB: BAND_HARBOR_THINK is INERT for OpenCode. The parser is NOT broken; real
     tool_use events appear. The model emits <think> prose plus MALFORMED JSON
     (unterminated string, two concatenated objects, stray </think>), so vLLM cannot
     parse tool_calls, OpenCode stores it as TEXT and finishes reason=stop after ~2
     steps. 5 of 7 trials. Only 1 of 7 made any edit at all.
-  => CHEAP TEST FIRST: BAND_HARBOR_THINK=0, relaunch, re-run agentstall.py. One env
+  => CHEAP TEST FIRST: BAND_SERVER_NO_THINK=1 (NOT BAND_HARBOR_THINK, which is a
      var, no fleet restart. ("thinking-off (DONE)" in the task list was WRONG.)
 
 DO THIS FIRST (operator's call): VALIDATE ENVIRONMENTS WITH NO MODEL.

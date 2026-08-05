@@ -2235,3 +2235,50 @@ the 500 SWE-bench task dirs had 12 files instead of 6, including `._Dockerfile` 
 `sha256sum <Dockerfile>`-based SIF naming and any `ls`-driven task discovery. It also floods any command's
 output with `tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'`.
 Fix: `find <dir> -name "._*" -delete` after unpacking (or `COPYFILE_DISABLE=1 tar ...` when creating).
+
+## `BAND_HARBOR_THINK` is INERT for OpenCode — two wrong calls on the same knob (2026-08-06)
+
+`interleaved_thinking` and `extra_body.chat_template_kwargs.enable_thinking` are implemented for
+**`terminus_2` / `openhands` / `mini_swe_agent` only**. `grep -rn extra_body src/harbor` returns **zero hits
+in `opencode.py`**. OpenCode never uses harbor's LLM client at all — it shells out (`opencode.py:876`):
+
+```
+opencode --model=<m> run --format=json <flags> --thinking --auto -- <instruction>
+```
+
+and `--thinking` only controls whether thinking blocks appear in the JSON output; it does not turn model
+thinking on or off. Unknown kwargs are **silently swallowed** — `AgentFactory` passes `**kwargs` through,
+`BaseAgent.__init__` accepts and never reads them — so the setting looks applied in `config.json` and does
+nothing. `gen_band_yaml.py:80-84` documents this in a comment that was written and then not followed.
+
+**The knob that works: `BAND_SERVER_NO_THINK=1`** ->
+`engine_init_kwargs.default_chat_template_kwargs={"enable_thinking": False}` (`gen_band_yaml.py:179-187`),
+merged by vLLM's renderer *under* request-level kwargs, so it reaches every request whatever the agent.
+It is **vLLM engine-construction time**: needs a NEW RL job, cannot be hot-applied — but needs **no fleet
+restart** (both env vars are read only by `gen_band_yaml.py` at YAML-generation time on the Jupiter side;
+nothing on JURECA reads them).
+
+**Process lesson.** This knob has now been called wrong twice: once marked "thinking-off DONE" when thinking
+was on, then reopened with the instruction to set `BAND_HARBOR_THINK=0` — a no-op that would have produced a
+confident **false negative** ("thinking-off didn't help") and burned a full job. Both errors share one root:
+**a config key was treated as evidence of behaviour.** The standing rule "verify by behaviour, never by
+config" applies to the knob you are about to turn, not just to the result — before spending a job on an env
+var, grep for where it is *read*, and confirm the agent you actually run is on that code path.
+
+## `rg` must be bound to /usr/local/bin, not just present in agent_tools (2026-08-06)
+
+The tool-bind dict is `worker.py:90-98` (`opencode`, `tmux`, `asciinema`, `uv`); adding
+`"rg": [os.path.join(agent_tools, "bin", "rg")]` is the whole code change, and it is a **safe no-op until
+the binary exists** — missing candidates are skipped via `next(..., None)`, not fatal (only `opencode` can
+fail closed, under `BRIDGE_REQUIRE_OPENCODE=1`).
+
+Do **not** assume `$BRIDGE_AGENT_TOOLS/bin` on PATH is enough: the no-proxy exec branch (`worker.py:1114`)
+hardcodes `PATH=/root/.local/bin:/testbed/.venv/bin:/usr/local/sbin:/usr/local/bin:...` **without** the
+agent_tools prefix, and r2egym runs with `ENABLE_WORKER_PROXY=0` (`jureca_workers.sbatch:54`). So on the
+live JURECA path the bind is genuinely required.
+
+OpenCode resolves ripgrep as: `which("rg")` over PATH -> `$XDG_DATA_HOME/opencode/bin/rg` -> **download from
+github.com** (which is what fails offline, raising `"ripgrep execution failed"` from the shared service used
+by BOTH `glob` and `grep`). So a PATH hit is sufficient. Artifact must be **static musl x86_64** — the SIFs'
+glibc varies per task image. There is **no provisioning script** for `$BRIDGE_AGENT_TOOLS/bin`; opencode,
+tmux, asciinema and uv were all hand-staged. Requires a **fleet restart** (workers hold the old module).

@@ -111,15 +111,27 @@ the direct lever on the band %.
    effect (workers are long-running), so it is not free.
 2. **Thinking is ON, and the 8B then emits unparseable tool calls.** Verified by BEHAVIOUR from the trial
    `config.json`: `agent.kwargs.interleaved_thinking=True` **and**
-   `agent.kwargs.extra_body.chat_template_kwargs.enable_thinking=True`. `BAND_HARBOR_THINK=1` in the §8
-   recipe is what sets this. The parser is **not** broken — real `tool_use` events do appear. What happens is
+   `agent.kwargs.extra_body.chat_template_kwargs.enable_thinking=True`.
+   ⚠ **But `BAND_HARBOR_THINK` is NOT what sets the model's behaviour — it is INERT for OpenCode.** Those
+   two keys are implemented for `terminus_2` / `openhands` / `mini_swe_agent` only. OpenCode never touches
+   harbor's LLM client; it shells out (`opencode.py:876`) to
+   `opencode --model=… run --format=json --thinking --auto`, where `--thinking` merely includes thinking
+   blocks in the JSON output. Unknown kwargs are silently swallowed (`BaseAgent.__init__` takes `**kwargs`
+   and never reads them), so the config *looks* applied and does nothing. `gen_band_yaml.py:80-84` says so
+   in a comment. The model thinks anyway because Qwen3's chat template defaults `enable_thinking=true`.
+   The parser is **not** broken — real `tool_use` events do appear. What happens is
    the model emits `<think>` prose plus **malformed JSON**: an unterminated string, two concatenated JSON
    objects, and a stray `</think>`. vLLM cannot parse that into `tool_calls`, so OpenCode records it as a
    `text` part and the step finishes `reason:"stop"` — the trial ends after ~2 steps with no edit.
 
-   **Cause 2 is the cheap one to test: it is one env var and a Jupiter relaunch, no fleet restart.**
-   Set `BAND_HARBOR_THINK=0` and re-run `agentstall.py`. Task #1 in the task list was marked
-   "thinking-off (DONE)" and that was **wrong** — it has been reopened.
+   **Cause 2 is still the cheaper one, but use the RIGHT knob:** `BAND_SERVER_NO_THINK=1`, which sets
+   `engine_init_kwargs.default_chat_template_kwargs={"enable_thinking": False}` (`gen_band_yaml.py:179-187`)
+   and reaches every request regardless of agent. That is vLLM **engine-construction** time, so it needs a
+   **new RL job** — but still **no fleet restart**. Then re-run `agentstall.py` and gate on behaviour
+   (no `<think>` in trajectory text), never on the config echo.
+   Unverified link in this chain: the MarinSkyRL `9904058` plumbing of `engine_init_kwargs` into vLLM.
+   Task #1 was once marked "thinking-off (DONE)" — wrong, reopened — and then the reopened version told
+   you to set `BAND_HARBOR_THINK=0`, which was **also wrong** (a no-op). Two errors on the same knob.
 
 ## 1. DO THIS FIRST — validate environments with NO model (operator's call, 08-06)
 
@@ -305,7 +317,8 @@ source hpc/skyrl_standard/jupiter/jup.sh          # then use jup / jrc, never ba
 
 W=/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next ; D=$W
 export BAND_MAX_TASKS=0 BAND_CONC=64 BAND_BRIDGE_PORT=9920
-export BAND_HARBOR_THINK=0        # <-- 1 emits unparseable tool calls (§0.3). This is the next experiment.
+export BAND_SERVER_NO_THINK=1     # <-- THE knob that actually works for OpenCode (see §0.3).
+export BAND_HARBOR_THINK=0        # <-- config honesty ONLY; this key is INERT for OpenCode.
 export BAND_MAX_EPISODES=50 BAND_CPUS=2 BAND_MEM_MB=4096 BAND_STORAGE_MB=8192
 export BAND_MAX_MODEL_LEN=40960 BAND_MAX_NUM_SEQS=1024 BAND_GMU=0.92
 export BAND_TOOL_PARSER=bare_json BAND_TOOL_PARSER_PLUGIN=$D/rl/tool_parsers/bare_json_tool_parser.py
@@ -340,7 +353,8 @@ which only fires during a training step.
 
 ## 9. Open items for Luke
 
-1. **Decide the order:** (a) `BAND_HARBOR_THINK=0` relaunch — one env var, no fleet restart, tests the
+1. **Decide the order:** (a) `BAND_SERVER_NO_THINK=1` relaunch — needs a NEW job (vLLM engine-construction
+   time) but no fleet restart; tests the
    likelier cause; or (b) stage `rg` + patch harbor's tool map — needs a **fleet restart**. §1's model-free
    oracle sweep is independent of both and should run regardless.
 2. Ask Marianna for her **~1.6k band task IDs** + band script as a cross-check (likely
