@@ -34,7 +34,15 @@ SIF_CACHE=${SIF_CACHE:-$ROOT/swebench_sif}
 STAGE=$TASKS/$TASK
 
 export BRIDGE_AGENT_TOOLS=${BRIDGE_AGENT_TOOLS:-$ROOT/agent_tools}
-WORKER=${WORKER:-$ROOT/apptainer_bridge/9c31e931/worker.py}
+# Extract the offline patch from the worker the LIVE FLEET actually loaded.
+# Verified 2026-08-06: job 15500584 runs
+#   /p/project1/synthlaion/lee27/harbor/src/harbor/environments/apptainer/jureca_workers.sbatch
+# i.e. a real checkout (branch lukedhlee/apptainer-opencode-bridge, d64180d), NOT the pinned
+# apptainer_bridge/<sha>/ copies. The pinned 9c31e931 copy is OLDER and lacks the astropy
+# DeprecationWarning shim and the /etc/gitconfig safe.directory write, so extracting from it
+# would measure a patch the fleet does not use.
+HARBOR_LIVE=${HARBOR_LIVE:-/p/project1/synthlaion/lee27/harbor}
+WORKER=${WORKER:-$HARBOR_LIVE/src/harbor/environments/apptainer/worker.py}
 
 emit_err() { echo "{\"task\":\"$TASK\",\"mode\":\"$MODE\",\"error\":\"$1\"}"; exit 0; }
 
