@@ -1673,3 +1673,43 @@ partly on meta. **Any measurement taken during startup is garbage, including one
 3. Worth fixing defensively: register a Meta/fake for `_C::rotary_embedding` (and audit other `_C` ops the
    reload trace can touch) so a stray request degrades to an error instead of killing the engine. Not done —
    needs the exact C++ schema arity and a GPU check, and the measurement was the priority.
+
+## Changing `PORTBASE` between relaunches silently orphans the reverse forward (2026-08-05)
+
+I burned ~15 min of a 128-concurrency run on this. The rule "never reuse a port" (`841a496f`) pushes you to bump
+`PORTBASE` on every relaunch — but the forward is added **by hand**, so bumping the port without re-adding it
+leaves the agents with **no route to the model at all**:
+
+```
+job 1246702 -> port 18210, forward 10.14.0.46:18210 -> 10.128.16.62:8000   (added)
+job 1246853 -> port 18220, forward ...                                     (NEVER ADDED)
+```
+
+**Symptoms, which look nothing like a networking fault:**
+- all 128 sandboxes reach `ready`, bridge `active_jobs: 128`, `workers_alive: true`
+- every `trial.log` stops after `[bridge] Env ... started: {'state': 'done', ...}`
+- **`agent/` stays completely EMPTY** — no `trajectory.json`, no steps, for 14+ min
+- zero results, zero exceptions, zero engine errors; job happily `RUNNING`
+- the failure only surfaces at `BRIDGE_EXEC_TIMEOUT` (2100 s), i.e. **35 min of wall per trial wasted**
+
+So the tell for "no route" is **an empty `agent/` dir with a healthy bridge**, not any error message.
+
+**TWO things change per relaunch and BOTH must be re-pointed:**
+1. `SKYRL_ROLLOUT_HTTP_ENDPOINT_PORT` (the JURECA-side listen port) — changes because we bump `PORTBASE`
+2. the **head node IP** (the Jupiter-side target) — changes because Slurm allocates new nodes
+
+```bash
+S=~/.ssh/cm_jureca/qwen36; H=jureca05.fz-juelich.de
+ssh -S $S -O cancel  -R 10.14.0.46:<OLDPORT>:<OLDHEAD>:8000 $H
+ssh -S $S -O forward -R 10.14.0.46:<NEWPORT>:<NEWHEAD>:8000 $H
+ssh -S $S $H 'ss -ltn | grep -E "<NEWPORT>|9923"'     # expect exactly 9923 + NEWPORT
+```
+Get the head IP from the FIRST node of `squeue -j <id> -h -o '%N'` (`getent hosts <node>`); the endpoint binds
+`0.0.0.0`, so any routable IP of that node works.
+
+**Checklist ordering that avoids all three stalls seen today:**
+1. wait for `Starting batch generation` / first `trace_jobs/*/` dir — **never probe during weight sync**, it
+   kills an EngineCore and hangs the driver
+2. re-point the forward to the NEW port AND the NEW head IP
+3. only then run the compute-node route gate
+4. confirm a non-empty `agent/` dir within ~2 min — that is the real proof the route works
