@@ -121,12 +121,18 @@ ssh -t jupiter 'S=~/.ssh/cm_jureca/qwen36; ssh -S $S -O exit jureca.fz-juelich.d
 ⚠ **Capture a dying master's forwards BEFORE killing it:** `ps -u $USER -o args | grep 'ssh .*-R'`.
 
 ## Live state at handoff (re-probe, do not trust)
-- **Jupiter `1244916` is DEAD — `ray.exceptions.NodeDiedError`, head node `10.128.32.219`
-  (jpbo-045-27) died mid-generation** at 1h35m; Slurm marked it CANCELLED. **Node/hardware failure, NOT our
-  code** — unrelated to the OOM fix or the tunnels. It produced **no `grad_norm` and no checkpoint**, so the
-  first non-zero gradient is still UNMEASURED.
-  ⇒ **Silver lining: the JURECA fleet is now FREE.** Nothing to harvest or cancel; go straight to the 8B work.
-  ⚠ Node death is a real failure mode here: prefer ≤4h walls and expect to relaunch.
+- **Jupiter `1244916` is DEAD — I `scancel`led it deliberately at ~17:51 KST.** `sacct` says
+  `CANCELLED by 34902`, exit `0:0`. **NOT a node failure** — the outgoing session wrote that up at 17:52 from
+  the `NodeDiedError` that Slurm teardown always produces, one minute after the cancel; that claim is
+  RETRACTED (see handoff § 2026-08-05 late). **There is no known hardware failure mode on Jupiter; do not
+  shorten walls for one.**
+  Why cancelled rather than harvested: its generation buffer was stuck at **6/16 groups after 55 min** and
+  wave 1 returned `0/4 successful × 8 batches` with `TIS mode: ALL 4 trajectories missing logprobs → this
+  batch cannot be used for TIS training` (prompts constantly overflowing 32768 at `28673 + 4096`). Best case
+  was ~40–80 min to the step **plus** a ~1.5h update — 2.5–3.5h of a 7h fleet window for a gradient TIS
+  would likely reject. It produced **no `grad_norm` and no checkpoint**, so the first non-zero gradient is
+  still UNMEASURED.
+  ⇒ **The JURECA fleet was thereby freed for the 8B subset work, which is the actual deliverable.**
 - **Tunnels left in a CLEAN state — you only need to add ONE forward:**
   - `10.14.0.46:18000` (vLLM) — **cancelled and released**; port is free, NOT burned. Add it at your new
     job's head IP once allocated.

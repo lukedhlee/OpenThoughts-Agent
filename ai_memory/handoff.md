@@ -1524,15 +1524,31 @@ registration decorator runs, not passed as a kwarg). **Neither is synced to the 
 Also: **10 of 46 groups score 1.0 while doing nothing** — those verifiers pass on an unmodified repo; a ~22%
 free floor that can never yield gradient. Exclude from the band denominator.
 
-### `1244916` died to a NODE FAILURE — the first non-zero gradient is still unmeasured
+### ~~`1244916` died to a NODE FAILURE~~ — **RETRACTED: I `scancel`led it (see below)**
+> ⚠ **This section was written by the OUTGOING session at 17:52 KST, one minute after the incoming session
+> `scancel`led `1244916` at ~17:51.** Two sessions overlapped in this repo. The `NodeDiedError` it saw is what
+> Ray logs *when Slurm tears the job down* — it was the scancel's own aftermath, not a hardware fault. The job
+> was verifiably alive immediately before: at 17:44 KST `squeue` showed it RUNNING with 4h28m left and the log
+> was writing live timestamps. **There is no evidence of node death on Jupiter.** Do not shorten walls or plan
+> for hardware failure on the strength of this. Original text kept below only so the retraction is legible.
+>
+> Authoritative evidence — `sacct -j 1244916 --format=State,ExitCode -X`:
+> ```
+> 1244916   CANCELLED by 34902   0:0
+> ```
+> uid `34902` is `lee27`, and exit `0:0` is a clean teardown. A genuine node failure records `NODE_FAIL`.
+
 After the tunnels were fixed it ran 1h35m with a healthy route (0 bridge timeouts, median_steps 18.5,
 33% pass) and then died: `ray.exceptions.NodeDiedError`, head node `10.128.32.219` (jpbo-045-27) dead
-mid-generation, Slurm CANCELLED. **Hardware/node failure, unrelated to the OOM fix or the tunnels.**
-No `grad_norm`, no checkpoint. So the pipeline is PROVEN to generate real multi-turn rollouts with reward
-variance, but a non-zero gradient has still never been observed.
-⇒ Two operational consequences: **prefer ≤4h walls and expect to relaunch** (node death is live here), and
-**a dead job's vLLM forward must be cancelled and re-added at the new head** — the bridge forward
-(`9923 → 10.128.1.2:9920`) is Jupiter-side and survives.
+mid-generation, Slurm CANCELLED. No `grad_norm`, no checkpoint. So the pipeline is PROVEN to generate real
+multi-turn rollouts with reward variance, but a non-zero gradient has still never been observed.
+⇒ **a dead job's vLLM forward must be cancelled and re-added at the new head** — the bridge forward
+(`9923 → 10.128.1.2:9920`) is Jupiter-side and survives. *(That part is correct and load-bearing.)*
+
+**Standing lesson:** a job vanishing from `squeue` plus a `NodeDiedError` in the log is **not** evidence of
+node failure — every teardown path produces both. Distinguish by `sacct` state/exit code, or by whether
+anyone cancelled it. Attributing an intentional cancel to hardware is how a phantom failure mode gets
+designed around for weeks.
 
 ⚠ Also re-triggered the **Jupiter-side** ControlMaster channel exhaustion by running one compound command
 with several nested `ssh` calls (`Session open refused by peer` → spurious TOTP prompt → `Permission
