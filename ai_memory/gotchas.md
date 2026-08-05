@@ -2196,3 +2196,42 @@ because `worker.py` (a) bind-mounts `$BRIDGE_AGENT_TOOLS` into the container `:r
 *extracts `_patch_test_sh_for_offline_pip` out of the live `worker.py` and execs it*, so it cannot drift
 from what the trainer actually does, and adds the `agent_tools` bind. It also emits a `tail` of container
 output in the JSON — v1's bare `reward: null` was undebuggable and cost a full sweep.
+
+## `--no-home` is mandatory for any hand-rolled Apptainer task run (2026-08-06)
+
+Apptainer mounts the host `$HOME` **by default**. r2egym's `test.sh` opens with `source ~/.bashrc`, so a
+container started without `--no-home` sources the **cluster login** bashrc — module init, and per harbor's
+own comment a **broken conda** — instead of the image's `/root/.bashrc`. harbor has always done this
+(`worker.py:584`):
+
+> Prevent host home mount — it causes quota issues and overwrites container's `/root/.bashrc` with the
+> host's (which has broken conda).
+
+**Symptom in envgate v2:** a single `r2egym-2514` pristine run consumed the **entire 25-min `srun` wall and
+emitted nothing**, on a task whose real rollout trials finish in ~3.4 min median. v1 by contrast failed in
+~2 min, so "it got slower" was actually evidence the offline patch had *worked* and execution now reached
+the host bashrc.
+
+Also: **set `HOME` inside the exec command, not via `--env`** — Apptainer rejects `HOME` in `--env` for
+instance execs on JURECA and then exposes the worker account's shared home (`worker.py:1076`).
+
+**General rule, twice-learned now:** when hand-rolling a runner to "measure the real environment", diff it
+against `worker.py`'s actual `instance start` argv line by line — `--no-home`, the `agent_tools` `:ro` bind,
+the `test.sh` offline patch, PATH, and HOME are all load-bearing. Anything missing means you are measuring
+your runner, not the environment. See also the envgate v1 entry above.
+
+## Always bound a cluster probe with its OWN timeout (2026-08-06)
+
+When the `srun` wall killed the envgate smoke, the script died before writing anything, so a **hang was
+indistinguishable from slow tests** — the single most expensive kind of null result. Every probe now runs
+`timeout -k 10 ${EG_TIMEOUT:-1500}` *inside* a longer `srun` (40 min) and always emits its JSON plus a
+`tail` of the last container output. Cost: one line. Value: the difference between "no data" and "stalled
+exactly here".
+
+## macOS `tar` ships AppleDouble `._*` files into cluster task dirs (2026-08-06)
+
+`tar czf` on the Mac added a `._<name>` sidecar for every file (xattr provenance). After unpacking, each of
+the 500 SWE-bench task dirs had 12 files instead of 6, including `._Dockerfile` — which would break
+`sha256sum <Dockerfile>`-based SIF naming and any `ls`-driven task discovery. It also floods any command's
+output with `tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'`.
+Fix: `find <dir> -name "._*" -delete` after unpacking (or `COPYFILE_DISABLE=1 tar ...` when creating).
