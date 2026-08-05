@@ -2466,3 +2466,34 @@ i.e. it trades one failure mode for a worse one. `reason="stop"` on 8/8, as befo
 values including a 1.0. Re-measure at larger n before deciding; if it holds, the conclusion is that
 `BAND_SERVER_NO_THINK=1` is harmful for OpenCode and the edit-rate lever is `rg` (fleet restart), not
 thinking.
+
+### MECHANISM for the zero-tool regression: thinking-off makes the model hallucinate tool syntax
+
+A complete zero-tool trajectory (`r2egym-1371__zuHxdQF`, job 1252276) is **one step only** —
+`{'step_start': 1, 'text': 1, 'step_finish': 1}`, 1595 bytes — and its single text part reads:
+
+```
+... Let me start by exploring the codebase ...
+</think>
+
+Let me start by exploring the repository structure ...
+</think>
+
+<argby>git log --oneline -1 && ls -la && find . -name '*.py' | xargs grep -l 'datasetmethod' ...</argby>
+```
+
+Two tells: **stray `</think>` closers with no opening `<think>`** (the template suppressed the opener but the
+model still emits the closer), and the bash command wrapped in an **invented `<argby>` tag** instead of a
+tool call. vLLM's `bare_json` parser finds no `tool_calls`, so OpenCode records a `text` part and the step
+finishes `reason="stop"` — one step, no tools, no edit.
+
+**So `BAND_SERVER_NO_THINK=1` does not fix malformed tool calls; it replaces them with NO parseable tool
+calls.** Thinking-ON at least produced real `tool_use` events (baseline: 0% zero-tool, median 2 tool calls).
+**Recommendation: keep thinking ON for this checkpoint + `bare_json`, and treat `rg` (fleet restart) as the
+edit-rate lever.** The §0.3 hypothesis "thinking causes unparseable tool calls, so turn it off" is therefore
+**refuted as a remedy** — turning it off is worse.
+
+Corollary worth keeping: the model emitting a bespoke `<argby>` wrapper hints it was SFT'd toward some tool
+syntax that neither `bare_json` nor OpenCode expects. If the edit rate stays low after `rg` lands, the next
+thing to examine is **tool-format mismatch between the checkpoint's training format and `bare_json`** — not
+thinking.
