@@ -51,6 +51,32 @@ ENV_BRIDGE_PORT = os.environ.get("BAND_BRIDGE_PORT", "9921")
 ENV_TOOL_PARSER = os.environ.get("BAND_TOOL_PARSER", "qwen3_coder")
 ENV_TOOL_PARSER_PLUGIN = os.environ.get("BAND_TOOL_PARSER_PLUGIN", "")
 ENV_NO_THINK = os.environ.get("BAND_SERVER_NO_THINK", "") not in ("", "0", "false", "False")
+
+# ===== MARIANNA-PARITY OVERRIDES =====
+# Values taken from the co-lead's working r2egym script. The point of the subset
+# run is to REPRODUCE her band rate (~358 learnable of 4,578 ~= 8% at 0<pass@4<1),
+# so anything that changes agent behaviour has to match hers, not ours.
+#
+#   BAND_MAX_EPISODES  -- she caps agent steps at 50. Our canary_ctx sets
+#     max_turns=999999, i.e. UNBOUNDED, so our trials only ever stop by hitting
+#     the 1800s wall. Measured: 63 of 64 trials still running at 38 min, 5
+#     completions. The episode cap, not thinking, is what bounds trial duration.
+#   BAND_CPUS/MEM/STORAGE -- hers are 1 cpu / 1024 MB / 1024 MB against our
+#     2 / 4096 / 4096. Lighter sandboxes = far more of them per fleet node.
+#   BAND_MAX_MODEL_LEN -- 40960 is g1's NATIVE window (config.json
+#     max_position_embeddings). We were serving 32768 and discarding 8k.
+#   BAND_TP / BAND_ENGINES -- she runs TP=4 with 8 engines (one engine per
+#     4-GPU node) rather than our TP=1 x 4 engines on one node. Same GPUs, but
+#     TP=4 shards each sequence's KV across 4 GPUs, which is what makes
+#     max_num_seqs=1024 at 40960 context feasible.
+ENV_MAX_EPISODES = int(os.environ.get("BAND_MAX_EPISODES", "0"))       # 0 = leave as-is
+ENV_CPUS = int(os.environ.get("BAND_CPUS", "0"))
+ENV_MEM_MB = int(os.environ.get("BAND_MEM_MB", "0"))
+ENV_STORAGE_MB = int(os.environ.get("BAND_STORAGE_MB", "0"))
+ENV_MAX_MODEL_LEN = int(os.environ.get("BAND_MAX_MODEL_LEN", "0"))
+ENV_TP = int(os.environ.get("BAND_TP", "0"))
+ENV_ENGINES = int(os.environ.get("BAND_ENGINES", "0"))
+ENV_GMU = float(os.environ.get("BAND_GMU", "0") or 0)
 if ENV_MAX_TASKS:
     shards = [s[:ENV_MAX_TASKS] for s in shards]
 
@@ -158,6 +184,20 @@ for i, shard in enumerate(shards):
     # 8B in bf16 is ~16GB of a 96GB GH200, so KV has room the 35B never had.
     # This is the lever that lifts concurrency from 32 to the hundreds.
     g["max_num_seqs"] = ENV_MAX_NUM_SEQS
+    if ENV_TP:
+        g["inference_engine_tensor_parallel_size"] = ENV_TP
+    if ENV_ENGINES:
+        # Overrides the 4*(NODES-1) default: with TP=4 an engine occupies a whole
+        # 4-GPU node, so engines == rollout nodes, not 4x rollout nodes.
+        g["num_inference_engines"] = ENV_ENGINES
+    if ENV_GMU:
+        g["gpu_memory_utilization"] = ENV_GMU
+    # NOTE: max_model_len is NOT settable here. The launcher accepts exactly ONE
+    # context declaration (context_budget) and derives max_model_len,
+    # max_prompt_length, max_input_tokens, max_episodes and three more from it;
+    # declaring any derived field is a HARD ERROR. The generator pops them for
+    # that reason. So the window and the episode cap are set on context_budget
+    # below, after canary_ctx is loaded.
 
     # ===== PROVEN AGENT BLOCK, lifted from the 35B canary =====
     # terminus-2 could not be made to work through this tunnel tonight: after
@@ -183,6 +223,24 @@ for i, shard in enumerate(shards):
     # proactive compaction threshold far enough below the 28,672 prompt ceiling
     # that one large tool observation still lands.
     c["context_budget"] = _y.safe_load(open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "canary_ctx.yaml")))
+    # max_episodes is DERIVED from max_turns, so the episode cap is set here.
+    # canary_ctx ships max_turns=999999 (unbounded), which is why our trials only
+    # ever terminated on the 1800s wall instead of after a bounded number of steps.
+    if ENV_MAX_EPISODES:
+        c["context_budget"]["max_turns"] = ENV_MAX_EPISODES
+    if ENV_MAX_MODEL_LEN:
+        c["context_budget"]["request_window_tokens"] = ENV_MAX_MODEL_LEN
+        # client_window_tokens must stay below the derived input ceiling
+        # (request_window - max_new_tokens_per_turn) or OpenCode stops compacting
+        # early enough for one large tool observation to land.
+        newtok = c["context_budget"].get("max_new_tokens_per_turn", 4096)
+        c["context_budget"]["client_window_tokens"] = max(8192, ENV_MAX_MODEL_LEN - newtok - 4096)
+    if ENV_CPUS:
+        tb["override_cpus"] = ENV_CPUS
+    if ENV_MEM_MB:
+        tb["override_memory_mb"] = ENV_MEM_MB
+    if ENV_STORAGE_MB:
+        tb["override_storage_mb"] = ENV_STORAGE_MB
 
     e = c["container"]["extra_env"]
     # Each shard gets its own reverse-forward port so shards can run concurrently
