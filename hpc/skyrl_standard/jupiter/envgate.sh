@@ -85,7 +85,15 @@ trap cleanup EXIT
 
 # NOTE the agent_tools bind: without it the wheel cache the patch points at
 # does not exist inside the container and we are back to exit 2.
+# --no-home is REQUIRED, not optional. Apptainer mounts the host $HOME by
+# default; r2egym's test.sh opens with `source ~/.bashrc`, so without this the
+# container sources the CLUSTER login bashrc (module init, broken conda) instead
+# of the image's /root/.bashrc. worker.py:584 does the same thing and says why:
+# "Prevent host home mount - it causes quota issues and overwrites container's
+# /root/.bashrc with the host's (which has broken conda)."
+# This is the prime suspect for the v2 smoke stalling out the full 25-min wall.
 apptainer instance start --overlay $W/ov.img \
+  --no-home \
   --bind $W/tests:/tests:rw \
   --bind $W/logs/verifier:/logs/verifier:rw \
   --bind $W/ws:/workspace:rw \
@@ -106,17 +114,27 @@ if [[ "$MODE" == "oracle" ]]; then
   PRE="git -C /testbed checkout $BASE -- . && git -C /testbed status --porcelain | head -5"
 fi
 
-apptainer exec instance://$INST bash -c \
-  "$PRE; cd /root 2>/dev/null || cd /; bash /tests/test.sh" >$W/out.txt 2>&1
+# Bound the run OURSELVES. If the srun wall kills us instead, the script dies
+# before emitting anything and a hang is indistinguishable from slow tests --
+# which is exactly what happened on the first v2 smoke (r2egym-2514 ate the full
+# 25 min srun limit and produced zero output, while real rollout trials finish in
+# ~3.4 min median). With our own timeout we always emit JSON, and `tail` shows
+# the last thing the container printed before it stalled.
+timeout -k 10 "${EG_TIMEOUT:-1500}" \
+  apptainer exec instance://$INST bash -c \
+  "export HOME=/root; $PRE; cd /root 2>/dev/null || cd /; bash /tests/test.sh" \
+  >$W/out.txt 2>&1
 RC=$?
+TIMED_OUT=false
+[[ $RC -eq 124 || $RC -eq 137 ]] && TIMED_OUT=true
 
 REWARD=$(cat $W/logs/verifier/reward.txt 2>/dev/null | tr -d '\n\r ')
 SUMMARY=$(grep -oE "[0-9]+ failed,? ?[0-9]* ?p?a?s?s?e?d?|[0-9]+ passed" $W/out.txt 2>/dev/null | tail -1)
 TAIL=$(tail -c 600 $W/out.txt 2>/dev/null)
 
-python3 - "$TASK" "$MODE" "${REWARD:-null}" "${SUMMARY:-}" "$RC" "${HEAD0:-}" "${PARENT:-}" "$BASE" "$PATCH_STATUS" "${TAIL:-}" <<'PY'
+python3 - "$TASK" "$MODE" "${REWARD:-null}" "${SUMMARY:-}" "$RC" "${HEAD0:-}" "${PARENT:-}" "$BASE" "$PATCH_STATUS" "${TAIL:-}" "$TIMED_OUT" <<'PY'
 import json, sys
-task, mode, reward, summary, rc, head0, parent, base, patch, tail = sys.argv[1:11]
+task, mode, reward, summary, rc, head0, parent, base, patch, tail, timed_out = sys.argv[1:12]
 try:
     r = float(reward)
 except Exception:
@@ -127,6 +145,7 @@ print(json.dumps({
     "head_before": head0[:12], "buggy_parent": parent[:12],
     "base_commit": base[:12],
     "head_was_buggy_parent": bool(head0) and head0 == parent,
+    "timed_out": timed_out == "true",
     "tail": tail[-600:],
 }))
 PY

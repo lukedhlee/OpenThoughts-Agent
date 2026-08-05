@@ -81,7 +81,10 @@ apptainer overlay create --size 4096 $W/ov.img >/dev/null 2>&1
 cleanup() { apptainer instance stop "$INST" >/dev/null 2>&1; rm -rf "$W"; }
 trap cleanup EXIT
 
+# --no-home is REQUIRED: Apptainer mounts the host $HOME by default, which
+# shadows the image's /root and its conda init. worker.py:584 does the same.
 apptainer instance start --overlay $W/ov.img \
+  --no-home \
   --bind $W/tests:/tests:rw \
   --bind $W/logs/verifier:/logs/verifier:rw \
   --bind $W/sol:/sol:ro \
@@ -92,20 +95,28 @@ apptainer instance start --overlay $W/ov.img \
 PRE="true"
 [[ "$MODE" == "oracle" ]] && PRE="bash /sol/solve.sh"
 
-apptainer exec instance://$INST bash -c \
-  "cd /testbed && $PRE && bash /tests/test.sh" >$W/out.txt 2>&1
+# Bound it ourselves so an srun wall-clock kill can never leave us with no
+# record; on timeout the tail still shows where it stalled. HOME is exported
+# inside the exec because Apptainer rejects HOME in --env for instance execs
+# on JURECA (worker.py:1076).
+timeout -k 10 "${SG_TIMEOUT:-1800}" \
+  apptainer exec instance://$INST bash -c \
+  "export HOME=/root; export PATH=$BRIDGE_AGENT_TOOLS/bin:\$PATH; \
+   cd /testbed && $PRE && bash /tests/test.sh" >$W/out.txt 2>&1
 RC=$?
+TIMED_OUT=false
+[[ $RC -eq 124 || $RC -eq 137 ]] && TIMED_OUT=true
 
 REWARD=$(cat $W/logs/verifier/reward.txt 2>/dev/null | tr -d '\n\r ')
 RESOLVED=$(grep -oE "^(PASSED|FAILED)$" $W/out.txt 2>/dev/null | tail -1)
 TAIL=$(tail -c 700 $W/out.txt 2>/dev/null)
 
-python3 - "$TASK" "$MODE" "${REWARD:-null}" "$RC" "$PATCH_STATUS" "${RESOLVED:-}" "${TAIL:-}" <<'PY'
+python3 - "$TASK" "$MODE" "${REWARD:-null}" "$RC" "$PATCH_STATUS" "${RESOLVED:-}" "${TAIL:-}" "$TIMED_OUT" <<'PY'
 import json, sys
-task, mode, reward, rc, patch, resolved, tail = sys.argv[1:8]
+task, mode, reward, rc, patch, resolved, tail, timed_out = sys.argv[1:9]
 try: r = float(reward)
 except Exception: r = None
 print(json.dumps({"task": task, "mode": mode, "reward": r, "raw_reward": reward,
                   "exit": int(rc), "offline_patch": patch, "resolved": resolved,
-                  "tail": tail[-700:]}))
+                  "timed_out": timed_out == "true", "tail": tail[-700:]}))
 PY
