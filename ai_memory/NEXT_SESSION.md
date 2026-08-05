@@ -1,190 +1,262 @@
 # NEXT SESSION — takeover note
 
-Written **2026-08-06 ~03:00 KST**. Supersedes all earlier versions
-(previous one archived at `ai_memory/logs/2026-08-05_NEXT_SESSION_superseded.md`).
+Written **2026-08-06 ~02:40 KST**. Supersedes all earlier versions
+(previous one archived at `ai_memory/logs/2026-08-06_NEXT_SESSION_superseded.md`).
 Report times in **KST** (cluster clocks are CEST = KST − 7h).
 
 ---
 
-## 0. Read this first: the headline finding
+## 0. Read this first: the finding has MOVED
 
-**For this project's entire history, the r2egym reward was a constant per task and never measured the model.**
-Every pass rate, every "zero variance" conclusion, every band number was measuring the container. The model,
-the `bare_json` tool parser, the reverse tunnels, the band metric and the concurrency were all verified
-working. None of them were ever the problem.
+Yesterday's headline was "the r2egym reward is a constant per task and never measures the model." That was
+correct, and **it is now fixed and verified.** The reward measures code state. Do not re-litigate it.
 
-**How it was proven** (job `1248713`, 8B + OpenCode + pass@4, 128 tasks):
+**The blocker has moved from the ENVIRONMENT to the AGENT.** The environment is proven good; the agent
+does almost nothing, so every reward is a *correct* `0.0`. That is a different failure with a different fix,
+and it is the whole job now.
+
+### 0.1 The environment is VALIDATED — model-independently
+
+All three documented free-pass mechanisms are refuted by direct measurement on Marianna's SIFs, **with no
+model in the loop**. Do not redo these.
+
+| check | method | result |
+|---|---|---|
+| `/testbed` populated? | `apptainer exec <sif> ls /testbed` | **yes** — real repo (Orange3) inside the SIF, no clone, no network |
+| at the BUGGY state? | `rev-parse HEAD` vs `rev-parse <base_commit>^` | **yes, HEAD == `base_commit^` exactly** |
+| do agent edits reach the tests? | `Orange.__file__` + `Orange3.egg-link` / `easy-install.pth` | **yes** — develop/editable install pointing at `/testbed` |
+| `/testbed` writable by the agent? | write test on fleet node `jrc0553` | **`WRITE_OK`** (fakeroot is unavailable on JURECA compute and is NOT needed) |
+| does `chardet` abort `test.sh`? | real SIF + writable overlay | **no** — `Audited 1 package`, exit 0. **§4.1 RETIRED** |
+
+The third mechanism deserves emphasis because it was thought to doom 55% of the pool: `TESTS_DIR=/r2e_tests`
+lives *outside* `/testbed`, but the **code under test** still resolves to `/testbed` through the egg-link. Tests
+living outside the repo is fine — arguably desirable, since the agent cannot edit them.
+
+### 0.2 The reward is now a real measurement — proven
+
+Three completed trials on `1251403`, three different repos. Each ran a genuine pytest with **exactly one
+failing test — the specific bug named in that task** — and everything else passing:
 
 ```
-results 356   rewards {0.0: 139, 1.0: 217}   trial pass rate 61.0%
-groups 96 seen, 75 fully sampled     IN BAND (0<k<4): 0   (0.0%)
+r2egym-0000  1 failed,  9 passed   reward=0.0
+r2egym-2040  1 failed, 12 passed   reward=0.0     (scrapy HttpCompression)
+r2egym-1742  1 failed, 13 passed   reward=0.0
 ```
 
-At a 61% pass rate a 4-sample group is out-of-band only if all four pass (`0.61⁴ = 13.8%`) or all four fail
-(`0.39⁴ = 2.3%`), so **~84% of groups should be IN band**. Observing 0 of 75 has probability ~`0.16⁷⁵`. This
-arithmetic needs no external baseline — **run it before believing any pass rate.** Corroborating: a trial
-scored 1.0 with **zero** agent steps; among passing trials only 24% ever edited a file versus 49% of failing
-trials — editing *lowered* your score.
+Reward `0.0` is **correct**: the agent never fixed the bug. Flipping that one test to PASSED yields `1.0`.
+This is the inverse of the old failure, where the reward was ~61% `1.0` no matter what the model did.
 
-**Root cause.** `DCAgent/r2egym-patched-full-oracle` was deliberately flattened — documented in our own
-`data/r2egym/PATCHING.md` — to collapse 8,101 Daytona snapshots into 3, by replacing each task's prebuilt image
-`FROM namanjain12/<repo>_final:<sha>` (whose `/testbed` holds the repo at the buggy commit) with a generic
-`python:X.Y` base plus an instruction preamble telling the **agent** to `git clone` the repo itself. Then three
-things independently guarantee a constant reward:
+### 0.3 The new blocker: the agent does nothing (measured)
 
-1. sandboxes have **no outbound network** (`ENABLE_WORKER_PROXY=0`, with a comment claiming "r2egym does not
-   need outbound access" — false for this dataset) → the clone dies with
-   `fatal: unable to access 'https://github.com/...': Failed to connect` → `/testbed` stays **empty** → the
-   verifier grades the stock pip-installed wheel the Dockerfile baked in.
-2. the preamble checked out `base_commit`, which **is the fix commit**. Proven per-file: every file under
-   `solution/patched_files` is byte-identical to the repo content at `base_commit`, and `solve.sh` "solves" a
-   task by copying those files in — which would be a no-op if `/testbed` were already at `base_commit`. So even
-   a working clone hands the agent the answer. The intended buggy state is `base_commit~1`.
-3. for the "hard repos" bucket (numpy, pandas, orange3, matplotlib, sympy — **55%** of that dataset) `test.sh`
-   sets `TESTS_DIR=/r2e_tests`, **outside** `/testbed`, deliberately so the repo cannot shadow the installed
-   wheel. Those tasks can *never* respond to the agent, no matter what else is fixed.
+`agentstall.py` (`~/ota-band/hpc/skyrl_standard/jupiter/agentstall.py`, deployed at
+`/e/fscratch/reformo/lee27/agentstall.py`) over the completed trials:
 
-The flattening existed to serve Daytona's snapshot cache. **We are on Apptainer SIFs now, so the constraint
-that justified breaking the dataset no longer applies to us.**
+```
+trials analysed                        : 3
+with a raw-JSON tool call left AS TEXT : 2
+with a ripgrep tool error              : 3   (100%)
+that made >=1 successful edit/write    : 0
+ended with reason=stop                 : 3
+median steps                           : 2
+```
 
-## 1. The fix that is now deployed
+**Two independent causes, both concrete:**
 
-**Stop using the patched dataset. Use Marianna's unpatched one and her prebuilt SIFs.** Both are readable on
-JSC shared scratch. Zero Docker pulls, zero SIF builds.
+1. **`rg` (ripgrep) is not in the sandbox.** OpenCode's `glob` *and* `grep` tools shell out to ripgrep, so the
+   agent's two primary code-search tools fail on its very first action, in **100%** of trials
+   (`"error":"ripgrep execution failed"`). The tool map in harbor
+   `src/harbor/environments/apptainer/worker.py` (~line 91) is a **hardcoded dict** — `opencode`, `tmux`,
+   `asciinema`, `uv` — and each entry is bound from `$BRIDGE_AGENT_TOOLS/bin/<name>` to
+   `/usr/local/bin/<name>`. `$BRIDGE_AGENT_TOOLS` is `/p/scratch/synthlaion/lee27/agent_tools`, which
+   contains exactly `asciinema grading-python311 opencode tmux uv`. Fix = stage a **static x86_64 musl**
+   `rg` into `.../agent_tools/bin/rg` **and** add `"rg"` to that dict. Needs a **fleet restart** to take
+   effect (workers are long-running), so it is not free.
+2. **Thinking is ON, and the 8B then emits unparseable tool calls.** Verified by BEHAVIOUR from the trial
+   `config.json`: `agent.kwargs.interleaved_thinking=True` **and**
+   `agent.kwargs.extra_body.chat_template_kwargs.enable_thinking=True`. `BAND_HARBOR_THINK=1` in the §8
+   recipe is what sets this. The parser is **not** broken — real `tool_use` events do appear. What happens is
+   the model emits `<think>` prose plus **malformed JSON**: an unterminated string, two concatenated JSON
+   objects, and a stray `</think>`. vLLM cannot parse that into `tool_calls`, so OpenCode records it as a
+   `text` part and the step finishes `reason:"stop"` — the trial ends after ~2 steps with no edit.
 
-| what | where | state |
-|---|---|---|
-| her task dataset | `/p/scratch/transfernetx/nezhurina1/r2egym_apptainer_dataset` | 4,578 tasks, read-only |
-| our copy | `/e/fscratch/reformo/lee27/tasks/r2egym-raw` | **4,578 built** |
-| her SIFs | `/p/scratch/transfernetx/nezhurina1/sif_cache/build_r2egym-*.sif` | ~830 MB each |
-| our cache (symlinks) | `/p/scratch/synthlaion/lee27/r2egym_sif` | **4,575 linked, 4,568 resolve** |
-| task lists | `band_raw_all_names.txt` (4,568) · `band_raw_32_names.txt` (32, repo-diverse) | `/e/fscratch/reformo/lee27/` |
+   **Cause 2 is the cheap one to test: it is one env var and a Jupiter relaunch, no fleet restart.**
+   Set `BAND_HARBOR_THINK=0` and re-run `agentstall.py`. Task #1 in the task list was marked
+   "thinking-off (DONE)" and that was **wrong** — it has been reopened.
 
-**4,578 is exactly the pool behind Marianna's "~1.6k of 4.5k" band**, so our number becomes directly
-comparable to hers rather than approximately.
+## 1. DO THIS FIRST — validate environments with NO model (operator's call, 08-06)
 
-**THE INVARIANT — do not break it.** A SIF is keyed `build_${task_name}-${sha256(Dockerfile):12}.sif`. Our tree
-was copied with `shutil.copyfile` and keeps her task dir names, so hashes match and her cache resolves
-(verified 4,568/4,578; the 10 misses are ones **she** never built). **Rename a task dir or touch a Dockerfile
-and every task misses the cache and tries to pull from Docker Hub** — where we have no credentials and would
-hit anonymous rate limits (~100 per 6h).
+Luke's instruction: *"validate the environments first without running the models by actually submitting the
+oracles and the non-oracle answers."* This is right, and it is far cheaper than a GPU allocation.
 
-Rebuild the tree with `build_raw.py` (`hpc/skyrl_yaml/jupiter/band/`, also at
-`/e/fscratch/reformo/lee27/build_raw.py`). It exists because her tasks carry **no `instruction.md`** — the
-prompt lives in `environment/workspace/metadata.json:problem_statement`, which her harbor fork reads and ours
-does not. It generates `instruction.md` from that field, strips the `[ISSUE]` wrapper, and states that the repo
-is already at `/testbed` so no agent tries to clone. ~55 min to run (cross-cluster copy of ~27k files) — put it
-in `tmux` on the cluster, not a held ssh session.
-
-Repo mix — note **no sympy / moto / matplotlib**, unlike the patched pool which was 39% sympy:
-`pandas 1442, numpy 776, pillow 619, orange3 482, aiohttp 299, tornado 259, scrapy 215, pyramid 189,
-datalad 179, coveragepy 108`.
-
-## 2. Live state at handover
-
-| id | what | state |
-|---|---|---|
-| `1251403` | **the validation run** — 32 repo-diverse tasks × pass@4, 2 nodes, TP=1, 1:30 wall | RUNNING, engines starting, forward `18300 → 10.128.59.161` installed |
-| `15500584` | JURECA sandbox fleet, 32 nodes × 16 workers | RUNNING, ~22h left, `SIF_CACHE` already correct |
-
-**THE GATE — this is the whole question: does any group contain both a `0.0` and a `1.0`?**
+**The oracle is clean and free here:** `/testbed` sits at `base_commit^`, so `git checkout <base_commit> -- .`
+**is** the gold patch. No `solve.sh`, no `solution/patched_files` needed (those belong to the patched dataset).
 
 ```bash
-D=/e/fscratch/reformo/lee27/experiments/jupiter_band_8b_raw_v1/jupiter_band_8b_raw_v1/trace_jobs
-python3 /e/fscratch/reformo/lee27/mirrorgate.py $D   # clone → /testbed → DID PASSES EDIT A FILE → band
-python3 /e/fscratch/reformo/lee27/band.py     $D 0   # full gate ladder + throughput projection
+# on JURECA compute, via the existing fleet -- no new allocation, no GPU:
+bash /p/scratch/synthlaion/lee27/envgate.sh <task> pristine   # expect reward 0.0
+bash /p/scratch/synthlaion/lee27/envgate.sh <task> oracle     # expect reward 1.0
 ```
 
-- **PASS** → the environment finally measures the model. Scale to all 4,568 and compare to her ~36%.
-- **FAIL, rewards all null** → suspect `test.sh`'s `uv pip install chardet` under `set -e` (§4.1).
-- **FAIL, rewards are 0/1 but no variance** → there is a **fourth** free-pass mechanism. Do not tune. Find it.
+`envgate.sh` mirrors harbor's worker (instance start + `exec instance://`, writable ext3 overlay,
+`/tests` + `/logs/verifier` + `/workspace` binds) and emits one JSON line per run. 32 repo-diverse tasks are
+already staged at `/p/scratch/synthlaion/lee27/envgate/<task>/{test.sh,metadata.json}`
+(`/e/fscratch` is **not** visible from JURECA — that staging step is mandatory).
 
-Cancelled deliberately: `1248713` (had proved the constant reward), `1250164` (tested the now-obsolete
-clone-mirror workaround), `1247578` (TP=4, never brought up an engine).
+**A pristine `0.0` and an oracle `1.0` on the same task is THE GATE, with no model involved.** Scale it across
+tasks to get the solvable-task denominator a band number is meaningless without. Status at handover: the
+single-task bracket for `r2egym-0000` was **still running** — re-run it, do not assume.
 
-## 3. Tooling built this session — use it, don't re-derive it
+**Known trap inside `envgate.sh`:** plain `apptainer exec` on the SIF cannot `cd /root` — `chdir` returns
+**EPERM** even though `/root` is owned by us and writes succeed. That is why the script uses
+`instance start` + `exec instance://`, as harbor does. If you rewrite it, keep that.
 
-| tool | what it enforces |
-|---|---|
-| `hpc/skyrl_standard/jupiter/jup.sh` | `source` it. `jup`/`jrc` serialise every cluster call through a lockfile and force `BatchMode=yes`; `jup_bg`/`jrc_bg` put long jobs in `tmux` **on** the cluster. Three SSH rules were documented twice each and violated three times on 08-05. |
-| `hpc/skyrl_standard/jupiter/arm_rollout_forward.sh` | records every reverse-forward it installs in `~/.rollout_forwards` so the next cancel uses the **exact** spec; refuses to start if the port is bound by something unaccounted for. |
-| `hpc/skyrl_standard/jupiter/band_preflight.sh` | hard pre-submit gate: TP=1, derived context fields, dead keys, `n_samples>=2`, sane `max_turns`, ControlMaster, **both** forwards, fleet outlives walltime+30min, bridge capacity. Non-zero exit = do not submit. |
-| `band.py` / `band_report.py` | the gate ladder + band. **Never eyeball a band.** |
-| `mirrorgate.py` | clone → `/testbed` populated → **did passing trials edit a file** → band. |
-| `ai_memory/DEAD_KEYS.md` | the 7 accepted-but-ignored config keys. A key is not set until a **log line** proves the consumer acted on it. |
+## 2. Live state at handover (RE-PROBE, do not trust)
 
-## 4. Known risks, unmeasured
+| id | what | state at 02:40 KST |
+|---|---|---|
+| `1251403` | 8B × 32 tasks × pass@4, 2 nodes, TP=1 | RUNNING, ends ~02:56 KST. 3 results, all `0.0`, **0 edits** |
+| `15500584` | JURECA sandbox fleet, 32 nodes × 16 workers | RUNNING, ~21h left, `SIF_CACHE` correct |
 
-1. **`uv pip install chardet` under `set -e`** in her `test.sh`. She baked chardet into the SIFs so it succeeds
-   offline; if the SIFs we symlinked predate that rebuild, every trial aborts *before* grading. Shows as
-   **null** rewards, not a zero band — distinguishable, so do not pre-emptively patch it.
-2. **We depend on another user's read-only directory.** Stable since March, but if this becomes the main pool,
-   copy the 4,568 SIFs into our scratch (~3.7 TB against 36 TB free on `/p/scratch`).
-3. **Sandbox sizing** is 2 CPU / 4 GB / 8 GB, raised from her 1/1/1 for the abandoned clone-based workaround.
-   Nothing clones or compiles now, so it can likely come back down — that is free throughput.
-4. **10 tasks have no SIF** — already excluded from the name lists.
-5. **Throughput unmeasured on the raw path.** On the patched path: 10.6 min/trial median, 5.97 trials/min at
-   concurrency 91 ⇒ ~37h for a full pass. Peak concurrency 91 against **1,024** free fleet slots, so the cap is
-   ours: raising `n_concurrent_trials` toward ~512 projects ~6.5h. Trials should now be faster (no clone, no
-   build). **Do not tune throughput until the §2 gate passes.**
+**`1251403` lost its entire first wave of 64 rollouts to a dead reverse forward** (see §3.1). The environment
+and reward conclusions above are unaffected — they come from trials that ran *after* the repair, plus
+model-free SIF probes.
 
-## 5. Retractions — do not re-derive these
+Expect the band from this job to be **0**, legitimately: with 0 edits, no group can contain a `1.0`.
+**That is not the old bug.** Distinguish the two by the verifier output: constant `1.0` with no edits was the
+old free-pass failure; `0.0` with exactly one failing test per task is a correct measurement of an idle agent.
 
-- **"358 of 4,578 ≈ 8%" is WRONG.** Marianna, asked directly: the band is **~1.6k of 4.5k ≈ 36%**, and her
-  filtering pass cost `18k rollouts` (= 4.5k × 4, confirming pass@4 over a 4.5k pool). Where 358 came from is
-  unknown. This flipped a verdict once: 0-in-band reads as "consistent with 8%" (p≈0.47) but is ~1-in-800,000
-  against 36%.
-- **"33% pass ≈ Marianna's 35%, so a learnable band EXISTS"** — compared GROUPS against TRIALS. A pass rate is
-  not a band.
-- **"Concurrency is the bottleneck ⇒ a ~6× bump with no new nodes"** — we hit the configured cap instantly at
-  32/64/128. What actually made trials slow: `max_turns: 999999` (she caps 50) plus heavy sandboxes.
-- **"`1244916` died to a node failure"** — `sacct`: `CANCELLED by 34902`. Always `sacct -j <id> -X` before
-  writing any cause of death.
-- **"`main_tbench_generate` is broken"** — that smoke was TP=4, a *separate* confirmed bug (§6). The
-  pure-rollout entrypoint was probably convicted for TP=4's crime and is worth re-testing at TP=1: no policy,
-  no ref, no optimizer, no FSDP, no weight sync, and a single `generate()` over all prompts instead of
-  `ceil(N/train_batch_size)` sequential steps.
-- **"Our JuDoor key is rejected / go fix JuDoor"** — false, and it was told to Luke as an action item. A
-  55-minute held ssh session was consuming the connection slot; access returned the moment it closed. Two
-  correlated symptoms, one confounder, no waiting.
+## 3. What broke tonight, and what now prevents it
 
-## 6. Hard-won operational rules
+### 3.1 A dead rollout forward that every existing check called healthy
+`1251403` produced nothing for 20 minutes. The job log simply **froze at 868 lines with no error**.
+
+- `arm_rollout_forward.sh` logged a clean install, and `ss` on JURECA showed `10.14.0.46:18300` **LISTENING**.
+- But `curl` from a **fleet compute node** returned **`HTTP=000` in 1.5 ms** — refused.
+- Meanwhile the *bridge* forward (`9923`) was HTTP 200, which is why envs still started and the bridge looked
+  perfectly healthy. **This is rule #1: one forward up, one down ⇒ healthy bridge, 100% rollout timeouts.**
+- A `-O cancel` + `-O forward` of the **byte-identical spec** fixed it instantly.
+
+`ssh -R` binds the listener whether or not the forwarded-to target is reachable, and a stale registration on
+the same port is indistinguishable by `ss`. **Fixed structurally** (commit `003a7b94`):
+`arm_rollout_forward.sh` now issues a real `/v1/chat/completions` **from a JURECA compute node** (via
+`srun --overlap` against the fleet, arg 3) and **exits non-zero on `HTTP=000`**. Any HTTP status from the
+server is a PASS — a `400 Model name mismatch: loaded model name g1_diverse_tezos_100k_8b` is the proof you
+reached the real vLLM.
+
+⚠ **Unexplained, recorded as observation not mechanism:** why an identical spec was dead and then worked.
+Also `~/.rollout_forwards` **did not exist** even though the 18:25 arm log said "recorded in" it — so the
+recorded-spec safety net was absent. Find out what removes it.
+
+### 3.2 `jrc` ran HALF your command on the WRONG CLUSTER and exited 0
+This one invalidates evidence, so read it. `jrc` was `jup "ssh ... \"\$@\"" _ "$@"`, and **`ssh` joins all
+its arguments into ONE remote command string**. So `jrc 'hostname; uname -m'` became, on Jupiter:
+
+```sh
+ssh -S cm jureca05 "$@" _ hostname; uname -m
+```
+
+`_ hostname` ran on **JURECA** (printing `_: command not found`, eating the hostname) and `uname -m` ran on
+**JUPITER**, printing `aarch64`. Any payload containing `;`, `&&`, `||`, `|` or a newline silently executed
+part of itself on the wrong cluster **and still exited 0**. Fixed by base64-encoding the payload (`42bd89e9`).
+**A one-word payload is the only case the broken version got right — so distrust any pre-08-06 cross-cluster
+claim that was verified with a single-word `jrc` command.**
+
+Same commit: `trap ... RETURN` is **bash-only**, and zsh rejects it (`undefined signal: RETURN`), so it
+printed two noise lines per call, never installed, and left `$TMPDIR/.jup.lock.d` behind on any interrupted
+call — making every later call block the full 300 s. Now an age-based stale-lock break, and `_jup_locked`
+propagates the real exit code instead of `rmdir`'s.
+
+### 3.3 The false "auth outage", third recurrence — and it was self-inflicted
+`Session open refused by peer` then `lee27@login02...: Permission denied (keyboard-interactive)`.
+**Cause: my own background pollers exhausted the ControlMaster's session cap** — including one inherited
+monitor calling **raw `ssh jupiter`**, bypassing `jup.sh`'s lockfile entirely.
+
+- **DO NOT kill the Jupiter master.** It was established interactively with TOTP and `ControlPersist 8h`;
+  killing it risks needing Luke for a re-auth. That is exactly the documented false "JuDoor key is rejected".
+- **DO** stop every background poller. Access came back on the **first retry**, in under a minute.
+- **Run at most ONE cluster poller, and only through `jup`/`jrc`.** `BatchMode=yes` did its job here: the
+  refusal failed cleanly instead of burning TOTP tries.
+
+### 3.4 Marianna's SIFs are amd64 — probe them ONLY from JURECA
+From a Jupiter login node you get
+`FATAL: While checking container encryption: could not open image ...: the image's architecture (amd64) could
+not run on the host's (arm64)`. The "container encryption" prefix reads like a corrupt SIF; it is only an
+arch mismatch. Her SIFs derive from the prebuilt `namanjain12/<repo>_final` images, which are x86_64-only,
+so the JURECA `dc-cpu` fleet is **the only place they can run** — not a preference. (The *patched* dataset's
+`python:X.Y` base was multi-arch and did run on Jupiter aarch64; do not carry that assumption over.)
+
+### 3.5 `mirrorgate.py`'s CLONE check is INVERTED on the raw path
+It prints `[1] CLONE ... -> FAIL (clone still failing -- mirrors not bound?)` when `attempted=0`. On the raw
+path **`attempted=0` is the CORRECT outcome** — nothing should clone, the repo is already in the SIF
+(`testbedcheck.py` says so explicitly: "should be 0 now"). Ignore that line, or fix the gate. Likewise, at
+tiny n its `[3]`/`[4]` verdicts print `FAIL` off `n/a` denominators — **`FAIL` at n=1 is not a gate reading.**
+
+## 4. Open risks, unmeasured
+
+1. **We depend on another user's read-only dir** (`/p/scratch/transfernetx/nezhurina1`). Stable since March;
+   copy the 4,568 SIFs (~3.7 TB against 36 TB free) if this becomes the main pool.
+2. **Sandbox sizing** is 2 CPU / 4 GB / 8 GB, raised for the abandoned clone workaround. Nothing clones or
+   compiles now, so it can likely come down — free throughput, but **not before the §1 gate passes.**
+3. **10 tasks have no SIF** — already excluded from the name lists.
+4. **Throughput unmeasured on the raw path.** Trials that stop early finish in ~3 min, which tells you
+   nothing about a working agent. Do not extrapolate from it.
+
+## 5. Retractions — do not re-derive
+
+- **"358 of 4,578 ≈ 8%" is WRONG.** Marianna: the band is **~1.6k of 4.5k ≈ 36%** at `0 < pass@4 < 1`, and
+  her filtering pass cost `18k rollouts` (= 4.5k × 4). 0-in-band reads as "consistent with 8%" (p≈0.47) but
+  is ~1-in-800,000 against 36%.
+- **"33% pass ≈ her 35%, so a learnable band EXISTS"** — compared GROUPS against TRIALS. A pass rate is not a
+  band. The band is per-group: `0 < passes < n_samples`.
+- **"Concurrency is the bottleneck ⇒ ~6× with no new nodes"** — we hit the configured cap instantly at
+  32/64/128. What made trials slow was `max_turns: 999999` (she caps 50) plus heavy sandboxes.
+- **"`1244916` died to a node failure"** — `sacct`: `CANCELLED by 34902`. Always `sacct -j <id> -X` first.
+- **"Our JuDoor key is rejected"** — false, three times now. See §3.3.
+- **"The bare_json parser is validated"** — over-stated. It **does** fire, but "median 2 tool calls/trial" was
+  never healthy for a SWE task; it is the same 2-step stall documented in §0.3.
+- **"thinking-off (DONE)"** — false. It is ON. See §0.3.
+
+## 6. Hard-won operational rules (unchanged, still binding)
 
 - **TP=1 ONLY.** `inference_engine_tensor_parallel_size > 1` makes vLLM build a distributed executor that
   copies the parent actor's `os.environ` into a nested Ray `runtime_env`; Ray then asserts on its own
-  `__RAY_WORKER_PROCESS_SETUP_HOOK_ENV_VAR` and **no engine ever starts**. SkyRL mislabels it
-  `port collision (EADDRINUSE)` and burns 5×120s on a deterministic assertion. Gate on
-  `grep -c RAY_WORKER_PROCESS_SETUP_HOOK <joblog>`. Cost: the entire 8-node allocation of `1247578`. TP=1 is
-  also simply better for an 8B on 96 GB GH200 — 4 engines/node instead of 1, no collectives.
-- **Route-gate at `max_tokens=4096`**, the real per-turn budget. At 256 the 8B loops `<think>` blocks and
-  returns `finish_reason=length` with zero `tool_calls`, which reads exactly like a dead parser. A too-small
-  gate manufactures the failure it is testing for.
-- **Never probe the endpoint during weight sync** — params sit on the meta device and an inbound request kills
-  the EngineCore and hangs the driver (cost: `1246702`). Wait for `Starting batch generation` or the first
-  `trace_jobs/*/`.
-- **Anchor your own grep patterns.** Three times a filter matched a substring of the config echo:
-  `grad_norm=1.0` inside `max_grad_norm=1.0`, and `FileNotFoundError` inside
-  `mask_exceptions=[...,"RewardFileNotFoundError",...]` (twice, in a monitor I wrote an hour after re-reading
-  the entry warning about it). Exclude the echo line, or match on a line prefix.
-- **`/e/fscratch` for anything a job touches.** `/e/scratch` has an inode cap shared by 26 users and has killed
-  runs mid-rollout. `/p/scratch` is **not mounted on Jupiter compute** but IS visible from the Jupiter **login**
-  node and from JURECA — the login node is the only place that sees both filesystems, which is why cross-cluster
-  copies run there.
-- **The JURECA ControlMaster lives on the Jupiter login node**, not on the laptop. Every forward command is
-  double-hopped. `ssh jureca` from a Mac failing is expected, not an outage.
-- **`ssh -O cancel -R` matches the FULL spec including the connect address.** A wildcard or guessed IP silently
-  no-ops and returns success. Recover the real one with
-  `sacct -j <id> -X -o NodeList%40 -n` → `scontrol show hostnames` → `getent hosts`.
+  `__RAY_WORKER_PROCESS_SETUP_HOOK_ENV_VAR` and **no engine starts**. SkyRL mislabels it
+  `port collision (EADDRINUSE)` and burns 5×120 s. Gate on
+  `grep -c RAY_WORKER_PROCESS_SETUP_HOOK <joblog>`. Cost: all 8 nodes of `1247578`.
+- **Verify by BEHAVIOUR, never config.** Seven keys have been accepted, echoed and ignored
+  (`ai_memory/DEAD_KEYS.md`); `strict_json_parser: False` is in the live config right now. A key is not set
+  until a **log line or a trajectory** proves the consumer acted on it. Tonight's `interleaved_thinking=True`
+  was caught this way.
+- **Anchor your grep patterns.** The log echoes the whole hydra command line, so `FileNotFoundError` matches
+  `RewardFileNotFoundError` inside `mask_exceptions=[...]`, and `grad_norm=1.0` matches `max_grad_norm=1.0`.
+  Both produced phantom findings. Exclude the echo line or anchor on a line prefix.
+- **Never probe the vLLM endpoint during weight sync** — params sit on the meta device; an inbound request
+  kills an EngineCore and hangs the driver (cost: `1246702`). Wait for `Starting batch generation` or the
+  first `trace_jobs/*/`. After that it is safe.
+- **`/e/fscratch` for anything a job touches.** `/e/scratch` has an inode cap shared by 26 users.
+  `/p/scratch` is **not mounted on Jupiter compute** but IS visible from the Jupiter **login** node and from
+  JURECA — the login node is the only host that sees both, which is why every cross-cluster copy runs there.
+- **The JURECA ControlMaster lives ON the Jupiter login node**, not the laptop. `ssh jureca` from a Mac
+  failing is expected, not an outage.
+- **`ssh -O cancel -R` matches the FULL spec including the connect address.** A wildcard or guessed IP
+  silently no-ops and returns success.
+- **Reward is at `verifier_result.rewards.reward`** — not top-level `reward`, which does not exist. What
+  matters is per-group `len(set(rewards)) > 1`, never `avg_raw_reward`.
+- **Do NOT rename a task dir or touch a Dockerfile** under `tasks/r2egym-raw` — SIFs are keyed
+  `build_${task_name}-${sha256(Dockerfile):12}.sif`, so that breaks the free cache reuse (4,568/4,578 resolve).
 
-## 7. Open items for Luke — he deferred these, do not chase
+## 7. Tooling — use it, don't re-derive it
 
-1. Ask Marianna for her **~1.6k band task IDs** + band-generation script, as a cross-check once our
-   environment is proven. Her band code is likely in `/e/project1/jureap59/marianna/ot/dc-agent` (JSC-local,
-   not on GitHub; `marianna13/dc-agent` is 404).
-2. Decide whether to copy her SIF cache into our scratch for durability.
-3. **Agent choice:** Luke chose **OpenCode**; her band used **terminus-structured**. Our absolute band % may
-   legitimately differ. The pass/fail criterion is therefore "is there real within-group variance at all", not
-   "does it equal 36%".
+| tool | what it does / enforces |
+|---|---|
+| `hpc/skyrl_standard/jupiter/jup.sh` | `source` it. `jup`/`jrc` serialise every cluster call through a lockfile and force `BatchMode=yes`. **Fixed 08-06** — see §3.2. `jup_bg`/`jrc_bg` detach into tmux ON the cluster. |
+| `arm_rollout_forward.sh <job> <port> <fleet_jobid>` | arms the rollout forward and **verifies the route end-to-end from a compute node**. Pass arg 3 or it warns UNVERIFIED. |
+| `band_preflight.sh <yaml> <wall> <fleet_jobid>` | hard pre-submit gate. Non-zero exit = DO NOT SUBMIT. **TODO: fold in the §3.1 end-to-end route probe.** |
+| `/p/scratch/synthlaion/lee27/envgate.sh <task> <pristine\|oracle>` | **NEW** — model-free environment gate (§1). |
+| `agentstall.py <trace_jobs>` | **NEW** — per-trial tools / ripgrep errors / edits / unparsed-JSON-as-text / last stop reason. This is how §0.3 was measured. |
+| `band.py` / `band_report.py` | the gate ladder + band. **Never eyeball a band.** |
+| `mirrorgate.py` | clone → `/testbed` → did passes edit a file → band. **Its CLONE verdict is inverted on the raw path (§3.5).** |
+| `testbedcheck.py` | earliest signal: is `/testbed` non-empty, did anything try to clone. |
 
 ## 8. Launch recipe
 
@@ -192,7 +264,8 @@ clone-mirror workaround), `1247578` (TP=4, never brought up an engine).
 source hpc/skyrl_standard/jupiter/jup.sh          # then use jup / jrc, never bare ssh
 
 W=/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next ; D=$W
-export BAND_MAX_TASKS=0 BAND_CONC=64 BAND_BRIDGE_PORT=9920 BAND_HARBOR_THINK=1
+export BAND_MAX_TASKS=0 BAND_CONC=64 BAND_BRIDGE_PORT=9920
+export BAND_HARBOR_THINK=0        # <-- 1 emits unparseable tool calls (§0.3). This is the next experiment.
 export BAND_MAX_EPISODES=50 BAND_CPUS=2 BAND_MEM_MB=4096 BAND_STORAGE_MB=8192
 export BAND_MAX_MODEL_LEN=40960 BAND_MAX_NUM_SEQS=1024 BAND_GMU=0.92
 export BAND_TOOL_PARSER=bare_json BAND_TOOL_PARSER_PLUGIN=$D/rl/tool_parsers/bare_json_tool_parser.py
@@ -213,24 +286,36 @@ export APPTAINER_BRIDGE_URL=http://10.128.1.2:9920 SKYRL_CHUNKED_LOGPROBS=1
 export JOB_NAME=<name>
 bash hpc/skyrl_standard/jupiter/run_r2egym_band_probe_8b.sh
 
-# immediately after submit, arm the forward (it records its own IP for the next cancel):
-jup "tmux new-session -d -s armfwd 'bash $W/hpc/skyrl_standard/jupiter/arm_rollout_forward.sh <JOBID> 18300'"
+# immediately after submit -- NOTE arg 3, which is what makes the route verified:
+jup "tmux new-session -d -s armfwd 'bash $W/hpc/skyrl_standard/jupiter/arm_rollout_forward.sh <JOBID> 18300 15500584'"
+# then CONFIRM: grep -E 'ROUTE OK|FATAL' ~/arm_forward_<JOBID>.log
 ```
 
-Keep `SKYRL_CHUNKED_LOGPROBS=1` — it fixes the large-vocab backward OOM (33.41 GiB peak vs stock OOM at the
-identical 30.57 GiB, and 2.4× more accurate than the stock path vs fp64). Confirm via the log line
-`chunked gathered log-softmax ACTIVE`, which only fires during a training step.
+Keep `SKYRL_CHUNKED_LOGPROBS=1` (fixes the large-vocab backward OOM; 33.41 GiB peak vs stock OOM at the
+identical 30.57 GiB, and 2.4× more accurate vs fp64). Confirm via `chunked gathered log-softmax ACTIVE`,
+which only fires during a training step.
 
-`TIME_LIMIT` ≤ 04:00:00 — a 6h job can be deferred a day by a hidden maintenance window. Note that
-`scontrol update TimeLimit=` does **not** help a job whose reason is `Priority` rather than `Resources`
-(measured: shrinking 3:00:00 → 1:30:00 moved the estimated start *later*).
+`TIME_LIMIT` ≤ `04:00:00` — a 6 h job can be deferred a day by a hidden maintenance window. Note
+`scontrol update TimeLimit=` does **not** help a job whose reason is `Priority` rather than `Resources`.
 
-## 9. Branch / repo map
+## 9. Open items for Luke
+
+1. **Decide the order:** (a) `BAND_HARBOR_THINK=0` relaunch — one env var, no fleet restart, tests the
+   likelier cause; or (b) stage `rg` + patch harbor's tool map — needs a **fleet restart**. §1's model-free
+   oracle sweep is independent of both and should run regardless.
+2. Ask Marianna for her **~1.6k band task IDs** + band script as a cross-check (likely
+   `/e/project1/jureap59/marianna/ot/dc-agent`, JSC-local; `marianna13/dc-agent` is 404).
+3. Whether to copy her SIF cache into our scratch for durability.
+4. **Agent choice:** Luke chose OpenCode; her band used **terminus-structured**. Our absolute band % may
+   legitimately differ, so the criterion is "is there real within-group variance at all", not "= 36%".
+   ⚠ Worth revisiting now that OpenCode's `glob`/`grep` are known broken in 100% of trials.
+
+## 10. Branch / repo map
 
 | repo | branch | holds |
 |---|---|---|
 | `OpenThoughts-Agent` fork `lukedhlee` | `lukedhlee/vista-moe-grpo-30b` | `ai_memory/` — this file, `gotchas.md`, `DEAD_KEYS.md` |
-| `OpenThoughts-Agent` worktree `~/ota-band` | `lukedhlee/band-8b-subset` | `band_preflight.sh`, `jup.sh`, `arm_rollout_forward.sh`, `gen_band_yaml.py`, `build_raw.py`, `fix_r2egym_checkout_to_parent.py` |
-| `harbor` fork `lukedhlee` (local clone `~/harbor`) | `lukedhlee/apptainer-opencode-bridge` | `d64180d` offline git mirrors + `mirror_r2egym_repos.sh` — **inert on the raw path**, keep for reference |
+| `OpenThoughts-Agent` worktree `~/ota-band` | `lukedhlee/band-8b-subset` | `jup.sh` (`42bd89e9`), `arm_rollout_forward.sh` (`003a7b94`), `band_preflight.sh`, `gen_band_yaml.py`, `build_raw.py` |
+| `harbor` fork `lukedhlee` (clone `~/harbor`) | `lukedhlee/apptainer-opencode-bridge` | the apptainer worker. **The `rg` fix goes here** (~line 91). Offline git mirrors are **inert on the raw path**. |
 
 `origin` on `OpenThoughts-Agent` is `open-thoughts/` and we have **no push rights** — push to `fork`.
