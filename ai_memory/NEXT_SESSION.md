@@ -6,6 +6,39 @@ Report times in **KST** (cluster clocks are CEST = KST − 7h).
 
 ---
 
+## ★★ 0.0 STATUS 2026-08-06 ~03:40 KST — ENVIRONMENTS ARE VALIDATED, MODEL-FREE
+
+**Both task sets now pass a no-model gate. Do not re-litigate whether the environments work.**
+
+| | result |
+|---|---|
+| **r2egym** | **25/32 tasks** give pristine `0.0` **and** oracle `1.0`. Harness clean: 64/64 records, **0 timeouts, 0 nulls**. **Ceiling 78.1%.** |
+| **SWE-bench Verified** | **6/8 pilot tasks** give nop `0.0` and oracle `1.0`, incl. **django (231/500 = 46% of the benchmark)**. The 6 passing repos cover **413/500 = 83%**. |
+
+The r2egym 7 failures are **broken tasks, not a broken harness** (diagnosed): aiohttp dies on
+`asyncio.async(` -> `SyntaxError` (`async` reserved since Py3.7); pandas dies on pytest
+`unrecognized arguments: --strict-data-files`. Unsolvable by any model = real dead weight. **78.1% is a
+property of the dataset and an upper bound on achievable reward.**
+
+**Getting here required fixing FOUR harness bugs, each of which faked "the environment is broken":**
+missing `agent_tools` bind + `_patch_test_sh_for_offline_pip`; missing `--no-home`; **missing `--cleanenv`
+on `instance start` AND on every `exec`** (the big one — runs went from hanging past 25 min to finishing in
+~2 min); and no `PATH` / wrong cwd / wrong exec form. See `gotchas.md`. **A gate that diverges from
+`worker.py` measures the gate.**
+
+**In flight / next:**
+- Full 500 SWE-bench SIF build running in tmux `swbuild` on JURECA -> `swbuild_all.log`. Pull-only
+  (`apptainer pull`, no `%post`, no fakeroot): ~1.25 GB and ~150-420 s per task, so **~625 GB / several
+  hours**. Do NOT switch to harbor's `prebuild_sifs.sh` (doubles disk for zero reuse at 1:1 bases).
+- SWE-bench repos need **build deps** in `$BRIDGE_AGENT_TOOLS/wheels` (`flit_core`, `setuptools_scm`,
+  `cython==0.29.30`, `oldest-supported-numpy`). Staged 87 -> 95; **expect to extend per new repo.**
+- `rg` is staged at `$BRIDGE_AGENT_TOOLS/bin/rg` and **verified running on a compute node**; the harbor
+  bind is committed (`lukedhlee/apptainer-opencode-bridge` `1019a36f`, pushed). **It needs a `git pull` on
+  the cluster checkout `/p/project1/synthlaion/lee27/harbor` + a FLEET RESTART to take effect** — not done,
+  because restarting risks losing the 32-node allocation. Operator's call.
+
+---
+
 ## 0. Read this first: the finding has MOVED
 
 Yesterday's headline was "the r2egym reward is a constant per task and never measures the model." That was
