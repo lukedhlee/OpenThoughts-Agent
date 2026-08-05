@@ -2004,3 +2004,76 @@ The job log echoes the ENTIRE hydra command line, including `mask_exceptions=[..
 written an hour after re-reading the `grad_norm=1.0` / `max_grad_norm=1.0` entry warning about exactly this.
 Exclude the echo line (`grep -v mask_exceptions`) or anchor on a line prefix. Applies to your own monitors, not
 just to inherited log patterns.
+
+## ★★ `jrc` silently ran HALF your command on the WRONG CLUSTER and still exited 0 (2026-08-06)
+
+**Symptom:** an amd64-only SIF probe sent to JURECA answered
+`the image's architecture (amd64) could not run on the host's (arm64)` — an arm64 answer from a probe aimed at
+an x86_64 machine. A follow-up `jrc 'hostname; uname -m'` printed `bash: line 1: _: command not found` and then
+`aarch64`, with **no hostname at all**.
+
+**Cause:** `jrc` was
+```sh
+jup "ssh -o BatchMode=yes -S $CM $HOST \"\$@\"" _ "$@"
+```
+and **`ssh` joins all of its arguments into ONE remote command string.** So `jrc 'hostname; uname -m'` became,
+on the Jupiter login node:
+```sh
+ssh -S cm jureca05 "$@" _ hostname; uname -m
+```
+With `$@` empty on that hop, the first statement ran `_ hostname` **on JURECA** (hence `_: command not found`,
+which ate the `hostname`), and `uname -m` ran **on JUPITER**, printing `aarch64`. Any `jrc` payload containing
+`;`, `&&`, `||`, `|` or a newline had part of itself executed on the wrong cluster — **and the call still
+exited 0**, so it read as a successful JURECA result. This is the sanctioned tooling that exists specifically
+to stop SSH mistakes.
+
+**Fix:** base64 the payload so it survives both hops as a single opaque token —
+```sh
+_b64=$(printf '%s' "$*" | base64 | tr -d '\n')
+jup "ssh -o BatchMode=yes -S $CM $HOST 'echo $_b64 | base64 -d | bash'"
+```
+Verified by behaviour: `jrc 'hostname; uname -m; echo rc-test-$((1+1))'` → `jrlogin05.jureca` / `x86_64` /
+`rc-test-2`, all three from JURECA. **Never gate a cross-cluster fact on a single-word `jrc` command** — a
+one-word payload is the only case the broken version got right, which is why it survived.
+
+**Same commit, second bug in the same helper:** `trap '...' RETURN` is **bash-only**; zsh (the Mac default)
+rejects it with `undefined signal: RETURN`. It printed two noise lines on every single call *and never
+installed*, so an interrupted `jup` left `$TMPDIR/.jup.lock.d` behind and every later call blocked the full
+300 s before failing. Replaced with an age-based stale-lock break (>10 min) plus real exit-code propagation
+(`_jup_locked` previously returned `rmdir`'s status, not the command's).
+
+## Marianna's r2egym SIFs are amd64 — probe them ONLY from JURECA (2026-08-06)
+
+`apptainer exec` on `/p/scratch/synthlaion/lee27/r2egym_sif/*.sif` from a **Jupiter** login node fails with
+```
+FATAL: While checking container encryption: could not open image ...: the image's
+architecture (amd64) could not run on the host's (arm64)
+```
+The `While checking container encryption` prefix reads like a corrupt or encrypted SIF; it is only an
+architecture mismatch. Her SIFs derive from the prebuilt `namanjain12/<repo>_final` images, which are
+**x86_64-only**, so the sandbox fleet on JURECA `dc-cpu` is not a preference — it is the **only** place these
+can run. (Contrast the *patched* dataset, whose `python:X.Y` base is multi-arch and therefore ran natively on
+Jupiter aarch64 — do not carry that assumption over to the raw path.)
+
+## Risk RETIRED: `uv pip install chardet` under `set -e` does NOT abort offline (2026-08-06)
+
+`NEXT_SESSION.md` §4.1 flagged that her `tests/test.sh` runs `set -e` and then `uv pip install chardet` with no
+network, which would abort every trial *before* grading and show as **null** rewards. **Measured on JURECA
+against a real SIF — it is safe:**
+
+| condition | result |
+|---|---|
+| `chardet` baked into `/testbed/.venv` | **yes, 5.2.0** |
+| `uv pip install chardet`, SIF read-only | `error: failed to create file /testbed/.venv/.lock: Read-only file system` ⇒ **would abort** |
+| `uv pip install chardet`, **with a writable overlay** | `Audited 1 package in 252ms`, **exit 0** ✅ |
+
+uv short-circuits an already-satisfied unversioned requirement without touching the network, but it still
+takes a lock file, so the pass depends on the writable layer. Harbor's
+`environments/apptainer/worker.py` creates a **4 GB ext3 overlay image** per instance
+(`apptainer overlay create --size 4096`; a *directory* overlay is rejected in setuid mode), so production has
+it. **Corollary:** null rewards on the raw path are NOT chardet — look elsewhere.
+
+**Also confirmed at the image level:** `apptainer exec <sif> ls /testbed` lists the real repo (Orange3:
+`Orange/`, `setup.py`, `CHANGELOG.md`, …). `/testbed` is **populated inside the SIF itself**, with no clone
+and no network — the direct refutation of the flattened-dataset root cause, established independently of any
+rollout completing.
