@@ -2322,3 +2322,60 @@ and local HEAD differed in `/etc/gitconfig safe.directory`, an astropy shim, and
 `drwxrwxrwx` owned by **our own uid** (34902). So harbor's writable-workdir pre-copy + bind
 (`worker.py:494-522`), which exists for clusters without subuid mappings, is **not needed on JURECA** —
 `patch -p1` and `git apply` work directly against `/testbed`. Do not add that bind cargo-culted.
+
+# ★★ ENVIRONMENTS VALIDATED MODEL-FREE — 2026-08-06 ~03:30 KST
+
+## r2egym: GATE PASS 25/32, ceiling 78.1%
+
+After the four harness fixes (agent_tools bind + offline patch; `--no-home`; `--cleanenv`; PATH/cwd/exec
+form), the 32-task x {pristine, oracle} sweep is **clean**: 64/64 records, **0 timed out, 0 null, offline
+patch ok 64/64**, and each run finishes in **~2 min** where the unfixed gate hung past 25. That timing
+collapse is the confirmation that `--cleanenv` was the stall.
+
+**25/32 tasks produce pristine `0.0` AND oracle `1.0`** — the reward takes both values on the same task with
+**no model in the loop**. The environment measures code state. This is the model-free counterpart to the
+02:30 in-job gate (`r2egym-2514`) and is much stronger evidence, because it cannot be confounded by agent
+behaviour.
+
+**The 7 failures are broken TASKS, not a broken harness** — diagnosed, not assumed:
+- `r2egym-1739..1742` (aiohttp): `self._writer = asyncio.async(` -> `SyntaxError: invalid syntax`. `async`
+  became a reserved word in Python 3.7, so the repo cannot even be imported by the image's interpreter.
+- `r2egym-3134..3136` (pandas): `pytest: error: unrecognized arguments: --strict-data-files` (from the
+  repo's `setup.cfg`); the installed pytest predates that option, so the suite can never run.
+Both are unsolvable by ANY model -> genuine dead weight. **78.1% is a real property of the dataset**, and it
+is an upper bound on achievable reward, not a harness artefact.
+
+## SWE-bench Verified: GATE PASS 6/8 pilot, covering 83% of the benchmark
+
+| task | nop | oracle | |
+|---|---|---|---|
+| django__django-10554 | 0.0 | 1.0 | **PASS** |
+| sympy__sympy-12489 | 0.0 | 1.0 | **PASS** |
+| matplotlib__matplotlib-14623 | 0.0 | 1.0 | **PASS** |
+| scikit-learn__scikit-learn-25102 | 0.0 | 1.0 | **PASS** |
+| pydata__xarray-3993 | 0.0 | 1.0 | **PASS** |
+| pytest-dev__pytest-10356 | 0.0 | 1.0 | **PASS** |
+| astropy__astropy-13398 | null | null | build deps |
+| sphinx-doc__sphinx-11510 | null | null | build deps |
+
+The pilot is one task from each of the 8 largest repos, which together are **479/500** instances. The 6
+passing repos alone are **413/500 = 83%**. **django is 231/500 (46%)** — if django works, half the benchmark
+works, and it does.
+
+**The 2 failures are a wheel-cache gap, not an environment defect.** SWE-bench `test.sh` runs
+`python -m pip install -e .[test]`, which needs **build** dependencies; offline pip (`PIP_NO_INDEX`) then
+correctly reports `No matching distribution found for flit_core>=3.7` / `setuptools_scm>=6.2`,
+`cython==0.29.30`, `oldest-supported-numpy`. Note `scikit-learn` passes *because harbor deliberately blanks
+its install step* (`swebench_adapter/utils.py:82-83`) — evidence the intended fix is to avoid or satisfy
+that install, not to change the environment.
+Staged the missing wheels into `$BRIDGE_AGENT_TOOLS/wheels` (87 -> 95) with
+`pip download --only-binary=:all: --platform manylinux2014_x86_64 --python-version {39,311}`.
+**Any new SWE-bench repo may need its own build deps — expect to extend the wheel cache per repo.**
+
+## SWE-bench SIF build: pull-only works, ~1.25 GB/task
+
+`apptainer pull docker://<image>` alone is sufficient — **no `%post`, no `--fakeroot`** — because the only
+things the adapter's Dockerfile adds are `uv` (already on PATH from `agent_tools`) and `/logs` (bind-mounted).
+Measured on 8 pilot tasks: **147-424 s each, 10 GB total (~1.25 GB avg)** -> **~625 GB for 500**, against
+36 TB free. Do NOT use harbor's `prebuild_sifs.sh` here: with 1:1 base images it also pre-pulls each base
+into its own `base_*.sif`, roughly doubling disk for zero reuse.
