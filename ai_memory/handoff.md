@@ -1352,3 +1352,86 @@ python3 /e/fscratch/reformo/lee27/rewardcheck.py   # now globs band_oc_s*
   Qwen3 XML tool calls at all; inspect `agent/opencode.txt` for what it returned, and consider that a
   terminus-trained model may simply never produce OpenCode's format — in which case terminus-2's timeout
   becomes the only path and must be fixed.
+
+---
+
+## 2026-08-05 (session: gate resolved, OOM fixed) — the FAIL branch was right
+
+### The gate FAILED, and the cause is a tool-call FORMAT mismatch, not thinking
+`1242066` produced **182/182 steps with `median_steps=1`, `max_steps=1`**. Thinking-off **did** apply
+(`reasoning: 0` tokens); the `<think>` tags are literal trained-in text, so that knob was never the lever.
+
+Root cause, verified end to end:
+1. The checkpoint emits tool calls as **bare JSON in the message body** —
+   `{"name":"bash","arguments":{"command":"ls -la /testbed"}}`. Census over every step: **182 bare JSON,
+   0 `<tool_call>`, 0 `<function=`.**
+2. vLLM is served `--enable-auto-tool-choice --tool-call-parser qwen3_coder`, which parses only the XML
+   grammar. It never matches and **never logs** — the silent failure that hid this.
+3. OpenCode gets one `type:"text"` part, zero tool parts, `reason:"stop"` → one step.
+4. Verifier grades an untouched repo ⇒ reward is a function of the TASK, not the agent.
+
+⚠ **The zero-variance symptom is now explained, not merely observed.** 46 task groups, **0 with
+within-group variance**. The agent never acts, so reward cannot vary within a group.
+
+⚠ **NEW: ~22% of r2egym tasks pass with zero work.** Grouped: **10/46 all-1.0, 36/46 all-0.0, 0 mixed.**
+Those 10 verifiers pass on an unmodified repo. They put a free floor under any band number and can never
+yield gradient — **exclude them from the band denominator.**
+
+### The parser fix is written and validated — but NOT yet wired
+`OpenThoughts-Agent/rl/tool_parsers/bare_json_tool_parser.py` (uncommitted). Validated offline against
+**all 182 real captured outputs: 182 parsed, 0 missed**, 8/8 edge cases, streaming emits exactly 1 delta.
+Why it was cheap — four stock parsers each miss by one detail:
+`qwen3_coder`/`qwen3xml` want XML · `hermes` wants this exact JSON but wrapped in `<tool_call>` ·
+`llama3_json` has the right logic but hard-requires `<|python_tag|>`, absent from the Qwen3 vocab, so it
+raises at construction · `xlam` strips `</think>` and takes the same keys but demands a top-level ARRAY.
+⛔ **Remaining gap:** `skyrl_train/inference_engines/vllm/utils.py::pop_openai_kwargs` forwards
+`enable_auto_tool_choice` / `tool_call_parser` / `openai_sampling_params` but **NOT `tool_parser_plugin`**,
+so the plugin currently has no path through. ~4 lines mirroring the existing `tool_parser` passthrough.
+
+### MILESTONE: the backward OOM is FIXED (MarinSkyRL `637a764`)
+⚠ **The old arithmetic in this doc was wrong.** It used the 8B's vocab for the 35B. The 35B's real vocab is
+**248320**, nested in `config.json → text_config` (top level has only `image_token_id` etc.).
+That reproduces the failure exactly: `30.57 GiB / 4 B / 248320 = S≈33046 ≈ max_seq_len`. The grad is
+allocated in **fp32** because autocast promotes `log_softmax` — which is why a "bf16 branch" produced a
+30 GiB fp32 tensor. Real budget for that one op: logits 15.2 + saved output 15.2 + fp32 grad 30.6 ≈ **61 GiB**.
+
+The failing op is `_log_softmax_backward_data` / `LogSoftmaxBackward0` inside `logprobs_from_logits_v2`'s
+bf16 branch. That function bounds memory by looping the **BATCH** dim — a no-op at
+`micro_train_batch_size_per_gpu=1`.
+⚠ **Sequence-chunking alone does NOT work**: `log_softmax` saves its output, so every chunk's output stays
+live. The fix mirrors `_EntropyFromLogits`: save only logits, recompute softmax per chunk in backward.
+
+GPU-validated on GH200 (jobs `1243216`, `1243229`):
+
+| check | result |
+|---|---|
+| fp32 parity | fwd diff **0.000e+00**, grad 2.4e-07 |
+| bf16 under autocast (**the training path**) | fwd **9.5e-07**, grad 3.1e-05 |
+| seq not divisible by chunk | pass |
+| peak @ S=33046, V=248320 | **chunked 33.41 GiB** vs stock **OOM "Tried to allocate 30.57 GiB"** (byte-identical to the original failure) |
+| bf16 no-autocast "mismatch" | adjudicated vs fp64: chunked is **2.4x MORE accurate** — it was the reference's bf16 error |
+
+**Off by default.** `SKYRL_CHUNKED_LOGPROBS=1` engages it and the call site logs
+`[logprobs] chunked gathered log-softmax ACTIVE` **once** — verify by that line, never by the config.
+Note the line only fires during a TRAINING step (~2h in, after generation), so `FIX=0` early is expected.
+
+### Four operational traps that each cost a job or an attempt
+1. **There are TWO MarinSkyRL clones.** A bare `python` imports
+   `/e/scratch/reformo/lee27/MarinSkyRL`; the RL job prepends
+   **`MarinSkyRL-apptainer-bridge/skyrl-train`** to `PYTHONPATH`. Sync/patch the BRIDGE clone, and give any
+   standalone test the same `PYTHONPATH` or it silently tests the wrong code.
+2. **`retarget_job.sh`'s `OLD_TARGETS` is STALE** — it lacks `10.128.18.209` (1229649's head), so that dead
+   job's forward still held port 18000 and the retarget burned all 5 retries and exited FATAL. Cancel the
+   previous head explicitly: `ssh -S ~/.ssh/cm_jureca/qwen36 -O cancel -R 10.14.0.46:18000:<oldIP>:8000 …`
+   **Always cancel a job's forward when it dies, or the port is burned.**
+3. **Submit RL from the repo root with `DCFT` set** — `1243248` FAILED instantly with
+   `FATAL: WORKDIR=... is not the OpenThoughts-Agent repo root`. Use
+   `cd /e/scratch/reformo/lee27/OpenThoughts-Agent && export DCFT=$PWD && sbatch --chdir=$PWD …`.
+   `sbatch --time=` and `--export=ALL,VAR=v` override the generated sbatch without editing it.
+4. **Do not run Jupiter ssh calls in parallel** — the ControlMaster refuses sessions
+   (`session request failed`) and you get a bogus TOTP prompt. This is the same channel exhaustion that
+   broke the watcher on `1229649`. Serialize.
+
+### Booster is no longer starved
+`sinfo`: **2349 idle** nodes (was 147 drain / 1 idle). Jobs now allocate in seconds and longer walls are
+available — the 3h geometry that constrained `1229649` is no longer forced.

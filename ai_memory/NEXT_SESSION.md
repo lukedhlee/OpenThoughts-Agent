@@ -1,4 +1,4 @@
-# Takeover — 2026-08-05 (supersedes the 04 Aug 10:30 KST note)
+# Takeover — 2026-08-05 (supersedes the 05 Aug 10:30 KST note)
 
 Report times in **KST**. Read `ai_memory/handoff.md` bottom-up (newest sections first), then `gotchas.md`.
 
@@ -7,64 +7,87 @@ Agentic RL (GRPO) on `Qwen/Qwen3.6-35B-A3B` over r2egym. Jupiter = training + vL
 sandboxes reached via a reverse SSH forward from a Jupiter login node.
 
 **Two goals, in order:**
-1. **The milestone** — one finite optimizer update + checkpoint + HF export. Still never executed.
-2. **The learnable band** — p@4 over 3,328 tasks on `g1_diverse_tezos_100k_8b` (the co-lead's own 8B).
-   Every group we have ever scored had **zero within-group reward variance** ⇒ advantage 0 ⇒ no gradient.
-   The band is a gradient prerequisite, not a compute saving.
+1. **The milestone** — one finite optimizer update + checkpoint + HF export.
+   **The blocker is FIXED and a run is in flight (`1243351`).** Confirm the outcome first.
+2. **The learnable band** — p@4 over 3,328 tasks. **Root cause of the zero-variance wall is now known**
+   (tool-call format mismatch, below). The fix is written and validated but **not yet wired on the cluster.**
 
 ## Establish reality first — do not trust the numbers below
 ```bash
 ssh jupiter "squeue --me -o '%.10i %.9T %.6M %.6L %.4D %N'"
-ssh jupiter "ssh -S ~/.ssh/cm_jureca/qwen36 jureca.fz-juelich.de 'squeue --me'"   # bare `ssh jureca` FAILS
-ssh jupiter "curl -s -m 8 http://10.128.1.2:9921/status"                          # probe bridge
-ssh jupiter "python3 /e/fscratch/reformo/lee27/trajcheck.py"                      # THE GATE
-ssh jupiter "python3 /e/fscratch/reformo/lee27/rewardcheck.py"
+ssh jupiter "sacct -j 1243351 --format=JobID,State,Elapsed -n | head -3"
+D=/e/fscratch/reformo/lee27/experiments/jupiter_qwen36_35b_r2egym_grpo_canary_n4t1800_20260804h
+N=jupiter_qwen36_35b_r2egym_grpo_canary_n4t1800_20260804h
+ssh jupiter "ls -d $D/$N/checkpoints/global_step_* 2>/dev/null; ls $D/$N/exports 2>/dev/null"   # THE MILESTONE
+ssh jupiter "grep -ac 'chunked gathered log-softmax ACTIVE' $D/logs/${N}_1243351.out"           # fix engaged?
+ssh jupiter "ssh -S ~/.ssh/cm_jureca/qwen36 jureca.fz-juelich.de 'squeue --me'"                 # bare `ssh jureca` FAILS
 ```
+⚠ **Judge the milestone by ARTIFACTS on disk, never by a log line.** `Finished: 'policy_train'` is logged
+from `__exit__` as an exception propagates. Success = a `checkpoints/global_step_*` dir **and** a
+non-empty `exports/`.
 
-## Live: job 1242066 — OpenCode 1.18.8 + thinking OFF, port 18180
-2 nodes, 3 h wall. JURECA fleet **15498197** (32 x dc-cpu, 16 workers/node, tmpfs staging) has ~20 h — reuse it.
+## Milestone: the OOM is fixed (MarinSkyRL `637a764`, already on the cluster clone)
+`_log_softmax_backward_data` in `logprobs_from_logits_v2`'s bf16 branch. That function bounds memory by
+looping the **BATCH** dim — a no-op at `micro_train_batch_size_per_gpu=1` — so it ran one autocast-promoted
+fp32 `log_softmax` over the full `[S, V]`. **Real vocab is 248320** (nested in `config.json → text_config`;
+the old note's 151936 was the 8B's) ⇒ `30.57 GiB / 4 B / 248320 = S≈33046`, matching exactly.
+Fixed by recomputing softmax per chunk in backward (saving only logits), mirroring `_EntropyFromLogits`.
+Sequence-chunking alone does **not** work — `log_softmax` saves its output.
+GPU-validated: chunked **33.41 GiB** vs stock **OOM at the identical "30.57 GiB"**; training-path parity
+9.5e-07; and vs fp64 the chunked path is **2.4x more accurate** than the stock one.
 
-**Decide on the gate, nothing else:**
-- **`median_steps > 1`** → it works. Launch shards 1-7: set the port base in
-  `/e/fscratch/reformo/lee27/launch_band_shards.sh` to **18190**, then
-  `bash launch_band_shards.sh 1 7 04:00:00` and `setsid nohup bash fwd_all.sh &`.
-  First wait for the bridge's `stopping` count to reach ~0, or the new shards queue behind the drain.
-- **`median_steps == 1`** → thinking was not the cause. Read `agent/opencode.txt` for what the model
-  returned: a terminus-trained checkpoint may never emit OpenCode's Qwen3 XML tool calls, which would make
-  terminus-2's request timeout the only path and the thing to fix.
+**Off by default.** `SKYRL_CHUNKED_LOGPROBS=1`. Verify by the `ACTIVE` log line, which only fires during a
+TRAINING step (~2h in, after generation) — `FIX=0` early is expected, not a failure.
 
-## Four rules that each cost hours
-1. **`scored=N` counts FILES, not rewards.** Gate ladder in order: non-null reward → **trajectory with
-   >1 step** → trial duration in *minutes* → only then believe a band number. Four separate bugs produced
-   null rewards while every progress counter looked healthy.
-2. **Address the rollout endpoint by IP `10.14.0.46`, never `jrlogin05i`.** Inside the sandbox Python and
-   curl resolve that hostname differently, and it varies by node.
-3. **Sandbox staging must be node-local** (`STAGING_BASE=/tmp/apptainer_staging`): `apptainer overlay
-   create` is 18.06 s on `/p/scratch` vs 3.57 s on tmpfs, against a **hardcoded 60 s** timeout.
-4. **JURECA ports are single-use** — a forward left by a dead job cannot be reclaimed. Burned 18100-18180.
-   **Never `pkill -f` over SSH** — it kills your own session mid-chain; use `tmux kill-session`.
+**If `1243351` still OOMs:** lower `SKYRL_CHUNKED_LOGPROBS_CHUNK` (default 1024) or cap training seq len.
+The op itself is proven to fit; anything left is the surrounding activation budget.
 
-## The milestone's remaining blocker is arithmetic, not infrastructure
-`1229649` finished generation (16/16 groups, `avg_pass_at_4 0.375`), ran forward logprobs and advantages,
-then died in **backward**: `torch.OutOfMemoryError: Tried to allocate 30.57 GiB` (95 GiB GPU, 3.97 free).
-Shape is large-vocab logits: ~151k vocab x 28,672 tokens ~= 8.6 GiB/copy bf16, several live at once, and
-gradient checkpointing does not touch the final projection. Try chunked/fused cross-entropy, a shorter
-training-time sequence cap, or sequence/tensor parallelism.
-⚠ `Finished: 'policy_train'` is **NOT** success — the timer logs it from `__exit__` as the exception propagates.
+## Band: the zero-variance wall is a TOOL-CALL FORMAT MISMATCH
+The checkpoint emits **bare JSON** — `{"name":"bash","arguments":{...}}` — with no `<tool_call>`
+delimiter. Census on `1242066`: **182 bare JSON, 0 XML.** vLLM ran `--tool-call-parser qwen3_coder`, which
+parses only XML, so it matched nothing and **logged nothing**; OpenCode saw text, stopped at step 1; the
+verifier graded an untouched repo ⇒ reward is a function of the task ⇒ **0 of 46 groups had variance.**
+Thinking was never the cause (`reasoning: 0`; the `<think>` tags are literal trained-in text).
 
-## Ask the co-lead (Marianna) — cheap, and both change what we run
-1. Her **band task-ID list** (V1 indices or docker_images). Our 3,328 is a 73% subset of her 4,578 keyed by
-   the same index, so it intersects directly (~1,160 expected) — one message vs ~10 h of generation.
-2. **Which agent, and was thinking on?** The band belongs to the (model, agent, config) triple, so her
-   ~35% is only comparable if those match.
+**To finish this (≈30 min):**
+1. `cd /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge && git fetch fork <branch> && git reset --hard`
+   — picks up `d8bdc79`, which forwards `tool_parser_plugin`. **NOT yet synced** (deliberately: a job was
+   running and Ray can spawn workers against changed code).
+2. Add to the RL yaml / overrides:
+   `engine_init_kwargs.tool_parser_plugin: <repo>/rl/tool_parsers/bare_json_tool_parser.py`
+   and `tool_call_parser: bare_json` (OT-Agent `4add607c`).
+3. Re-run one shard and check `trajcheck.py` gives **`median_steps > 1`**.
+
+⚠ **NEW — exclude the free-pass tasks.** 10 of 46 groups score **1.0 while doing nothing**: those r2egym
+verifiers pass on an unmodified repo. They put a ~22% floor under any band number and can never yield
+gradient. Drop them from the denominator.
+
+## Traps that each cost a job or an attempt today
+1. **Two MarinSkyRL clones.** A bare `python` imports `/e/scratch/.../MarinSkyRL`; the RL job prepends
+   **`MarinSkyRL-apptainer-bridge/skyrl-train`** to `PYTHONPATH`. Patch the BRIDGE clone; give standalone
+   tests the same `PYTHONPATH` or you silently test the wrong code.
+2. **`WORKDIR` is `/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next`** — NOT
+   `/e/scratch/.../OpenThoughts-Agent` (which lacks `hpc/shell_utils/flashinfer_aot_cache.sh`). Submit as
+   `cd $W && export DCFT=$W && sbatch --chdir=$W --time=… --export=ALL,DCFT=$W,… <sbatch>`.
+   Wrong dir ⇒ instant FAIL (`1243248`, `1243289`). `--time=`/`--export=` override without editing the file.
+3. **`retarget_job.sh`'s `OLD_TARGETS` is STALE** (lacks `10.128.18.209`), so a dead job's forward still
+   held port 18000 and the watcher burned all 5 retries → FATAL. Cancel explicitly:
+   `ssh -S ~/.ssh/cm_jureca/qwen36 -O cancel -R 10.14.0.46:18000:<oldIP>:8000 jureca.fz-juelich.de`
+   **Always cancel a job's forward when it dies, or the port is burned.** Then re-add to the new head IP
+   and confirm `ss -ltn | grep 18000`. **Verify a watcher's RESULT, not that you launched it.**
+4. **Never run Jupiter ssh calls in parallel** — the ControlMaster refuses sessions and you get a spurious
+   TOTP prompt. Same channel exhaustion that broke the watcher on `1229649`. Serialize.
 
 ## Standing constraints
-Jupiter <=16 nodes / JURECA <=32 for this work · never `scancel` another user's job · never `find`/`du` on
-GPFS or JURECA scratch · bind listeners to internal interfaces, never `0.0.0.0` · `enable_db_registration:
-false` · local clones are ground truth: edit locally → push to `fork` → `git fetch` + hard reset on the
-cluster, never hand-edit · no `Co-Authored-By` in commits.
+Jupiter <=16 nodes / JURECA <=32 · never `scancel` another user's job · never `find`/`du` on GPFS or JURECA
+scratch · bind listeners to internal interfaces, never `0.0.0.0` · `enable_db_registration: false` · local
+clones are ground truth: edit locally → push to `fork` → `git fetch` + hard reset on the cluster, never
+hand-edit · no `Co-Authored-By` in commits.
 
 ## Do not re-derive
-The **`0/197` band figure is RETRACTED** — an artifact of one-step trajectories. It is left in the handoff
-deliberately so nobody trusts it from git history. Six accepted-but-ignored config keys so far (newest:
-harbor `timeout`) — verify any key by **behaviour**, never by its presence in the materialized config.
+- The **`0/197` band figure is RETRACTED** (one-step-trajectory artifact), and so is the old **"151k vocab
+  × 28,672 tokens ≈ 8.6 GiB"** arithmetic — wrong model's vocab. Both are left in `handoff.md` deliberately.
+- **Booster is no longer starved**: ~2349 idle nodes, jobs allocate in seconds, longer walls available.
+  The 3h geometry that constrained `1229649` is no longer forced.
+- Six accepted-but-ignored config keys so far — verify any key by **behaviour**, never by its presence in
+  the materialized config.
