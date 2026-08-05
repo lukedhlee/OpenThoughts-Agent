@@ -1914,3 +1914,93 @@ otherwise some trials are served by unpatched workers and the run is a silent mi
 After cloning, the instruction runs `pip install --no-build-isolation -e .` on numpy/pandas/sympy. Compiling
 those in a **1 CPU / 1 GB** sandbox (the Marianna-parity sizing) may be too slow or OOM. If so, sandbox
 resources must go up and parity on that axis is lost. Correctness first.
+
+---
+
+## RESOLUTION of the constant-reward bug: use the UNPATCHED dataset + her prebuilt SIFs (2026-08-06)
+
+Supersedes the mirror/parent-checkout workaround in the entry above — that fix was correct but covered only the
+**45%** of patched tasks whose `test.sh` reads `/testbed`. It is now inert; keep it for reference only.
+
+**The patched dataset cannot be repaired.** For the "hard repos" bucket (numpy, pandas, orange3, matplotlib,
+sympy = **1,828 of 3,328 = 55%**) `tests/test.sh` sets `TESTS_DIR=/r2e_tests`, deliberately OUTSIDE `/testbed`,
+so pytest's rootdir walk cannot put the repo on `sys.path` and shadow the pip-installed wheel. Verified by
+reading two task `test.sh` files: numpy gets `/r2e_tests`, aiohttp gets `/testbed/r2e_tests`. No amount of
+fixing the clone makes those tasks respond to the agent.
+
+**`data/r2egym/PATCHING.md` documented the whole thing all along**, including the giveaway:
+
+> `python:3.9-bookworm` (scientific) | numpy, pandas, orange3, matplotlib, sympy | Tasks **skip
+> `pip install -e .`** and pytest runs from `/tmp` so the source tree at `/testbed` doesn't shadow the
+> pre-installed package. Trade-off: oracle verifies "**pre-installed wheel satisfies expected outcomes**"
+> rather than "this exact commit's source compiles and passes"
+
+The flattening served Daytona's `auto_snapshot` cache (8,101 snapshots → 3). **We are on Apptainer SIFs, so that
+constraint no longer applies to us** — the justification for breaking the dataset expired and nobody noticed.
+
+**What to use instead.** Marianna's unpatched dataset AND her prebuilt SIFs are readable on shared scratch:
+
+```
+tasks : /p/scratch/transfernetx/nezhurina1/r2egym_apptainer_dataset   4,578 tasks, FROM namanjain12/<repo>_final:<sha>
+SIFs  : /p/scratch/transfernetx/nezhurina1/sif_cache/build_r2egym-*.sif   4,568 built, ~830MB each
+```
+
+4,578 is **exactly** the pool behind her "~1.6k of 4.5k ≈ 36%" band, so a number measured here is directly
+comparable to hers. Cost of adopting it: **zero Docker pulls, zero SIF builds.** The Docker Hub rate limit that
+looked like the blocker (~100 anonymous pulls / 6h vs 3,328 needed) is irrelevant.
+
+**Two mechanical facts that make it work:**
+
+1. **A SIF is keyed `build_${task_name}-${sha256(Dockerfile):12}.sif`.** So copy her tree with byte-preserving
+   `shutil.copyfile` and KEEP her task dir names (`r2egym-0000`, ...). Verified 4,568/4,578 resolve; the 10
+   misses are ones she never built. Rename a dir or touch a Dockerfile and every task misses the cache and
+   tries to pull. Symlink her SIFs into our own writable cache (`ln -s`) rather than copying 3.7 TB — our dir
+   stays writable so the fleet can still build anything missing.
+2. **Her tasks have no `instruction.md`.** The prompt lives in
+   `environment/workspace/metadata.json:problem_statement` (alongside `docker_image`, `base_commit`,
+   `expected_output_json`), which her harbor fork reads and ours does not — our patcher is what moves it into
+   `setup_files/` and writes `instruction.md`. `build_raw.py` generates `instruction.md` from that field, strips
+   the `[ISSUE]` wrapper, and states the repo is already at `/testbed` so no agent tries to clone.
+
+Her `tests/test.sh` depends on the IMAGE's contents (`/testbed/.venv`, `/r2e_tests` at root) — correct for
+prebuilt images. It runs `uv pip install chardet` under `set -e`; she pre-baked chardet into the SIFs
+(`rebuild_r2egym_sifs.sh`) so that succeeds offline. If the SIFs we symlink predate that rebuild, trials abort
+BEFORE grading and show **null** rewards — distinguishable from a zero band, so do not pre-emptively patch it.
+
+**Her R2E-Gym path contains no `git clone` and no `git checkout` at all** — the buggy state comes entirely from
+the image's baked `/testbed`. So `base_commit~1` was OUR hypothesis and no upstream code validates it; adopting
+the raw dataset retires the question instead of betting on the answer.
+
+## `ssh -O cancel -R` matches the CONNECT address, not just the listen port (2026-08-06)
+
+A cancel spec must reproduce the original forward exactly:
+
+```bash
+ssh -S $CM -O cancel -R 10.14.0.46:<PORT>:<ORIGINAL_HEAD_IP>:8000 $H   # works
+ssh -S $CM -O cancel -R 10.14.0.46:<PORT>:0.0.0.0:8000        $H       # silently NO-OPS, exit 0
+```
+
+A wildcard or guessed IP **returns success while changing nothing**, so the port stays bound to a dead head
+node. The symptom is an empty `agent/` dir with a perfectly healthy bridge, surfacing only 35 min later at
+`BRIDGE_EXEC_TIMEOUT`. This happened three times on 08-05 (and killed `1246853`) because nothing recorded which
+IP was installed. Recover the real one:
+
+```bash
+N=$(sacct -j <jobid> -X -o NodeList%40 -n | tr -d ' ')
+H=$(scontrol show hostnames "$N" | head -1); IP=$(getent hosts "$H" | cut -d' ' -f1)
+```
+
+**Fixed structurally:** `hpc/skyrl_standard/jupiter/arm_rollout_forward.sh` appends every install to
+`~/.rollout_forwards` and cancels from that file on startup; it refuses to run if the port is bound by something
+it cannot account for. Also `hpc/skyrl_standard/jupiter/jup.sh` now serialises all cluster ssh through a
+lockfile and forces `BatchMode=yes` — three SSH rules had been written down twice each and violated three times
+in one day. Prose does not enforce invariants.
+
+## Anchor your own grep patterns against the config echo (2026-08-06, third instance)
+
+The job log echoes the ENTIRE hydra command line, including `mask_exceptions=[...]` and
+`exclude_exceptions=[...]`. A monitor grepping `FileNotFoundError` matched
+`RewardFileNotFoundError` inside those lists and reported phantom errors on a healthy run — twice, in a filter
+written an hour after re-reading the `grad_norm=1.0` / `max_grad_norm=1.0` entry warning about exactly this.
+Exclude the echo line (`grep -v mask_exceptions`) or anchor on a line prefix. Applies to your own monitors, not
+just to inherited log patterns.
