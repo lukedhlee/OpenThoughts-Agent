@@ -77,6 +77,12 @@ ENV_MAX_MODEL_LEN = int(os.environ.get("BAND_MAX_MODEL_LEN", "0"))
 ENV_TP = int(os.environ.get("BAND_TP", "0"))
 ENV_ENGINES = int(os.environ.get("BAND_ENGINES", "0"))
 ENV_GMU = float(os.environ.get("BAND_GMU", "0") or 0)
+# Thinking ON is the co-lead's configuration (interleaved_thinking=true,
+# extra_body.chat_template_kwargs.enable_thinking=true), so band parity wants
+# true. These two keys are INERT for OpenCode (harbor implements extra_body for
+# terminus_2/openhands/mini_swe_agent only), but leaving them at false while the
+# model actually thinks is a lie in the config that will mislead the next reader.
+ENV_HARBOR_THINK = os.environ.get("BAND_HARBOR_THINK", "")
 if ENV_MAX_TASKS:
     shards = [s[:ENV_MAX_TASKS] for s in shards]
 
@@ -235,6 +241,10 @@ for i, shard in enumerate(shards):
         # early enough for one large tool observation to land.
         newtok = c["context_budget"].get("max_new_tokens_per_turn", 4096)
         c["context_budget"]["client_window_tokens"] = max(8192, ENV_MAX_MODEL_LEN - newtok - 4096)
+    if ENV_HARBOR_THINK != "":
+        _think = ENV_HARBOR_THINK not in ("0", "false", "False")
+        tb["interleaved_thinking"] = _think
+        tb.setdefault("extra_body", {}).setdefault("chat_template_kwargs", {})["enable_thinking"] = _think
     if ENV_CPUS:
         tb["override_cpus"] = ENV_CPUS
     if ENV_MEM_MB:
