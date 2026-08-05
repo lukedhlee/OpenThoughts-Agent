@@ -1,165 +1,199 @@
-# Takeover — 2026-08-05 (supersedes the 05 Aug 10:30 KST note)
+# Takeover — 2026-08-05 (late) — supersedes all earlier notes
 
-Report times in **KST**. Read `ai_memory/handoff.md` bottom-up (newest sections first), then `gotchas.md`.
+Report times in **KST**. Read `ai_memory/handoff.md` bottom-up (newest last), then `gotchas.md`.
 
 ## Mission
-Agentic RL (GRPO) on `Qwen/Qwen3.6-35B-A3B` over r2egym. Jupiter = training + vLLM; JURECA = Apptainer
-sandboxes reached via a reverse SSH forward from a Jupiter login node.
+Agentic RL (GRPO) on `Qwen/Qwen3.6-35B-A3B` over r2egym. Jupiter = training + vLLM;
+JURECA = Apptainer sandboxes reached via reverse SSH forwards from a Jupiter login node.
 
-**Two goals, in order:**
-1. **The milestone** — ✅ **THE MACHINERY LANDED on `1243377`.** For the first time: an optimizer update
-   ran, `checkpoints/global_step_1` (**235 GB**) was written, and `exports/global_step_1` (**65 GB**,
-   HF-format) was produced. The OOM fix worked in production — the log printed
-   `chunked gathered log-softmax ACTIVE (chunk=1024, vocab=248320, ...)` and backward completed with
-   `OOM=0`, execution continuing past `policy_train` into `train_critic_and_policy` / `run_training`.
-   ⛔ **BUT THE UPDATE IS NUMERICALLY VACUOUS — `grad_norm=0`.** All 64 rollouts died with
-   `BridgeOperationTimeoutError` (600s), so rewards were null→0, every group was uniform, and the
-   advantage was 0. The exported weights are effectively the base model. **A meaningful update still
-   requires a working rollout route (below).** Not my code: the chunked backward was verified to return
-   correct non-zero gradients (a zero-returning impl would have FAILED the scaled-tolerance parity test).
-2. **The learnable band** — p@4 over 3,328 tasks. **Root cause of the zero-variance wall is now known**
-   (tool-call format mismatch, below). The fix is written and validated but **not yet wired on the cluster.**
+## ✅ What changed today — the pipeline actually works now
+**For the entire project until today, no rollout had ever produced a multi-step trajectory.** The cause was
+never the model or the reward: **two reverse tunnels were dead** and every trial timed out. With both
+restored:
 
-## Establish reality first — do not trust the numbers below
+| signal | before | now |
+|---|---|---|
+| trajectory steps | `median=1, max=1` | **`median=18.5, max=26`** |
+| bridge timeouts | 32/32 trials | **0 of last 12** |
+| reward spread | uniform (0 of 46 groups varied) | **8×0.0, 4×1.0 → 33% pass** |
+
+**33% ≈ Marianna's ~35%.** Different model (that run is the 35B), but it means **a learnable band EXISTS on
+this task set**. Variance was never absent — the agent was never running. That retires the biggest risk.
+
+**Also banked:** the MILESTONE machinery. `1243377` COMPLETED (exit 0:0) with a real optimizer update,
+`global_step_1` checkpoint (**235 GB**) and HF-format export (**65 GB**) — preserved as
+`.../MILESTONE_1243377_{checkpoints,exports}`. Its gradient was **zero** (rollouts were still timing out),
+so it proves the machinery, not learning.
+
+## 🎯 THE GOAL NOW (decided by Luke)
+**Do NOT attempt the full band.** Instead:
+1. Get the learnable band **reliably on a SUBSET** of tasks,
+2. **on the 8B `g1_diverse_tezos_100k_8b`** (the model Marianna used),
+3. then **extrapolate** to answer: *is our system scalable to a full band in 7–10h?*
+
+Rationale: scalable rollout infra pays off across every future experiment and debugs ~10× faster
+(~9 min/trial vs ~1.5h/training-step), and staying inference-only removes all training-side concerns.
+
+## ⚠️ The 8B needs the tool-call parser wired FIRST — non-negotiable
+The 8B emits tool calls as **bare JSON** (`{"name":"bash","arguments":{…}}`), 182/182 steps, zero XML.
+vLLM ran `--tool-call-parser qwen3_coder` (XML-only) → never matched, **never logged** → OpenCode saw text
+→ 1 step → reward = f(task) → zero variance. Measuring a band on this = re-deriving the retracted `0/197`.
+
+Fix is written, validated, pushed, and **NOT yet synced to the cluster**:
+- `OpenThoughts-Agent 4add607c` — `rl/tool_parsers/bare_json_tool_parser.py`.
+  Validated offline against **all 182 real captured outputs: 182 parsed, 0 missed**, +8 edge cases,
+  +streaming replay. (Four stock parsers each miss by one detail — see the module docstring.)
+- `MarinSkyRL d8bdc79` — `pop_openai_kwargs` now forwards `tool_parser_plugin`. A plugin must be
+  **imported** (so `@ToolParserManager.register_module` runs), not passed as a kwarg.
+
+To wire it:
 ```bash
-ssh jupiter "squeue --me -o '%.10i %.9T %.6M %.6L %.4D %N'"
-ssh jupiter "sacct -j 1243351 --format=JobID,State,Elapsed -n | head -3"
-D=/e/fscratch/reformo/lee27/experiments/jupiter_qwen36_35b_r2egym_grpo_canary_n4t1800_20260804h
-N=jupiter_qwen36_35b_r2egym_grpo_canary_n4t1800_20260804h
-ssh jupiter "ls -d $D/$N/checkpoints/global_step_* 2>/dev/null; ls $D/$N/exports 2>/dev/null"   # THE MILESTONE
-ssh jupiter "grep -ac 'chunked gathered log-softmax ACTIVE' $D/logs/${N}_1243351.out"           # fix engaged?
-ssh jupiter "ssh -S ~/.ssh/cm_jureca/qwen36 jureca.fz-juelich.de 'squeue --me'"                 # bare `ssh jureca` FAILS
+cd /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge && git fetch fork lukedhlee/apptainer-bridge-rl \
+  && git reset --hard fork/lukedhlee/apptainer-bridge-rl     # ONLY when no job is running
+# then in the RL yaml / overrides:
+#   engine_init_kwargs.tool_parser_plugin: <repo>/rl/tool_parsers/bare_json_tool_parser.py
+#   engine_init_kwargs.tool_call_parser: bare_json
 ```
-⚠ **Judge the milestone by ARTIFACTS on disk, never by a log line.** `Finished: 'policy_train'` is logged
-from `__exit__` as an exception propagates. Success = a `checkpoints/global_step_*` dir **and** a
-non-empty `exports/`.
+⚠ **Never `git reset --hard` a clone while a job runs** — Ray can spawn workers against changed code.
 
-## Milestone: the OOM is fixed (MarinSkyRL `637a764`, already on the cluster clone)
-`_log_softmax_backward_data` in `logprobs_from_logits_v2`'s bf16 branch. That function bounds memory by
-looping the **BATCH** dim — a no-op at `micro_train_batch_size_per_gpu=1` — so it ran one autocast-promoted
-fp32 `log_softmax` over the full `[S, V]`. **Real vocab is 248320** (nested in `config.json → text_config`;
-the old note's 151936 was the 8B's) ⇒ `30.57 GiB / 4 B / 248320 = S≈33046`, matching exactly.
-Fixed by recomputing softmax per chunk in backward (saving only logits), mirroring `_EntropyFromLogits`.
-Sequence-chunking alone does **not** work — `log_softmax` saves its output.
-GPU-validated: chunked **33.41 GiB** vs stock **OOM at the identical "30.57 GiB"**; training-path parity
-9.5e-07; and vs fp64 the chunked path is **2.4x more accurate** than the stock one.
+## Next actions, in order
+1. **Harvest then kill `1244916`** (35B, 5 nodes). It is mid-generation with a healthy route; when it takes
+   its step it yields the first NON-ZERO gradient — worth banking. Then `scancel` to free the fleet.
+   (As of writing: `wait_for_generation_buffer`, no `grad_norm` yet.)
+2. **Sync the cluster** (above) once the queue is empty.
+3. **Launch an 8B SUBSET band shard** with `bare_json`.
+4. **Gate before scaling** — `median_steps > 1` AND ≥1 group with non-zero within-group variance.
+   A passing trial count is NOT a gate; see the ladder below.
+5. **Ramp concurrency** 32 → ~250 and find the next ceiling (likely vLLM).
+6. **Extrapolate** measured throughput → full-band hours. That is the deliverable.
 
-**Off by default.** `SKYRL_CHUNKED_LOGPROBS=1`. Verify by the `ACTIVE` log line, which only fires during a
-TRAINING step (~2h in, after generation) — `FIX=0` early is expected, not a failure.
+## Throughput math (measured, not assumed)
+Full band = 3,328 tasks × p@4 = **13,312 trials**; 10h ⇒ **22 completions/min**.
 
-**If it still OOMs:** lower `SKYRL_CHUNKED_LOGPROBS_CHUNK` (default 1024) or cap training seq len.
-The op itself is proven to fit; anything left is the surrounding activation budget.
+| measured | value |
+|---|---|
+| real agent trial | **median 8.9 min**, p90 13.3 |
+| trial that TIMES OUT | ~62 min (p90) — a failure costs **7× a success** in slot-time |
+| peak achieved concurrency | **32** = exactly the config cap |
+| sandboxes sitting READY while 32 run | **110** |
 
-⚠ **The in-run HF push will probably FAIL, and that does NOT invalidate the milestone.**
-`HF_HUB_CACHE=/e/data1/datasets/playground/ot-baf/hf_hub` is **feuer1's** dir — `lee27` gets
-`Permission denied` — and the sbatch derives `HF_HOME` from it (line ~346). `1229649` carried the same
-setting and simply never reached the export. There is **no `HF_TOKEN`** in the env and none under
-`HF_HOME`; the valid token (user `lukeleeai`) lives at `$HOME/.cache/huggingface/token`.
-The checkpoint and the LOCAL export land on `/e/fscratch` paths lee27 owns, so they are unaffected — do the
-push manually from the login node per `rl-agentic-job-cleanup`, with
-`HF_HOME=$HOME/.cache/huggingface` (or `HF_TOKEN=$(cat $HOME/.cache/huggingface/token)`).
-For a future run, set `HF_HUB_CACHE` to a lee27-writable path before submitting.
+⇒ Need **~200 concurrent** (22.2 × 8.9), ~295 sizing on p90. Fleet capacity is **512 slots**, so
+band-in-10h needs a **~6× concurrency bump, not more nodes**. Concurrency is provably the binding
+constraint; nothing else is saturated. (An earlier "666 concurrent" estimate was wrong — it used the 1800s
+agent *budget* as the trial duration.)
 
-## Band: the zero-variance wall is a TOOL-CALL FORMAT MISMATCH
-The checkpoint emits **bare JSON** — `{"name":"bash","arguments":{...}}` — with no `<tool_call>`
-delimiter. Census on `1242066`: **182 bare JSON, 0 XML.** vLLM ran `--tool-call-parser qwen3_coder`, which
-parses only XML, so it matched nothing and **logged nothing**; OpenCode saw text, stopped at step 1; the
-verifier graded an untouched repo ⇒ reward is a function of the task ⇒ **0 of 46 groups had variance.**
-Thinking was never the cause (`reasoning: 0`; the `<think>` tags are literal trained-in text).
-
-**To finish this (≈30 min):**
-1. `cd /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge && git fetch fork <branch> && git reset --hard`
-   — picks up `d8bdc79`, which forwards `tool_parser_plugin`. **NOT yet synced** (deliberately: a job was
-   running and Ray can spawn workers against changed code).
-2. Add to the RL yaml / overrides:
-   `engine_init_kwargs.tool_parser_plugin: <repo>/rl/tool_parsers/bare_json_tool_parser.py`
-   and `tool_call_parser: bare_json` (OT-Agent `4add607c`).
-3. Re-run one shard and check `trajcheck.py` gives **`median_steps > 1`**.
-
-⚠ **NEW — exclude the free-pass tasks.** 10 of 46 groups score **1.0 while doing nothing**: those r2egym
+⚠ **Exclude the free-pass tasks:** 10 of 46 groups scored **1.0 while doing nothing** — those r2egym
 verifiers pass on an unmodified repo. They put a ~22% floor under any band number and can never yield
-gradient. Drop them from the denominator.
+gradient. Cheapest throughput win available.
 
-## THE CONTROLMASTER CARRIES **TWO** FORWARDS — restoring only one silently kills every rollout
-Rebuilding the master is now reproducible. It was folklore before; these are the four facts:
+## 🔧 TUNNEL RUNBOOK — the ControlMaster carries **TWO** forwards
+Restoring only one gives a **PASSING route gate and 100% rollout timeouts**. This cost hours today.
 
 1. **`-4` is MANDATORY.** `jureca.fz-juelich.de` resolves IPv6-first and the key's JuDoor `from=` clause
-   rejects IPv6 → `Permission denied (publickey)` with TOTP never offered. With `-4` the key gets
-   `Authenticated ... partial success` and *then* JSC asks for the TOTP.
-   (The old note blaming "hostname resolution" is WRONG and cost hours.)
-2. **Pin the login node:** connect to **`jureca05.fz-juelich.de`** (single A record 134.94.1.132), NOT the
-   12-address round-robin alias. The tunnel must bind `10.14.0.46`, which only **jrlogin05** owns — land on
-   jrlogin10 and the forward fails with `NO_LISTENER` and nothing holding the port (looks like a burned
-   port; it is not).
-3. **Add BOTH forwards.** Restoring only the vLLM one gives a PASSING route gate and still 100% rollout
-   timeouts, because no sandboxes are ever created:
-   ```bash
-   S=~/.ssh/cm_jureca/qwen36; H=jureca05.fz-juelich.de
-   ssh -S $S -O forward -R 10.14.0.46:18000:<jupiter-head-ip>:8000 $H   # sandboxes -> vLLM
-   ssh -S $S -O forward -R 10.14.0.46:9923:10.128.1.2:9920         $H   # workers  -> bridge
-   ```
-   The bridge is a **python3 process on the Jupiter login node** at `10.128.1.2:9920`; the workers reach it
-   as `jrlogin05i:9923`. That port pair is recorded ONLY in the fleet's own log
-   (`/p/scratch/synthlaion/lee27/dc_agent_eval/logs/apptainer_workers_<fleetid>.out` → "Bridge URL"). Read
-   it rather than guessing — `BRIDGE_LOGIN` defaults to `jrlogin03i:9920` in the sbatch and is overridden.
-4. **`workers_alive: false` with live worker processes = a missing bridge forward**, not dead workers.
-   `pgrep -fc worker.py` on a fleet node distinguishes them. Recovery is instant: `active_jobs` jumps
-   within seconds of adding the forward.
+   rejects IPv6 → `Permission denied (publickey)` with TOTP never offered. With `-4`:
+   `Authenticated ... partial success` → *then* JSC prompts for the TOTP.
+   (The old note blaming "hostname resolution" is **WRONG**.)
+2. **Pin the login node** to `jureca05.fz-juelich.de` (single A record 134.94.1.132), never the
+   12-address round-robin alias. The tunnel must bind `10.14.0.46`, owned only by **jrlogin05**; land on
+   another node and the forward fails with `NO_LISTENER` and nothing holding the port — looks like a burned
+   port, is not.
+3. **Add BOTH forwards:**
+```bash
+S=~/.ssh/cm_jureca/qwen36; H=jureca05.fz-juelich.de
+ssh -S $S -O forward -R 10.14.0.46:18000:<jupiter-head-ip>:8000 $H   # sandboxes -> vLLM
+ssh -S $S -O forward -R 10.14.0.46:9923:10.128.1.2:9920         $H   # workers   -> bridge
+```
+   The bridge is a **python3 process on the Jupiter login node** at `10.128.1.2:9920`; workers reach it as
+   `jrlogin05i:9923`. That port pair is recorded ONLY in the fleet log
+   (`/p/scratch/synthlaion/lee27/dc_agent_eval/logs/apptainer_workers_<fleet>.out` → "Bridge URL").
+   `BRIDGE_LOGIN` defaults to `jrlogin03i:9920` in the sbatch and **is overridden** — read the log.
+4. **`workers_alive: false` + live worker processes = a missing bridge forward**, not dead workers.
+   `pgrep -fc worker.py` on a fleet node distinguishes them. Recovery is instant (`active_jobs` jumps in
+   seconds).
+5. **Then run the COMPUTE-NODE route gate** — a real `/v1/chat/completions` from a fleet node. A listener
+   check (`ss | grep 18000`) passes while the route is dead; that is exactly how `1243377` lost 64 rollouts.
 
-Full restart:
+Full master restart (needs ONE interactive TOTP):
 ```bash
 ssh -t jupiter 'S=~/.ssh/cm_jureca/qwen36; ssh -S $S -O exit jureca.fz-juelich.de 2>/dev/null; \
   ssh -4 -i ~/.ssh/id_ed25519_jupiter2jureca -M -S $S -fN lee27@jureca05.fz-juelich.de && \
-  ssh -S $S jureca05.fz-juelich.de hostname'   # MUST print jrlogin05.jureca
+  ssh -S $S jureca05.fz-juelich.de hostname'      # MUST print jrlogin05.jureca
 ```
-⚠ **Capture a dying master's forwards BEFORE killing it** (`ps -u $USER -o args | grep 'ssh .*-R'`).
-I killed one without doing so and spent an hour rediscovering the second forward.
+⚠ **Capture a dying master's forwards BEFORE killing it:** `ps -u $USER -o args | grep 'ssh .*-R'`.
 
-## ⛔ (RESOLVED 2026-08-05) the ControlMaster was channel-exhausted
-Every rollout times out because the sandboxes cannot reach vLLM. Diagnosed hop by hop:
+## Live state at handoff (re-probe, do not trust)
+- **Jupiter `1244916`** RUNNING, 5 nodes, ~4h36m left. 35B run, healthy route, mid-generation
+  (`wait_for_generation_buffer`), **no `grad_norm` yet**. Harvest its step then `scancel` to free the fleet.
+- **JURECA fleet `15498197`** RUNNING, 32 nodes, **~7h20m left** — the scarce resource; the 8B band needs it.
+- **Bridge** `10.128.1.2:9920`: `workers_alive: true`, `queue_size: 0`, `active_jobs: 32`, `envs.ready: 32`.
+- **Both forwards up** on the master pinned to jrlogin05 (pid was 4083409).
+- Helper scripts now persisted: `/e/fscratch/reformo/lee27/gate.py` (gate ladder) and
+  `.../throughput.py` (trial-duration + achieved-concurrency measurement).
 
-| hop | result |
-|---|---|
-| vLLM listening on head node | `0.0.0.0:8000` on `10.128.50.117` ✅ |
-| Jupiter login → vLLM directly | `http=200` ✅ |
-| JURECA listener on `10.14.0.46:18000` | present, `TCP_OPEN` ✅ |
-| **end-to-end through the tunnel** | **`Connection reset by peer` after the request** ⛔ |
+## Establish reality first
+```bash
+ssh jupiter "squeue --me -o '%.10i %.9T %.6M %.6L %.4D %N'"
+ssh jupiter "ssh -S ~/.ssh/cm_jureca/qwen36 jureca05.fz-juelich.de \"squeue --me -o '%.10i %.9T %.12L %.4D'\""
+ssh jupiter "curl -s -m 8 http://10.128.1.2:9920/status"      # workers_alive + active_jobs + envs.ready
+ssh jupiter "python3 /e/fscratch/reformo/lee27/gate.py"                            # median_steps + rewards, last 16 min
+```
 
-The listener accepts, then the forwarded channel is reset — the master (`pid=185890`, up 2+ days) has
-exhausted its channels. Same failure as the `Session open refused by peer` / spurious-TOTP errors, and the
-same root cause the handoff blames for the watcher breaking on `1229649`. Re-adding the forward does not
-help; **the ControlMaster must be restarted, which needs an interactive TOTP** — an agent cannot do it.
+## The gate ladder — in this order, every time
+1. non-null reward → 2. **trajectory with >1 step** → 3. trial duration in *minutes* → 4. only then believe
+a band number. **`scored=N` counts FILES, not rewards.** Four separate bugs produced null rewards while
+every progress counter looked healthy. I also nearly reported a false `grad_norm=1.0` — my regex had
+matched **`max_grad_norm=1.0`** from the config echo. Anchor patterns; verify by behaviour.
 
-**After restarting it:** re-add `-R 10.14.0.46:18000:<head-ip>:8000`, then **run the compute-node route
-gate** (a real `/v1/chat/completions` from a fleet node) — do NOT settle for `ss | grep 18000`, which is
-what I did and it passed while the route was dead.
+## Launch recipe that works (three attempts died on these)
+```bash
+W=/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next     # the REAL WORKDIR
+ssh jupiter "set -a; source /e/scratch/reformo/lee27/keys/secrets.env; set +a;
+  cd $W && source hpc/dotenv/jupiter.env >/dev/null 2>&1; export DCFT=$W;
+  sbatch --chdir=$W --time=06:00:00 --export=ALL,DCFT=$W,SKYRL_CHUNKED_LOGPROBS=1 <generated>_rl.sbatch"
+```
+- `WORKDIR` is **`/e/fscratch/.../OpenThoughts-Agent-r2egym-bridge-next`**, NOT
+  `/e/scratch/.../OpenThoughts-Agent` (which lacks `hpc/shell_utils/flashinfer_aot_cache.sh`).
+  Wrong dir ⇒ instant FAIL (`1243248`, `1243289`).
+- Secrets live at **`$SCRATCH/keys/secrets.env`**, not `~/secrets.env` as ops.md claims. Missing it ⇒
+  `AssertionError: WANDB_API_KEY is required` after full Ray startup (`1243351`).
+- `--time=` / `--export=ALL,VAR=v` override the generated sbatch without editing it.
+- **Never run Jupiter ssh calls in parallel** — the ControlMaster refuses sessions and you get a spurious
+  TOTP prompt (this is the channel exhaustion that broke the watcher on `1229649`). Serialize.
 
-## Traps that each cost a job or an attempt today
-1. **Two MarinSkyRL clones.** A bare `python` imports `/e/scratch/.../MarinSkyRL`; the RL job prepends
-   **`MarinSkyRL-apptainer-bridge/skyrl-train`** to `PYTHONPATH`. Patch the BRIDGE clone; give standalone
-   tests the same `PYTHONPATH` or you silently test the wrong code.
-2. **`WORKDIR` is `/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next`** — NOT
-   `/e/scratch/.../OpenThoughts-Agent` (which lacks `hpc/shell_utils/flashinfer_aot_cache.sh`). Submit as
-   `cd $W && export DCFT=$W && sbatch --chdir=$W --time=… --export=ALL,DCFT=$W,… <sbatch>`.
-   Wrong dir ⇒ instant FAIL (`1243248`, `1243289`). `--time=`/`--export=` override without editing the file.
-3. **`retarget_job.sh`'s `OLD_TARGETS` is STALE** (lacks `10.128.18.209`), so a dead job's forward still
-   held port 18000 and the watcher burned all 5 retries → FATAL. Cancel explicitly:
-   `ssh -S ~/.ssh/cm_jureca/qwen36 -O cancel -R 10.14.0.46:18000:<oldIP>:8000 jureca.fz-juelich.de`
-   **Always cancel a job's forward when it dies, or the port is burned.** Then re-add to the new head IP
-   and confirm `ss -ltn | grep 18000`. **Verify a watcher's RESULT, not that you launched it.**
-4. **Never run Jupiter ssh calls in parallel** — the ControlMaster refuses sessions and you get a spurious
-   TOTP prompt. Same channel exhaustion that broke the watcher on `1229649`. Serialize.
+## MILESTONE OOM — fixed, keep it enabled
+`MarinSkyRL 637a764` (on the cluster clone). `logprobs_from_logits_v2` bounds memory by looping the
+**BATCH** dim — a no-op at `micro_train_batch_size_per_gpu=1` — so it ran one autocast-promoted fp32
+`log_softmax` over the whole `[S, V]`. Real vocab is **248320** (nested in `config.json → text_config`;
+the old note's 151936 was the 8B's) ⇒ `30.57 GiB / 4 B / 248320 = S≈33046 ≈ max_seq_len`, matching exactly.
+Sequence-chunking alone does **not** help (log_softmax saves its output); the fix recomputes softmax per
+chunk in backward, mirroring `_EntropyFromLogits`.
+GPU-validated: chunked **33.41 GiB** vs stock **OOM at the identical "30.57 GiB"**; training-path parity
+9.5e-07; and vs fp64 the chunked path is **2.4× MORE accurate** than the stock one.
+**Enable with `SKYRL_CHUNKED_LOGPROBS=1`**; the call site logs `chunked gathered log-softmax ACTIVE` once —
+verify by that line. It only fires during a TRAINING step (~after generation), so absence early is normal.
+
+## Known-open
+- **HF Hub push never verified.** `HF_HUB_CACHE=/e/data1/datasets/playground/ot-baf/hf_hub` is **feuer1's**
+  dir (`Permission denied` for lee27) and the sbatch derives `HF_HOME` from it. No `HF_TOKEN` in env; the
+  valid token (user `lukeleeai`) is at `$HOME/.ssh/../.cache/huggingface/token`. The 65 GB export is
+  local-only — push manually from the login node per `rl-agentic-job-cleanup`, and set a lee27-writable
+  `HF_HUB_CACHE` for future runs.
+- `MarinSkyRL` (the non-bridge clone) has **5 files of uncommitted Megatron-checkpointing work** — on no
+  cluster. Decide whether to commit or discard.
+- `retarget_job.sh`'s `OLD_TARGETS` is stale and its route gate uses the hostname; prefer the runbook above.
 
 ## Standing constraints
-Jupiter <=16 nodes / JURECA <=32 · never `scancel` another user's job · never `find`/`du` on GPFS or JURECA
-scratch · bind listeners to internal interfaces, never `0.0.0.0` · `enable_db_registration: false` · local
-clones are ground truth: edit locally → push to `fork` → `git fetch` + hard reset on the cluster, never
-hand-edit · no `Co-Authored-By` in commits.
+Jupiter ≤16 nodes / JURECA ≤32 · never `scancel` another user's job (our own wedged jobs are pre-authorised)
+· never `find`/`du` on GPFS or JURECA scratch · bind listeners to internal interfaces, never `0.0.0.0` ·
+`enable_db_registration: false` · local clones are ground truth: edit locally → push to `fork` → `git fetch`
++ hard reset on the cluster, never hand-edit · no `Co-Authored-By` in commits · destructive cleanup is
+operator-only.
 
-## Do not re-derive
-- The **`0/197` band figure is RETRACTED** (one-step-trajectory artifact), and so is the old **"151k vocab
-  × 28,672 tokens ≈ 8.6 GiB"** arithmetic — wrong model's vocab. Both are left in `handoff.md` deliberately.
-- **Booster is no longer starved**: ~2349 idle nodes, jobs allocate in seconds, longer walls available.
-  The 3h geometry that constrained `1229649` is no longer forced.
-- Six accepted-but-ignored config keys so far — verify any key by **behaviour**, never by its presence in
-  the materialized config.
+## Do not re-derive (retractions)
+- **`0/197` band figure: RETRACTED** (one-step-trajectory artifact).
+- **"151k vocab × 28,672 tokens ≈ 8.6 GiB"**: RETRACTED — wrong model's vocab.
+- **"bare `ssh jureca` fails on hostname resolution"**: WRONG — it is IPv6 vs the key's `from=` clause; `-4`.
+- **"restoring the tunnel needs one TOTP"**: incomplete — it needs `-4`, jrlogin05 pinning, **and two
+  forwards**. The TOTP was never the hard part.
+- Six accepted-but-ignored config keys so far — verify any key by **behaviour**, never by presence in the
+  materialized config.

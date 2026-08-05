@@ -1435,3 +1435,97 @@ Note the line only fires during a TRAINING step (~2h in, after generation), so `
 ### Booster is no longer starved
 `sinfo`: **2349 idle** nodes (was 147 drain / 1 idle). Jobs now allocate in seconds and longer walls are
 available — the 3h geometry that constrained `1229649` is no longer forced.
+
+---
+
+## 2026-08-05 (late) — THE ROLLOUT PATH WAS THE BUG THE WHOLE TIME
+
+### The finding that reframes the project
+**Two reverse forwards ride the JURECA ControlMaster, and only one was ever documented.** Every rollout in
+this project's history timed out because the second one (workers → bridge) was missing or dead. With both up:
+
+| signal | every prior run | after the fix |
+|---|---|---|
+| trajectory steps | `median=1 max=1` | **`median=18.5 max=26`** |
+| bridge timeouts | 32/32 | **0 of last 12** |
+| reward spread | 0 of 46 groups varied | **8×0.0, 4×1.0 → 33% pass** |
+
+**33% ≈ Marianna's ~35%.** ⇒ **A learnable band EXISTS on this task set.** The zero-variance wall was an
+artifact of an agent that never ran, not a property of the model or the tasks. The "band may not exist"
+risk is RETIRED.
+
+The two forwards:
+- `-R 10.14.0.46:18000 → <jupiter-head>:8000` — sandboxes → vLLM (this one was known)
+- `-R 10.14.0.46:9923  → 10.128.1.2:9920`     — **workers → bridge (this one was not)**
+
+The bridge is a **python3 process on the Jupiter login node** (`10.128.1.2:9920`); workers address it as
+`jrlogin05i:9923`. The port pair exists ONLY in the fleet log
+(`/p/scratch/synthlaion/lee27/dc_agent_eval/logs/apptainer_workers_<fleet>.out` → "Bridge URL") —
+`BRIDGE_LOGIN` defaults to `jrlogin03i:9920` in the sbatch and is overridden at submit.
+⚠ `workers_alive: false` **with live worker processes** = a missing bridge forward, NOT dead workers
+(`pgrep -fc worker.py` distinguishes them). Recovery is instant — `active_jobs` jumped to 181 in seconds.
+
+### Two SSH facts that made the master un-reproducible
+1. **`-4` is mandatory.** `jureca.fz-juelich.de` resolves IPv6-first; the key's JuDoor `from=` clause rejects
+   IPv6, giving `Permission denied (publickey)` with TOTP never offered. With `-4` the key reaches
+   `Authenticated ... partial success` and JSC *then* prompts for the TOTP.
+   **The long-standing note blaming "hostname resolution" is WRONG** and sent everyone down the wrong path.
+2. **Pin `jureca05.fz-juelich.de`** (single A record 134.94.1.132). The tunnel must bind `10.14.0.46`, owned
+   only by jrlogin05; the round-robin alias landed us on jrlogin10 and the forward failed with `NO_LISTENER`
+   and nothing holding the port — indistinguishable from a burned port, but not one.
+
+⚠ **Capture a dying master's forwards BEFORE killing it** (`ps -u $USER -o args | grep 'ssh .*-R'`). Killing
+one without doing so cost ~an hour rediscovering forward #2.
+
+### MILESTONE: machinery LANDED (`1243377`, COMPLETED exit 0:0)
+First clean end-to-end run in the project: real optimizer update → `global_step_1` checkpoint (**235 GB**) →
+HF-format export (**65 GB**, `policy/`). Preserved as `MILESTONE_1243377_{checkpoints,exports}`.
+⚠ Its `grad_norm` was **0** — rollouts were still timing out, so the update is numerically vacuous. It
+proves the machinery, not learning. The OOM fix (`637a764`) is confirmed working in production: the log
+printed `chunked gathered log-softmax ACTIVE (chunk=1024, vocab=248320)` and execution continued past
+`policy_train` into `train_critic_and_policy` / `run_training` — that *continuation* is the proof, since
+`Finished: 'policy_train'` alone is logged from `__exit__` on exception.
+
+### Measured throughput (supersedes all estimates)
+| measured | value |
+|---|---|
+| real agent trial | **median 8.9 min**, p90 13.3, max 15.2 |
+| trial that times out | ~62 min p90 → **a failure costs 7× a success** in slot-time |
+| peak achieved concurrency | **32** = exactly the config cap |
+| sandboxes READY while only 32 ran | **110** |
+
+Full band = 13,312 trials; 10h ⇒ 22 completions/min ⇒ **~200 concurrent needed** (295 on p90) against
+**512 fleet slots**. So band-in-10h is a **~6× concurrency bump, not more nodes**. An earlier "666
+concurrent" figure was wrong — it used the 1800s agent *budget* as the trial duration.
+
+### A near-miss worth remembering
+I almost reported success on `grad_norm=1.0`. The only match in the log was **`max_grad_norm=1.0`** — the
+clipping threshold from the config echo — and no training step had run at all. Same family as
+`scored=N counts FILES`. **Anchor log patterns; a metric name that appears as a substring of a config key
+will lie to you.**
+
+### Launch-environment archaeology (three jobs died, one each)
+- `1243248` — submitted from a scratch dir ⇒ `FATAL: WORKDIR ... is not the repo root`.
+- `1243289` — `DCFT` pointed at `/e/scratch/.../OpenThoughts-Agent`, which lacks
+  `hpc/shell_utils/flashinfer_aot_cache.sh`. The real WORKDIR is
+  **`/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next`**, recoverable only from a successful
+  run's log line `Working directory: …`.
+- `1243351` — reached full Ray startup then died on `AssertionError: WANDB_API_KEY is required`. The assert
+  is **unconditional** (ignores `WANDB_MODE=offline`). Secrets live at **`$SCRATCH/keys/secrets.env`**, not
+  `~/secrets.env` as ops.md says.
+`--time=` and `--export=ALL,VAR=v` override a generated sbatch without editing it.
+
+### The 8B's one-turn no-op — root-caused and fixed (unwired)
+`g1_diverse_tezos_100k_8b` emits tool calls as **bare JSON**, 182/182 steps, zero XML, while vLLM ran
+`--tool-call-parser qwen3_coder` (XML-only) — never matched, **never logged**. Parser written and validated
+against all 182 real captured outputs (182 parsed, 0 missed) + 8 edge cases + streaming:
+OT-Agent `4add607c`; MarinSkyRL `d8bdc79` forwards `tool_parser_plugin` (a plugin must be *imported* so its
+registration decorator runs, not passed as a kwarg). **Neither is synced to the cluster.**
+Also: **10 of 46 groups score 1.0 while doing nothing** — those verifiers pass on an unmodified repo; a ~22%
+free floor that can never yield gradient. Exclude from the band denominator.
+
+### Direction set by Luke at end of session
+**Do NOT chase the full band.** Get the band **reliably on a SUBSET**, on the **8B Marianna used**, then
+**extrapolate** to answer whether the system scales to a full band in 7–10h. Inference-only for now: it
+removes training-side concerns and debugs ~10× faster (~9 min/trial vs ~1.5h/step). The parser must be
+wired first or the subset re-measures one-turn no-ops.
