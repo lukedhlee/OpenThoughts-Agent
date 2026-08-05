@@ -359,3 +359,49 @@ which only fires during a training step.
 | `harbor` fork `lukedhlee` (clone `~/harbor`) | `lukedhlee/apptainer-opencode-bridge` | the apptainer worker. **The `rg` fix goes here** (~line 91). Offline git mirrors are **inert on the raw path**. |
 
 `origin` on `OpenThoughts-Agent` is `open-thoughts/` and we have **no push rights** — push to `fork`.
+
+---
+
+# SWE-BENCH VERIFIED — staging facts settled 2026-08-06 (read before touching it)
+
+## What exists now
+`/Users/lukedhlee/swebench-verified-tasks` on the Mac: **500 task dirs, 0 failures, 21 MB total**,
+generated with `cd ~/harbor/adapters/swebench && uv run swebench --all --task-dir <out>`.
+Per task: `instruction.md`, `task.toml`, `tests/{test.sh,config.json}`, `solution/solve.sh`,
+`environment/Dockerfile`. Small enough to rsync anywhere; regenerating takes ~8 min.
+
+## Facts that change the plan
+- **There is no "validation split".** `princeton-nlp/SWE-bench_Verified` ships **only `test`, 500
+  instances**, and the dataset id is **hardcoded** at `adapters/swebench/.../adapter.py:46` — there is no
+  `--dataset`/`--split` flag. "SWE-bench val" = those 500. Do not go looking for another split.
+- **The oracle is free.** Each task has `solution/solve.sh` = `patch --fuzz=5 -p1` of the dataset `patch`.
+  So the model-free gate is `nop` vs `oracle`, with **no git trickery** — unlike r2egym, where the gold fix
+  is `git checkout <base_commit> -- .` because `/testbed` sits at `base_commit^`.
+- **500 tasks -> 500 DISTINCT base images** (`swebench/sweb.eval.x86_64.<id>:latest`, `__`->`_1776_`),
+  verified: `grep -h ^FROM */environment/Dockerfile | sort -u | wc -l` = 500. **No base-image reuse trick
+  exists here** (contrast SweSmith: 2500 tasks -> 38 SIFs). Images are **x86_64-only**, so this can only run
+  on the JURECA/JUWELS x86 fleet — never on Jupiter (GH200/aarch64).
+- **`worker.py` already carries SWE-bench-specific shims** (make_test_spec's GitHub fetch monkey-patched to
+  no-ops, Django `chdir` EPERM, Astropy DeprecationWarning). Somebody debugged this path before — read
+  `_patch_test_sh_for_offline_pip()` before writing anything new.
+- All three verifier wheels are already staged in `$BRIDGE_AGENT_TOOLS/wheels`:
+  `swebench-4.0.3`, `datasets-2.16.1`, `fastcore-1.10.5`. The offline verifier path is provisioned.
+
+## Do NOT use harbor's `prebuild_sifs.sh` unmodified for this
+It pre-pulls every `FROM` into its own `base_*.sif` **and** builds a second SIF from a generated `.def` —
+with 1:1 bases that is **~2x disk for zero reuse** (~1-2 TB, not ~1 TB). Its `.def` also has a `%post`
+(apt-get, pip) needing root/`--fakeroot`, and it hides every build error behind `2>/dev/null`.
+Its sbatch header is Marianna's JUWELS `projectnucleus` account, and its proxy block sources
+`/e/project1/jureap59/marianna/...` (a **Jupiter** path — verify reachability from JURECA before relying on it).
+
+`hpc/skyrl_standard/jupiter/swebench_build_sifs.sh` (committed) does a **pull-only** build instead: those
+Dockerfiles only add `uv` and `/logs` on top of the base, and harbor already puts `uv` on PATH from
+`agent_tools` and bind-mounts `/logs/verifier`. **This is a hypothesis — verify on a small sample before
+committing to 500.**
+
+## Unverified cost risks — measure on a sample of ~5-10 FIRST, then extrapolate and report
+1. **Disk**: 500 x ~1-2 GB. Check the `/p/scratch/synthlaion` quota before starting.
+2. **Docker Hub rate limits**: anonymous pulls are throttled per-IP. 500 pulls may need auth or serialising
+   over many hours. This, not compute, is likely the wall.
+3. **Whether pull-only SIFs actually run** (`uv` on PATH inside the container).
+Build a sample, time it, measure the SIF size, run the gate on it — only then launch the 500.

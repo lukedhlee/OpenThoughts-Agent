@@ -2151,3 +2151,48 @@ It prints `[1] CLONE attempted=0 ... -> FAIL (clone still failing -- mirrors not
 `testbedcheck.py` says so explicitly ("should be 0 now"). The offline git mirrors are inert here. Likewise at
 small n its `[3]`/`[4]` verdicts print `FAIL` off `n/a` denominators: **a `FAIL` at n=1 is not a gate
 reading.** Fix the gate or ignore that line; do not "re-fix" a working clone path because of it.
+
+## The auth outage ROOT CAUSE: stale `tail -F` followers, days old (2026-08-06, supersedes the entry above)
+
+The previous entry blamed "too many pollers at once" and prescribed "run at most ONE poller". That was the
+right first aid but the **wrong diagnosis**, so it kept recurring. The actual cause, found by finally running
+`ps -o pid,etime` instead of just counting processes:
+
+```
+ps -o pid,etime,command -ax | grep "[s]sh" | grep -iE "jupiter|jureca|cm_"
+```
+
+showed **8 `ssh jupiter tail -F .../logs/*.out` followers with etime `02-…`/`03-…`, i.e. 2-3 DAYS old**, left
+behind by long-concluded 35B jobs (`..._smoke_14/15/16`, `..._canary_*_20260803*`). They are immortal:
+`tail -F` never exits, the job it followed is gone, and nobody reaps them. Each permanently holds one
+ControlMaster session, so the cap is **already nearly exhausted before the session starts** — which is why a
+mere two concurrent `jrc` calls tipped it over and why it looked like "my pollers".
+
+**Fix (safe, verified):** kill the followers by PID; keep the `[mux]` master (`ssh: …:22 [mux]`) alive.
+Killing the master risks a TOTP re-auth. After the kill only the master + the one live call remained and
+`jrc` worked immediately.
+
+**Do this as a session-start hygiene step, before blaming anything else for an auth failure.** Any `ssh`
+process older than the current job is garbage by definition.
+
+**Second, independent lesson from the same incident:** `jup.sh` serialises on a lockfile, so a *backgrounded*
+`jup`/`jrc` (one auto-backgrounded by a tool timeout, for instance) **holds the lock for its whole runtime**
+and the next call dies with `jup: lock timeout` — not an auth problem at all. Never launch a second `jrc`
+while a long one is still in flight; give the long one its own tmux on the cluster and return immediately.
+
+## envgate v1 measured my own harness, not the environments (2026-08-06)
+
+First 32-task pristine-vs-oracle sweep returned `reward: null, exit: 2` on **every task and both modes** —
+which looks exactly like "the environment is broken/constant-reward", the very pathology being hunted.
+It was not. `head_was_buggy_parent: true` in the same records proved the SIF and git state were fine.
+
+Cause: the staged r2egym `test.sh` runs `uv pip install chardet` under `set -e`, and JURECA compute nodes
+have **no PyPI access**, so `test.sh` died before running a single test. Real rollouts do not hit this
+because `worker.py` (a) bind-mounts `$BRIDGE_AGENT_TOOLS` into the container `:ro` and (b) rewrites every
+`test.sh` via `_patch_test_sh_for_offline_pip()`, injecting `UV_NO_INDEX`/`UV_FIND_LINKS`/`PIP_NO_INDEX`/
+`PIP_FIND_LINKS` at the 87-wheel local cache (chardet included).
+
+**Lesson: a gate that reimplements the runtime is measuring the reimplementation.** envgate v2 now
+*extracts `_patch_test_sh_for_offline_pip` out of the live `worker.py` and execs it*, so it cannot drift
+from what the trainer actually does, and adds the `agent_tools` bind. It also emits a `tail` of container
+output in the JSON — v1's bare `reward: null` was undebuggable and cost a full sweep.
