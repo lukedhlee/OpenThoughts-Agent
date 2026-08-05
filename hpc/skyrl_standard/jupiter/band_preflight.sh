@@ -79,12 +79,35 @@ else
     fi
   done
 
-  # Keys the consumer accepts, echoes, and ignores. Each cost >=1 job. See
-  # ai_memory/DEAD_KEYS.md. A dead key in a config is a silent no-op, which is
-  # worse than an error because it reads as a fix.
-  for K in strict_json_parser store_all_messages override_timeout_sec; do
+  # Keys the consumer accepts, echoes, and ignores. See ai_memory/DEAD_KEYS.md.
+  # A dead key is a silent no-op, which is worse than an error because it reads
+  # as a fix.
+  #
+  # ONLY still-inert keys belong here. store_all_messages and override_timeout_sec
+  # were BOTH later fixed (harbor 179b31e9; BRIDGE_EXEC_TIMEOUT above the agent
+  # budget) and listing them produced false FAILs on a correct config -- a gate
+  # that cries wolf gets switched off, which is worse than no gate. When a dead
+  # key is fixed, delete it from here in the same commit.
+  for K in strict_json_parser compaction_reserved; do
     grep -qE "^\s+${K}:" "$YAML" && bad "declares DEAD key '$K' (inert -- see ai_memory/DEAD_KEYS.md)"
   done
+  grep -qE '^\s+reserved:' "$YAML" && grep -qE '^\s*compaction:' "$YAML" \
+    && bad "declares DEAD key 'compaction.reserved' -- use context_budget.client_window_tokens"
+
+  # hf_upload_mode is not inert by itself: the whole upload callback is gated on
+  # hf_hub_repo_id, a DIFFERENT key. Grep for the guard, not the key.
+  if grep -qE 'hf_upload_mode:' "$YAML" && ! grep -qE 'hf_hub_repo_id:' "$YAML"; then
+    bad "hf_upload_mode set without hf_hub_repo_id -- upload callback is never constructed"
+  fi
+
+  # extra_body / interleaved_thinking are implemented for terminus_2, openhands and
+  # mini_swe_agent only. Under opencode they are inert AND misleading: the config
+  # claims a thinking mode it cannot deliver. Server-side
+  # default_chat_template_kwargs is the only lever that reaches an external agent.
+  if grep -qE 'agent(_name)?:\s*opencode' "$YAML" && grep -qE '^\s+extra_body:' "$YAML"; then
+    note "WARN: extra_body under opencode is inert (no OpenCode path in harbor)."
+    note "      Use engine_init_kwargs.default_chat_template_kwargs instead."
+  fi
 
   # A band is per-group: 0 < passes < n. n=1 cannot produce a band at all.
   NS=$(grep -E '^\s*n_samples_per_prompt:' "$YAML" | tail -1 | tr -dc '0-9')
@@ -172,7 +195,9 @@ except Exception as e:
     print(f"  \033[31mFAIL\033[0m bridge /status unparseable: {e}"); raise SystemExit(1)
 alive = d.get("workers_alive")
 ready = (d.get("envs") or {}).get("ready", 0)
-print(f"  {'\033[32mPASS\033[0m' if alive else '\033[31mFAIL\033[0m'} workers_alive={alive}")
+GREEN, RED, OFF = "\033[32m", "\033[31m", "\033[0m"
+tag = f"{GREEN}PASS{OFF}" if alive else f"{RED}FAIL{OFF}"
+print(f"  {tag} workers_alive={alive}")
 print(f"       envs.ready={ready} queue={d.get('queue_size')} active_jobs={d.get('active_jobs')}")
 if not alive:
     print("       workers_alive:false WITH live worker procs = missing 9923 forward,")
