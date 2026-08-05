@@ -1629,3 +1629,47 @@ because the **model** emitted non-conforming JSON after thinking:
 So "0 tool calls" has at least three distinct causes beyond the parser: wrong schema, hallucinated schema, and
 truncation. **Read the trajectory's raw message tail before concluding a parser bug** — and note that the
 truncated case means a *longer* `max_new_tokens_per_turn` is not always the fix; not thinking is.
+
+## NEVER probe the vLLM endpoint during startup — a request during weight sync KILLS an EngineCore (2026-08-05)
+
+I wedged `1246702` by running route/no-think gates against the endpoint while the job was still in
+`init_weight_sync_state`. Cost: one full bring-up (~15 min) plus the fleet time it held.
+
+**Mechanism.** The layerwise weight-reload bracket restores every layer's params/buffers onto the **meta**
+device. An inference request arriving inside that window runs a real forward over meta tensors, and vLLM's `_C`
+custom ops are registered for `torch::kCUDA` ONLY:
+```
+NotImplementedError: _C::rotary_embedding: attempted to run this operator with Meta tensors,
+but there was no fake impl or Meta kernel registered
+```
+The EngineCore dies, and the driver then **hangs forever** — log frozen at the same line count, `Initialized
+weight sync state` printed, zero trace dirs, job still `RUNNING` and burning wall.
+
+`ensure_norm_meta_fakes_registered()` already immunizes `_C::rms_norm` and `_C::fused_add_rms_norm` for exactly
+this reason (it was written after the same crash killed 3 engines on the 30B-A3B CP4 cell). **`rotary_embedding`
+has no such fake**, so it is the next domino.
+
+**The controlled comparison, which is what settled it:**
+
+| run | probed during weight sync? | `_C::rotary_embedding` meta errors | outcome |
+|---|---|---|---|
+| `1246344` | no | **0** | generated normally, 3 batches |
+| `1246702` | **yes** (12:08–12:11 vs sync 12:08:30–47) | **1** | EngineCore dead, driver hung |
+
+The smoking gun: the crash came back **as the HTTP response to my own probe** —
+`{"error": {"message": "EngineCore encountered an issue...", "code": 500}}`.
+
+**Also why the probe results looked insane.** Identical temperature-0 requests returned 43 tokens / no
+`<think>`, then 376, then 1024-with-`<think>`, then a 500. Those were not model nondeterminism and not
+per-engine config drift (I guessed both, wrongly) — the engine was **mid-weight-reload** and its weights were
+partly on meta. **Any measurement taken during startup is garbage, including one that looks like a pass.**
+
+### Rules
+1. **Gate ONLY after generation has started** — wait for `Starting batch generation for N trials` or the first
+   `trace_jobs/*/` dir. `curl` returning 200 (or a 404 on `/v1/models`) means a socket is open, NOT that the
+   model is loaded and stable.
+2. A `default_chat_template_kwargs` / thinking-off probe that passes during startup proves **nothing**. My
+   "NO-THINK GATE: PASS" at 12:05 was taken on an engine that was about to be reloaded.
+3. Worth fixing defensively: register a Meta/fake for `_C::rotary_embedding` (and audit other `_C` ops the
+   reload trace can touch) so a stray request degrades to an error instead of killing the engine. Not done —
+   needs the exact C++ schema arity and a GPU check, and the measurement was the priority.
