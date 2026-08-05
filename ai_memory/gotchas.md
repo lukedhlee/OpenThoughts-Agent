@@ -2440,3 +2440,29 @@ for the whole run on account of a few percent — measured throughput at P=6 is 
 (~500 in ~6 h, ~625 GB).
 Note the build must run on the **login node**: compute nodes have no internet, which is the whole premise
 of the offline wheel cache.
+
+## PRELIMINARY (n=8, job 1252276): thinking-OFF may TRADE malformed tool calls for NO tool calls
+
+First 8 completed trials with `BAND_SERVER_NO_THINK=1` (verified reaching vLLM as
+`engine_init_kwargs.default_chat_template_kwargs.enable_thinking=false`), vs the thinking-ON baseline:
+
+| metric | baseline (n=7, thinking ON) | n=8, thinking OFF |
+|---|---|---|
+| raw-JSON tool call left as TEXT | 5/7 (71%) | 4/8 (50%) |
+| made >=1 successful edit | 1/7 (14%) | 1/8 (12%) |
+| ripgrep tool error | 7/7 (100%) | **0/8** |
+| **ZERO-tool-call trajectories** | **0 (0%)** | **6/8 (75%)** |
+
+⚠ **Do NOT read "ripgrep errors 0/8" as the `rg` fix working.** The fleet was never restarted, so `rg` is
+still absent from the sandboxes. The count is 0 **only because 6 of 8 trials never called a tool at all**,
+so nothing ever invoked `glob`/`grep`. This is precisely the kind of denominator artefact that has produced
+false wins here before — a metric can only fire if the code path runs.
+
+The real signal is the **zero-tool rate going 0% -> 75%**, which is a **regression**. Working hypothesis:
+turning thinking off makes this 8B stop emitting tool calls altogether rather than emitting malformed ones —
+i.e. it trades one failure mode for a worse one. `reason="stop"` on 8/8, as before.
+
+**n=8 — do not act on this yet.** Rewards so far `{1.0: 1, 0.0: 7}`, so the pipeline is producing real
+values including a 1.0. Re-measure at larger n before deciding; if it holds, the conclusion is that
+`BAND_SERVER_NO_THINK=1` is harmful for OpenCode and the edit-rate lever is `rg` (fleet restart), not
+thinking.
