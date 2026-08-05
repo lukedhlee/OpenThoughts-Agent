@@ -61,3 +61,24 @@ passthrough_exceptions:
 - AgentTimeoutError
 - ContextLengthExceededError
 - NonZeroAgentExitCodeError
+
+# THINKING OFF. Not a tuning knob -- the second of the two independent causes of
+# the one-step no-op, and the one that keeps coming back.
+#
+# base8b.yaml ships thinking ON. a42199f5 turned it off by editing the SHARD
+# yamls, then ca3d56f7 replaced the whole harbor block with this file, which
+# carried neither key -- so Qwen3's template defaulted thinking back ON and every
+# episode ended after ONE step: the model emitted a short <think> as plain TEXT
+# (~300 tokens, so not a 4096 truncation) and never produced a tool call at all.
+# b361f179 fixed it again by hand-editing one shard yaml, so a freshly GENERATED
+# config still regressed. Fixing it HERE is what makes the generator's output
+# correct by construction.
+#
+# The two causes are independent and BOTH are required:
+#   thinking off      -> the model actually emits its bare-JSON tool call
+#   bare_json parser  -> vLLM recognises that call instead of passing it through
+#                        as assistant text (see BAND_TOOL_PARSER in gen_band_yaml.py)
+interleaved_thinking: false
+extra_body:
+  chat_template_kwargs:
+    enable_thinking: false
