@@ -22,10 +22,17 @@ ON the Jupiter login node (not the laptop). Model = the 8B g1_diverse_tezos_100k
 GOAL = reproduce Marianna's learnable band (~1.6k of 4.5k tasks at 0 < pass@4 < 1,
 ~36%) as end-to-end proof the infra is trustworthy.
 
-THE FINDING HAS MOVED -- do not re-litigate yesterday's.
+*** THE GATE PASSED 2026-08-06 02:30 KST -- do not re-litigate any of this. ***
 Yesterday: "the r2egym reward is a per-task CONSTANT and never measures the model."
-That was true, and IT IS NOW FIXED AND VERIFIED. The blocker is now the AGENT, not
-the environment. Every reward is a CORRECT 0.0 because the agent does nothing.
+True then, FIXED AND VERIFIED now. A group finally holds BOTH values:
+  task r2egym-2514 (task_name confirmed in BOTH result.json files), 2 of 4 samples
+    dCmGsKH  reward 1.0  "3 passed"           4x edit tool calls + read/ls/bash
+    uGPuwvX  reward 0.0  "2 failed, 1 passed" bash + glob only -- NO edits
+The sample that EDITED turned 2 failing tests into passing; the one that didn't,
+didn't. That is the INVERSE of the old pathology (passing trials used to edit LESS:
+24% vs 49%). THE ENVIRONMENT MEASURES THE MODEL. Go get a band number.
+What remains is a RATE problem, not a correctness one: only 1 of 7 trials made any
+edit. The two causes below are throughput/quality levers, NOT blockers.
 
 ENVIRONMENT = VALIDATED, model-independently (do not redo):
   /testbed populated  -- real repo inside her SIF, no clone, no network
@@ -34,11 +41,13 @@ ENVIRONMENT = VALIDATED, model-independently (do not redo):
                           edits DO reach the tests, even for the "hard repos"
   /testbed writable    -- WRITE_OK on fleet node, fakeroot unavailable and NOT needed
   chardet safe offline -- "Audited 1 package", exit 0. NEXT_SESSION 4.1 RETIRED
-REWARD IS NOW REAL: 3 trials, 3 repos, each a genuine pytest with EXACTLY ONE
-failing test = the bug that task names, rest passing, reward 0.0. Correct, not free.
+REWARD IS NOW REAL: across trials on different repos each verifier ran a genuine
+pytest with EXACTLY ONE failing test = the bug that task names, rest passing, so a
+0.0 is correct rather than free -- and fixing it flips the reward to 1.0 (see above).
 
-THE NEW BLOCKER (measured with agentstall.py, 3/3 trials):
-  ripgrep error 3/3 (100%) -- rg is NOT in the sandbox, so OpenCode's glob AND grep
+THE RATE PROBLEM (measured with agentstall.py over 7 trials: 7/7 ripgrep errors,
+5/7 unparsed JSON, 1/7 made an edit -- and that one scored 1.0):
+  ripgrep error 7/7 (100%) -- rg is NOT in the sandbox, so OpenCode's glob AND grep
     fail on the agent's first action. harbor worker.py ~line 91 has a HARDCODED tool
     dict {opencode,tmux,asciinema,uv}. Fix = stage a static musl rg into
     $BRIDGE_AGENT_TOOLS/bin/rg AND add "rg" to that dict. Needs a FLEET RESTART.
@@ -47,7 +56,7 @@ THE NEW BLOCKER (measured with agentstall.py, 3/3 trials):
     tool_use events appear. The model emits <think> prose plus MALFORMED JSON
     (unterminated string, two concatenated objects, stray </think>), so vLLM cannot
     parse tool_calls, OpenCode stores it as TEXT and finishes reason=stop after ~2
-    steps. 2/3 trials. 0/3 made any edit.
+    steps. 5 of 7 trials. Only 1 of 7 made any edit at all.
   => CHEAP TEST FIRST: BAND_HARBOR_THINK=0, relaunch, re-run agentstall.py. One env
      var, no fleet restart. ("thinking-off (DONE)" in the task list was WRONG.)
 
@@ -64,13 +73,14 @@ an earlier attempt died to a 12-min srun limit -- Orange3 setup is slow, use 40m
 /e/fscratch is NOT visible from JURECA, hence the staging step.
 
 LIVE STATE (re-probe, do not trust):
-  1251403   8B x 32 tasks x pass@4, 2 nodes TP=1. Ends ~02:56 KST. 3 results, all
-            0.0, 0 edits. It LOST ITS FIRST 64 ROLLOUTS to a dead forward (below).
+  1251403   8B x 32 tasks x pass@4, 2 nodes TP=1. Ends ~02:56 KST. 7 results,
+            {0.0: 6, 1.0: 1}, GATE PASSED on r2egym-2514. It LOST ITS FIRST 64
+            ROLLOUTS to a dead forward (below), so it only had ~35 min of real run.
   15500584  JURECA fleet, 32 nodes, ~21h left, SIF_CACHE correct.
-Expect band=0 from this job, LEGITIMATELY: 0 edits => no group can hold a 1.0.
-Tell the two failures apart by the verifier output -- constant 1.0 with no edits was
-the OLD free-pass bug; 0.0 with exactly one failing test is a correct measurement of
-an idle agent.
+Its band % will be small but NON-ZERO -- that is the 1-in-7 edit rate, not a defect.
+Tell the modes apart by the verifier output: constant 1.0 with NO edits was the OLD
+free-pass bug; 0.0 with exactly one failing test is a correct read on an idle agent;
+1.0 next to 4 edit calls is the pipeline working.
 
 FIVE MISTAKES THAT COST REAL TIME TONIGHT -- do not repeat them
 1. A LISTENER IS NOT A ROUTE. 1251403 froze at 868 log lines with NO error for 20
@@ -133,7 +143,9 @@ AUTONOMY: keep root-causing and relaunching on bring-up failures. Cancelling OUR
 wedged jobs is pre-authorised, never anyone else's. Push to lukedhlee forks freely
 (origin is open-thoughts, no push rights); PRs need an explicit ask. Report when a
 milestone lands or when blocked on something only Luke can do. Do NOT tune
-throughput or scale nodes until a group contains both a 0.0 and a 1.0.
+throughput or scale nodes for its own sake -- but note the gate that gated it HAS
+now passed, so scaling toward the full 4,568 (band_raw_all_names.txt) to compare
+against her ~36% is the sanctioned next step once the edit rate is raised.
 ```
 
 ---

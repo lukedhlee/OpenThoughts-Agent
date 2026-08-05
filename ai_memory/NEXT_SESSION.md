@@ -11,9 +11,22 @@ Report times in **KST** (cluster clocks are CEST = KST − 7h).
 Yesterday's headline was "the r2egym reward is a constant per task and never measures the model." That was
 correct, and **it is now fixed and verified.** The reward measures code state. Do not re-litigate it.
 
-**The blocker has moved from the ENVIRONMENT to the AGENT.** The environment is proven good; the agent
-does almost nothing, so every reward is a *correct* `0.0`. That is a different failure with a different fix,
-and it is the whole job now.
+**★★ THE GATE PASSED at 02:30 KST on 2026-08-06. A group now contains both a `0.0` and a `1.0`.**
+This is the first genuine within-group reward variance in the project's history, and it is causally clean:
+
+```
+task r2egym-2514, two of four samples (task_name confirmed in BOTH result.json files)
+  dCmGsKH  reward 1.0   "3 passed"                4x edit tool calls + read/ls/bash
+  uGPuwvX  reward 0.0   "2 failed, 1 passed"      bash + glob only -- NO edits
+```
+
+The sample that **edited files** turned two failing tests into passing; the sample that did not, did not.
+That is the exact **inverse** of the old pathology, in which passing trials edited *less* often than failing
+ones (24% vs 49%). **The environment measures the model. Stop re-verifying this and go get a band number.**
+
+The remaining problem is a **rate** problem, not a correctness one: the agent succeeds too rarely
+(1 of 7 trials made any edit), for two identified and fixable reasons — see §0.3. Those are now throughput /
+quality levers on a working pipeline, no longer blockers.
 
 ### 0.1 The environment is VALIDATED — model-independently
 
@@ -46,19 +59,23 @@ r2egym-1742  1 failed, 13 passed   reward=0.0
 Reward `0.0` is **correct**: the agent never fixed the bug. Flipping that one test to PASSED yields `1.0`.
 This is the inverse of the old failure, where the reward was ~61% `1.0` no matter what the model did.
 
-### 0.3 The new blocker: the agent does nothing (measured)
+### 0.3 The rate problem: the agent succeeds too rarely (measured)
 
 `agentstall.py` (`~/ota-band/hpc/skyrl_standard/jupiter/agentstall.py`, deployed at
 `/e/fscratch/reformo/lee27/agentstall.py`) over the completed trials:
 
 ```
-trials analysed                        : 3
-with a raw-JSON tool call left AS TEXT : 2
-with a ripgrep tool error              : 3   (100%)
-that made >=1 successful edit/write    : 0
-ended with reason=stop                 : 3
+trials analysed                        : 7
+with a raw-JSON tool call left AS TEXT : 5   (71%)
+with a ripgrep tool error              : 7   (100%)
+that made >=1 successful edit/write    : 1   (14%)  <-- and that one scored 1.0
+ended with reason=stop                 : 7
 median steps                           : 2
 ```
+
+**The 1-in-7 edit rate is the number to move.** It is also roughly what a band needs: with pass@4, a
+per-trial success probability anywhere in the mid range puts most groups in band, so lifting the edit rate is
+the direct lever on the band %.
 
 **Two independent causes, both concrete:**
 
@@ -114,16 +131,18 @@ single-task bracket for `r2egym-0000` was **still running** — re-run it, do no
 
 | id | what | state at 02:40 KST |
 |---|---|---|
-| `1251403` | 8B × 32 tasks × pass@4, 2 nodes, TP=1 | RUNNING, ends ~02:56 KST. 3 results, all `0.0`, **0 edits** |
+| `1251403` | 8B × 32 tasks × pass@4, 2 nodes, TP=1 | RUNNING, ends ~02:56 KST. 7 results, `{0.0: 6, 1.0: 1}`, **GATE PASSED** on `r2egym-2514` |
 | `15500584` | JURECA sandbox fleet, 32 nodes × 16 workers | RUNNING, ~21h left, `SIF_CACHE` correct |
 
 **`1251403` lost its entire first wave of 64 rollouts to a dead reverse forward** (see §3.1). The environment
 and reward conclusions above are unaffected — they come from trials that ran *after* the repair, plus
 model-free SIF probes.
 
-Expect the band from this job to be **0**, legitimately: with 0 edits, no group can contain a `1.0`.
-**That is not the old bug.** Distinguish the two by the verifier output: constant `1.0` with no edits was the
-old free-pass failure; `0.0` with exactly one failing test per task is a correct measurement of an idle agent.
+The band from this job will be **small but non-zero** — it only had ~35 min of working route and a 1-in-7
+edit rate. Do not read a low band % here as a defect; read it as the edit rate, which §0.3 tells you how to
+raise. **Distinguish the failure modes by the verifier output:** constant `1.0` with no edits was the old
+free-pass bug; `0.0` with exactly one failing test is a correct measurement of an idle agent; and a `1.0`
+alongside 4 `edit` calls is the pipeline working.
 
 ## 3. What broke tonight, and what now prevents it
 

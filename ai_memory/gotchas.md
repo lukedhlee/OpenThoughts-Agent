@@ -2077,3 +2077,77 @@ it. **Corollary:** null rewards on the raw path are NOT chardet — look elsewhe
 `Orange/`, `setup.py`, `CHANGELOG.md`, …). `/testbed` is **populated inside the SIF itself**, with no clone
 and no network — the direct refutation of the flattened-dataset root cause, established independently of any
 rollout completing.
+
+## ★★ THE GATE PASSED — within-group reward variance is real (2026-08-06 02:30 KST)
+
+First time in the project's history that a prompt group contains both a `0.0` and a `1.0`. Job `1251403`,
+8B + OpenCode on the UNPATCHED r2egym dataset with Marianna's prebuilt SIFs:
+
+```
+task r2egym-2514, two of four samples (task_name verified in BOTH result.json files)
+  dCmGsKH  reward 1.0  "3 passed"                4x edit tool calls + read/ls/bash
+  uGPuwvX  reward 0.0  "2 failed, 1 passed"      bash + glob only -- NO edits
+```
+
+The sample that **edited files** turned two failing tests into passing; the sample that did not, did not.
+This is the **inverse** of the old pathology, where passing trials edited *less* often than failing ones
+(24% vs 49%) and a trial once scored 1.0 with zero agent steps. **The reward now measures the model.**
+
+**What made it work** — the dataset swap, not a tuning change: `DCAgent/r2egym-patched-full-oracle` had been
+flattened to collapse 8,101 Daytona snapshots into 3, replacing each prebuilt
+`namanjain12/<repo>_final:<sha>` image (whose `/testbed` holds the repo at the buggy commit) with a generic
+`python:X.Y` base plus an instruction telling the agent to `git clone`. With no outbound network `/testbed`
+stayed empty and the verifier graded the stock installed wheel. Marianna's unpatched dataset + her SIFs fix
+all of it at once.
+
+**Do not re-verify these five; they are settled by direct measurement, no model involved:**
+
+| property | evidence |
+|---|---|
+| `/testbed` populated | `apptainer exec <sif> ls /testbed` lists the real repo, no clone, no network |
+| at the buggy state | `rev-parse HEAD` **==** `rev-parse <base_commit>^` |
+| edits reach the tests | `Orange.__file__` → `/testbed/...` via `Orange3.egg-link` + `easy-install.pth` (develop install), so even a "hard repo" with `TESTS_DIR=/r2e_tests` responds |
+| `/testbed` writable | `WRITE_OK` on fleet node `jrc0553`; `--fakeroot` FAILS there (no userns) and is not needed |
+| `chardet` safe offline | `Audited 1 package`, exit 0, with a writable overlay; harbor also pre-installs it |
+
+**The remaining problem is a RATE, not a correctness bug:** only 1 of 7 trials made any edit
+(`agentstall.py`). Two fixable causes — `rg` is absent so OpenCode's `glob`/`grep` fail in 100% of trials, and
+`interleaved_thinking=True` makes the 8B emit malformed JSON that cannot be parsed into `tool_calls` (5 of 7
+trials), so OpenCode records it as text and stops after ~2 steps.
+
+## A bound listener is NOT a working route — `1251403` lost 64 rollouts to it (2026-08-06)
+
+**Symptom:** the job log froze at **868 lines with no error** for 20 minutes; 64 trials active, `jobs_completed`
+frozen, `envs.ready: 0`.
+**Every check said healthy:** `arm_rollout_forward.sh` logged a clean install at 18:25, and `ss` on JURECA
+showed `10.14.0.46:18300 LISTEN`. The **bridge** forward (`9923`) returned HTTP 200 throughout, so the bridge
+looked perfect — the classic rule-#1 shape: one forward up, one down ⇒ healthy bridge, 100% rollout timeouts.
+**The only probe that caught it:** `curl` from a **fleet compute node** → `HTTP=000` in **1.5 ms** (refused).
+**Fix:** `-O cancel` then `-O forward` of the **byte-identical** spec, which worked instantly. Proof of a live
+route is a real response: `400 Model name mismatch: loaded model name g1_diverse_tezos_100k_8b`.
+**Why `ss` cannot tell you:** `ssh -R` binds the listener whether or not the forwarded-to target is reachable,
+and a stale registration on the same port is indistinguishable. Structurally fixed in `003a7b94` —
+`arm_rollout_forward.sh <job> <port> <fleet_jobid>` now issues that request from a compute node via
+`srun --overlap` and exits non-zero on `HTTP=000`.
+⚠ **Unexplained, recorded as observation not mechanism:** why the identical spec was dead and then worked.
+Also `~/.rollout_forwards` **did not exist** despite the arm log saying "recorded in" it, so the
+recorded-spec safety net was absent.
+
+## The "auth outage" was self-inflicted, third recurrence (2026-08-06)
+
+`Session open refused by peer`, then `lee27@login02...: Permission denied (keyboard-interactive)`.
+**Cause: my own background pollers exhausted the ControlMaster's session cap** — including an inherited
+monitor calling **raw `ssh jupiter`**, bypassing `jup.sh`'s lockfile entirely.
+**Do NOT kill the Jupiter master.** It was established interactively with TOTP under `ControlPersist 8h`;
+killing it risks needing the operator for a re-auth — which is precisely the documented false
+"our JuDoor key is rejected". **Kill the pollers instead**; access returned on the **first retry**, under a
+minute. Run at most ONE cluster poller, always through `jup`/`jrc`. `BatchMode=yes` did its job: the refusal
+failed cleanly instead of burning TOTP attempts.
+
+## `mirrorgate.py`'s CLONE verdict is INVERTED on the raw path (2026-08-06)
+
+It prints `[1] CLONE attempted=0 ... -> FAIL (clone still failing -- mirrors not bound?)`. On the raw path
+**`attempted=0` is the CORRECT outcome** — nothing should clone, the repo ships inside the SIF, and
+`testbedcheck.py` says so explicitly ("should be 0 now"). The offline git mirrors are inert here. Likewise at
+small n its `[3]`/`[4]` verdicts print `FAIL` off `n/a` denominators: **a `FAIL` at n=1 is not a gate
+reading.** Fix the gate or ignore that line; do not "re-fix" a working clone path because of it.
