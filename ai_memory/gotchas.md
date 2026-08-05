@@ -1574,3 +1574,58 @@ that the retirement of that risk was premature, and that the right measurement i
 ⇒ Always report the band as **fraction of fully-sampled groups with `0 < passes < n`**, never as a pass rate.
 `band.py <trace_jobs> [window_min]` on Jupiter does this, and flags suspected free-pass groups
 (`k == n` with median steps ≤ 2) separately.
+
+## `extra_body` (and every harbor-level LLM knob) NEVER reaches OpenCode (2026-08-05)
+
+`interleaved_thinking: false` and `extra_body.chat_template_kwargs.enable_thinking: false` were BOTH set in
+the band YAML and both verified present in the materialized config — and the 8B still thought on every turn.
+
+**Cause:** `extra_body` is implemented **only** in these harbor agents —
+```
+harbor/agents/terminus_2/terminus_2.py          # extra_body -> llm_call_kwargs
+harbor/agents/installed/openhands_sdk_runner.py # LITELLM_EXTRA_BODY
+harbor/agents/installed/mini_swe_agent.py       # -c model.model_kwargs.extra_body...
+```
+There is **no OpenCode path**. OpenCode is an external Node process that builds its own OpenAI requests
+against the endpoint, so *nothing* harbor puts in its own LLM-client kwargs can reach it. The key is accepted,
+stored, echoed in the config dump, and ignored — **the 7th accepted-but-ignored key in this project.**
+
+⚠ The generic lesson is broader than thinking: **for an EXTERNAL agent (OpenCode), harbor-level model/sampling
+settings are inert.** Only two layers can affect it — the agent's own config, or the **vLLM endpoint itself**.
+
+### The fix: force it server-side with `default_chat_template_kwargs`
+vLLM 0.22 exposes a frontend default that the renderer merges **UNDER** any request-level
+`chat_template_kwargs` (so it is a default, not an override), and **both** `OpenAIServingRender` and
+`OpenAIServingChat` accept it — which is why it can ride MarinSkyRL's existing `openai_kwargs` splat:
+```yaml
+generator.engine_init_kwargs:
+  default_chat_template_kwargs: {enable_thinking: false}
+```
+Wired by **MarinSkyRL `9904058`** (`pop_openai_kwargs` forwards it) + **OT-Agent `aae638eb`**
+(`BAND_SERVER_NO_THINK=1` in `gen_band_yaml.py`). This reaches every request on the endpoint regardless of
+which agent issued it — the property the harbor-level setting could never have.
+
+### What thinking-on actually costs (measured on 1246344, 8B, conc 64)
+| | value |
+|---|---|
+| trials completed in 38 min at 64 concurrent | **5** |
+| completion rate | **0.17 trials/min** ⇒ full band ≈ **1,300+ h** |
+| trials still in flight at 38 min | **63 of 64** |
+| duration of the few that DID finish | median **3.2 min** |
+| zero-tool-call trajectories | **40%** |
+
+The bimodality is the tell: the trials that finish are the degenerate ones (1–3 steps), while the rest grind
+4096-token thinking turns. For comparison, the same endpoint with thinking off answered a tool-call request in
+**1 s / 21 completion tokens**.
+
+### The failure is NOT the parser — check the JSON SHAPE before blaming it
+With `bare_json` provably active (a sibling trial made 2 clean tool calls), the zero-tool trajectories failed
+because the **model** emitted non-conforming JSON after thinking:
+```
+{... "action": "explore_repo"}                     # no name/arguments keys at all
+{"parameters": {"$schema": ..., "properties": ...}} # a JSON SCHEMA, not a call
+{"name":"bash","arguments":{...,"workdir":"/"}      # CORRECT shape, TRUNCATED mid-object
+```
+So "0 tool calls" has at least three distinct causes beyond the parser: wrong schema, hallucinated schema, and
+truncation. **Read the trajectory's raw message tail before concluding a parser bug** — and note that the
+truncated case means a *longer* `max_new_tokens_per_turn` is not always the fix; not thinking is.
