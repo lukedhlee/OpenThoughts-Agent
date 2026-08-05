@@ -25,65 +25,118 @@ this task set**. Variance was never absent — the agent was never running. That
 `.../MILESTONE_1243377_{checkpoints,exports}`. Its gradient was **zero** (rollouts were still timing out),
 so it proves the machinery, not learning.
 
-## 🎯 THE GOAL NOW (decided by Luke)
-**Do NOT attempt the full band.** Instead:
-1. Get the learnable band **reliably on a SUBSET** of tasks,
-2. **on the 8B `g1_diverse_tezos_100k_8b`** (the model Marianna used),
-3. then **extrapolate** to answer: *is our system scalable to a full band in 7–10h?*
+## 🎯 THE GOAL NOW — REFRAMED by Luke, 2026-08-05 evening (supersedes the version below)
+**Build scalable, trustworthy, functioning infra by REPRODUCING Marianna's learnable-band work.**
+Success = **matching her number**, not beating a clock. A number to hit is a far stronger correctness test
+than a throughput estimate, and "get a band within 10h" invites a *false* band.
 
-Rationale: scalable rollout infra pays off across every future experiment and debugs ~10× faster
-(~9 min/trial vs ~1.5h/training-step), and staying inference-only removes all training-side concerns.
+**Her result, from the script she shared:** `358 learnable tasks` out of the **4,578**-task r2egym pool,
+band defined as **`0 < pass@4 < 1`** ⇒ **≈8%**. (Her script says `n_samples_per_prompt=8`, but that is her
+TRAINING config — Luke confirmed the band itself was built at **p@4**.)
+⚠ So the long-quoted **"~35%" is NOT a band rate** — it must have been a pass rate / `resolved@1`. Our own
+0-of-16 groups on the 35B is *consistent* with an ~8% band, not a contradiction of it.
 
-## ⚠️ The 8B needs the tool-call parser wired FIRST — non-negotiable
-The 8B emits tool calls as **bare JSON** (`{"name":"bash","arguments":{…}}`), 182/182 steps, zero XML.
-vLLM ran `--tool-call-parser qwen3_coder` (XML-only) → never matched, **never logged** → OpenCode saw text
-→ 1 step → reward = f(task) → zero variance. Measuring a band on this = re-deriving the retracted `0/197`.
+**Her config, and where ours differed** (all now knobs in `gen_band_yaml.py`, `b5dba99b` + `758fce66`):
 
-Fix is written, validated, pushed, and **NOT yet synced to the cluster**:
-- `OpenThoughts-Agent 4add607c` — `rl/tool_parsers/bare_json_tool_parser.py`.
-  Validated offline against **all 182 real captured outputs: 182 parsed, 0 missed**, +8 edge cases,
-  +streaming replay. (Four stock parsers each miss by one detail — see the module docstring.)
-- `MarinSkyRL d8bdc79` — `pop_openai_kwargs` now forwards `tool_parser_plugin`. A plugin must be
-  **imported** (so `@ToolParserManager.register_module` runs), not passed as a kwarg.
+| | hers | ours (before) |
+|---|---|---|
+| `max_episodes` | **50** | **UNBOUNDED** (`canary_ctx max_turns=999999`) |
+| `override_cpus / memory_mb / storage_mb` | 1 / 1024 / 1024 | 2 / 4096 / 4096 |
+| `max_model_len` | **40960** (g1's native window) | 32768 |
+| tensor-parallel × engines | **4 × 8** | 1 × 4 |
+| `max_num_seqs`, GMU | 1024, 0.92 | 64, 0.85 |
+| thinking | **ON** (`interleaved_thinking=true`) | tried to force OFF |
+| agent | `terminus-structured`, `use_fn_calling=False` | OpenCode (needs a tool parser) |
 
-To wire it:
-```bash
-cd /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge && git fetch fork lukedhlee/apptainer-bridge-rl \
-  && git reset --hard fork/lukedhlee/apptainer-bridge-rl     # ONLY when no job is running
-# then in the RL yaml / overrides:
-#   engine_init_kwargs.tool_parser_plugin: <repo>/rl/tool_parsers/bare_json_tool_parser.py
-#   engine_init_kwargs.tool_call_parser: bare_json
-```
-⚠ **Never `git reset --hard` a clone while a job runs** — Ray can spawn workers against changed code.
+**The episode cap is the throughput story, not thinking.** With `max_turns` unbounded a trial can only end by
+hitting the 1800s wall — measured: **63 of 64 trials still running at 38 min for 5 completions**
+(0.17 trials/min). I spent hours treating thinking as the bottleneck; it was a contributor, not the cause.
+
+⚠ **Her `use_fn_calling=False` means her agent parses actions from RAW TEXT and uses no vLLM tool parser at
+all.** OpenCode requires OpenAI tool-calling, so that part of the pipeline can never be identical to hers.
+
+**Blocked on Marianna / Luke:** her paths are `Permission denied` for `lee27` —
+`/e/project1/jureap59/marianna/...` and `/e/data1/datasets/playground/ot/hf_hub/...`. Worth asking for:
+1. the **358-task learnable set** (`r2egym_learnable_heldout`, `merge_split_learnable.py`) — reusing it skips
+   the 13,312-trial sweep entirely,
+2. her **band-generation** script (she sent the training one),
+3. `qwen3_thinking_acc.jinja2`.
+
+### Old goal, kept for context (superseded)
+1. band on a SUBSET, 2. on the 8B, 3. extrapolate to a 7–10h full band.
+
+## ✅ Tool-call parsing is WIRED and VERIFIED IN PRODUCTION (was the top blocker)
+Both clones are synced; `bare_json` is live and confirmed **by behaviour**, not by config echo:
+- offline on the cluster's real vLLM **0.22.0**: `get_tool_parser('bare_json')` resolves
+  `BareJsonToolParser` and parses all 5 shapes, 0 calls on plain text (`/e/fscratch/.../parsergate.py`)
+- live endpoint: `finish_reason: tool_calls`, one parsed `bash` call, 21 completion tokens
+- live rollout: `r2egym-v1-00300` made **2 clean tool calls** in a real trajectory
+- through the tunnel from JURECA compute nodes `jrc0554/0555/0556`
+
+⚠ **`qwen3_coder` was the wrong DIALECT, not merely the wrong parser.** g1's own
+`chat_template.jinja` (4 KB — note `tokenizer_config.json`'s `chat_template` is EMPTY, the template lives in
+the separate `.jinja` file) instructs:
+`<tool_call>\n{"name": ..., "arguments": ...}\n</tool_call>` — that is the **hermes** dialect.
+`qwen3_coder` expects `<function=name><parameter=x>`, a different grammar, so it never matched and never logged.
+
+**Measured `hermes` vs `bare_json` on the real shapes** (`/e/fscratch/.../hermestest.py`):
+
+| shape | `hermes` | `bare_json` |
+|---|---|---|
+| `<tool_call>` XML (template-canonical) | ✅ | ✅ |
+| XML after `</think>` | ✅ | ✅ |
+| bare JSON, no XML (the 182 captures) | ❌ | ✅ |
+
+⇒ **`bare_json` is a strict SUPERSET of `hermes`**, so keeping it is right: a *missed* tool call ends the
+episode, while a spurious one only wastes a step. Asymmetric — prefer over-parsing. (Its one observed cost: a
+1024-token runaway yielded 29 extracted calls.) `hermes` is the correct fallback if the custom plugin is ever
+unavailable — do NOT go back to `qwen3_coder`.
+
+### The parser was never the whole bug — thinking was the other half
+`enable_thinking` IS supported, at `chat_template.jinja:86`:
+`{%- if enable_thinking is defined and enable_thinking is false %}{{- '<think>\n\n</think>\n\n' }}`
+i.e. it prefills an EMPTY think block. But **harbor's `extra_body` never reaches OpenCode** (implemented for
+`terminus_2` / `openhands` / `mini_swe_agent` only), so the harbor-level keys are inert for it — the 7th
+accepted-but-ignored key here. `MarinSkyRL 9904058` adds the server-side lever
+(`generator.engine_init_kwargs.default_chat_template_kwargs`), which is the only layer that reaches an
+external agent. **It is committed but NOT NEEDED for band parity — Marianna runs thinking ON.**
 
 ## Next actions, in order
-1. ~~Harvest `1244916`~~ — **it died of node failure; nothing to harvest. The fleet is already free.**
-   Re-add the vLLM forward at whatever head your next job gets.
-2. **Sync the cluster** (above) — the queue is empty, so this is safe now.
-3. **Launch an 8B SUBSET band shard** with `bare_json`.
-4. **Gate before scaling** — `median_steps > 1` AND ≥1 group with non-zero within-group variance.
-   A passing trial count is NOT a gate; see the ladder below.
-5. **Ramp concurrency** 32 → ~250 and find the next ceiling (likely vLLM).
-6. **Extrapolate** measured throughput → full-band hours. That is the deliverable.
+1. **Read `1247578`** (128 tasks × p@4 = 512 trials, 8 Jupiter nodes, Marianna-parity config) with
+   `python3 /e/fscratch/reformo/lee27/band.py <trace_jobs>`. It reports three things at once:
+   **band rate** (compare to her ~8%), **zero-tool-call %** (is OpenCode's formatting right?), and
+   **per-trial duration** (the only honest input to an extrapolation).
+2. **Gate on the LADDER, in order** — non-null reward → >1 step → duration in minutes → only then a band
+   number. `band.py` walks it for you and flags suspected free-pass groups separately.
+3. If the band rate is near ~8%: the infra is trustworthy ⇒ scale to the full 4,578-task pool
+   (needs a fresh 24h JURECA fleet). If it is far off: fix the DIFFERENCE from her config, don't tune blindly.
+4. **Ask Marianna for the 358-task set** — reusing it makes the whole 13,312-trial sweep unnecessary.
 
-## Throughput math (measured, not assumed)
-Full band = 3,328 tasks × p@4 = **13,312 trials**; 10h ⇒ **22 completions/min**.
+## Throughput math — MEASURED, and the old conclusion was WRONG
+Full pool = **4,578** tasks × p@4 = **18,312 trials** (the old note said 3,328/13,312 — that is our
+`r2egym-patched-full-oracle` subset, a 73% slice of her pool).
 
 | measured | value |
 |---|---|
-| real agent trial | **median 8.9 min**, p90 13.3 |
-| trial that TIMES OUT | ~62 min (p90) — a failure costs **7× a success** in slot-time |
-| peak achieved concurrency | **32** = exactly the config cap |
-| sandboxes sitting READY while 32 run | **110** |
+| real agent trial (35B, thinking on) | median **9.7 min**, p90 15.1 |
+| trial that TIMES OUT | ~62 min p90 — a failure costs **~7× a success** in slot-time |
+| **8B @ conc 64, thinking on, UNBOUNDED episodes** | **0.17 trials/min — 63 of 64 still running at 38 min** |
+| peak achieved concurrency | 32 (config cap), then **64**, then **128** — all reached immediately |
+| fleet capacity | 32 nodes × 16 workers = **512 slots** |
 
-⇒ Need **~200 concurrent** (22.2 × 8.9), ~295 sizing on p90. Fleet capacity is **512 slots**, so
-band-in-10h needs a **~6× concurrency bump, not more nodes**. Concurrency is provably the binding
-constraint; nothing else is saturated. (An earlier "666 concurrent" estimate was wrong — it used the 1800s
-agent *budget* as the trial duration.)
+⚠ **RETRACTED: "band-in-10h needs a ~6× concurrency bump, not more nodes."** Concurrency was never the
+binding constraint — we hit the configured cap instantly every time (32, then 64, then 128 sandboxes live).
+The wall was **per-trial latency**, from two things:
+1. **`max_turns: 999999`** ⇒ a trial can only end by hitting the 1800s wall. Marianna caps `max_episodes=50`.
+2. **heavy sandboxes** (2 CPU / 4 GB vs her 1 CPU / 1 GB) ⇒ far fewer fit per fleet node.
 
-⚠ **Exclude the free-pass tasks:** 10 of 46 groups scored **1.0 while doing nothing** — those r2egym
-verifiers pass on an unmodified repo. They put a ~22% floor under any band number and can never yield
-gradient. Cheapest throughput win available.
+Node arithmetic, for sizing: at 20k context a TP=1 engine holds ~21 sequences, so 4 engines ≈ 84 concurrent —
+but ~25 engines saturate the 512 fleet slots, i.e. **~8 Jupiter nodes, not 16**. Beyond that more Jupiter buys
+nothing and JURECA becomes the lever. Jupiter cap is 16 nodes; we had been using **2**.
+
+⚠ **Exclude the free-pass tasks:** trials that score >0 with **ZERO tool calls** — the verifier passes an
+untouched repo. Seen at 40% of scored trials on `1246344`. They can never yield gradient and they inflate any
+band/pass number. `band.py` counts them separately; exclude them from the denominator.
 
 ## 🔧 TUNNEL RUNBOOK — the ControlMaster carries **TWO** forwards
 Restoring only one gives a **PASSING route gate and 100% rollout timeouts**. This cost hours today.
@@ -139,22 +192,31 @@ ssh -t jupiter 'S=~/.ssh/cm_jureca/qwen36; ssh -S $S -O exit jureca.fz-juelich.d
   - `10.14.0.46:9923` (workers → bridge) — **still UP and verified**. It is Jupiter-side, so it survives job
     deaths. Do not re-add it; just confirm the listener exists.
 - **Bridge** `10.128.1.2:9920`: `workers_alive: true`, `queue_size: 0` — healthy, draining leftover envs.
-- **JURECA fleet `15498197`**: 32 nodes, **~7h left**. Enough for a subset band; NOT enough for a full
-  13,312-trial band — submit a fresh 24h fleet before attempting that.
-- **Jupiter queue: EMPTY.** Cluster clone sync is safe right now.
-- **JURECA fleet `15498197`** RUNNING, 32 nodes, **~7h20m left** — the scarce resource; the 8B band needs it.
-- **Bridge** `10.128.1.2:9920`: `workers_alive: true`, `queue_size: 0`, `active_jobs: 32`, `envs.ready: 32`.
-- **Both forwards up** on the master pinned to jrlogin05 (pid was 4083409).
-- Helper scripts now persisted: `/e/fscratch/reformo/lee27/gate.py` (gate ladder) and
-  `.../throughput.py` (trial-duration + achieved-concurrency measurement).
+- **JURECA fleet `15498197`**: 32 nodes, expires **~00:40 KST 2026-08-06**. A full 18,312-trial run needs a
+  **fresh 24h fleet** — operator action.
+- **Bridge** `10.128.1.2:9920` healthy. ⚠ `workers_alive` is a bookkeeping artifact (batch `/worker/get_jobs`
+  never updates it) — trust `envs.ready` climbing, never that flag.
+- **Jupiter `1247578` RUNNING** — the parity run: 128 tasks × p@4, 8 nodes, `max_episodes=50`,
+  1 CPU/1 GB sandboxes, 40960 window, TP=4 × 7 engines, thinking ON, `bare_json`. Endpoint port **18300**.
+- Runs `1244916` / `1246344` / `1246702` / `1246853` are all cancelled by us. `1246344`'s traces are the
+  **thinking-on, unbounded-episode baseline** worth keeping (0.17 trials/min).
+- Helper scripts on the cluster (`/e/fscratch/reformo/lee27/`):
+  `band.py <trace_jobs> [win_min]` — **use this one**: gate ladder + band as within-group variance + tool-call
+  and free-pass accounting + concurrency. `gate.py` is the old 35B-hardcoded version. `throughput.py`
+  (durations/concurrency), `parsergate.py` (parser registration), `hermestest.py` (parser dialect comparison),
+  `nothinkgate.sh` / `routegate.sh` (compute-node route gates), `insandbox.py` (in-sandbox DNS/HTTP probes).
 
 ## Establish reality first
 ```bash
-ssh jupiter "squeue --me -o '%.10i %.9T %.6M %.6L %.4D %N'"
-ssh jupiter "ssh -S ~/.ssh/cm_jureca/qwen36 jureca05.fz-juelich.de \"squeue --me -o '%.10i %.9T %.12L %.4D'\""
-ssh jupiter "curl -s -m 8 http://10.128.1.2:9920/status"      # workers_alive + active_jobs + envs.ready
-ssh jupiter "python3 /e/fscratch/reformo/lee27/gate.py"                            # median_steps + rewards, last 16 min
+ssh -o BatchMode=yes jupiter "squeue --me -o '%.10i %.9T %.6M %.6L %.4D %N'"
+ssh -o BatchMode=yes jupiter "ssh -S ~/.ssh/cm_jureca/qwen36 jureca05.fz-juelich.de \"squeue --me\""
+ssh -o BatchMode=yes jupiter "curl -s -m 8 http://10.128.1.2:9920/status"
+ssh -o BatchMode=yes jupiter "python3 /e/fscratch/reformo/lee27/band.py <trace_jobs_dir>"
 ```
+⚠ **Always `-o BatchMode=yes` on Jupiter.** The remote sshd runs out of channel slots under concurrent use and
+falls back to keyboard-interactive, which burns TOTP attempts (3 per try) and risks a JuDoor lockout. BatchMode
+fails fast instead. The condition is transient and self-heals — wait, don't retry harder:
+`until ssh -o BatchMode=yes jupiter true; do sleep 20; done`. **Serialize Jupiter calls; never run two at once.**
 
 ## The gate ladder — in this order, every time
 1. non-null reward → 2. **trajectory with >1 step** → 3. trial duration in *minutes* → 4. only then believe
@@ -213,5 +275,23 @@ operator-only.
 - **"bare `ssh jureca` fails on hostname resolution"**: WRONG — it is IPv6 vs the key's `from=` clause; `-4`.
 - **"restoring the tunnel needs one TOTP"**: incomplete — it needs `-4`, jrlogin05 pinning, **and two
   forwards**. The TOTP was never the hard part.
-- Six accepted-but-ignored config keys so far — verify any key by **behaviour**, never by presence in the
-  materialized config.
+- **"33% pass ≈ Marianna's ~35% ⇒ a learnable band EXISTS / the risk is RETIRED"**: **RETRACTED.** A trial
+  pass rate is not a band. Re-measured on the 35B's full trace tree: 31.6% pass rate and **0 of 16 groups**
+  with within-group variance (5 always-solved, 11 never). GRPO's advantage is within-group, so an all-agreeing
+  group gives exactly zero gradient. The comparison put GROUPS in the before-column and TRIALS in the after.
+  Her real band is **358 / 4,578 ≈ 8% at `0 < pass@4 < 1`**, so ~35% was never a band number.
+- **"~6× concurrency bump, not more nodes"**: **RETRACTED.** We hit the configured concurrency cap instantly
+  every time (32 → 64 → 128 sandboxes live). The wall is per-trial latency: unbounded `max_turns` plus heavy
+  sandboxes. See the throughput section.
+- **"`1244916` died of a node failure"**: **RETRACTED** — `sacct`: `CANCELLED by 34902`, exit `0:0`, our own
+  scancel. A job vanishing from `squeue` plus a `NodeDiedError` is not evidence of hardware failure; every
+  teardown path produces both. **Distinguish by `sacct`.**
+- **"full pool = 3,328 tasks / 13,312 trials"**: that is OUR `r2egym-patched-full-oracle` subset. Her pool is
+  **4,578** ⇒ **18,312** trials at p@4.
+- **SEVEN** accepted-but-ignored config keys now — verify any key by **behaviour**, never by presence in the
+  materialized config. Newest: `extra_body` / `interleaved_thinking` are inert for **OpenCode** (harbor
+  implements them for `terminus_2` / `openhands` / `mini_swe_agent` only).
+- **A gate that passes DURING STARTUP proves nothing.** My "NO-THINK GATE: PASS" was taken on an engine
+  mid-weight-reload; the identical probe later returned thinking-on output and a 500. Worse, probing during
+  weight sync **killed an EngineCore and hung the driver** (params are on the meta device; `_C` ops are
+  CUDA-only). Gate only after `Starting batch generation` / the first `trace_jobs/*/` dir.
