@@ -1,7 +1,7 @@
 # Fresh-session kickoff prompt — paste the block below
 
 Volatile numbers go stale fast. Re-probe before trusting them; the durable state is in `NEXT_SESSION.md`.
-Last refreshed **2026-08-06 02:50 KST**.
+Last refreshed **2026-08-06 04:00 KST**.
 
 ⚠ **This file is the bootstrap, so a stale claim here costs more than anywhere else.** On 08-05 it sat for
 three hours still asserting "A LEARNABLE BAND EXISTS" and the "~6x concurrency bump" *after* both had been
@@ -22,7 +22,23 @@ ON the Jupiter login node (not the laptop). Model = the 8B g1_diverse_tezos_100k
 GOAL = reproduce Marianna's learnable band (~1.6k of 4.5k tasks at 0 < pass@4 < 1,
 ~36%) as end-to-end proof the infra is trustworthy.
 
-*** THE GATE PASSED 2026-08-06 02:30 KST -- do not re-litigate any of this. ***
+*** ENVIRONMENTS ARE VALIDATED MODEL-FREE, 2026-08-06 03:50 KST. Do not re-litigate. ***
+  r2egym    : 25/32 tasks give pristine 0.0 AND oracle 1.0. Harness clean
+              (64/64 records, 0 timeouts, 0 nulls). CEILING 78.1%.
+              The 7 failures are BROKEN TASKS, diagnosed: aiohttp dies on
+              `asyncio.async(` -> SyntaxError (async reserved since Py3.7);
+              pandas dies on pytest `unrecognized arguments: --strict-data-files`.
+              Unsolvable by any model => real dead weight, not a harness artefact.
+  SWE-bench : 8/8 pilot tasks give nop 0.0 AND oracle 1.0 -- all 8 largest repos,
+              = 479/500 = 96% of the benchmark, incl. django (231/500 = 46%).
+              500 task dirs staged; full pull-only SIF build running (~625GB, ~6h).
+  Getting here meant fixing FOUR bugs in MY OWN GATE, each of which faked
+  "the environment is broken": missing agent_tools bind + offline-pip patch;
+  missing --no-home; missing --cleanenv on start AND every exec (runs went from
+  hanging past 25min to ~2min); no PATH / wrong cwd / wrong exec form.
+  RULE: a gate that diverges from worker.py measures the gate. Diff argv line by line.
+
+*** THE IN-JOB GATE PASSED 2026-08-06 02:30 KST -- also settled. ***
 Yesterday: "the r2egym reward is a per-task CONSTANT and never measures the model."
 True then, FIXED AND VERIFIED now. A group finally holds BOTH values:
   task r2egym-2514 (task_name confirmed in BOTH result.json files), 2 of 4 samples
