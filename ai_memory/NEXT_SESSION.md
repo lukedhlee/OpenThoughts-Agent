@@ -32,6 +32,11 @@ on `instance start` AND on every `exec`** (the big one — runs went from hangin
   hours**. Do NOT switch to harbor's `prebuild_sifs.sh` (doubles disk for zero reuse at 1:1 bases).
 - SWE-bench repos need **build deps** in `$BRIDGE_AGENT_TOOLS/wheels` (`flit_core`, `setuptools_scm`,
   `cython==0.29.30`, `oldest-supported-numpy`). Staged 87 -> 95; **expect to extend per new repo.**
+- **Training job `1252276`** (2 nodes, 4 h, thinking OFF via `BAND_SERVER_NO_THINK=1`) is RUNNING with a
+  route verified end-to-end (`HTTP=400` from a compute node = reached the real vLLM). **Early read (n=8):
+  thinking-off is HARMFUL — zero-tool trajectories went 0% -> 75%**, because the model emits stray
+  `</think>` and an invented `<argby>` wrapper instead of a parseable tool call. **Keep thinking ON.**
+  ⚠ Its "ripgrep errors 0/8" is a **denominator artefact** (no tools called at all), NOT the `rg` fix.
 - `rg` is staged at `$BRIDGE_AGENT_TOOLS/bin/rg` and **verified running on a compute node**; the harbor
   bind is committed (`lukedhlee/apptainer-opencode-bridge` `1019a36f`, pushed). **It needs a `git pull` on
   the cluster checkout `/p/project1/synthlaion/lee27/harbor` + a FLEET RESTART to take effect** — not done,
