@@ -126,10 +126,16 @@ ssh -t jupiter 'S=~/.ssh/cm_jureca/qwen36; ssh -S $S -O exit jureca.fz-juelich.d
   code** — unrelated to the OOM fix or the tunnels. It produced **no `grad_norm` and no checkpoint**, so the
   first non-zero gradient is still UNMEASURED.
   ⇒ **Silver lining: the JURECA fleet is now FREE.** Nothing to harvest or cancel; go straight to the 8B work.
-  ⚠ Its vLLM forward now points at a dead node — **cancel and re-add `10.14.0.46:18000` at the new head**
-  before the next run (`-O cancel -R 10.14.0.46:18000:10.128.32.219:8000`). The **bridge** forward
-  (`9923 → 10.128.1.2:9920`) is Jupiter-side and should still be valid — verify, don't assume.
   ⚠ Node death is a real failure mode here: prefer ≤4h walls and expect to relaunch.
+- **Tunnels left in a CLEAN state — you only need to add ONE forward:**
+  - `10.14.0.46:18000` (vLLM) — **cancelled and released**; port is free, NOT burned. Add it at your new
+    job's head IP once allocated.
+  - `10.14.0.46:9923` (workers → bridge) — **still UP and verified**. It is Jupiter-side, so it survives job
+    deaths. Do not re-add it; just confirm the listener exists.
+- **Bridge** `10.128.1.2:9920`: `workers_alive: true`, `queue_size: 0` — healthy, draining leftover envs.
+- **JURECA fleet `15498197`**: 32 nodes, **~7h left**. Enough for a subset band; NOT enough for a full
+  13,312-trial band — submit a fresh 24h fleet before attempting that.
+- **Jupiter queue: EMPTY.** Cluster clone sync is safe right now.
 - **JURECA fleet `15498197`** RUNNING, 32 nodes, **~7h20m left** — the scarce resource; the 8B band needs it.
 - **Bridge** `10.128.1.2:9920`: `workers_alive: true`, `queue_size: 0`, `active_jobs: 32`, `envs.ready: 32`.
 - **Both forwards up** on the master pinned to jrlogin05 (pid was 4083409).
