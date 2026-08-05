@@ -16,9 +16,11 @@ Read ai_memory/NEXT_SESSION.md FIRST — it is the takeover note and it contains
 tunnel runbook and the launch recipe. Then handoff.md § "2026-08-05 (late)" and
 gotchas.md. Report times in KST.
 
-Agentic RL (GRPO) on Qwen/Qwen3.6-35B-A3B over r2egym: Jupiter for training +
-vLLM, JURECA for Apptainer sandboxes via reverse forwards from a Jupiter login
-node.
+Agentic RL (GRPO) over r2egym: Jupiter for vLLM + training, JURECA for Apptainer
+sandboxes reached via reverse forwards held on a ControlMaster that lives ON the
+Jupiter login node (not your laptop). Current model is the 8B
+g1_diverse_tezos_100k_8b (Marianna's checkpoint), agent OpenCode, inference-only.
+The 35B-A3B work is CONCLUDED -- do not resume it without an explicit ask.
 
 THE TRANSPORT NOW WORKS. For the whole project until 08-05 no rollout had ever
 produced a multi-step trajectory; the cause was TWO dead reverse tunnels, not the
@@ -70,13 +72,17 @@ is ~0.16^75, i.e. never. Also: a trial scored 1.0 with ZERO agent steps, and onl
   READ ai_memory/NEXT_SESSION.md sections 0-2 before touching anything.
 DO NOT tune throughput or scale nodes until a group shows both a 0.0 and a 1.0.
 
-FIRST, non-negotiable: the 8B emits BARE-JSON tool calls (182/182 steps, zero
-XML) while vLLM ran --tool-call-parser qwen3_coder (XML-only), so it never
-matched and never logged -> 1-step no-ops -> zero variance. Wire the fix before
-measuring anything, or you re-derive the retracted 0/197:
-  OT-Agent 4add607c  rl/tool_parsers/bare_json_tool_parser.py (validated 182/182)
-  MarinSkyRL d8bdc79 pop_openai_kwargs forwards tool_parser_plugin
-Neither is synced to the cluster. Sync ONLY when no job is running.
+DONE, do not redo: the bare_json tool parser is WIRED, SYNCED and VALIDATED IN
+PRODUCTION. The 8B emits BARE-JSON tool calls while vLLM shipped only
+qwen3_coder (an XML dialect: <function=name><parameter=x>), so it never matched
+-> 1-step no-ops. Fixed by OT-Agent 4add607c rl/tool_parsers/bare_json_tool_parser.py
+(a superset of hermes) + MarinSkyRL d8bdc79 pop_openai_kwargs forwarding
+tool_parser_plugin. Confirmed by BEHAVIOUR on 1248713: median 2 tool calls/trial,
+max 13, and ZERO zero-tool trajectories out of 97 (was 40%). Keep
+engine_init_kwargs.tool_call_parser=bare_json + tool_parser_plugin set.
+  vLLM 0.22 gotcha: the @ToolParserManager.register_module decorator fills
+  lazy_parsers, NOT tool_parsers, so `'bare_json' in ToolParserManager.tool_parsers`
+  is False even on success. Only get_tool_parser(name) is a trustworthy check.
 
 Start by establishing reality, don't trust numbers:
   ssh jupiter "squeue --me -o '%.10i %.9T %.6M %.6L %.4D %N'"
