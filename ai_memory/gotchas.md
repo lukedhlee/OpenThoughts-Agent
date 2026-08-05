@@ -2497,3 +2497,23 @@ Corollary worth keeping: the model emitting a bespoke `<argby>` wrapper hints it
 syntax that neither `bare_json` nor OpenCode expects. If the edit rate stays low after `rg` lands, the next
 thing to examine is **tool-format mismatch between the checkpoint's training format and `bare_json`** — not
 thinking.
+
+### CONFIRMED at n=14 (job 1252276): thinking-OFF is worse. Keep thinking ON.
+
+| metric | baseline n=7 (thinking ON) | n=14 (thinking OFF) |
+|---|---|---|
+| made >=1 successful edit | 1/7 (**14%**) | 1/14 (**7%**) — halved |
+| raw-JSON tool call as TEXT | 5/7 (71%) | 7/14 (50%) |
+| ZERO-tool trajectories | 0 (0%) | ~75% |
+| `reason="stop"` | 7/7 | 14/14 |
+| rewards | — | `{1.0: 1, 0.0: 13}` |
+| groups: seen 8, fully sampled 1, **WITH VARIANCE 0** | | |
+
+Reducing "malformed JSON as text" 71% -> 50% bought nothing, because the trials that stopped emitting
+malformed calls stopped emitting calls **at all**. The edit rate — the number that actually matters — got
+**worse**. `BAND_SERVER_NO_THINK=1` is refuted as a remedy for this checkpoint + `bare_json`.
+
+**Standing conclusion for the next run: thinking ON, and spend the next experiment on `rg`
+(needs a fleet restart), not on thinking.** Note only 1 group was fully sampled at n=14, so "0 groups with
+variance" is a weak statement about the band — it is a strong statement about the edit rate, which is what
+this run was for. Do not upgrade it into a band claim.
