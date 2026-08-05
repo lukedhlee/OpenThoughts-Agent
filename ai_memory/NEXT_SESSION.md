@@ -30,6 +30,13 @@ so it proves the machinery, not learning.
 Success = **matching her number**, not beating a clock. A number to hit is a far stronger correctness test
 than a throughput estimate, and "get a band within 10h" invites a *false* band.
 
+
+> ⚠ **RETRACTED 2026-08-05 23:5x KST — "358 of 4,578 ≈ 8%" IS WRONG.** Marianna, asked directly, said the
+> band is **~1.6k of 4.5k ≈ 36%**, and that her filtering pass cost `18k rollouts` (= 4.5k x 4, confirming
+> pass@4 over a 4.5k pool). Where 358 came from is unknown; treat every "8%" / "358" below as void. This
+> matters because it flips a verdict: our measured 0-in-band was "consistent with 8%" but is
+> ~1-in-800,000 against 36%. Her run also used **terminus-structured**, not OpenCode.
+
 **Her result, from the script she shared:** `358 learnable tasks` out of the **4,578**-task r2egym pool,
 band defined as **`0 < pass@4 < 1`** ⇒ **≈8%**. (Her script says `n_samples_per_prompt=8`, but that is her
 TRAINING config — Luke confirmed the band itself was built at **p@4**.)

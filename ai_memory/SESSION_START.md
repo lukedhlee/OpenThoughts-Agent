@@ -34,12 +34,31 @@ NOT a band. The band is per-group: 0 < passes < n_samples. Compute it only with
 band_report.py / band.py, never by eye.
 
 THE GOAL NOW (Luke's call, 08-05 evening): do NOT chase a fast band number.
-Build scalable, trustworthy infra by REPRODUCING Marianna's band measurement —
-success is matching her number, 358 learnable of 4,578 r2egym tasks at
-0 < pass@4 < 1, ~8%. (Her script's n_samples_per_prompt=8 is her TRAINING
-config; the band is pass@4.) Validate on a 128-task subset first, then
-extrapolate. Model: the 8B g1_diverse_tezos_100k_8b she used. Agent: OpenCode.
+Build scalable, trustworthy infra by REPRODUCING Marianna's band measurement.
+HER NUMBERS, from her own words 08-05 late: band = ~1.6k of 4.5k r2egym tasks
+=> ~36%, at 0 < pass@4 < 1, and the filtering pass cost "18k rollouts"
+(= 4.5k x 4, so pass@4 over a 4.5k pool is confirmed). She used the agent
+terminus-structured, NOT OpenCode.
+  RETRACTED: "358 of 4,578 ~= 8%". Never verified, source unknown, void. It
+  flipped a verdict once already: our measured 0-in-band reads as "consistent
+  with 8%" (p~0.47) but is ~1-in-800,000 against 36%. If you see 358 or 8%
+  anywhere, it is stale.
+Model: the 8B g1_diverse_tezos_100k_8b she used. Agent: OpenCode (Luke's call —
+its transport is the one that works; her band % came from terminus-structured, so
+our absolute % may legitimately differ. The pass/fail criterion is therefore
+"is there real within-group variance at all", not "does it equal 36%").
 Stay inference-only: it removes training-side concerns and debugs ~10x faster.
+
+STOP-THE-LINE, 08-05 23:40 KST: THE REWARD IS A PER-TASK CONSTANT. On 1248713
+(OpenCode, 8B, r2egym-patched-full-oracle) 62.6% of trials scored 1.0 while
+0 of 30 fully-sampled groups showed ANY within-group variance. At a 62.6% pass
+rate ~83% of 4-sample groups should be in band, so 0/30 has probability
+~0.17^30 ~ 1e-23. The reward is not measuring the model. Corroborating: a trial
+scored 1.0 with ZERO agent steps, and trials that never edited a file passed MORE
+often (76% of passes made no edit) than trials that did. Prime suspect: the
+"-patched-" in r2egym-patched-full-oracle means the fix ships pre-applied, so the
+tests already pass and editing only breaks them. DO NOT tune throughput, scale
+nodes, or believe any band number until this is resolved.
 
 FIRST, non-negotiable: the 8B emits BARE-JSON tool calls (182/182 steps, zero
 XML) while vLLM ran --tool-call-parser qwen3_coder (XML-only), so it never
@@ -108,9 +127,12 @@ BEFORE ANY LAUNCH — this exact recipe; three jobs died one per line
   sbatch --chdir=$W --time=<T> --export=ALL,DCFT=$W,SKYRL_CHUNKED_LOGPROBS=1 <generated>_rl.sbatch
   TIME_LIMIT 04:00:00 or less — a 6h job can be deferred a day by a hidden
     maintenance window. Probe free: sbatch --test-only -t <T> <sbatch>
-  Confirm the JURECA fleet has MORE time left than walltime + startup. Preflight
-    does NOT check this (it checks workers_alive, a liveness check doing duty as
-    a sufficiency check).
+  RUN THE GATE FIRST — it now enforces most of the rules above, so you do not
+    have to remember them:
+      bash hpc/skyrl_standard/jupiter/band_preflight.sh <config.yaml> <walltime> <fleet_jobid>
+    Non-zero exit = DO NOT SUBMIT. It checks TP=1, derived context fields, dead
+    keys, n_samples>=2, sane max_turns, the ControlMaster, BOTH forwards, that the
+    fleet outlives walltime+30min, and bridge capacity.
   After allocation: retarget BOTH forwards at the new head, then prove the route
     with a real /v1/chat/completions FROM A COMPUTE NODE. A listener check
     (ss | grep 18000) passes while the route is dead — that is exactly how
