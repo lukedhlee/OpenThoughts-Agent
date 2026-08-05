@@ -80,7 +80,42 @@ Thinking was never the cause (`reasoning: 0`; the `<think>` tags are literal tra
 verifiers pass on an unmodified repo. They put a ~22% floor under any band number and can never yield
 gradient. Drop them from the denominator.
 
-## ⛔ BLOCKER #1 — the JURECA ControlMaster is channel-exhausted; only a human can fix it
+## THE CONTROLMASTER CARRIES **TWO** FORWARDS — restoring only one silently kills every rollout
+Rebuilding the master is now reproducible. It was folklore before; these are the four facts:
+
+1. **`-4` is MANDATORY.** `jureca.fz-juelich.de` resolves IPv6-first and the key's JuDoor `from=` clause
+   rejects IPv6 → `Permission denied (publickey)` with TOTP never offered. With `-4` the key gets
+   `Authenticated ... partial success` and *then* JSC asks for the TOTP.
+   (The old note blaming "hostname resolution" is WRONG and cost hours.)
+2. **Pin the login node:** connect to **`jureca05.fz-juelich.de`** (single A record 134.94.1.132), NOT the
+   12-address round-robin alias. The tunnel must bind `10.14.0.46`, which only **jrlogin05** owns — land on
+   jrlogin10 and the forward fails with `NO_LISTENER` and nothing holding the port (looks like a burned
+   port; it is not).
+3. **Add BOTH forwards.** Restoring only the vLLM one gives a PASSING route gate and still 100% rollout
+   timeouts, because no sandboxes are ever created:
+   ```bash
+   S=~/.ssh/cm_jureca/qwen36; H=jureca05.fz-juelich.de
+   ssh -S $S -O forward -R 10.14.0.46:18000:<jupiter-head-ip>:8000 $H   # sandboxes -> vLLM
+   ssh -S $S -O forward -R 10.14.0.46:9923:10.128.1.2:9920         $H   # workers  -> bridge
+   ```
+   The bridge is a **python3 process on the Jupiter login node** at `10.128.1.2:9920`; the workers reach it
+   as `jrlogin05i:9923`. That port pair is recorded ONLY in the fleet's own log
+   (`/p/scratch/synthlaion/lee27/dc_agent_eval/logs/apptainer_workers_<fleetid>.out` → "Bridge URL"). Read
+   it rather than guessing — `BRIDGE_LOGIN` defaults to `jrlogin03i:9920` in the sbatch and is overridden.
+4. **`workers_alive: false` with live worker processes = a missing bridge forward**, not dead workers.
+   `pgrep -fc worker.py` on a fleet node distinguishes them. Recovery is instant: `active_jobs` jumps
+   within seconds of adding the forward.
+
+Full restart:
+```bash
+ssh -t jupiter 'S=~/.ssh/cm_jureca/qwen36; ssh -S $S -O exit jureca.fz-juelich.de 2>/dev/null; \
+  ssh -4 -i ~/.ssh/id_ed25519_jupiter2jureca -M -S $S -fN lee27@jureca05.fz-juelich.de && \
+  ssh -S $S jureca05.fz-juelich.de hostname'   # MUST print jrlogin05.jureca
+```
+⚠ **Capture a dying master's forwards BEFORE killing it** (`ps -u $USER -o args | grep 'ssh .*-R'`).
+I killed one without doing so and spent an hour rediscovering the second forward.
+
+## ⛔ (RESOLVED 2026-08-05) the ControlMaster was channel-exhausted
 Every rollout times out because the sandboxes cannot reach vLLM. Diagnosed hop by hop:
 
 | hop | result |
