@@ -1313,4 +1313,42 @@ allow-listed `timeout` is dropped between the agent kwargs and the client; (c) c
 actually the *streaming* idle timeout rather than a total-request timeout, which would explain a 10 s call
 succeeding while an agent turn dies.
 
-Nothing is running now. Jupiter is clear; JURECA fleet **15498197** is up with ~21 h.
+~~Nothing is running now.~~ **Superseded — see below.** JURECA fleet **15498197** is up with ~21 h.
+
+## RUNNING NOW: 1242066 — OpenCode + thinking OFF
+
+**This is the live experiment.** Job `1242066`, port **18180**, 3 h wall, 2 nodes, agent **OpenCode
+1.18.8** with thinking disabled. Tunnel forwarded to `10.128.18.17`. Bridge 9921 restarted clean
+(`jobs_errors` back to 0 after clearing 164 `stopping` envs).
+
+### Why OpenCode and not terminus-2
+OpenCode's **transport was never broken**: 1,219 trials, zero exceptions, readable rewards, no timeouts.
+terminus-2 cannot get a single request through (`APITimeoutError`, and `timeout: 900` is ignored). So the
+proven transport is OpenCode's; the only defect was the one-turn episode.
+
+### The cause of the one-turn episodes was MINE, not OpenCode's
+Adopting the canary harbor block wholesale **discarded the thinking-off settings**, and that block carries
+no `extra_body` at all — so Qwen3's template defaulted thinking **ON**. The model then spent its turn on a
+~300-token `<think>` emitted as plain TEXT (not a 4096 truncation — the whole trajectory was ~1.2 KB) and
+never produced a tool call, so OpenCode ended the episode after one step. terminus-2 received the
+thinking-off treatment; OpenCode never did. Now fixed:
+
+```yaml
+interleaved_thinking: false
+extra_body: { chat_template_kwargs: { enable_thinking: false } }
+engine_init_kwargs: { enable_auto_tool_choice: true, tool_call_parser: qwen3_coder }   # still required
+```
+
+### The gate, and what to do on each outcome
+```bash
+python3 /e/fscratch/reformo/lee27/trajcheck.py     # now globs band_oc_s* ; median_steps > 1 => PASS
+python3 /e/fscratch/reformo/lee27/rewardcheck.py   # now globs band_oc_s*
+```
+- **PASS** → launch the remaining 7 shards. Set the port base in
+  `/e/fscratch/reformo/lee27/launch_band_shards.sh` to **18190** first (18100–18180 are burned), then
+  `bash launch_band_shards.sh 1 7 04:00:00` and `setsid nohup bash fwd_all.sh &`. Wait for the bridge's
+  `stopping` count to reach ~0 before launching, or the new shards queue behind the drain.
+- **FAIL, still one step** → thinking was not the cause. Then the question is whether this checkpoint emits
+  Qwen3 XML tool calls at all; inspect `agent/opencode.txt` for what it returned, and consider that a
+  terminus-trained model may simply never produce OpenCode's format — in which case terminus-2's timeout
+  becomes the only path and must be fixed.
