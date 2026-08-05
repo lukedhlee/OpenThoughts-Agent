@@ -1,7 +1,13 @@
 # Fresh-session kickoff prompt — paste the block below
 
 Volatile numbers go stale fast. Re-probe before trusting them; the durable state is in `handoff.md`.
-Last refreshed **2026-08-05 (late)**.
+Last refreshed **2026-08-05 23:00 KST**.
+
+⚠ **This file is the bootstrap, so a stale claim here costs more than anywhere else.** On 08-05 it sat for
+three hours still asserting "A LEARNABLE BAND EXISTS" and the "~6x concurrency bump" *after* both had been
+retracted in `NEXT_SESSION.md` — i.e. it was seeding every new session with the project's two most expensive
+wrong beliefs. **When you retract something, grep for it across all of `ai_memory/` and fix this file in the
+same commit.** Corrections are not done until they are propagated.
 
 ---
 
@@ -14,19 +20,26 @@ Agentic RL (GRPO) on Qwen/Qwen3.6-35B-A3B over r2egym: Jupiter for training +
 vLLM, JURECA for Apptainer sandboxes via reverse forwards from a Jupiter login
 node.
 
-THE PIPELINE NOW WORKS. For the whole project until 08-05 no rollout had ever
+THE TRANSPORT NOW WORKS. For the whole project until 08-05 no rollout had ever
 produced a multi-step trajectory; the cause was TWO dead reverse tunnels, not the
 model or the reward. With both up: median_steps 18.5 (was 1), 0 bridge timeouts
-(was 32/32), rewards 8x0.0 + 4x1.0 = 33% pass, which matches Marianna's ~35%. So
-A LEARNABLE BAND EXISTS. The milestone machinery is also banked (1243377: update
-+ 235GB ckpt + 65GB export, preserved as MILESTONE_1243377_*), though with
-grad_norm=0 because rollouts were still timing out then.
+(was 32/32). The milestone machinery is also banked (1243377: update + 235GB ckpt
++ 65GB export, preserved as MILESTONE_1243377_*), though with grad_norm=0 because
+rollouts were still timing out then.
 
-THE GOAL NOW (Luke's call): do NOT chase the full band. Get the learnable band
-RELIABLY ON A SUBSET, on the 8B g1_diverse_tezos_100k_8b that Marianna used, then
-EXTRAPOLATE to answer whether the system scales to a full band in 7-10h. Stay
-inference-only for now: it removes training-side concerns and debugs ~10x faster
-(~9 min/trial vs ~1.5h/training-step).
+RETRACTED — do not re-derive: "33% pass matches Marianna's ~35%, so A LEARNABLE
+BAND EXISTS." That compared GROUPS against TRIALS. Re-measurement of the same
+35B data found a 31.6% pass rate and **0 of 16 groups in band**. A pass rate is
+NOT a band. The band is per-group: 0 < passes < n_samples. Compute it only with
+band_report.py / band.py, never by eye.
+
+THE GOAL NOW (Luke's call, 08-05 evening): do NOT chase a fast band number.
+Build scalable, trustworthy infra by REPRODUCING Marianna's band measurement —
+success is matching her number, 358 learnable of 4,578 r2egym tasks at
+0 < pass@4 < 1, ~8%. (Her script's n_samples_per_prompt=8 is her TRAINING
+config; the band is pass@4.) Validate on a 128-task subset first, then
+extrapolate. Model: the 8B g1_diverse_tezos_100k_8b she used. Agent: OpenCode.
+Stay inference-only: it removes training-side concerns and debugs ~10x faster.
 
 FIRST, non-negotiable: the 8B emits BARE-JSON tool calls (182/182 steps, zero
 XML) while vLLM ran --tool-call-parser qwen3_coder (XML-only), so it never
@@ -42,7 +55,7 @@ Start by establishing reality, don't trust numbers:
   ssh jupiter "curl -s -m 8 http://10.128.1.2:9920/status"   # workers_alive, active_jobs, envs.ready
   ssh jupiter "python3 /e/fscratch/reformo/lee27/gate.py"     # median_steps + rewards, last 16 min
 
-FIVE THINGS NOT TO GET WRONG
+SEVEN THINGS NOT TO GET WRONG
 1. THE CONTROLMASTER CARRIES TWO FORWARDS. Restoring only one gives a PASSING
    route gate and 100% rollout timeouts.
      -R 10.14.0.46:18000 -> <jupiter-head>:8000   sandboxes -> vLLM
@@ -59,7 +72,7 @@ FIVE THINGS NOT TO GET WRONG
                   stale; killed two runs mid-rollout. Reads fine.
      /p/scratch   NOT MOUNTED on Jupiter compute (login-node staging only) —
                   BUT sif_cache must stay on it, JURECA workers do mount it.
-3. Verify by BEHAVIOUR, never by config. Six keys have now been accepted,
+3. Verify by BEHAVIOUR, never by config. SEVEN keys have now been accepted,
    written, and ignored by their consumer. And checking a thing EXISTS is not
    checking it WORKS where and when it's needed — that mistake has now recurred
    four times (route gate, workers_alive, /p/scratch, listener-vs-route).
@@ -68,11 +81,25 @@ FIVE THINGS NOT TO GET WRONG
 4. Reward is at verifier_result.rewards.reward — NOT top-level `reward`, which
    does not exist and returns None for every trial. The number that matters is
    per-group len(set(rewards)) > 1, never avg_raw_reward.
-5. Concurrency is the throughput bottleneck, not nodes. Measured: real trials
-   take ~8.9 min (median), peak achieved concurrency is 32 = exactly the config
-   cap, and 110 sandboxes sat READY while only 32 ran. Band-in-10h needs ~200
-   concurrent against 512 fleet slots => a ~6x bump, no new nodes. A timed-out
-   trial holds a slot ~62 min, so failures cost 7x a success.
+5. RETRACTED: "concurrency is the bottleneck => a ~6x bump, no new nodes." We
+   hit the configured cap instantly at every setting tried (32 -> 64 -> 128 all
+   went live), so the cap was never the binding constraint. What actually made
+   trials slow: max_turns: 999999 (Marianna caps 50) plus heavy sandboxes
+   (2 CPU/4GB vs her 1 CPU/1GB). A timed-out trial holds a slot ~62 min, so
+   failures cost ~7x a success — that part stands.
+6. TP=1 ONLY. inference_engine_tensor_parallel_size > 1 makes vLLM build a
+   distributed executor that copies the parent actor's os.environ into a nested
+   Ray runtime_env; Ray then asserts on its own
+   __RAY_WORKER_PROCESS_SETUP_HOOK_ENV_VAR and NO engine ever starts. SkyRL
+   mislabels this as "port collision (EADDRINUSE)" and burns 5x120s retries on a
+   deterministic assertion, so gate on
+   `grep -c RAY_WORKER_PROCESS_SETUP_HOOK <joblog>`, not the EADDRINUSE string.
+   Cost: 8-node job 1247578, whole allocation. TP=1 is also simply better for an
+   8B on 96GB GH200 — 28 engines on 8 nodes instead of 7, no collectives.
+7. Route-gate at max_tokens=4096, the REAL per-turn budget. At 256 the 8B loops
+   <think> blocks and returns finish_reason=length with zero tool_calls, which
+   reads exactly like a dead parser. At 4096 it emits a clean tool call in ~79
+   tokens. A too-small gate manufactures the failure it is testing for.
 
 BEFORE ANY LAUNCH — this exact recipe; three jobs died one per line
   W=/e/fscratch/reformo/lee27/OpenThoughts-Agent-r2egym-bridge-next   # the REAL WORKDIR
