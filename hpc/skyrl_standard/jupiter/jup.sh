@@ -38,15 +38,22 @@ _jup_locked() {
     flock -w 300 9 || { echo "jup: lock timeout" >&2; return 1; }
     "$@"
   else
-    local d="${_JUP_LOCK}.d" i=0
+    local d="${_JUP_LOCK}.d" i=0 rc=0
+    # `trap ... RETURN` is bash-only -- zsh (the Mac default) rejects it with
+    # "undefined signal: RETURN", so it printed two noise lines per call AND
+    # never installed, meaning an interrupted call left the lock dir behind and
+    # every later jup/jrc blocked for 300s. Break a stale lock instead.
+    if [ -d "$d" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
+      echo "jup: breaking stale lock ($d, >10min old)" >&2
+      rmdir "$d" 2>/dev/null
+    fi
     until mkdir "$d" 2>/dev/null; do
       i=$((i+1)); [ "$i" -gt 300 ] && { echo "jup: lock timeout" >&2; return 1; }
       sleep 1
     done
-    trap 'rmdir "$d" 2>/dev/null' RETURN
-    "$@"
+    "$@"; rc=$?
     rmdir "$d" 2>/dev/null
-    trap - RETURN
+    return $rc
   fi
 }
 
@@ -63,9 +70,23 @@ jup() {
 
 # JURECA is reached through the ControlMaster that lives ON the Jupiter login node --
 # NOT on your laptop. `ssh jureca` from a Mac is expected to fail; that is not an outage.
+#
+# The payload is base64-encoded so it survives BOTH ssh hops untouched. Do not
+# "simplify" this back to nested quotes.
+#   BROKEN (2026-08-05..06): jup "ssh ... \"\$@\"" _ "$@"
+#   ssh joins all its args into ONE remote command string, so
+#   jrc 'hostname; uname -m' became, on Jupiter:
+#       ssh -S cm host "$@" _ hostname; uname -m
+#   i.e. `_ hostname` ran on JURECA (-> "_: command not found") while
+#   `uname -m` ran ON JUPITER and printed aarch64. Any jrc command containing
+#   ; && || | or a newline silently executed part of itself on the WRONG
+#   CLUSTER and still exited 0. That is how a JURECA-only amd64 SIF probe
+#   returned a Jupiter arm64 answer.
 jrc() {
   [ $# -gt 0 ] || { echo "usage: jrc '<command>'" >&2; return 2; }
-  jup "ssh -o BatchMode=yes -S $_JUP_CM_JURECA $_JUP_JURECA_HOST \"\$@\"" _ "$@"
+  local _b64
+  _b64=$(printf '%s' "$*" | base64 | tr -d '\n')
+  jup "ssh -o BatchMode=yes -S $_JUP_CM_JURECA $_JUP_JURECA_HOST 'echo $_b64 | base64 -d | bash'"
 }
 
 # Long-running work: detach into tmux on the cluster so no ssh session is held.
