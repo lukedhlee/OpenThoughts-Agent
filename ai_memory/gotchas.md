@@ -2282,3 +2282,43 @@ github.com** (which is what fails offline, raising `"ripgrep execution failed"` 
 by BOTH `glob` and `grep`). So a PATH hit is sufficient. Artifact must be **static musl x86_64** — the SIFs'
 glibc varies per task image. There is **no provisioning script** for `$BRIDGE_AGENT_TOOLS/bin`; opencode,
 tmux, asciinema and uv were all hand-staged. Requires a **fleet restart** (workers hold the old module).
+
+## `--cleanenv` on BOTH instance start AND every exec (2026-08-06)
+
+The single most expensive omission in the hand-rolled gates. `worker.py:559` sets `--cleanenv` at
+`instance start` and `worker.py:1131` repeats it on **every** `apptainer exec`, and :1125-1130 says why:
+
+> An instance's start-time `--cleanenv` does **not** apply to later `apptainer exec instance://…` calls.
+> Without repeating it here, Slurm/PMI/ParaStation state from the worker step leaks into every agent and
+> verifier process. Besides breaking isolation, **old Python runtimes can fail to spawn subprocesses while
+> that launcher state is present.**
+
+A gate launched from inside an `srun` step therefore leaks `SLURM_*`, `PMI_*`, `PSP_*`, `PYTHONPATH`,
+`CONDA_*` and `LD_LIBRARY_PATH` into images whose Python is **3.5-3.9**. That is the best mechanical
+explanation for an envgate run consuming the entire 25-minute wall with no output. **Repeating the flag on
+exec is not redundant — it is the whole point.**
+
+## Diff your runner against `worker.py`'s argv, line by line, BEFORE trusting a number
+
+Three separate audits of the same ~130-line gate found, cumulatively: missing `agent_tools` bind, missing
+`_patch_test_sh_for_offline_pip`, missing `--no-home`, missing `--cleanenv` (x4 call sites), **no `PATH` at
+all**, missing per-tool `/usr/local/bin/<name>` binds (incl. `uv`, which is what makes `uv run parser.py`
+resolve), wrong cwd (`/root` instead of the Dockerfile `WORKDIR`), `bash <path>` instead of shebang
+execution, `bash -c` instead of `/usr/bin/bash -lc` (a **login** shell — this is how conda gets on PATH),
+half-size overlay with no failure check, and no per-instance `/tmp`.
+
+Every one of these makes the gate fail where a real rollout succeeds — i.e. they all manufacture false
+evidence that "the environment is broken", which is precisely the hypothesis under test. **A gate that
+diverges from the runtime measures the gate.** Read the actual `instance start` / `exec` argv construction
+and mirror it flag for flag; do not reason from what "should" matter.
+
+Corollary on provenance: both gates exec the patch function out of a **pinned** `apptainer_bridge/<sha>/
+worker.py`. Confirm which sha the live fleet actually loaded before trusting a gate result — the pinned copy
+and local HEAD differed in `/etc/gitconfig safe.directory`, an astropy shim, and the `rg` bind.
+
+## Measured, so nobody re-derives it: `/testbed` is writable in these SIFs (2026-08-06)
+
+`apptainer exec --cleanenv <swebench sif> sh -c 'ls -ld /testbed; stat -c %u /testbed; id -u'` gives
+`drwxrwxrwx` owned by **our own uid** (34902). So harbor's writable-workdir pre-copy + bind
+(`worker.py:494-522`), which exists for clusters without subuid mappings, is **not needed on JURECA** —
+`patch -p1` and `git apply` work directly against `/testbed`. Do not add that bind cargo-culted.
