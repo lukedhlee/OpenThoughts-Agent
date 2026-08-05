@@ -13,7 +13,7 @@ Report times in **KST** (cluster clocks are CEST = KST − 7h).
 | | result |
 |---|---|
 | **r2egym** | **25/32 tasks** give pristine `0.0` **and** oracle `1.0`. Harness clean: 64/64 records, **0 timeouts, 0 nulls**. **Ceiling 78.1%.** |
-| **SWE-bench Verified** | **6/8 pilot tasks** give nop `0.0` and oracle `1.0`, incl. **django (231/500 = 46% of the benchmark)**. The 6 passing repos cover **413/500 = 83%**. |
+| **SWE-bench Verified** | **8/8 pilot tasks** give nop `0.0` and oracle `1.0` — every one of the 8 largest repos, covering **479/500 = 96%**, incl. **django (231/500 = 46%)**. |
 
 The r2egym 7 failures are **broken tasks, not a broken harness** (diagnosed): aiohttp dies on
 `asyncio.async(` -> `SyntaxError` (`async` reserved since Py3.7); pandas dies on pytest

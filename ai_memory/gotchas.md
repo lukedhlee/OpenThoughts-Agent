@@ -2379,3 +2379,20 @@ things the adapter's Dockerfile adds are `uv` (already on PATH from `agent_tools
 Measured on 8 pilot tasks: **147-424 s each, 10 GB total (~1.25 GB avg)** -> **~625 GB for 500**, against
 36 TB free. Do NOT use harbor's `prebuild_sifs.sh` here: with 1:1 base images it also pre-pulls each base
 into its own `base_*.sif`, roughly doubling disk for zero reuse.
+
+## SWE-bench pilot is 8/8 after staging build-dep wheels (2026-08-06 ~03:50 KST)
+
+`astropy__astropy-13398` and `sphinx-doc__sphinx-11510` went from `null`/`null` to **nop `0.0`, oracle
+`1.0`** purely by adding wheels — no environment or harness change. So the SWE-bench pilot is now
+**8/8 GATE PASS across all 8 largest repos = 479/500 = 96% of the benchmark.**
+
+The wheels added (`87 -> 95`), fetched on a networked host with
+`pip download --only-binary=:all: --platform manylinux2014_x86_64 --python-version {39,311}`:
+`flit_core`, `setuptools_scm`, `cython==0.29.30`, `oldest-supported-numpy`, plus `wheel`/`setuptools`/
+`tomli`/`packaging`/`typing_extensions`. **`pip download` on the Mac defaults to macOS wheels — the
+`--platform`/`--python-version` flags are mandatory or you stage unusable artefacts.**
+
+**Generalise:** when a SWE-bench repo's verifier returns `null` with
+`No matching distribution found for <pkg>` / `Installing build dependencies: finished with status 'error'`,
+that is a **wheel-cache gap, not a broken environment**. Read the missing package out of the tail and stage
+it. Expect a new set per repo family as coverage widens beyond these 8.
