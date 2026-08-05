@@ -1560,3 +1560,73 @@ recovers on its own. **One remote call per `ssh` invocation.**
 **extrapolate** to answer whether the system scales to a full band in 7–10h. Inference-only for now: it
 removes training-side concerns and debugs ~10× faster (~9 min/trial vs ~1.5h/step). The parser must be
 wired first or the subset re-measures one-turn no-ops.
+
+## 2026-08-05 (evening) — goal reframed to REPRODUCING Marianna's band; two headline claims retracted
+
+### The reframe (Luke, mid-session)
+Not "get a learnable band within 10h" — **build scalable, trustworthy, functioning infra by reproducing
+Marianna's band work.** Success is **matching her number**, because a target number is a far stronger
+correctness test than a throughput estimate, and a deadline invites a *false* band.
+
+**Her result:** `358` learnable tasks of the **4,578**-task r2egym pool at **`0 < pass@4 < 1`** ⇒ **≈8%**.
+(Her shared script says `n_samples_per_prompt=8`; that is the TRAINING config — Luke confirmed the band was
+built at p@4. Our pool, `r2egym-patched-full-oracle` = 3,328, is a 73% slice of hers.)
+
+### Retraction 1 — "33% pass ≈ 35% ⇒ a learnable band EXISTS"
+A **trial pass rate is not a band.** Re-measured over the 35B canary's whole trace tree (212 results):
+31.6% pass rate, and **0 of 16 fully-sampled groups in band** (5 always-solved, 11 never-solved, none mixed).
+GRPO's advantage is computed *within* a group, so an all-agreeing group contributes **exactly zero gradient**.
+The inherited table put **GROUPS** in the before-column and **TRIALS** in the after-column; compared that way
+any bimodal task mix looks like a band. `0.65^16 ≈ 0.1%` if the true band were 35%.
+Her ~8% shows the band is genuinely small, so 0/16 at p@4 is *consistent* with it — not a contradiction.
+⇒ Report the band ONLY as *fraction of fully-sampled groups with `0 < passes < n`*. `band.py` does this.
+
+### Retraction 2 — "band-in-10h needs a ~6× concurrency bump, not more nodes"
+Concurrency was **never** the binding constraint: we hit the configured cap instantly on every run
+(32 → 64 → 128 sandboxes live, `envs.ready` matching). The wall is **per-trial latency**, from two things:
+1. **`context_budget.max_turns: 999999`** ⇒ `max_episodes` unbounded ⇒ a trial can only end by hitting the
+   1800s wall. **Marianna caps `max_episodes=50`.** Measured on `1246344`: **63 of 64 trials still running at
+   38 min, 5 completions, 0.17 trials/min.**
+2. **Heavy sandboxes** — ours 2 CPU / 4 GB / 4 GB vs hers **1 CPU / 1 GB / 1 GB**.
+
+I spent hours treating **thinking** as the bottleneck. It is a contributor (4096-token turns vs ~40) but not
+the cause, and chasing it was optimizing the wrong thing — she runs thinking **ON**. Sizing note: ~25 engines
+saturate the 512 fleet slots ⇒ **~8 Jupiter nodes, not 16**; we had been using **2** of a 16 cap.
+
+### Tool-call parsing: wired, verified in production, and `qwen3_coder` was the wrong DIALECT
+g1's template lives in a separate **`chat_template.jinja`** (`tokenizer_config.json`'s `chat_template` is
+EMPTY) and instructs `<tool_call>\n{"name":…,"arguments":…}\n</tool_call>` — the **hermes** dialect.
+`qwen3_coder` expects `<function=name><parameter=x>`, a different grammar, hence never matching and never
+logging. Measured comparison: `hermes` parses both XML shapes but **misses bare JSON**; `bare_json` parses all
+three ⇒ **`bare_json` is a strict superset**, and keeping it is right because a *missed* call ends the episode
+while a spurious one only wastes a step. Verified live: `finish_reason: tool_calls` from compute nodes, and
+`r2egym-v1-00300` made 2 clean tool calls in a real trajectory.
+
+⚠ **`extra_body` / `interleaved_thinking` never reach OpenCode** (harbor implements them for `terminus_2`,
+`openhands`, `mini_swe_agent` only) — the 7th accepted-but-ignored key. The only lever that reaches an external
+agent is server-side: `generator.engine_init_kwargs.default_chat_template_kwargs` (**MarinSkyRL `9904058`**).
+Committed, but NOT needed for parity since she runs thinking on.
+Also: her agent uses **`use_fn_calling=False`** (raw-text action parsing, no vLLM tool parser at all), so this
+part of the pipeline can never be identical to hers — OpenCode requires OpenAI tool-calling.
+
+### Two self-inflicted losses worth not repeating
+1. **Probing the endpoint during weight sync killed an EngineCore and hung the driver** (`1246702`). Params sit
+   on the **meta** device during the reload bracket and `_C` ops are CUDA-only ⇒
+   `_C::rotary_embedding … Meta tensors`. The controlled comparison settled it: `1246344` (unprobed) 0 errors
+   and generated; `1246702` (probed) 1 error, dead engine — and the crash returned **as the HTTP 500 to my own
+   probe**. It also means my earlier "NO-THINK GATE: PASS" was measured mid-reload and is void.
+2. **Bumping `PORTBASE` without re-adding the reverse forward** (`1246853`) — 128 sandboxes `ready`, bridge
+   healthy, and every `agent/` dir **empty** for 14 min, failing only at the 2100s bridge timeout. **The tell
+   for "no route" is an empty `agent/` dir with a healthy bridge**, not any error. TWO things change per
+   relaunch and both must be re-pointed: the endpoint **port** and the **head node IP**.
+
+### Live at handoff
+`1247578` RUNNING — the parity run: 128 tasks × p@4 = 512 trials, 8 Jupiter nodes, `max_episodes=50`,
+1 CPU/1 GB sandboxes, 40960 window (g1's native; we had been serving 32768), TP=4 × 7 engines,
+`max_num_seqs=1024`, thinking ON, `bare_json`, endpoint port 18300, bridge 9920.
+Read it with `band.py` — it yields the band rate, the zero-tool-call %, and per-trial duration together.
+
+**Blocked on others:** Marianna's paths are `Permission denied` for `lee27`
+(`/e/project1/jureap59/marianna/...`, `/e/data1/datasets/playground/ot/hf_hub/...`). Worth requesting: the
+**358-task learnable set** + `merge_split_learnable.py` (reusing it makes the 18,312-trial sweep unnecessary),
+her **band-generation** script, and `qwen3_thinking_acc.jinja2`. A fresh 24h JURECA fleet is operator-only.
