@@ -7,8 +7,16 @@ Agentic RL (GRPO) on `Qwen/Qwen3.6-35B-A3B` over r2egym. Jupiter = training + vL
 sandboxes reached via a reverse SSH forward from a Jupiter login node.
 
 **Two goals, in order:**
-1. **The milestone** — one finite optimizer update + checkpoint + HF export.
-   **The blocker is FIXED and a run is in flight (`1243351`).** Confirm the outcome first.
+1. **The milestone** — ✅ **THE MACHINERY LANDED on `1243377`.** For the first time: an optimizer update
+   ran, `checkpoints/global_step_1` (**235 GB**) was written, and `exports/global_step_1` (**65 GB**,
+   HF-format) was produced. The OOM fix worked in production — the log printed
+   `chunked gathered log-softmax ACTIVE (chunk=1024, vocab=248320, ...)` and backward completed with
+   `OOM=0`, execution continuing past `policy_train` into `train_critic_and_policy` / `run_training`.
+   ⛔ **BUT THE UPDATE IS NUMERICALLY VACUOUS — `grad_norm=0`.** All 64 rollouts died with
+   `BridgeOperationTimeoutError` (600s), so rewards were null→0, every group was uniform, and the
+   advantage was 0. The exported weights are effectively the base model. **A meaningful update still
+   requires a working rollout route (below).** Not my code: the chunked backward was verified to return
+   correct non-zero gradients (a zero-returning impl would have FAILED the scaled-tolerance parity test).
 2. **The learnable band** — p@4 over 3,328 tasks. **Root cause of the zero-variance wall is now known**
    (tool-call format mismatch, below). The fix is written and validated but **not yet wired on the cluster.**
 
@@ -71,6 +79,25 @@ Thinking was never the cause (`reasoning: 0`; the `<think>` tags are literal tra
 ⚠ **NEW — exclude the free-pass tasks.** 10 of 46 groups score **1.0 while doing nothing**: those r2egym
 verifiers pass on an unmodified repo. They put a ~22% floor under any band number and can never yield
 gradient. Drop them from the denominator.
+
+## ⛔ BLOCKER #1 — the JURECA ControlMaster is channel-exhausted; only a human can fix it
+Every rollout times out because the sandboxes cannot reach vLLM. Diagnosed hop by hop:
+
+| hop | result |
+|---|---|
+| vLLM listening on head node | `0.0.0.0:8000` on `10.128.50.117` ✅ |
+| Jupiter login → vLLM directly | `http=200` ✅ |
+| JURECA listener on `10.14.0.46:18000` | present, `TCP_OPEN` ✅ |
+| **end-to-end through the tunnel** | **`Connection reset by peer` after the request** ⛔ |
+
+The listener accepts, then the forwarded channel is reset — the master (`pid=185890`, up 2+ days) has
+exhausted its channels. Same failure as the `Session open refused by peer` / spurious-TOTP errors, and the
+same root cause the handoff blames for the watcher breaking on `1229649`. Re-adding the forward does not
+help; **the ControlMaster must be restarted, which needs an interactive TOTP** — an agent cannot do it.
+
+**After restarting it:** re-add `-R 10.14.0.46:18000:<head-ip>:8000`, then **run the compute-node route
+gate** (a real `/v1/chat/completions` from a fleet node) — do NOT settle for `ss | grep 18000`, which is
+what I did and it passed while the route was dead.
 
 ## Traps that each cost a job or an attempt today
 1. **Two MarinSkyRL clones.** A bare `python` imports `/e/scratch/.../MarinSkyRL`; the RL job prepends
