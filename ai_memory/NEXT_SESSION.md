@@ -24,6 +24,27 @@ The sample that **edited files** turned two failing tests into passing; the samp
 That is the exact **inverse** of the old pathology, in which passing trials edited *less* often than failing
 ones (24% vs 49%). **The environment measures the model. Stop re-verifying this and go get a band number.**
 
+⚠ **Be precise about which claim this supports, or you will repeat the pass-rate-vs-band error.**
+The gate as posed — *"does any group contain both a `0.0` and a `1.0`?"* — is **MET**. But `band.py`'s
+`IN BAND` counter only considers **fully-sampled** groups (≥4 trials), and `r2egym-2514` had 2 of 4 samples
+in when this was observed, so `band.py` still reports `0 fully sampled` and cannot yet print a band %.
+**Within-group variance is PROVEN; the band PERCENTAGE is not yet measured.** Those are different claims —
+do not upgrade one into the other. The rest of the ladder passes cleanly:
+
+```
+[1] non-null reward : 7/7 -> PASS
+[2] steps           : median 3  max 8   -> PASS (multi-turn)
+[2b] TOOL CALLS     : median 2  max 11  | ZERO-tool trajectories 0 (0%) -> PASS
+[3] trial duration  : median 3.4 min  p90 13.9 -> PASS (real work)
+[4] groups: 6 seen, 0 fully sampled
+```
+
+**Throughput is the next real constraint, and it is severe:** 0.29 trials/min measured, peak concurrency 5
+(completed trials only), ⇒ the full band of 13,312 trials projects to **~759 h** at this rate. That number is
+understated-in-our-favour (the run lost its first 20 min) but it is the right order of magnitude to plan
+against. Raising the edit rate (§0.3) and concurrency both feed this; scaling is now sanctioned, because the
+gate that gated it has passed.
+
 The remaining problem is a **rate** problem, not a correctness one: the agent succeeds too rarely
 (1 of 7 trials made any edit), for two identified and fixable reasons — see §0.3. Those are now throughput /
 quality levers on a working pipeline, no longer blockers.

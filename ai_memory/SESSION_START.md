@@ -31,6 +31,14 @@ True then, FIXED AND VERIFIED now. A group finally holds BOTH values:
 The sample that EDITED turned 2 failing tests into passing; the one that didn't,
 didn't. That is the INVERSE of the old pathology (passing trials used to edit LESS:
 24% vs 49%). THE ENVIRONMENT MEASURES THE MODEL. Go get a band number.
+BE PRECISE OR YOU REPEAT THE PASS-RATE-VS-BAND ERROR: within-group variance is
+PROVEN, but the band PERCENTAGE is NOT yet measured -- band.py counts only
+FULLY-SAMPLED groups (>=4 trials) and r2egym-2514 had 2 of 4 in, so it still prints
+"0 fully sampled". Different claims; do not upgrade one into the other.
+Rest of the ladder passes: non-null reward 7/7, steps median 3 max 8, tool calls
+median 2 max 11 with ZERO zero-tool trajectories, duration median 3.4 min.
+THROUGHPUT is the next real constraint: 0.29 trials/min, peak concurrency 5 =>
+the full 13,312-trial band projects to ~759 h. Scaling is now sanctioned.
 What remains is a RATE problem, not a correctness one: only 1 of 7 trials made any
 edit. The two causes below are throughput/quality levers, NOT blockers.
 
