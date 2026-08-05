@@ -1530,3 +1530,47 @@ Verified on the cluster (`/e/fscratch/reformo/lee27/parsergate.py`, vLLM 0.22.0)
 The lazy entry's `module_path` is `obj.__module__` = the plugin's basename, resolvable only because
 `import_from_path` leaves it in `sys.modules`. Registration and resolution must therefore happen **in the same
 process** — fine here, since `pop_openai_kwargs` is called from `_create_engine` inside each vLLM engine actor.
+
+## "33% pass" is NOT a band: across-group pass rate vs WITHIN-group variance (2026-08-05)
+
+The takeover note's headline — *`8×0.0, 4×1.0 → 33% pass`, **33% ≈ Marianna's ~35%**, therefore "a learnable
+band EXISTS" and "the band-may-not-exist risk is RETIRED"* — **does not follow from that evidence**, and the
+fuller data contradicts it.
+
+Re-measured over the 35B canary's whole `trace_jobs` tree (212 results, `band.py`, all-time window):
+
+```
+rewards        : {0.0: 67, None: 114, 1.0: 31}
+trajectory     : n=98 median=18.0 max=35        -> multi-turn, genuinely working
+trial pass rate: 31.6% (31/98)                  <- reproduces the reported ~33%
+groups fully sampled at p@4                     -> 16
+  always-solved  :  5 (31.2%)
+  never-solved   : 11 (68.8%)
+  IN BAND (0<k<4):  0 ( 0.0%)                   <- ZERO
+```
+
+**A 31.6% trial pass rate here is produced entirely by a bimodal all-or-nothing split across groups**: 5
+tasks the model always solves, 11 it never solves, and **not one group where some samples pass and some
+fail**. GRPO's advantage is computed *within* a group, so a group whose 4 samples all agree contributes
+**exactly zero gradient**. 0 of 16 groups in band means the measured gradient signal on this subset is zero —
+the opposite of the conclusion drawn.
+
+If the true band fraction were 35%, observing 0/16 has probability `0.65^16 ≈ 0.1%`.
+
+**The confusion is a units error and it is easy to repeat:** "reward spread" across a batch is not variance
+within a group. The takeover note's own table row says *"reward spread: 0 of 46 groups varied → 8×0.0, 4×1.0"*
+— the before-column counts GROUPS and the after-column counts TRIALS. Compared like that, any bimodal task
+mix looks like a band.
+
+**Caveats, stated so this is not over-read in the other direction:** 114 of 212 trials were
+`BridgeOperationTimeoutError` with a null reward (early wave + the scancel tail), so scoring coverage is
+partial; and this is the **35B**, not the 8B `g1_diverse_tezos_100k_8b` that Marianna's ~35% was measured on.
+It does **not** show the band is empty for the 8B. What it shows is that **the band question is still OPEN**,
+that the retirement of that risk was premature, and that the right measurement is exactly the 8B subset run.
+
+**What the rollout-path fix DID retire** (this part stands): rollouts now produce real multi-turn trajectories
+(median 18–21 steps) with non-null rewards. That was the actual blocker. It just is not the same claim.
+
+⇒ Always report the band as **fraction of fully-sampled groups with `0 < passes < n`**, never as a pass rate.
+`band.py <trace_jobs> [window_min]` on Jupiter does this, and flags suspected free-pass groups
+(`k == n` with median steps ≤ 2) separately.
