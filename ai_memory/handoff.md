@@ -1524,6 +1524,21 @@ registration decorator runs, not passed as a kwarg). **Neither is synced to the 
 Also: **10 of 46 groups score 1.0 while doing nothing** — those verifiers pass on an unmodified repo; a ~22%
 free floor that can never yield gradient. Exclude from the band denominator.
 
+### `1244916` died to a NODE FAILURE — the first non-zero gradient is still unmeasured
+After the tunnels were fixed it ran 1h35m with a healthy route (0 bridge timeouts, median_steps 18.5,
+33% pass) and then died: `ray.exceptions.NodeDiedError`, head node `10.128.32.219` (jpbo-045-27) dead
+mid-generation, Slurm CANCELLED. **Hardware/node failure, unrelated to the OOM fix or the tunnels.**
+No `grad_norm`, no checkpoint. So the pipeline is PROVEN to generate real multi-turn rollouts with reward
+variance, but a non-zero gradient has still never been observed.
+⇒ Two operational consequences: **prefer ≤4h walls and expect to relaunch** (node death is live here), and
+**a dead job's vLLM forward must be cancelled and re-added at the new head** — the bridge forward
+(`9923 → 10.128.1.2:9920`) is Jupiter-side and survives.
+
+⚠ Also re-triggered the **Jupiter-side** ControlMaster channel exhaustion by running one compound command
+with several nested `ssh` calls (`Session open refused by peer` → spurious TOTP prompt → `Permission
+denied`). The Mac→Jupiter master stayed alive; the remote sshd had simply run out of channel slots, and it
+recovers on its own. **One remote call per `ssh` invocation.**
+
 ### Direction set by Luke at end of session
 **Do NOT chase the full band.** Get the band **reliably on a SUBSET**, on the **8B Marianna used**, then
 **extrapolate** to answer whether the system scales to a full band in 7–10h. Inference-only for now: it

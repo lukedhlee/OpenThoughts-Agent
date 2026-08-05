@@ -57,10 +57,9 @@ cd /e/scratch/reformo/lee27/MarinSkyRL-apptainer-bridge && git fetch fork lukedh
 ⚠ **Never `git reset --hard` a clone while a job runs** — Ray can spawn workers against changed code.
 
 ## Next actions, in order
-1. **Harvest then kill `1244916`** (35B, 5 nodes). It is mid-generation with a healthy route; when it takes
-   its step it yields the first NON-ZERO gradient — worth banking. Then `scancel` to free the fleet.
-   (As of writing: `wait_for_generation_buffer`, no `grad_norm` yet.)
-2. **Sync the cluster** (above) once the queue is empty.
+1. ~~Harvest `1244916`~~ — **it died of node failure; nothing to harvest. The fleet is already free.**
+   Re-add the vLLM forward at whatever head your next job gets.
+2. **Sync the cluster** (above) — the queue is empty, so this is safe now.
 3. **Launch an 8B SUBSET band shard** with `bare_json`.
 4. **Gate before scaling** — `median_steps > 1` AND ≥1 group with non-zero within-group variance.
    A passing trial count is NOT a gate; see the ladder below.
@@ -122,8 +121,15 @@ ssh -t jupiter 'S=~/.ssh/cm_jureca/qwen36; ssh -S $S -O exit jureca.fz-juelich.d
 ⚠ **Capture a dying master's forwards BEFORE killing it:** `ps -u $USER -o args | grep 'ssh .*-R'`.
 
 ## Live state at handoff (re-probe, do not trust)
-- **Jupiter `1244916`** RUNNING, 5 nodes, ~4h36m left. 35B run, healthy route, mid-generation
-  (`wait_for_generation_buffer`), **no `grad_norm` yet**. Harvest its step then `scancel` to free the fleet.
+- **Jupiter `1244916` is DEAD — `ray.exceptions.NodeDiedError`, head node `10.128.32.219`
+  (jpbo-045-27) died mid-generation** at 1h35m; Slurm marked it CANCELLED. **Node/hardware failure, NOT our
+  code** — unrelated to the OOM fix or the tunnels. It produced **no `grad_norm` and no checkpoint**, so the
+  first non-zero gradient is still UNMEASURED.
+  ⇒ **Silver lining: the JURECA fleet is now FREE.** Nothing to harvest or cancel; go straight to the 8B work.
+  ⚠ Its vLLM forward now points at a dead node — **cancel and re-add `10.14.0.46:18000` at the new head**
+  before the next run (`-O cancel -R 10.14.0.46:18000:10.128.32.219:8000`). The **bridge** forward
+  (`9923 → 10.128.1.2:9920`) is Jupiter-side and should still be valid — verify, don't assume.
+  ⚠ Node death is a real failure mode here: prefer ≤4h walls and expect to relaunch.
 - **JURECA fleet `15498197`** RUNNING, 32 nodes, **~7h20m left** — the scarce resource; the 8B band needs it.
 - **Bridge** `10.128.1.2:9920`: `workers_alive: true`, `queue_size: 0`, `active_jobs: 32`, `envs.ready: 32`.
 - **Both forwards up** on the master pinned to jrlogin05 (pid was 4083409).
