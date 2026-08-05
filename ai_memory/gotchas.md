@@ -1481,3 +1481,52 @@ healthy**:
 
 The lesson is not any one of them: it is that **`scored=N` counts files, not rewards**, and a probe must
 gate on a non-null reward before it is allowed to consume a wall.
+
+## The one-step no-op had TWO independent causes, and the generator kept restoring one (2026-08-05)
+
+Wiring the `bare_json` tool parser was necessary but **not sufficient**. `g1_diverse_tezos_100k_8b` ends
+every episode after one step for two unrelated reasons, and fixing either alone leaves the symptom intact:
+
+| cause | what the model does | fix |
+|---|---|---|
+| thinking **ON** | emits a ~300-token `<think>` as plain TEXT and never produces a tool call at all | `interleaved_thinking: false` + `extra_body.chat_template_kwargs.enable_thinking: false` |
+| `qwen3_coder` parser | *does* emit a bare-JSON call, but the XML-only parser never matches and never logs, so OpenCode sees assistant text | `tool_call_parser: bare_json` + `tool_parser_plugin: <path>` |
+
+Note the thinking case is **not** a 4096-token truncation — the output is short. That misled an earlier session.
+
+### Why the thinking setting kept coming back — fix the file the GENERATOR reads
+`base8b.yaml` ships thinking **ON**. The history is a loop:
+1. `a42199f5` disabled it — by editing the **shard yamls**.
+2. `ca3d56f7` replaced the whole harbor block from `canary_harbor.yaml`, which carried **neither key** → thinking defaulted back on.
+3. `b361f179` fixed it again — by hand-editing **one shard yaml**.
+
+Every one of those fixes lived **downstream of `gen_band_yaml.py`**, so a freshly *generated* config regressed
+each time, silently. Fixed now in `canary_harbor.yaml` itself (`ef861140`), which makes the generator's output
+correct by construction. **Standing lesson: when a generator overwrites a config block wholesale, a fix applied
+to its output is not a fix — it is a fix with an expiry date.**
+
+## vLLM 0.22: `@ToolParserManager.register_module` fills `lazy_parsers`, NOT `tool_parsers` (2026-08-05)
+
+My first parser-plumbing gate reported **FAIL: plugin did not register** — and the gate was wrong, not the
+plugin. In vLLM 0.22 the decorator form registers **lazily**:
+
+```python
+for n in names:
+    cls.lazy_parsers[n] = (module_path, class_name)   # no import, no tool_parsers entry
+```
+
+So `'bare_json' in ToolParserManager.tool_parsers` is **False even after a fully successful registration**.
+`tool_parsers` only fills when something resolves the name. The only trustworthy check is to call
+**`ToolParserManager.get_tool_parser(name)`** and confirm it returns the class.
+
+Worse, `import_tool_parser` **swallows every exception** (`logger.exception` then returns), so a genuinely
+broken plugin also leaves the registry untouched — indistinguishable from this false negative if you check
+the wrong dict.
+
+Verified on the cluster (`/e/fscratch/reformo/lee27/parsergate.py`, vLLM 0.22.0): `lazy_parsers['bare_json']
+== ('bare_json_tool_parser', 'BareJsonToolParser')`, `get_tool_parser` resolves it, and it parses bare JSON,
+`</think>`-prefixed, `parameters`-keyed and prose-wrapped calls while returning 0 calls for plain text.
+
+The lazy entry's `module_path` is `obj.__module__` = the plugin's basename, resolvable only because
+`import_from_path` leaves it in `sys.modules`. Registration and resolution must therefore happen **in the same
+process** — fine here, since `pop_openai_kwargs` is called from `_create_engine` inside each vLLM engine actor.
