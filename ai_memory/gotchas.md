@@ -1761,3 +1761,48 @@ after 30 bridge probes. Confirm with `grep -c "starting 16 workers"` on the new 
 Never let the fleet become the schedule constraint: a Jupiter GRPO job that is `PENDING (Priority)` can sit for
 hours, and `scontrol update TimeLimit=` **does not help** when the reason is `Priority` rather than `Resources`
 (measured: shrinking 3:00:00 -> 1:30:00 moved the estimated start *later*, not earlier).
+
+---
+
+## TP>1 is a hard bring-up failure on this fork, and SkyRL mislabels it "port collision" (2026-08-05)
+
+Job `1247578` (8 nodes, `inference_engine_tensor_parallel_size: 4`, 7 engines) never brought up a single
+engine. Every `EngineCore` died with:
+
+```
+AssertionError: The env var, __RAY_WORKER_PROCESS_SETUP_HOOK_ENV_VAR, is not permitted
+because it is reserved for the internal use.
+  ... ray/_private/runtime_env/setup_hook.py:73 in export_setup_func_module
+```
+
+**Mechanism.** With TP>1 vLLM builds a distributed executor, which creates nested Ray workers with a
+`runtime_env` whose `env_vars` are copied from the parent actor's `os.environ`. That environ contains Ray's own
+`__RAY_WORKER_PROCESS_SETUP_HOOK_ENV_VAR`, and Ray asserts against seeing it in a user-supplied `env_vars`.
+TP=1 never builds the distributed executor, so the path is never taken — which is why every prior run was fine.
+
+**The log lies (rule 3 again).** `vllm_engine:_create_engine` reports this as
+`Engine init hit a port collision (EADDRINUSE / engine-core init) on attempt N/5`. It is not a port collision;
+`Failed core proc(s): {}` is empty and the real cause is the assertion above it. Retries cannot clear a
+deterministic assertion — 5 attempts x 120 s just burns 10 minutes of allocation. **Gate on
+`grep -c RAY_WORKER_PROCESS_SETUP_HOOK` in the job log, not on the EADDRINUSE string.**
+
+**Fix: use TP=1.** For an 8B on 96 GB GH200 this is not a compromise, it is better — 4 engines/node instead of
+1, so 8 nodes give 28 engines rather than 7, with no cross-GPU collectives and more aggregate KV. TP=4 in the
+parity config was cargo-culted from Marianna's script (she was configuring a *training* run, likely on a larger
+model); nothing about the band measurement needs it.
+
+**Consequence for `main_tbench_generate`.** The band generator carries a comment retiring the pure-rollout
+entrypoint because smoke `1235333` saw "AsyncVLLMInferenceEngine actors crash-looped inside
+`create_ray_wrapped_inference_engines`, **GPUs held 4/4 in placement groups**, no traceback". 4/4 means that
+smoke was TP=4 as well, and the symptom is identical to the confirmed TP=4 bug. **`main_tbench_generate` was
+probably never broken — it was convicted for TP=4's crime.** Worth re-testing at TP=1, because it is the
+correct path for a band: no policy, no ref, no optimizer, no FSDP, no weight sync (so the meta-tensor
+probe hazard disappears), and a single `generate()` over all prompts instead of `ceil(N/train_batch_size)`
+sequential steps. Do not change TP and the entrypoint in the same run.
+
+**Why a trainer node at all, on `main_tbench`.** `placement.policy_num_nodes=1` +
+`colocate_policy_ref=true` + `colocate_all=false` spends one whole node on policy+ref FSDP shards, and
+`lr=0.0` is what demotes that trainer to a probe: updates still fire (which flushes the generation buffer so
+the run walks the whole shard) but the weights never move, so all `n_samples_per_prompt=4` rollouts come from
+the base policy. The cost is a fixed 1 node regardless of scale. On `main_tbench_generate` the node is not
+freed so much as repurposed — the driver orchestrating 128 concurrent HTTP trials is genuinely CPU-hungry.
