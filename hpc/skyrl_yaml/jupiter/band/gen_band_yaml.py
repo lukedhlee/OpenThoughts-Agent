@@ -50,6 +50,7 @@ ENV_MAX_NUM_SEQS = int(os.environ.get("BAND_MAX_NUM_SEQS", "64"))
 ENV_BRIDGE_PORT = os.environ.get("BAND_BRIDGE_PORT", "9921")
 ENV_TOOL_PARSER = os.environ.get("BAND_TOOL_PARSER", "qwen3_coder")
 ENV_TOOL_PARSER_PLUGIN = os.environ.get("BAND_TOOL_PARSER_PLUGIN", "")
+ENV_NO_THINK = os.environ.get("BAND_SERVER_NO_THINK", "") not in ("", "0", "false", "False")
 if ENV_MAX_TASKS:
     shards = [s[:ENV_MAX_TASKS] for s in shards]
 
@@ -143,6 +144,15 @@ for i, shard in enumerate(shards):
     g.setdefault("engine_init_kwargs", {})["tool_call_parser"] = ENV_TOOL_PARSER
     if ENV_TOOL_PARSER_PLUGIN:
         g["engine_init_kwargs"]["tool_parser_plugin"] = ENV_TOOL_PARSER_PLUGIN
+    # SERVER-SIDE thinking-off. The harbor-level interleaved_thinking /
+    # extra_body.chat_template_kwargs settings are implemented for terminus_2,
+    # openhands and mini_swe_agent ONLY -- there is no OpenCode path, so for the
+    # OpenCode agent they are accepted and ignored, and the model thinks anyway.
+    # vLLM's renderer merges this UNDER any request-level chat_template_kwargs,
+    # so it is a default rather than an override, and it reaches every request
+    # regardless of which agent issued it. Requires MarinSkyRL 9904058.
+    if ENV_NO_THINK:
+        g["engine_init_kwargs"]["default_chat_template_kwargs"] = {"enable_thinking": False}
     g["n_samples_per_prompt"] = 4          # p@4 -- the band filter itself
     g["num_inference_engines"] = 4 * (NODES - 1)  # rollout nodes only; node 1 is policy
     # 8B in bf16 is ~16GB of a 96GB GH200, so KV has room the 35B never had.
