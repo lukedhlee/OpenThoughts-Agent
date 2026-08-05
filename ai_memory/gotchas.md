@@ -1806,3 +1806,111 @@ sequential steps. Do not change TP and the entrypoint in the same run.
 the run walks the whole shard) but the weights never move, so all `n_samples_per_prompt=4` rollouts come from
 the base policy. The cost is a fixed 1 node regardless of scale. On `main_tbench_generate` the node is not
 freed so much as repurposed — the driver orchestrating 128 concurrent HTTP trials is genuinely CPU-hungry.
+
+---
+
+## r2egym scores a STOCK LIBRARY, not the agent: /testbed ships empty and the clone needs internet (2026-08-05)
+
+**This invalidates every r2egym reward number this project has produced.** Read it before trusting any band,
+pass rate, or "zero variance" claim.
+
+### The symptom that finally exposed it
+
+Job `1248713` (8B `g1_diverse_tezos_100k_8b`, OpenCode, pass@4, TP=1, 128 tasks):
+
+```
+results     : 356      rewards: {0.0: 139, 1.0: 217}       trial pass rate : 61.0%
+groups: 96 seen, 75 fully sampled (>=4)     IN BAND (0<k<4): 0  (0.0%)
+```
+
+A 61% pass rate looks like a working pipeline. It is the tell. **At a 61% pass rate, a 4-sample group is
+out-of-band only if all four pass (`0.61^4 = 13.8%`) or all four fail (`0.39^4 = 2.3%`), so ~84% of groups
+should be IN band.** Observing 0 of 75 has probability ~`0.16^75`, i.e. never. So the reward cannot be a
+function of the model — **it is a constant per task.** This arithmetic needs no external baseline and is the
+cheapest possible check; run it before believing any pass rate.
+
+Corroborating signals, all pointing the same way:
+- a trial scored **1.0 with ZERO agent steps**
+- of trials that passed, only **24% ever edited a file**; of trials that failed, **49%** did — editing
+  *lowers* your score
+- median steps 3 with `max_turns: 50`, i.e. trials end early, not by exhausting turns
+
+### The cause
+
+Every task ships an **EMPTY `/testbed`**, and `instruction.md` opens with:
+
+```
+## Environment Setup (complete these steps first)
+cd /testbed
+git clone https://github.com/<owner>/<repo>.git . && git checkout <base_commit>
+pip install --no-build-isolation -e . ...
+cp -r /setup_files/r2e_tests /testbed/r2e_tests
+```
+
+The agent is *supposed* to fetch the repo. But sandboxes have no outbound network
+(`ENABLE_WORKER_PROXY` defaults to `0`, with the comment *"r2egym does not need outbound access"* — **that
+comment is false for this dataset**), so the clone dies:
+
+```
+Cloning into '.'...
+fatal: unable to access 'https://github.com/numpy/numpy.git/':
+  Failed to connect to github.com port 443 after 7126 ms: Couldn't connect to server
+```
+
+`/testbed` stays empty, the agent burns its 4096-token budget looping `<think>` blocks (`reason: "length"`),
+and the verifier then tests the **stock library the Dockerfile pip-installed** (`pip install "aiohttp==0.22.5"`
+etc.) instead of a repo checkout. Whether that stock version satisfies a given task's tests is a fixed
+property of the task ⇒ constant reward ⇒ 0% band by construction.
+
+Note what was NOT wrong: the model, the `bare_json` parser, the reverse tunnels, the band metric, the
+concurrency. All verified working. The environment simply never handed the agent the code.
+
+### Why the dataset is like this, and the correct fix
+
+`DCAgent/r2egym-patched-full-oracle` (3,328 tasks, HF) has Dockerfiles of the form `FROM python:3.9-bookworm`
+that only `mkdir /testbed`. **0 of 200 sampled Dockerfiles populate it.** Yet each task's
+`setup_files/test_info.json` still carries the right answer:
+
+```json
+{"docker_image": "namanjain12/aiohttp_final:04de8885...", "github_repo": "aio-libs/aiohttp",
+ "base_commit": "04de8885...", "python_version": "3.9"}
+```
+
+`marianna13/harbor` @ `marianna/beam` shows the upstream-correct pattern —
+`adapters/swebench/template/Dockerfile` is literally `FROM {docker_image}`, i.e. use the prebuilt benchmark
+image that already contains the repo at the buggy commit. Whoever built this dataset substituted a generic
+python base plus "clone it yourself" instructions.
+
+**That pattern does not scale for us: 3,328 tasks = 3,328 DISTINCT image tags at ~1-2 GB each (TBs).**
+
+**Our fix — offline mirrors.** Those 3,328 tasks draw from only **13 repos** (sympy 1286, Pillow 574, pandas
+269, moto 220, pyramid 167, tornado 161, numpy 152, scrapy 123, datalad 97, aiohttp 80, coveragepy 78,
+matplotlib 73, orange3 48). Bare-mirror all 13 once = **4.3 GB**, bind read-only into the sandbox, and rewrite
+the GitHub prefix so the agent's own clone command works verbatim and offline:
+
+```bash
+bash src/harbor/environments/apptainer/mirror_r2egym_repos.sh   # harbor d64180d
+# layout MUST mirror the URL path so ONE prefix rewrite covers all 13:
+#   https://github.com/numpy/numpy.git -> <mirrors>/numpy/numpy.git
+```
+
+harbor `d64180d` binds `$BRIDGE_GIT_MIRRORS` at `/git_mirrors` and writes `/etc/gitconfig`:
+
+```ini
+[url "/git_mirrors/"]
+	insteadOf = https://github.com/
+[safe]
+	directory = *
+```
+
+`/etc/gitconfig`, not an env var, because it must apply to whatever user/env the agent's own shell runs as.
+`safe.directory = *` is REQUIRED or git refuses a mirror owned by another uid ("dubious ownership").
+Bare mirrors keep full history, so `git checkout <base_commit>` still resolves. `instruction.md` untouched.
+
+**A fleet restart is required** for a worker.py change to take effect, and old fleets MUST be cancelled first —
+otherwise some trials are served by unpatched workers and the run is a silent mix.
+
+### Open risk, not yet measured
+After cloning, the instruction runs `pip install --no-build-isolation -e .` on numpy/pandas/sympy. Compiling
+those in a **1 CPU / 1 GB** sandbox (the Marianna-parity sizing) may be too slow or OOM. If so, sandbox
+resources must go up and parity on that axis is lost. Correctness first.
