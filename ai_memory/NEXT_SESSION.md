@@ -39,8 +39,18 @@ GPU-validated: chunked **33.41 GiB** vs stock **OOM at the identical "30.57 GiB"
 **Off by default.** `SKYRL_CHUNKED_LOGPROBS=1`. Verify by the `ACTIVE` log line, which only fires during a
 TRAINING step (~2h in, after generation) — `FIX=0` early is expected, not a failure.
 
-**If `1243351` still OOMs:** lower `SKYRL_CHUNKED_LOGPROBS_CHUNK` (default 1024) or cap training seq len.
+**If it still OOMs:** lower `SKYRL_CHUNKED_LOGPROBS_CHUNK` (default 1024) or cap training seq len.
 The op itself is proven to fit; anything left is the surrounding activation budget.
+
+⚠ **The in-run HF push will probably FAIL, and that does NOT invalidate the milestone.**
+`HF_HUB_CACHE=/e/data1/datasets/playground/ot-baf/hf_hub` is **feuer1's** dir — `lee27` gets
+`Permission denied` — and the sbatch derives `HF_HOME` from it (line ~346). `1229649` carried the same
+setting and simply never reached the export. There is **no `HF_TOKEN`** in the env and none under
+`HF_HOME`; the valid token (user `lukeleeai`) lives at `$HOME/.cache/huggingface/token`.
+The checkpoint and the LOCAL export land on `/e/fscratch` paths lee27 owns, so they are unaffected — do the
+push manually from the login node per `rl-agentic-job-cleanup`, with
+`HF_HOME=$HOME/.cache/huggingface` (or `HF_TOKEN=$(cat $HOME/.cache/huggingface/token)`).
+For a future run, set `HF_HUB_CACHE` to a lee27-writable path before submitting.
 
 ## Band: the zero-variance wall is a TOOL-CALL FORMAT MISMATCH
 The checkpoint emits **bare JSON** — `{"name":"bash","arguments":{...}}` — with no `<tool_call>`
