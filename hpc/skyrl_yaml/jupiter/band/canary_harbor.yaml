@@ -48,7 +48,10 @@ exclude_exceptions:
 - VerifierInfrastructureError
 - ContextLengthExceededError
 - NonZeroAgentExitCodeError
-log_level: INFO
+# DEBUG while the ~918s mid-trial env-stop is under investigation: trial.log
+# then timestamps every phase transition, which is the evidence that names the
+# actor. Return to INFO once the killer is fixed.
+log_level: DEBUG
 enable_reward_shaping: false
 collect_rollout_details: true
 enable_error_classification: true
