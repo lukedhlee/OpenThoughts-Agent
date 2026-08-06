@@ -2587,3 +2587,14 @@ own files. Identical to broad on unscrubbed images. **General rule: a gold "patc
 commit's file set, not a full-tree restore; images may carry deliberate uncommitted working-tree
 state.** (Also the debugging trap that hid this: `git status --porcelain | head -5` in the PRE echo
 truncated the change list, so the config restore was invisible in the sweep records.)
+
+## RETRACTION: most "broken aiohttp tasks" were the broad-oracle artifact too (2026-08-06)
+
+The n=32 gate diagnosed aiohttp failures as `asyncio.async(` SyntaxError → "unsolvable by any model",
+and the 260-sample extended that to the family. After the narrow-oracle + config-strip retry sweep,
+**aiohttp went 139 fails → 24**: the majority were `git checkout $BASE -- .` resurrecting scrubbed
+working-tree state, exactly the pandas pathology. The SyntaxError mechanism is real but holds for at
+most the residual 24. **Lesson: a correctly-diagnosed mechanism on n=4 does not license attributing
+the whole family's failures to it — the family shared a symptom, not a cause.** Final pool numbers:
+ceiling 97.6% (4,460/4,568), residual fails 108 (numpy 31, aiohttp 24, tornado 20, orange3 11,
+pandas 8, datalad 7, coveragepy 5, scrapy 2), zero free-pass tasks in the whole pool.

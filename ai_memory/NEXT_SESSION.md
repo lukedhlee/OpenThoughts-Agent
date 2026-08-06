@@ -44,12 +44,22 @@ patterns exist at scale: (0,1)×3,015 and (0,0)×1,549 — **zero free-pass task
 Artifacts: `allowlist_r2egym_v1.txt` (3,015) + `gatefail_r2egym_v1.txt` (1,554) in
 `/p/scratch/synthlaion/lee27/`.
 
-**Pandas recovery is productionized and a RETRY SWEEP of the 1,554 fails is running** (same tmux
-`egbig`, resume mode) under fixed mechanics: harbor `55c416cd` (worker.py `pandas_compat` strips
-`--strict-data-files` from setup.cfg/pyproject.toml/etc — envgate inherits it by extracting the live
-function) + envgate `fa5acdd6` (**narrow oracle**: checkout only the gold commit's files; the broad
-`-- .` form resurrected configs the image builders had scrubbed). Gate-validated 9/10 on shimmed
-pandas tasks (the 10th fails genuinely at gold). Expected allowlist v2 ≈ 4.2k, ceiling ≈ 90%+.
+**★★ FINAL (17:15 KST): RETRY SWEEP DONE — CEILING 97.6% (4,460/4,568). THE ALLOWLIST EXISTS.**
+Fixed mechanics: harbor `55c416cd` (worker.py `pandas_compat` strips `--strict-data-files`; envgate
+inherits it by extracting the live function) + envgate `fa5acdd6` (**narrow oracle** — checkout only
+the gold commit's files). Harness on the retry: 0 timeouts, 0 nulls, patch ok 9,207/9,207.
+- Recovery: pandas 1,332→**8** fails; aiohttp 139→**24**; total fails 1,549→**108** (2.4%).
+- ⚠ **RETRACTION: "aiohttp is genuinely unfixable (asyncio.async SyntaxError)" was over-general** —
+  115 of its 139 failures were the broad-oracle resurrection artifact, same as pandas. The
+  SyntaxError diagnosis holds only for (at most) the residual 24.
+- Residual fails (park; diminishing returns): numpy 31, aiohttp 24, tornado 20, orange3 11, pandas 8,
+  datalad 7, coveragepy 5, scrapy 2. Plus 1 task with no SIF (`r2egym-3711`).
+- **Zero free-pass tasks in the entire 4,568-task pool** (reward pairs are only (0,1) and (0,0)).
+- Artifacts: `allowlist_r2egym_v2.txt` (4,460 names) at `/p/scratch/synthlaion/lee27/` AND
+  `/e/fscratch/reformo/lee27/` (for gen_band_yaml), gzipped copies in `ai_memory/artifacts/`.
+  v1 files are superseded.
+- Consequence for the band probe: run it over the allowlist; quote band % against BOTH denominators
+  (allowlist and full pool) so the number is comparable to Marianna's ~36%-of-4.5k.
 ⚠ shim-staging trap recorded in gotchas: an UNQUOTED heredoc expanded `$_cfg` to `""` and staged a
 no-op sed — verify staged shims by grep before running the gate.
 
