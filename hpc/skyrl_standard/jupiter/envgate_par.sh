@@ -10,21 +10,43 @@
 # code state. No model involved, so it cannot be confounded by agent behaviour.
 set -uo pipefail
 R=/p/scratch/synthlaion/lee27
-FLEET=${FLEET:-15500584}
-OUT=$R/envgate_results.jsonl
-PARTS=$R/envgate_parts
-LOG=$R/envgate_par.log
+
+# FLEET has NO default on purpose. It used to default to 15500584; that job is dead,
+# and a stale default silently sends every srun at a nonexistent allocation.
+FLEET=${FLEET:?set FLEET=<current sandbox fleet jobid> (squeue -u lee27 on JURECA)}
+
+# Staging root + output paths are parameterised together so a new sweep cannot
+# overwrite the validated 32-task results.
+STAGE_ROOT=${EG_STAGE_ROOT:-$R/envgate}
+TAG=${EG_TAG:-$(basename "$STAGE_ROOT")}
+OUT=$R/envgate_results_$TAG.jsonl
+PARTS=$R/envgate_parts_$TAG
+LOG=$R/envgate_par_$TAG.log
+
+# Concurrency. The fleet runs 16 workers/node, so one-task-per-node left ~15/16 of
+# the allocation idle. CONC is how many tasks run at once; nodes are still assigned
+# round-robin so the load spreads evenly.
+CONC=${EG_CONC:-64}
+
+export EG_STAGE_ROOT="$STAGE_ROOT"
 exec >>"$LOG" 2>&1
 
-rm -rf $PARTS; mkdir -p $PARTS
-echo "=== parallel sweep $(date '+%F %T') fleet=$FLEET ==="
+mkdir -p $PARTS
+echo "=== parallel sweep $(date '+%F %T') fleet=$FLEET stage=$STAGE_ROOT conc=$CONC ==="
 
-mapfile -t TASKS < <(ls $R/envgate)
+mapfile -t TASKS < <(ls $STAGE_ROOT)
 mapfile -t NODES < <(scontrol show hostnames "$(squeue -j $FLEET -h -o '%N')")
 echo "tasks=${#TASKS[@]} nodes=${#NODES[@]}"
+if [[ ${#NODES[@]} -eq 0 ]]; then
+  echo "FATAL: fleet $FLEET has no nodes -- is it RUNNING?"; exit 1
+fi
 
 i=0
 for T in "${TASKS[@]}"; do
+  # Idempotent: skip tasks already recorded, so a re-run resumes instead of redoing.
+  if [[ -s $PARTS/$T.pristine.json && -s $PARTS/$T.oracle.json ]]; then
+    echo "  skip $T (already recorded)"; i=$((i+1)); continue
+  fi
   N=${NODES[$(( i % ${#NODES[@]} ))]}
   (
     for M in pristine oracle; do
@@ -34,6 +56,7 @@ for T in "${TASKS[@]}"; do
   ) &
   echo "  launched $T on $N"
   i=$((i+1))
+  while [[ $(jobs -rp | wc -l) -ge $CONC ]]; do sleep 2; done
 done
 
 wait

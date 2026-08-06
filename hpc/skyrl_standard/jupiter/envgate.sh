@@ -35,7 +35,10 @@ MODE="${2:-pristine}"
 ROOT=/p/scratch/synthlaion/lee27
 export APPTAINER_CACHEDIR=$ROOT/apptainer_cache
 export APPTAINER_TMPDIR=$ROOT/apptainer_tmp
-STAGE=$ROOT/envgate/$TASK
+# Staging root is parameterised: the original 32-task set lives in $ROOT/envgate,
+# the 260-task sample in $ROOT/envgate_big. Hardcoding this meant a "260-task sweep"
+# would have silently re-run the same 32 and reported a confident wrong number.
+STAGE=${EG_STAGE_ROOT:-$ROOT/envgate}/$TASK
 
 # Same values harbor's worker uses.
 export BRIDGE_AGENT_TOOLS=${BRIDGE_AGENT_TOOLS:-$ROOT/agent_tools}
