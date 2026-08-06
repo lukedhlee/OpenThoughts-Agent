@@ -1,6 +1,20 @@
-# Handoff — lukedhlee · updated 2026-08-04 (01:00 KST)
+# Handoff — lukedhlee · updated 2026-08-06 (17:30 KST)
 
-> **START HERE: § "Live state — 2026-08-04 10:30 KST" in this file.** It supersedes the 2026-08-03
+> ## ⛔ THIS FILE IS TWO DAYS BEHIND. START AT `NEXT_SESSION.md` §0.0-FINAL (2026-08-06).
+>
+> Everything below predates the 2026-08-05/06 pivot to the **8B band-reproduction goal** and the
+> 2026-08-06 **task-pool validation campaign**. The current truth, in one paragraph:
+> the r2egym harness is validated model-free; the pool is measured — **allowlist v3 = 4,469 of
+> 4,568 tasks solvable (97.8%)**, the 99 exclusions diagnosed (env-sensitive grading, not broken
+> harness); zero free-pass tasks exist on the raw path; the edit-rate stall was root-caused to
+> malformed bare-JSON tool calls (parser repair `d1e3ecb8` shipped + deployed) plus missing `rg`
+> (harbor `1019a36` staged, needs the next fleet); pandas' 1,332 "dead" tasks were recovered by a
+> config-strip shim (harbor `55c416cd`) + a **narrow oracle** (envgate `fa5acdd6`).
+> The model-side bring-up is a copy-paste RUNBOOK in `NEXT_SESSION.md`, gated only on the operator's
+> Jupiter→JURECA ControlMaster TOTP. Historical context below remains valid as history; where it
+> conflicts with `NEXT_SESSION.md` or `gotchas.md` (2026-08-06 entries), the newer docs win.
+
+> **OLD START HERE: § "Live state — 2026-08-04 10:30 KST" in this file.** It supersedes the 2026-08-03
 > block below it and `notes/qwen36_resume_brief.md`, both of which are now two framings behind.
 > Then read [[gotchas]] § 2026-08-04 and [[decisions]] § 2026-08-04.
 >

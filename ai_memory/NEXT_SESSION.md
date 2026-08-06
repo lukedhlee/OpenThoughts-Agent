@@ -1,5 +1,61 @@
 # NEXT SESSION — takeover note
 
+---
+
+## ★★★ 0.0-FINAL 2026-08-06 ~17:30 KST — TASK-POOL VALIDATION COMPLETE. NEXT: TOTP → RUNBOOK.
+
+**The r2egym pool question is CLOSED. Do not re-sweep.** Terminal state:
+- **Allowlist v3: 4,469 of 4,568 solvable (97.8%)** — `allowlist_r2egym_v3.txt` +
+  `gatefail_r2egym_v3.txt` (99 names) at `/p/scratch/synthlaion/lee27/` AND
+  `/e/fscratch/reformo/lee27/` (v3 supersedes v1/v2; gzipped copies in `ai_memory/artifacts/`).
+- The 99 exclusions are DIAGNOSED (census in §0.0-UPDATE): 31 grader-expectation mismatch (all tests
+  pass, frozen expected-output disagrees), ~47 environment-hostile tests (network on air-gapped
+  nodes, wall-clock asserts, GUI), 21 numpy hypothesis-suite fragility. A quiet-node rerun recovered
+  only 9 of the original 108 — the 99 fail persistently. **"Unsolvable" = the human gold fix itself
+  cannot score 1.0 in our sandbox, so no agent can. Skip them in ALL training/probing.**
+- **Zero free-pass tasks in the entire pool** (only (0,1)/(0,0) reward pairs). The old ~22%
+  free-floor was a patched-dataset artifact.
+- Operator decision (told to me directly): **skip the 99, train/probe on the 4,469 only.**
+
+**LIVE STATE at handover (re-probe, don't trust):**
+- JURECA allocation **`15502693`** (32× dc-cpu, envgate_alloc) idles for the sweep work — submitted
+  ~07:00 CEST 08-06 with 24h wall ⇒ **dies ~07:00 CEST Aug 7 (14:00 KST)**. Still useful for any gate
+  probes; NOT a worker fleet (no workers running in it).
+- **NO worker fleet exists. The Jupiter→JURECA ControlMaster is still DOWN** unless Luke has run the
+  clipboard command (`ssh -t jupiter 'mkdir -p ~/.ssh/cm_jureca && ssh -4 -M -S ~/.ssh/cm_jureca/qwen36
+  -fNT -o ControlPersist=8h lee27@jureca05.fz-juelich.de && ssh -S ~/.ssh/cm_jureca/qwen36 -O check
+  lee27@jureca05.fz-juelich.de'`). **First action of the new session: check
+  `jup 'ssh -S ~/.ssh/cm_jureca/qwen36 -O check lee27@jureca05.fz-juelich.de'` — if "Master running",
+  execute the RUNBOOK below immediately** (bridge → forward → fleet → smoke). My background watchers
+  died with the old session; re-arm your own.
+- Mac→JURECA direct mux (`ssh jureca '<cmd>'`) was alive all day and carried the whole campaign —
+  don't kill it; new connections need TOTP.
+- tmux sessions left on cluster: `egbig`/`egpandas` (JURECA login, dead/idle — safe to kill),
+  `egstage` (Jupiter login, done).
+
+**What changed today (all pushed): See §RUNBOOK preconditions + gotchas 08-06.** Highlights:
+bare_json parser repair pass (`d1e3ecb8`, deployed to the fscratch checkout); harbor `55c416cd`
+pandas config-strip (deployed to `/p/project1/synthlaion/lee27/harbor`, rides next fleet start with
+the `rg` bind `1019a36`); envgate narrow oracle (`fa5acdd6`); the fleet-env / heredoc / broad-oracle
+gotchas.
+
+**Marianna handoff draft (operator asked how to share — approved shape, paste-ready):**
+> We gate-checked your full r2egym pool model-free (pristine vs gold-commit oracle, your SIFs, our
+> JURECA workers): 4,469/4,568 verifiably solvable, 99 where even the gold fix can't score 1.0
+> (env-sensitive grading: network/timing tests, frozen expected-outputs, hypothesis flakes). Lists:
+> `/p/scratch/synthlaion/lee27/{allowlist,gatefail}_r2egym_v3.txt`. Two free cross-checks from your
+> 18k-rollout history: (a) did any of the 99 ever score 1.0 for you? (b) is your ~1.6k band fully
+> inside our 4,469? FYI: a verifier applying gold via `git checkout <base> -- .` resurrects scrubbed
+> working-tree configs on newer pandas/aiohttp images — checkout only the commit's own files.
+
+**Sequence for the new session:** ① CM check (above) → ② RUNBOOK steps 2-6 (bridge, forward, fleet
+with EXPLICIT env, rg-verify by behaviour, ~32-task edit-rate smoke from the ALLOWLIST) → ③ band
+probe over the 4,469 (quote band %% against both denominators). The edit-rate smoke gates the band
+probe: `agentstall.py` — ripgrep errors 0 WITH tools called, edit rate off 14%, and the vLLM log line
+`bare_json: repaired a malformed tool call` proving the parser repair fires live.
+
+---
+
 Written **2026-08-06 ~02:40 KST**, revised **~13:00 KST** (§0.0, §1, §2, §5 rewritten — read those first;
 later sections still carry the 02:40 framing). Supersedes all earlier versions
 (previous one archived at `ai_memory/logs/2026-08-06_NEXT_SESSION_superseded.md`).
