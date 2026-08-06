@@ -2598,3 +2598,37 @@ most the residual 24. **Lesson: a correctly-diagnosed mechanism on n=4 does not 
 the whole family's failures to it — the family shared a symptom, not a cause.** Final pool numbers:
 ceiling 97.6% (4,460/4,568), residual fails 108 (numpy 31, aiohttp 24, tornado 20, orange3 11,
 pandas 8, datalad 7, coveragepy 5, scrapy 2), zero free-pass tasks in the whole pool.
+
+## 2026-08-07 — THE ~900s SANDBOX KILLER: the bridge's own zombie reaper (fixed a12ca6bc)
+
+Four smokes (1257671/1262436/1266257/1268898) masked 87-93% of trials as
+`AddTestsDirError` with agent phases dying in a razor-tight 904-934s cluster.
+It was never harbor's agent timeout: the bridge `server.py` cleanup loop reaps
+any ENV_READY env whose `last_used` is older than `BRIDGE_STALE_READY_SEC`
+(default **900**), and `last_used` only ticked on job SUBMIT — while an
+OpenCode episode is ONE long exec with no further submits. Every sandbox whose
+agent thought for >15 min was executed by its own bridge (worker receipts:
+client-originated STOP at exactly t_exec+901s while the exec's wire timeout
+was still 2100s), the exec died with the instance, and verification then hit
+"No instance for env". **Only fast-failing agents survived → every completed-
+trial statistic from those smokes (reward 0.0, near-zero tool calls) was a
+selection artifact, not a capability measurement.**
+
+Fix (harbor a12ca6bc, deployed + bridge restarted with
+`BRIDGE_STALE_READY_SEC=3600` for belt): (1) envs with a pending/running job
+are never reaped; (2) job completion refreshes `last_used`.
+
+Debugging lessons paid for in ~6 hours:
+- The timeout-config path (task.toml 900 → override → multiplier) was verified
+  correct three times (YAML, resolved config, materialized TrialConfig) while
+  behaviour stayed 900s. When config and behaviour disagree, STOP reading
+  config plumbing and instrument the actual kill: the flushed+timestamped
+  worker receipts (60703b26) + 20s instance-liveness observer named the killer
+  in one run.
+- Two other real bugs were found stacked on the same symptom and fixed on the
+  way: fleet startup swept the SHARED staging dir, rm -rf'ing live sandbox
+  workdirs (2bb65ce2, age-gated); `gen_band_yaml.py` REPLACES the harbor
+  section with `canary_harbor.yaml`, so base8b.yaml edits to harbor fields
+  silently do nothing (061fe2cb carries the timeout values in the right file).
+- `worker.py` receipt prints were block-buffered for hours — "absent from the
+  log" meant nothing. Always `flush=True` on operational prints.
