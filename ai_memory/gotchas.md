@@ -2517,3 +2517,50 @@ malformed calls stopped emitting calls **at all**. The edit rate — the number 
 (needs a fleet restart), not on thinking.** Note only 1 group was fully sampled at n=14, so "0 groups with
 variance" is a weak statement about the band — it is a strong statement about the edit rate, which is what
 this run was for. Do not upgrade it into a band claim.
+
+## The 8B's stalls are MALFORMED bare-JSON, not a parser dialect gap — and they are repairable (2026-08-06)
+
+Classified every `text` part in the `1251403` thinking-ON trace tree (the trials that stalled after ~2
+steps): **0 of 11 trials contained a VALID tool-call JSON left as text** — the bare_json parser misses
+nothing it was designed for — but **10/11 contained a tool call whose JSON has exactly one small defect**:
+missing closing quote on the command string with the braces textually present (6), literal newlines inside
+an open string in pretty-printed JSON (3), stray `\"` escapes outside strings (1). Right dialect, right
+tool names (`bash`/`glob`/`grep`), sloppy JSON — an 8B model-quality defect that `rg` CANNOT fix and output-cap
+truncation does NOT explain (all candidates brace-balanced, median 566 chars ≪ 4096-token cap).
+**Fix shipped:** `bare_json` parser repair pass (ota-band `d1e3ecb8`) — strict parse first (healthy outputs
+byte-identical), then lenient decode / close-quote insertion before the trailing closer run / unescape.
+8/10 captured real failures now parse; the 2 ambiguous shapes stay content. Streaming cannot fire early:
+an unfinished string never ends in a bare closer run (tested per-character on prefixes).
+Fixtures = verbatim trajectories in `tests/data/bare_json_malformed_1251403.json`.
+**Verify live** via the vLLM log line `bare_json: repaired a malformed tool call`.
+
+## pandas r2egym tasks die on `--strict-data-files` — a 2-line test.sh shim recovers them (2026-08-06)
+
+63/66 pandas tasks in the 260-task envgate sample fail with
+`pytest: error: unrecognized arguments: --strict-data-files` — the option is registered by pandas'
+`conftest.py`, which never loads because the graded tests run from OUTSIDE `/testbed`, while the repo's
+ini file still injects it via `addopts`. **The flag lives in `setup.cfg` on older pandas and
+`pyproject.toml` on newer** — a shim that seds only setup.cfg fixed 6/9 and left 3 dying on
+`inifile: /testbed/pyproject.toml`. The v2 shim seds
+`setup.cfg pyproject.toml tox.ini pytest.ini run_tests.sh`, all `|| true`.
+Gate-validated (pristine `0.0` with exactly the task's bug failing, oracle `1.0`) — see
+`envgate_pandasfix` results. Production home for the shim: worker.py's test.sh rewrite (same mechanism
+as `_patch_test_sh_for_offline_pip`; astropy precedent). ~1,050 tasks of the full pool ride on this.
+
+## Fleet submission env was IMPLICIT — 15502687 died at t=1s on a missing HARBOR_SRC (2026-08-06)
+
+The running fleet's config lived only in the exported environment of the interactive shell that
+submitted it (`sbatch --export=ALL` inheritance). Cancelling the fleet destroyed the only copy;
+the naive resubmit died in 1 second (`HARBOR_SRC: Set HARBOR_SRC…`). Recovered the resolved config
+from the old fleet's log header (it echoes everything). **Rule: submit fleets with the full env
+EXPLICIT on the sbatch line, and capture a job's resolved config before cancelling the only instance.**
+The runbook in NEXT_SESSION.md now carries the explicit submission line.
+
+## Mac→JURECA direct ssh WORKS when its mux is alive — the "expected to fail" note is stale (2026-08-06)
+
+Ops docs say `ssh jureca` from the Mac failing is "expected, not an outage" (the CM lives on Jupiter).
+BUT the Mac keeps its own `~/.ssh/cm/lee27@jureca.fz-juelich.de:22` mux, and while it lives, direct
+`ssh jureca '<cmd>'` works fine — this session ran the entire envgate campaign through it while the
+Jupiter→JURECA CM was dead. Caveats: it round-robins onto an arbitrary login node (landed jrlogin10;
+`10.14.0.46`-bound forwards still need jrlogin05), and a NEW connection needs TOTP — so treat the live
+mux as a perishable asset and don't kill it.

@@ -43,6 +43,43 @@ already recorded). Output = the permanent verified solvable-task allowlist.
 
 ---
 
+## ★ RUNBOOK — model-side bring-up, gated ONLY on the operator's TOTP (written ~16:00 KST 08-06)
+
+Everything below is verified staged; the single missing piece is the interactive CM re-auth.
+
+**Preconditions already in place (verified by inspection this session):**
+- harbor cluster checkout `/p/project1/synthlaion/lee27/harbor` @ `1019a36` — `rg` bind in
+  `worker.py:106` + tool loop `:710`; binary `agent_tools/bin/rg` is ELF x86-64 **static-pie**.
+- `bare_json` parser now carries a **repair pass** (`d1e3ecb8`, deployed to the
+  `/e/fscratch/.../OpenThoughts-Agent-r2egym-bridge-next` checkout by fetch+hard-reset, md5-verified):
+  repairs 8/10 real malformed tool calls from `1251403`. See gotchas 08-06 (malformed-JSON taxonomy).
+- Sweep allowlist: see §0.0-UPDATE; file path recorded there when the full sweep lands.
+
+**Sequence (operator does step 1; the rest is scriptable):**
+1. **TOTP (Luke, ~2 min):** on the Jupiter login02 shell:
+   `ssh -4 -M -S ~/.ssh/cm_jureca/qwen36 -fNT -o ControlPersist=8h lee27@jureca05.fz-juelich.de`
+   `-4` mandatory (IPv6 resolution bypasses the key's `from=` clause → publickey denied, no TOTP
+   prompt). Pin `jureca05` (10.14.0.46 is jrlogin05's; round-robin lands elsewhere and the forward
+   binds nothing).
+2. **Bridge** on Jupiter login02 (internal bind per guardrail — NOT 0.0.0.0):
+   `tmux new -d -s bridge "python3 /p/project1/synthlaion/lee27/harbor/src/harbor/environments/apptainer/server.py --port 9920 --host 10.128.1.2 >> ~/bridge_9920.log 2>&1"`
+3. **Workers→bridge forward** on the CM:
+   `ssh -S ~/.ssh/cm_jureca/qwen36 -O forward -R 10.14.0.46:9923:10.128.1.2:9920 lee27@jureca05.fz-juelich.de`
+   Verify from JURECA: `curl http://jrlogin05i:9923/status` → 200.
+4. **Fleet, with FULL EXPLICIT env** (the 15502687 lesson — never rely on `--export=ALL` inheritance
+   of an interactive shell):
+   `sbatch --nodes=32 --export=ALL,HARBOR_SRC=/p/project1/synthlaion/lee27/harbor/src,BRIDGE_URL=http://jrlogin05i:9923 /p/project1/synthlaion/lee27/harbor/src/harbor/environments/apptainer/jureca_workers.sbatch`
+5. **Edit-rate smoke** (~32 tasks from the ALLOWLIST, thinking ON — leave `BAND_SERVER_NO_THINK`
+   unset): §8 recipe + `arm_rollout_forward.sh <job> 18300 <fleetid>`; probe the route only AFTER
+   vLLM logs startup. Gate with `agentstall.py`: ripgrep errors must be 0 **with tools actually
+   called** (state the denominator), edit rate must move off 14%, and grep the vLLM log for
+   `bare_json: repaired a malformed tool call` — that line is the repair pass proving itself live.
+6. Only on a passed smoke: **band probe** over the allowlist, pass@4, sharded
+   (`gen_band_yaml.py` + the 8-shard precedent; ~200 concurrency against 512 fleet slots).
+   Success criterion: within family of Marianna's ~36% (her denominator = full 4.5k pool).
+
+---
+
 ## ★★ 0.0 STATUS 2026-08-06 ~13:00 KST — HARNESS VALIDATED; NOW VERIFYING THE TASK POOL
 
 **The no-model gate passes on both task sets. Do not re-litigate whether the harness works.**
