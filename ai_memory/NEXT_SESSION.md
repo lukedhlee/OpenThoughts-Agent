@@ -7,6 +7,42 @@ Report times in **KST** (cluster clocks are CEST = KST − 7h).
 
 ---
 
+## ★★ 0.0-UPDATE 2026-08-06 ~14:30 KST — 260-TASK SWEEP DONE: CEILING 70.0% (n=260); FULL SWEEP IN FLIGHT
+
+Supersedes the fleet/live-state claims in §0.0 below. The task-pool question §0.0 posed is now measured.
+
+**Sample sweep result (COMPLETE 14:12 KST, `envgate_results_envgate_big.jsonl`):**
+- **Harness: clean.** 520/520 records, 0 timeouts, 0 nulls, offline patch ok 520/520.
+- **Ceiling: 182/260 = 70.0%** (95% CI ≈ 64–76%). Consistent with the n=32 estimate (78.1%, CI 61–89).
+  Pooled with the 32 (3-task overlap, outcomes reproduce exactly): 206/289 ≈ 71.3%.
+- **Zero free-pass tasks in 260** — no `pristine=1.0` anywhere. The patched-era "~22% pass with zero
+  work" pathology does NOT exist on the raw path. Only two reward patterns occur: (0,1)×182, (0,0)×78.
+- **Failures are repo-concentrated and diagnosed:** pandas **63/66 dead** (`pytest: unrecognized
+  arguments: --strict-data-files`), aiohttp **11/23** (`asyncio.async(` SyntaxError), tornado 3/16
+  (**all tests PASS yet reward 0.0** — grader-expectation mismatch vs `expected_output_json`; 2296/2400
+  identical tails), numpy 1/40 (4 hypothesis-library errors at gold state, 571 pass).
+  Everything else (pillow 40, orange3 23, scrapy 18, datalad 17, pyramid 11, coveragepy 6): **0 failures**.
+  Excluding pandas+aiohttp, the rest of the pool is 167/171 = **97.7% solvable**.
+
+**Fleet correction (supersedes §0.0 "RUNNING"):** `15502687` **FAILED at t=1s** (06:41:49 CEST) —
+submitted without `HARBOR_SRC` (the sbatch requires it; the old fleet's env was inherited via
+`--export=ALL` and never captured). **The sweep does not need the fleet, workers, or bridge at all** —
+it only needs an allocation for `srun --overlap`. Replaced by plain allocation **`15502693`**
+(32× dc-cpu, 24h, from ~07:00 CEST), which ran the sample sweep in 19 min at `EG_CONC=64`.
+
+**Tunnel state:** the Jupiter→JURECA ControlMaster is DEAD (socket refused; no bridge process, no
+`ssh -R` on login02). All reverse forwards (18300 vLLM, 9923 workers→bridge) died with it.
+**Re-establishing needs operator TOTP** (`ssh -4 jureca05.fz-juelich.de` from Jupiter login) — required
+before any model re-probe, NOT for the sweeps. The live listener `jrlogin05i:9920` is NOT ours
+(our bridge was Jupiter-side and is dead) — do not touch it, do not run `start_bridge_jureca.sh` at 9920.
+
+**In flight:** full-pool staging (`envgate_stage.sh --sample 4569`, tmux `egstage` on Jupiter login,
+log `envgate_stage_full.log`) → then resume sweep over all 4,569 on `15502693`
+(`FLEET=15502693 EG_STAGE_ROOT=.../envgate_big EG_CONC=128 bash envgate_par.sh` — it skips the 260
+already recorded). Output = the permanent verified solvable-task allowlist.
+
+---
+
 ## ★★ 0.0 STATUS 2026-08-06 ~13:00 KST — HARNESS VALIDATED; NOW VERIFYING THE TASK POOL
 
 **The no-model gate passes on both task sets. Do not re-litigate whether the harness works.**
