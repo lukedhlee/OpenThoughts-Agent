@@ -150,8 +150,15 @@ PARENT=$(apptainer exec --cleanenv instance://$INST git -C /testbed rev-parse ${
 
 PRE="true"
 if [[ "$MODE" == "oracle" ]]; then
-  # Gold patch = the diff between the buggy parent and base_commit.
-  PRE="git -C /testbed checkout $BASE -- . && git -C /testbed status --porcelain | head -5"
+  # Gold patch = the diff between the buggy parent and base_commit — applied
+  # NARROWLY: only the files that commit actually touches. The old broad form
+  # (`git checkout $BASE -- .`) restored EVERY tracked file, which on some
+  # images RESURRECTED configs the dataset builders had deliberately scrubbed
+  # from the working tree (measured: pandas pyproject.toml carrying
+  # --strict-data-files came back on the oracle leg only, killing pytest at
+  # argument parsing while the pristine leg ran fine). For unscrubbed images
+  # the two forms are identical (extra restored files == working tree already).
+  PRE="git -C /testbed diff --name-only -z HEAD $BASE | xargs -0 -r git -C /testbed checkout $BASE -- && git -C /testbed status --porcelain | head -5"
 fi
 
 # Bound the run OURSELVES. If the srun wall kills us instead, the script dies
