@@ -118,7 +118,75 @@ def _extract(text: str) -> tuple[list[dict], str]:
     leftover = scanned
     for start, stop in reversed(spans):
         leftover = leftover[:start] + leftover[stop:]
+    if calls:
+        return calls, leftover.strip()
+
+    # Strict scan found nothing. If the text plainly ATTEMPTS a tool call, try
+    # the conservative repair pass (see _extract_repaired) before giving up.
+    # Measured on job 1251403 (thinking-ON baseline): 10/11 stalled trials
+    # carried a tool call whose JSON had exactly one small defect, and 0/11 had
+    # a valid call the strict pass missed.
+    if _NAME_KEY.search(scanned):
+        repaired = _extract_repaired(scanned)
+        if repaired is not None:
+            return repaired
     return calls, leftover.strip()
+
+
+# Repair pass. Fires ONLY when the strict scan yields nothing, so healthy
+# outputs are byte-identically handled. Defect classes it repairs are the three
+# measured on real g1_diverse_tezos_100k_8b trajectories (job 1251403):
+#   1. literal control chars inside strings  -> strict=False decode
+#   2. missing closing quote on the LAST string, its braces textually present
+#      (`"command": "ls -la /testbed}}`)     -> insert '"' before the trailing
+#      brace run. In streaming this cannot fire early: until the model has
+#      emitted every closing brace the candidate stays unbalanced and fails.
+#   3. stray backslash-escapes outside strings (`"pattern": \"x\"`) -> unescape.
+# NOT repaired (ambiguous, measured 1 case each): unquoted YAML-ish `{bash: x}`
+# and an arguments dict that is not valid JSON structure. Those stay content.
+_NAME_KEY = re.compile(r'"name"\s*:\s*"')
+_TRAILING_JUNK = re.compile(r"(?:\s|</tool_call>|</think>)+$")
+# Leftmost closer whose suffix is nothing but closers/whitespace — covers both
+# compact (`}}`) and pretty-printed (`\n  }\n}`) endings.
+_TRAILING_CLOSERS = re.compile(r"[}\]][\s}\]]*$")
+
+
+def _repair_candidates(fragment: str):
+    yield fragment
+    closers = _TRAILING_CLOSERS.search(fragment)
+    if closers:
+        yield fragment[: closers.start()] + '"' + fragment[closers.start() :]
+    unescaped = fragment.replace('\\"', '"')
+    if unescaped != fragment:
+        yield unescaped
+        closers = _TRAILING_CLOSERS.search(unescaped)
+        if closers:
+            yield unescaped[: closers.start()] + '"' + unescaped[closers.start() :]
+
+
+def _extract_repaired(scanned: str) -> tuple[list[dict], str] | None:
+    """Best-effort recovery of ONE defective tool call; None if unrepairable."""
+    lenient = json.JSONDecoder(strict=False)  # tolerates raw \n and \t in strings
+    trimmed = _TRAILING_JUNK.sub("", scanned)
+    for match in _JSON_START.finditer(trimmed):
+        start = match.start()
+        fragment = trimmed[start:]
+        if not _NAME_KEY.search(fragment):
+            continue
+        for candidate in _repair_candidates(fragment):
+            try:
+                obj, _ = lenient.raw_decode(candidate)
+            except json.JSONDecodeError:
+                continue
+            normalized = _as_tool_call_dicts(obj)
+            if normalized is None:
+                continue
+            logger.warning(
+                "bare_json: repaired a malformed tool call (defect fixed by "
+                "lenient decode / close-quote insertion / unescape)"
+            )
+            return normalized, trimmed[:start].strip()
+    return None
 
 
 def _to_arguments_json(args: object) -> str:
