@@ -25,7 +25,18 @@ terminal_bench:
     extra_body:
       chat_template_kwargs:
         enable_thinking: true
-    override_timeout_sec: 1800
+    # Agent wall = (override or task.toml 900) x timeout_multiplier. The
+    # override empirically does NOT survive into TrialConfig (smoke 1257671:
+    # every masked trial's agent phase died at ~900s = the task.toml base with
+    # multiplier 1), so keep the override AT the task base and put the real
+    # lever in timeout_multiplier below — both plumbing paths then agree.
+    override_timeout_sec: 900
+    # 4.0: agent 900->3600s (50-turn thinking episodes exceeded 900s in 111/128
+    # smoke trials; the timeout also tears down the env BEFORE verify, masking
+    # the trial as AddTestsDirError). Verifier 600->2400s (envgate measured
+    # heavy pandas/numpy suites at 15-30 min; the old 120s cap could not grade
+    # ANY heavy-repo task).
+    timeout_multiplier: 4.0
     override_cpus: 2
     override_memory_mb: 4096
     override_storage_mb: 4096
@@ -36,7 +47,7 @@ terminal_bench:
     bridge_url: ${oc.env:APPTAINER_BRIDGE_URL,http://10.128.1.2:9920}
     sif_cache: /p/scratch/synthlaion/lee27/r2egym_sif
     auto_snapshot: false
-    verifier_override_timeout_sec: 120
+    verifier_override_timeout_sec: 600
     max_retries: 3
     min_wait_sec: 60.0
     max_wait_sec: 600.0
