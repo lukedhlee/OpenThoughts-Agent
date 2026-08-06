@@ -14,14 +14,24 @@ upload_agent_logs: false
 enable_episode_logging: false
 record_terminal_session: false
 enable_pane_logging: false
-override_timeout_sec: 1800
+# Agent wall = (override or task.toml 900) x timeout_multiplier. The override
+# empirically does NOT survive into TrialConfig (smoke 1257671: every masked
+# trial's agent phase died at ~900s = the task.toml base, multiplier 1), so the
+# override is pinned AT the task base and timeout_multiplier carries the real
+# lever — both plumbing paths then agree on 3600s. 111/128 smoke trials
+# exceeded 900s, and the timeout tears the env down BEFORE verify, so they all
+# masked as AddTestsDirError ("No instance for env").
+override_timeout_sec: 900
+timeout_multiplier: 4.0
 override_cpus: 2
 override_memory_mb: 4096
 override_storage_mb: 4096
 environment_type: apptainer
 sif_cache: /p/scratch/synthlaion/lee27/r2egym_sif
 auto_snapshot: false
-verifier_override_timeout_sec: 120
+# 600 x timeout_multiplier 4.0 = 2400s. The old 120s cap could not grade ANY
+# heavy-repo task (envgate measured pandas/numpy suites at 15-30 min).
+verifier_override_timeout_sec: 600
 max_retries: 3
 min_wait_sec: 60.0
 max_wait_sec: 600.0
