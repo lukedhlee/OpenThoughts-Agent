@@ -1,24 +1,37 @@
 # NEXT SESSION — takeover note
 
-Written **2026-08-06 ~02:40 KST**. Supersedes all earlier versions
+Written **2026-08-06 ~02:40 KST**, revised **~13:00 KST** (§0.0, §1, §2, §5 rewritten — read those first;
+later sections still carry the 02:40 framing). Supersedes all earlier versions
 (previous one archived at `ai_memory/logs/2026-08-06_NEXT_SESSION_superseded.md`).
 Report times in **KST** (cluster clocks are CEST = KST − 7h).
 
 ---
 
-## ★★ 0.0 STATUS 2026-08-06 ~03:40 KST — ENVIRONMENTS ARE VALIDATED, MODEL-FREE
+## ★★ 0.0 STATUS 2026-08-06 ~13:00 KST — HARNESS VALIDATED; NOW VERIFYING THE TASK POOL
 
-**Both task sets now pass a no-model gate. Do not re-litigate whether the environments work.**
+**The no-model gate passes on both task sets. Do not re-litigate whether the harness works.**
+**But read the sample sizes below before quoting any rate.**
 
-| | result |
-|---|---|
-| **r2egym** | **25/32 tasks** give pristine `0.0` **and** oracle `1.0`. Harness clean: 64/64 records, **0 timeouts, 0 nulls**. **Ceiling 78.1%.** |
-| **SWE-bench Verified** | **8/8 pilot tasks** give nop `0.0` and oracle `1.0` — every one of the 8 largest repos, covering **479/500 = 96%**, incl. **django (231/500 = 46%)**. |
+| | gate result | tasks gated |
+|---|---|---|
+| **r2egym** | **25/32** give pristine `0.0` **and** oracle `1.0`. Harness clean: 64/64 records, **0 timeouts, 0 nulls**. | **32 of 4,569 = 0.7%** |
+| **SWE-bench Verified** | **8/8** give nop `0.0` and oracle `1.0` — one instance per repo, from the 8 largest repos. | **8 of 500 = 1.6%** |
+| **SWE-bench SIFs** | build COMPLETE | **500/500, 577 GB**, `/p/scratch/synthlaion/lee27/swebench_sif` |
 
-The r2egym 7 failures are **broken tasks, not a broken harness** (diagnosed): aiohttp dies on
+⚠ **The gate proves the HARNESS is sound — that the grader measures code state rather than returning a
+constant. That is an EXISTENCE claim and 32 tasks suffice for it. It does NOT establish a pass rate over
+either task set.** Keep those three claims separate (harness health / measurement / dataset ceiling).
+
+⚠ **The "78.1% ceiling" is a point estimate from n=32, 95% CI ≈ 61–89%.** Earlier versions of this doc
+stated it as a hard number — that was wrong. Quote it as a range until the sweep below lands. Pinning it
+to ±5 pp needs ~260 tasks gated.
+The 7 known failures are **broken tasks, not a broken harness** (diagnosed): aiohttp dies on
 `asyncio.async(` -> `SyntaxError` (`async` reserved since Py3.7); pandas dies on pytest
-`unrecognized arguments: --strict-data-files`. Unsolvable by any model = real dead weight. **78.1% is a
-property of the dataset and an upper bound on achievable reward.**
+`unrecognized arguments: --strict-data-files`.
+
+⚠ **SWE-bench's "479/500 = 96%" is REPO coverage, not instances gated.** 8 instances were gated; their
+repos account for 96% of the benchmark. That the other instances work is a reasonable inference from the
+shared base-image family and harness path — **not a measurement.**
 
 **Getting here required fixing FOUR harness bugs, each of which faked "the environment is broken":**
 missing `agent_tools` bind + `_patch_test_sh_for_offline_pip`; missing `--no-home`; **missing `--cleanenv`
@@ -26,21 +39,48 @@ on `instance start` AND on every `exec`** (the big one — runs went from hangin
 ~2 min); and no `PATH` / wrong cwd / wrong exec form. See `gotchas.md`. **A gate that diverges from
 `worker.py` measures the gate.**
 
-**In flight / next:**
-- Full 500 SWE-bench SIF build running in tmux `swbuild` on JURECA -> `swbuild_all.log`. Pull-only
-  (`apptainer pull`, no `%post`, no fakeroot): ~1.25 GB and ~150-420 s per task, so **~625 GB / several
-  hours**. Do NOT switch to harbor's `prebuild_sifs.sh` (doubles disk for zero reuse at 1:1 bases).
+### THE CURRENT PRIORITY (operator's call, 2026-08-06 ~12:30 KST): verify the TASK POOL before the model
+
+Rationale, in the order that matters:
+1. **Broken tasks are specifically toxic to GRPO.** It learns from spread between attempts at the SAME
+   task. An unsolvable task returns all zeros, contributes zero gradient, and still consumes its full
+   share of every batch. 20% broken = paying full GPU price for batches 20% guaranteed-dead.
+2. **The output is a permanent asset** — a verified solvable-task list improves every future run. The `rg`
+   fix improves one run.
+3. **Zero GPU cost**, runs on the idle sandbox fleet.
+4. **Without it the ambiguity returns one level up**: a bad reward number means "weak model" OR "impossible
+   task pool" — the same ambiguity the gate was built to kill.
+
+Sequence: fleet restart (done) → ~260-task sample sweep → decide on full 4,569 sweep → only then re-probe
+the model with thinking ON + `rg` live.
+
+**Live state as of ~13:00 KST:**
+- **Fleet `15500584` CANCELLED (idle, ours); replaced by `15502687`** — 32 nodes, dc-cpu, fresh 24 h wall.
+  Restart was free (fleet idle since its only client died 00:40 KST-cluster) and does double duty:
+  activates `rg` AND gives the sweep a full-length allocation.
+- **`rg` should now be LIVE** (harbor `1019a36f` was pulled onto `/p/project1/synthlaion/lee27/harbor`
+  at 20:37 CEST, before this fleet started). Binary: `/p/scratch/synthlaion/lee27/agent_tools/bin/rg`,
+  x86-64 **static-pie**. Path agreement confirmed: the sbatch defaults `BRIDGE_AGENT_TOOLS` to that dir.
+  **Verify by behaviour inside a task container before believing it.**
+- **`envgate.sh` on the cluster was STALE and is now fixed** — it defaulted to the pinned
+  `apptainer_bridge/9c31e931/worker.py` (Jul 29, 80,793 B) instead of the live harbor worker
+  (Aug 5, 86,365 B, +5.5 KB incl. the astropy shim). The fix existed locally and was deliberately not
+  deployed mid-sweep, then never redeployed. **Redeployed 2026-08-06 ~12:50 KST and verified.** A 260-task
+  sweep against the stale copy would have measured the wrong harness.
+- **Staging is the sweep's blocker**: the gate reads `/p/scratch/synthlaion/lee27/envgate/<task>/{test.sh,
+  metadata.json}` and only the original **32** are staged. A subagent is tracing the canonical source and
+  staging 260 into `envgate_big/`, with a **byte-comparison of 3 freshly-staged tasks against the
+  validated 32 as a hard gate** — divergent staging would silently invalidate the sweep.
+- **Training job `1252276` ENDED `TIMEOUT` at 04:00:24** = its 4 h wall, the intended end, not a crash.
+  **FINAL n=14: thinking-OFF is HARMFUL.** Edit rate 14% (1/7) → 7% (1/14); raw-JSON-as-text 71% → 50%
+  but bought nothing because **zero-tool trajectories went 0% → ~75%**; rewards `{1.0: 1, 0.0: 13}`;
+  **groups with variance: 0** → no gradient at all. **Keep thinking ON.**
+  ⚠ Its "ripgrep errors 0/14" is a **denominator artefact** (no tools called at all), NOT the `rg` fix.
 - SWE-bench repos need **build deps** in `$BRIDGE_AGENT_TOOLS/wheels` (`flit_core`, `setuptools_scm`,
-  `cython==0.29.30`, `oldest-supported-numpy`). Staged 87 -> 95; **expect to extend per new repo.**
-- **Training job `1252276`** (2 nodes, 4 h, thinking OFF via `BAND_SERVER_NO_THINK=1`) is RUNNING with a
-  route verified end-to-end (`HTTP=400` from a compute node = reached the real vLLM). **Early read (n=8):
-  thinking-off is HARMFUL — zero-tool trajectories went 0% -> 75%**, because the model emits stray
-  `</think>` and an invented `<argby>` wrapper instead of a parseable tool call. **Keep thinking ON.**
-  ⚠ Its "ripgrep errors 0/8" is a **denominator artefact** (no tools called at all), NOT the `rg` fix.
-- `rg` is staged at `$BRIDGE_AGENT_TOOLS/bin/rg` and **verified running on a compute node**; the harbor
-  bind is committed (`lukedhlee/apptainer-opencode-bridge` `1019a36f`, pushed). **It needs a `git pull` on
-  the cluster checkout `/p/project1/synthlaion/lee27/harbor` + a FLEET RESTART to take effect** — not done,
-  because restarting risks losing the 32-node allocation. Operator's call.
+  `cython==0.29.30`, `oldest-supported-numpy`). Staged 87 -> 95; **expect to extend per new repo family**
+  when gate coverage widens past the 8 pilot repos.
+- Operator-facing status page (progressive-disclosure briefing, kept current):
+  `https://claude.ai/code/artifact/9434f46b-46cd-44fa-a02d-9e248607bdd4`
 
 ---
 
@@ -171,10 +211,32 @@ the direct lever on the band %.
    Task #1 was once marked "thinking-off (DONE)" — wrong, reopened — and then the reopened version told
    you to set `BAND_HARBOR_THINK=0`, which was **also wrong** (a no-op). Two errors on the same knob.
 
-## 1. DO THIS FIRST — validate environments with NO model (operator's call, 08-06)
+## 1. DO THIS FIRST — sweep the TASK POOL with NO model (operator's call, 08-06 ~12:30 KST)
 
-Luke's instruction: *"validate the environments first without running the models by actually submitting the
-oracles and the non-oracle answers."* This is right, and it is far cheaper than a GPU allocation.
+**The harness question is CLOSED (§0.0). The open question is how much of the 4,569-task pool is solvable.**
+
+Luke's original instruction: *"validate the environments first without running the models by actually
+submitting the oracles and the non-oracle answers."* Done — that's what §0.0 records. His follow-up call
+after seeing the 32/4,569 denominator: **verify the tasks before spending more GPU on the model.** Rationale
+is in §0.0; the short version is that unsolvable tasks are zero-gradient dead weight in every GRPO batch,
+and the sweep's output is a permanent solvable-task filter.
+
+**Concrete next steps, in order:**
+1. Confirm staging validated (byte-match vs the original 32) → `envgate_big/` + `envgate_big_tasklist.txt`.
+2. Run `envgate_par.sh` over the ~260-task sample against fleet `15502687`. **Set `FLEET=15502687`** — the
+   script's default is hardcoded to the now-dead `15500584`. Raise concurrency past one-task-per-node if
+   the wall is too long: the fleet runs **16 workers/node × 32 nodes**, so 512-way is available; the
+   original one-per-node choice was conservatism, not a constraint.
+3. `envgate_report.py` for HARNESS / GATE / CEILING, with the null-reward exclusion.
+4. Decide on the full 4,569 sweep; its artefact is the verified task allowlist.
+5. Only then re-probe the model: thinking **ON**, `rg` live.
+
+**Cheap parallel item, no GPU, no fleet:** the tool-format hypothesis — compare the checkpoint's SFT tool
+syntax against the `bare_json` parser. The invented `<argby>` wrapper is the hint. If they disagree, `rg`
+was never going to matter.
+
+**Do NOT re-run the 32 already-gated tasks expecting new information** — but DO note whether the new sample
+overlaps them, because that changes how the two results combine.
 
 **The oracle is clean and free here:** `/testbed` sits at `base_commit^`, so `git checkout <base_commit> -- .`
 **is** the gold patch. No `solve.sh`, no `solution/patched_files` needed (those belong to the patched dataset).
@@ -200,10 +262,16 @@ single-task bracket for `r2egym-0000` was **still running** — re-run it, do no
 
 ## 2. Live state at handover (RE-PROBE, do not trust)
 
-| id | what | state at 02:40 KST |
+| id | what | state at ~13:00 KST 08-06 |
 |---|---|---|
-| `1251403` | 8B × 32 tasks × pass@4, 2 nodes, TP=1 | RUNNING, ends ~02:56 KST. 7 results, `{0.0: 6, 1.0: 1}`, **GATE PASSED** on `r2egym-2514` |
-| `15500584` | JURECA sandbox fleet, 32 nodes × 16 workers | RUNNING, ~21h left, `SIF_CACHE` correct |
+| `15502687` | JURECA sandbox fleet, 32 nodes × 16 workers, dc-cpu | **RUNNING**, fresh 24 h. Started AFTER harbor `1019a36f` → should have `rg`. **Verify by behaviour.** |
+| `15500584` | previous fleet | **CANCELLED** 08-06 ~12:40 KST — ours, idle, deliberate. Started 4 h before the `rg` fix landed, so it could never have had it. |
+| `1252276` | 8B band probe, thinking OFF, 2 nodes, TP=1 | **TIMEOUT at 04:00:24** = its 4 h wall, intended end. n=14, conclusion in §0.0. |
+| `1251403` | 8B × 32 tasks × pass@4 | ENDED `TIMEOUT` 01:30:02. Source of the n=7 thinking-ON baseline. |
+| `1250164` | 8B mirrorfix | ENDED `TIMEOUT` 01:30:03. |
+
+**Jupiter queue is EMPTY.** No GPU job is running. The fleet is idle and therefore free capacity for the
+model-free sweep — that is a large part of why the sweep is the right next move rather than a detour.
 
 **`1251403` lost its entire first wave of 64 rollouts to a dead reverse forward** (see §3.1). The environment
 and reward conclusions above are unaffected — they come from trials that ran *after* the repair, plus
@@ -305,6 +373,21 @@ tiny n its `[3]`/`[4]` verdicts print `FAIL` off `n/a` denominators — **`FAIL`
 - **"The bare_json parser is validated"** — over-stated. It **does** fire, but "median 2 tool calls/trial" was
   never healthy for a SWE task; it is the same 2-step stall documented in §0.3.
 - **"thinking-off (DONE)"** — false. It is ON. See §0.3.
+- **"`BAND_HARBOR_THINK=0` is the cheap test"** — false, it is a **no-op** for the OpenCode agent
+  (`interleaved_thinking`/`extra_body` are wired only for terminus_2 / openhands / mini_swe_agent; OpenCode
+  shells out to `opencode ... run --format=json --thinking --auto`, `opencode.py:876`, and unknown kwargs
+  are silently swallowed). Acting on it would have burned a job on a confident false negative. Correct knob:
+  `BAND_SERVER_NO_THINK=1`.
+- **"78.1% is a hard ceiling"** — over-stated. It is a **point estimate from n=32 of 4,569 (0.7%)**, 95% CI
+  ≈ **61–89%**. Quote the range. Likewise **"SWE-bench 479/500 = 96%"** is repo coverage, not instances
+  gated (8 were). Both were **numerators reported without their denominators** — the same failure as the
+  `ripgrep 0/14` empty-denominator trap, pointed the other way. State the denominator, always.
+- **"the envgate WORKER default was fixed"** — it was fixed **locally only**. The cluster copy still ran the
+  pinned Jul-29 `worker.py` until it was redeployed 08-06 ~12:50 KST. A "fixed" claim means **deployed and
+  verified on the machine that runs it**, not committed locally.
+- **"the fleet log went quiet, something is wedged"** — false. Five hours of silence was an **idle** fleet;
+  its only client (`1252276`) had ended. Cross-check the client's `sacct` end time against the last log
+  write before calling anything wedged.
 
 ## 6. Hard-won operational rules (unchanged, still binding)
 
