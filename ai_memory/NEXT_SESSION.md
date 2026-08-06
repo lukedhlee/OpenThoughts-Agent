@@ -36,10 +36,22 @@ it only needs an allocation for `srun --overlap`. Replaced by plain allocation *
 before any model re-probe, NOT for the sweeps. The live listener `jrlogin05i:9920` is NOT ours
 (our bridge was Jupiter-side and is dead) — do not touch it, do not run `start_bridge_jureca.sh` at 9920.
 
-**In flight:** full-pool staging (`envgate_stage.sh --sample 4569`, tmux `egstage` on Jupiter login,
-log `envgate_stage_full.log`) → then resume sweep over all 4,569 on `15502693`
-(`FLEET=15502693 EG_STAGE_ROOT=.../envgate_big EG_CONC=128 bash envgate_par.sh` — it skips the 260
-already recorded). Output = the permanent verified solvable-task allowlist.
+**FULL SWEEP DONE (16:38 KST): baseline ceiling 66.1%** — 3,015/4,564 usable tasks gate-pass
+(9,214 records; 4 timeouts + 4 nulls + 2 `no_sif` excluded as unknown). Per-repo fails/total:
+**pandas 1,332/1,443 (92%)**, aiohttp 139/299, numpy 31/776, tornado 22/259, orange3 12/482,
+datalad 9/179, scrapy 4/215, coveragepy 5/108, **pillow 0/619, pyramid 0/189**. Only two reward
+patterns exist at scale: (0,1)×3,015 and (0,0)×1,549 — **zero free-pass tasks in the whole pool**.
+Artifacts: `allowlist_r2egym_v1.txt` (3,015) + `gatefail_r2egym_v1.txt` (1,554) in
+`/p/scratch/synthlaion/lee27/`.
+
+**Pandas recovery is productionized and a RETRY SWEEP of the 1,554 fails is running** (same tmux
+`egbig`, resume mode) under fixed mechanics: harbor `55c416cd` (worker.py `pandas_compat` strips
+`--strict-data-files` from setup.cfg/pyproject.toml/etc — envgate inherits it by extracting the live
+function) + envgate `fa5acdd6` (**narrow oracle**: checkout only the gold commit's files; the broad
+`-- .` form resurrected configs the image builders had scrubbed). Gate-validated 9/10 on shimmed
+pandas tasks (the 10th fails genuinely at gold). Expected allowlist v2 ≈ 4.2k, ceiling ≈ 90%+.
+⚠ shim-staging trap recorded in gotchas: an UNQUOTED heredoc expanded `$_cfg` to `""` and staged a
+no-op sed — verify staged shims by grep before running the gate.
 
 ---
 

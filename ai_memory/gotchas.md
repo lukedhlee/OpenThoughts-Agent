@@ -2564,3 +2564,26 @@ BUT the Mac keeps its own `~/.ssh/cm/lee27@jureca.fz-juelich.de:22` mux, and whi
 Jupiter→JURECA CM was dead. Caveats: it round-robins onto an arbitrary login node (landed jrlogin10;
 `10.14.0.46`-bound forwards still need jrlogin05), and a NEW connection needs TOTP — so treat the live
 mux as a perishable asset and don't kill it.
+
+## An unquoted ssh heredoc silently emptied `$_cfg` in a staged shim (2026-08-06)
+
+The pandas shim v2 was staged through `ssh jureca 'python3 - <<PY ... sed -i "…" "$_cfg" ... PY'` —
+with an UNQUOTED heredoc delimiter, so the LOCAL shell expanded `$_cfg` (unset → empty) before python
+ever saw it, and the staged test.sh contained `sed -i "s/--strict-data-files//g" ""` — a silent no-op
+(`2>/dev/null || true` swallowed even the error). The re-gate then "confirmed" the fix didn't work,
+which nearly buried a correct hypothesis. v3 with `<<'PY'` worked immediately: 3363/3365 flipped to
+gate-PASS. **Rules:** quote heredoc delimiters whenever the payload contains `$`; and after staging any
+generated script, `grep` the staged copy for the load-bearing token (here `"$_cfg"`) before spending a
+run on it. Same family as "verify by behaviour": verify the DEPLOYED text, not the intended text.
+
+## The broad envgate oracle resurrected configs the image builders scrubbed (2026-08-06)
+
+`git checkout $BASE -- .` restores EVERY tracked file to the base state. On newer pandas images the
+dataset builders had deliberately scrubbed `pyproject.toml` (with its `--strict-data-files` addopts)
+from the WORKING TREE without committing — so the pristine leg ran fine while the oracle leg
+resurrected the poisoned config and died at pytest argument parsing. Fix (`fa5acdd6`): narrow oracle —
+`git diff --name-only -z HEAD $BASE | xargs -0 git checkout $BASE --` — apply only the gold commit's
+own files. Identical to broad on unscrubbed images. **General rule: a gold "patch" must be the
+commit's file set, not a full-tree restore; images may carry deliberate uncommitted working-tree
+state.** (Also the debugging trap that hid this: `git status --porcelain | head -5` in the PRE echo
+truncated the change list, so the config restore was invisible in the sweep records.)
