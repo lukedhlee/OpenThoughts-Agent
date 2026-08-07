@@ -1,3 +1,38 @@
+---
+
+## ★★★ 0.0-NIGHT 2026-08-07 ~11:00 KST — INFRA CHAIN CLOSED (reaper was the killer); NOW MEASURING THE MODEL
+
+**The ~900s mass-masking mystery is SOLVED and fixed** (full chain in gotchas 08-07):
+bridge zombie reaper executed every sandbox whose agent thought >15 min
+(`BRIDGE_STALE_READY_SEC=900`, last_used only ticked on job submit). Fixes deployed:
+harbor `a12ca6bc` (reaper busy-guard), `2bb65ce2` (staging sweep age-gate),
+`60703b26` (flushed worker receipts), band `ce8e7ff3` (BRIDGE_EXEC_TIMEOUT 4000),
+`061fe2cb` (canary_harbor carries the timeout values — gen REPLACES base8b's harbor
+section, edits to base8b harbor fields DO NOTHING). Bridge restarted with fix +
+BRIDGE_STALE_READY_SEC=3600.
+
+**Smoke 32f (1270405, first unbiased n=128):** masking 119→0; all 128 transcripts;
+agents run 25-40 min. Model-side reality: edit rate 6/128 (4.7%); raw-JSON-as-text
+29/128; `invalid` tool calls 64 (model hallucinates `ls`/`cat` — not trained on
+OpenCode schema); hallucinated read paths; glob/grep path:null SchemaErrors;
+rg exec fails ~2% (binary itself OK on nodes); rewards 0.0×32 completed (plausible
+at n=32 given her band density). **Dominant structural issue: TURN STARVATION —
+~4 min/turn under 64 trials on 4 TP=1 engines ⇒ ~8 turns/trial vs the 50-step cap.**
+
+**RUNNING NOW: smoke 32g (1270830, 9 nodes = 32 TP=1 engines, conc 64 ⇒ 2 trials/engine,
+exec 4000):** measures edit rate + turns/trial with serving 8× less starved. Census it
+first (same finalcensus/agentstall flow as 32f in the transcript).
+
+**Marianna parity sheet: `ai_memory/marianna_parity.md`** (her script verbatim in
+ai_memory/reference/ — TIMEOUT_SEC=1800, 50 steps, terminus-structured, TP=4×8 engines,
+**her band = 358 tasks (~8%), NOT 36%**).
+
+**Live state:** fleet-1 (in-alloc 15502693) DIES 07:00 CEST 08-07; fleet-2 15503116
+until ~17:00 CEST; fleet-3 15504529 queued (has all fixes). CM keepalive tmux `cmkeep`
+on jupiter login02; bridge tmux `bridge` (restarted w/ fix); observer tmux `obskill`
+on JURECA login (kill when done). Band probe over the 4,469 remains GATED on an edit
+rate that actually moves.
+
 # NEXT SESSION — takeover note
 
 ---
