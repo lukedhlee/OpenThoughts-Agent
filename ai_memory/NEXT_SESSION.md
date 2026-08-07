@@ -1,5 +1,44 @@
 ---
 
+## ★★★ 0.0-QUOTA 2026-08-08 ~02:30 KST — BAND PROBE #1 DIED ON INODE QUOTA; RETRY STAGED AT CONC 64
+
+**band512_s0..3 (1271527-30) crashed 15 min after start (02:15-02:29 UTC 08-07):
+1,562/2,048 trials = `BridgeOperationError: [Errno 122] Disk quota exceeded` on
+`/p/scratch/synthlaion`.** Cause is the **INODE quota, not bytes**: project at
+3.887M/4.0M soft (4.4M hard); 512 concurrent staged sandboxes × ~2.3k files each
+punched the hard limit. Data quota was fine (64TB/97TB). Check quota with
+`jutil project dataquota -p synthlaion` (login shell only — `bash -lc`).
+
+**Partial signal from the 160 clean trials:** 4 mixed (band) tasks found —
+r2egym-1711 1/4, r2egym-2215 2/4, r2egym-2414 1/2, r2egym-2996 1/2; of 16 tasks
+with full 4 trials, 2 in band (12.5%, n far too small to quote). Clean-trial pass
+rate 5/160. Census artifact: `/e/fscratch/reformo/lee27/band512_census.json`;
+census script `/e/fscratch/reformo/lee27/band_census.py` (reusable — glob
+`experiments/<name>/<name>/trace_jobs/*/result.json`).
+
+**Retry staged (08-08 night):** `band512r_s0..3` under
+`/e/fscratch/reformo/lee27/experiments/` — byte-identical clones of the originals
+(sed name swap in launcher JSON + sbatch) except `n_concurrent_trials=64` (peak
+staging ≈ 256×2.3k ≈ 590k inodes, fits post-cleanup headroom ~1.2M). Conc lives in
+`configs/<name>_rl_config.json` → `skyrl_hydra_args` — NOT in any YAML on disk
+(the of04 shard YAMLs were never saved; experiments/*/sbatch+configs are the
+source of truth for resubmission). Ports 18300-18303 preserved per shard.
+
+**Rebuilt stack (all verified): bridge tmux on login02 (BRIDGE_STALE_READY_SEC=3600,
+`curl 10.128.1.2:9920/status` OK); Jupiter→JURECA CM re-established (TOTP by Luke,
+ControlPersist=yes + ServerAliveInterval=60, keepalive tmux `cmkeep`); 9923 forward
+armed + verified from JURECA; fleets queued: 15506490 (32n/24h, est start ~19:20
+08-08 cluster) + 15506501 (16n/12h backfill). Staging cleanup of 651 stale
+apt_env dirs running 8-way parallel on login02.** Mac-side watcher auto-submits
+the 4 retry shards when a fleet is RUNNING + workers_alive. After shard start:
+arm 18300-18303 rollout forwards (arm_rollout_forward.sh, end-to-end verify) and
+watch first 15 min of trace_jobs for quota errors.
+
+**JURECA→Jupiter auth fact: the dedicated key gives only "partial success" —
+JURECA chains publickey+TOTP. The CM can NEVER be re-established without Luke.**
+
+---
+
 ## ★★★ 0.0-NIGHT 2026-08-07 ~11:00 KST — INFRA CHAIN CLOSED (reaper was the killer); NOW MEASURING THE MODEL
 
 **The ~900s mass-masking mystery is SOLVED and fixed** (full chain in gotchas 08-07):

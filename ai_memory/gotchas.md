@@ -2632,3 +2632,17 @@ Debugging lessons paid for in ~6 hours:
   silently do nothing (061fe2cb carries the timeout values in the right file).
 - `worker.py` receipt prints were block-buffered for hours — "absent from the
   log" meant nothing. Always `flush=True` on operational prints.
+
+## 2026-08-08 — inode quota, not data quota, is the staging killer
+- `/p/scratch/synthlaion` project inode quota: 4.0M soft / 4.4M hard. Baseline usage ~3.2M.
+  Each staged r2egym sandbox (`apptainer_staging/apt_env-*`) holds ~250-2,300 files.
+  512 concurrent sandboxes ⇒ ~1.2M transient inodes ⇒ `[Errno 122] Disk quota exceeded`
+  inside 15 min. Data usage was 64/97 TB — checking `du`/bytes tells you NOTHING here.
+- Symptom in results: mass `BridgeOperationError ... Disk quota exceeded ... apptainer_staging`.
+- Budget rule: concurrent_trials_total × ~2.3k inodes must fit under (hard_limit − baseline).
+  At baseline 3.2M that means ≤ ~500 concurrent, with zero margin — use ≤256 (conc 64 × 4 shards).
+- Stale staging dirs from crashed runs are NOT cleaned until the next fleet start (age-gate 24h)
+  and single `rm -rf` on GPFS does ~1 dir/15s — parallelize: `ls -d apt_env-* | xargs -P 8 -n 20 rm -rf`.
+- `jutil` needs a login shell over ssh: `ssh jupiter 'bash -lc "jutil project dataquota -p synthlaion"'`.
+- Pipeline exit-status trap (burned again): `ssh ... 2>&1 | tail -1 && echo OK` prints OK even when
+  ssh FAILED — the `&&` sees tail's status. Never gate on a piped ssh.
