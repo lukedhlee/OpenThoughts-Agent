@@ -280,7 +280,7 @@ for i, shard in enumerate(shards):
     # cap, so the bridge kills the exec mid-task. Measured on the 35B canary:
     # 76% of trials cut off mid-task, which flattens reward to 0 and would make
     # a saturated-looking band out of tasks the model never got to finish.
-    e["BRIDGE_EXEC_TIMEOUT"] = "2100"
+    e["BRIDGE_EXEC_TIMEOUT"] = "4000"  # must exceed the 3600s agent wall; 2100 truncated 96/128 trials in smoke 1270405
     e["WANDB_DIR"] = f"{FSCRATCH}/wandb"
     e["WANDB_MODE"] = "offline"
     # /e/scratch is inode-exhausted and cannot create files; it killed 1229643
