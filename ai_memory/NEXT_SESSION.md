@@ -1,5 +1,44 @@
 ---
 
+## ★★★★ 0.0-DONE 2026-08-09 ~07:00 KST — BAND512 CENSUS IS FINAL. THE MILESTONE IS DELIVERED.
+
+**The 512-task pass@4 probe of `g1_diverse_tezos_100k_8b` (frozen, lr=0, OpenCode agent) is COMPLETE
+after 7 harvest passes. Do not re-run it. Artifact: `/e/fscratch/reformo/lee27/band512_census_final.json`
+(copy committed at `ai_memory/artifacts/band512_census_final.json` — includes the band task lists).**
+
+**Headline numbers (state the denominator, always):**
+- Coverage: **500/512 tasks with ≥4 clean samples** (all 512 have ≥1; the 12 stragglers have 1–3 clean
+  samples after seven passes — effectively un-runnable at full depth in this harness, excluded with note).
+- **Strict band (0 < pass@4 < 1, first-4 samples): 44/500 = 8.8%.**
+- **all_pass = 0. zero_pass = 456/500 (91.2%).** Headroom band (pass<1) = 500/500 = **vacuous** for us.
+- All-samples view (any # samples, 512 denom): 50 tasks ever-passed-but-not-always.
+- Raw material: 6,427 results, 2,962 clean trials; dominant exceptions BridgeOperationError 2,492
+  (mostly the quota era) + BridgeOperationTimeout 439 + NonZeroAgentExit 349.
+- Band task list (44): r2egym-0212 0469 0554 0644 0653 0695 0984 1201 1385 1507 1515 1523 1631 1679
+  1711 1727 1735 1784 1921 2039 2047 2071 2103 2167 2175 2183 2191 2215 2223 2291 2305 2321 2354
+  2370 2387 2414 2771 2819 2940 2996 3405 3912 4121 4193.
+
+**vs Marianna:** her band = ~1.6k/4.5k ≈ **32–36%** (terminus-structured agent, p@4). Ours is 8.8%
+with **zero saturated tasks** — the gap is the OpenCode-vs-terminus absolute pass-rate gap, not a harness
+defect (within-group variance is real; band fraction was stable 8.6–10.5% across coverage 257→500).
+Extrapolated over the 4,469 allowlist: **~390 band tasks** — a non-degenerate GRPO pool. NEXT: decide
+band-filtered GRPO (her result: band converges faster, same final SWB p@1, 48k vs 60k rollouts).
+
+**Wall-clock honesty + the <10h recipe (Luke asked; hers took <10h, ours ~3 days):** the days went to
+one-time debugging (meta-crash race root-caused+fixed, quota sweeps, JUWELS pivot) and ONE recurring
+structural flaw: harvesting through the RL trainer means each job dies at its (useless) lr=0 training-step
+OOM after ~32 groups → 7 passes. Fix for the next sweep: make the training step survivable
+(micro_train_batch 1 / cap train seq-len — rollouts unaffected) or skip the update entirely; then the
+512-census is ONE ~5–6h submission and the full-pool sweep shards wide, comfortably <10h.
+
+**Infra state at close:** JUWELS worker fleets 14187062/63 CANCELLED by me (harvest done). Jupiter→JUWELS
+CM + all forwards (9923, 18300-03) still UP on jwlogin08 (10.13.0.158). **JURECA backup fleets 15506490 /
+15506501 still PENDING — cancelling needs Luke (TOTP; the old JURECA CM is dead).** Staging swept (0 stale).
+Monitors stopped. Probe gotcha: the JUWELS forward listeners bind **10.13.0.158, not 127.0.0.1** — a
+127.0.0.1 curl returns 000 and looks like a dead tunnel when everything is healthy.
+
+---
+
 ## ★★★ 0.0-QUOTA 2026-08-08 ~02:30 KST — BAND PROBE #1 DIED ON INODE QUOTA; RETRY STAGED AT CONC 64
 
 **band512_s0..3 (1271527-30) crashed 15 min after start (02:15-02:29 UTC 08-07):
