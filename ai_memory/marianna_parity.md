@@ -26,8 +26,18 @@ settings are unknown.**
 
 ## Band-number disambiguation (two different figures circulate)
 
-- **358 learnable** = tasks with 0 < pass@8 < 1 for g1 on her runs (≈8% of pool)
+> **2026-08-08 UPDATE — read `reference/marianna_band_experiment_result.md` (verbatim from her).**
+> Her actual training band was **~1.6k of 4.5k (~35%)** = "filtered by the base's p@4, only
+> tasks with headroom left" (likely pass@4<1, i.e. drops only saturated tasks). That IS the
+> ~36% figure below — it is a BAND definition, not a per-trial solve rate as previously
+> glossed. The 358 (~8%) strict-mixed figure and the 1.6k headroom figure coexist; always
+> name the definition. Her result: band = faster convergence + fewer tokens (compute win,
+> 48k vs 60k rollouts to ~45.5 SWB p@1), NOT a final-performance boost.
+
+- **358 learnable** = tasks with 0 < pass@**4** < 1 for g1 on her runs (≈8% of pool)
   — the RLOO/GRPO-gradient-bearing set. This is the number her script banks on.
+  (OPERATOR CORRECTION 2026-08-08: pass@4, NOT pass@8 as previously recorded here
+  — our 4-sample band probe is therefore directly comparable to her denominator.)
 - **~36%** = the earlier-quoted per-trial solve rate figure. Do not conflate:
   reproducing "her band" means reproducing a non-degenerate learnable set in
   the hundreds, not a 36% pass rate.

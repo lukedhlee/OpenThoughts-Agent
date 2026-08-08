@@ -2646,3 +2646,31 @@ Debugging lessons paid for in ~6 hours:
 - `jutil` needs a login shell over ssh: `ssh jupiter 'bash -lc "jutil project dataquota -p synthlaion"'`.
 - Pipeline exit-status trap (burned again): `ssh ... 2>&1 | tail -1 && echo OK` prints OK even when
   ssh FAILED — the `&&` sees tail's status. Never gate on a piped ssh.
+
+## 2026-08-08 — vLLM engines die PERMANENTLY if a request lands during the weight-sync reload window
+- Mechanism: the fork's layerwise weight-reload bracket puts engine params on the META device;
+  any real request executed in that window dispatches `_C` custom ops on meta tensors. The
+  registered norm fakes (rms_norm/fused_add_rms_norm, the "CP>1 weight-sync fix") let the request
+  silently PASS normalization — it then dies at `_C::rotary_embedding` (no fake) with
+  `NotImplementedError: ... Meta tensors`. The EngineCore process exits and NEVER recovers;
+  the client retries forever ("Inference engine error: EngineCore encountered an issue"),
+  the entrypoint log goes silent, and the job is a zombie burning its full allocation.
+- Trigger is a startup RACE, config-dependent: with fully-async workers=32 (v1 band probe) the
+  first agent LLM calls arrive after the initial sync closes → zero errors. With workers=128
+  (forced by policy_mini_batch_size=128 via the `workers >= mini` assert) the startup burst is
+  still in flight when the bracket opens → all 32 engines die within seconds, 0 trials ever run.
+  cpu_offload was an innocent suspect (v4); v5 with offload=false died identically.
+- Diagnosis path: driver log only says "see stack trace above" (it isn't there). The real
+  traceback is node-local: `srun --jobid=<job> --overlap -N1 bash -c 'grep -r Traceback
+  /tmp/ray/ray_<job>/ray/session_*/logs/worker-*.err'`.
+- Fully-async trainer constraint chain (fail-serially discovered): train_batch_size ==
+  policy_mini_batch_size, AND num_parallel_generation_workers >= mini_batch — so raising batch
+  drags workers up with it and re-arms the race. Batch=32/mini=32/workers=32 is the proven-safe
+  triple for the band probe; its cost is the known OOM at train step 1 (23.5GiB log_softmax
+  backward, seq~41k × vocab 151k, policy on only 4 GPUs) AFTER ~200 trials/shard are harvested.
+- Band-probe workaround: rerun the 32/32/32 config with the per-shard task list REVERSED
+  (dataloader order is seed-fixed) so pass 2 harvests the tasks pass 1 never reached; census
+  merges result.json across passes (lr=0 → same frozen policy, samples are exchangeable).
+- Real fixes if a full single run is ever needed: policy over 8 GPUs (10 nodes,
+  policy_num_nodes=2, fsdp_size=8) to fit the backward; or fork-side: gate request admission
+  during the reload bracket (the correct fix — add to MarinSkyRL via PR, not hand-edit).
