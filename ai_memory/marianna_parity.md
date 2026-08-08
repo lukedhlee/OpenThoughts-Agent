@@ -34,10 +34,14 @@ settings are unknown.**
 > name the definition. Her result: band = faster convergence + fewer tokens (compute win,
 > 48k vs 60k rollouts to ~45.5 SWB p@1), NOT a final-performance boost.
 
-- **358 learnable** = tasks with 0 < pass@**4** < 1 for g1 on her runs (≈8% of pool)
-  — the RLOO/GRPO-gradient-bearing set. This is the number her script banks on.
-  (OPERATOR CORRECTION 2026-08-08: pass@4, NOT pass@8 as previously recorded here
-  — our 4-sample band probe is therefore directly comparable to her denominator.)
+- **~1.6k of 4.5k (≈32–35%) is HER TRAINING BAND** (verbatim message, see
+  `reference/marianna_band_experiment_result.md`): "filtered by the base's p@4,
+  only tasks with headroom for RL left". THIS is the comparator for our probe.
+- **358 is DUBIOUS as "the band"** (operator challenged it 2026-08-08). It came
+  from our reading of her launch script paste; best current guess is it's the
+  size of her `r2egym_learnable_heldout` EVAL split, not the training band. Do
+  NOT quote 358/4,578 ≈ 8% as her band without re-confirming with her.
+  (Earlier operator correction stands: her sampling is pass@4, not pass@8.)
 - **~36%** = the earlier-quoted per-trial solve rate figure. Do not conflate:
   reproducing "her band" means reproducing a non-degenerate learnable set in
   the hundreds, not a 36% pass rate.
