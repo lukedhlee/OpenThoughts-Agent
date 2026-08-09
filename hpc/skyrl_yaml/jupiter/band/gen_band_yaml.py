@@ -91,6 +91,9 @@ ENV_HARBOR_THINK = os.environ.get("BAND_HARBOR_THINK", "")
 # from concurrent engine-constructor contention, which that knob serializes.
 ENV_GENERATE = os.environ.get("BAND_GENERATE", "") not in ("", "0", "false", "False")
 ENV_ENGINE_INIT_BATCH = int(os.environ.get("BAND_ENGINE_INIT_BATCH", "4"))
+# BAND_LR: 0.0 = frozen probe (the band-census default). Set >0 for a REAL
+# training run (pilot GRPO on the band); 8e-6 is Marianna's r2egym value.
+ENV_LR = float(os.environ.get("BAND_LR", "0") or 0)
 if ENV_MAX_TASKS:
     shards = [s[:ENV_MAX_TASKS] for s in shards]
 
@@ -167,7 +170,7 @@ for i, shard in enumerate(shards):
     c["trainer"]["policy_mini_batch_size"] = TBS   # fully-async asserts equality
     # Walk the entire shard: ceil(tasks / prompts-per-step).
     c["trainer"]["max_steps"] = -(-len(shard) // TBS)
-    c["trainer"]["policy"]["optimizer_config"]["lr"] = 0.0
+    c["trainer"]["policy"]["optimizer_config"]["lr"] = ENV_LR
     # use_tis needs sampling_params.logprobs, which is None here, and TIS is
     # meaningless at lr=0 anyway.
     c["trainer"]["algorithm"]["use_tis"] = False
@@ -300,6 +303,13 @@ for i, shard in enumerate(shards):
     # dies with EACCES 52s into the job. /tmp is node-local, which is correct --
     # Ray logs are per-node anyway.
     e["OT_AGENT_RAY_LOG_DIR"] = "/tmp/ray_logs"
+    # Chunked gathered log-softmax for the training step (bounds the ~23 GiB
+    # seq×vocab logits spike; MarinSkyRL 637a764). MUST ride container.extra_env:
+    # the band512r census exported it only in the submit shell and it never
+    # reached the workers — zero 'ACTIVE' markers in any pass log, and every
+    # pass died at the step-1 OOM this flag exists to prevent. Harmless in
+    # generate mode (no training step ever runs).
+    e["SKYRL_CHUNKED_LOGPROBS"] = "1"
     if ENV_GENERATE:
         # Serialize engine constructor bringup in batches of N — the fix for the
         # generate-path crash-loop (concurrent TP NCCL/TCPStore bringup contends
