@@ -1,6 +1,29 @@
 ---
 
-## ★★★★★ 0.0-LIVE 2026-08-10 ~03:00 KST — TRAINER-FREE SWEEP PROVEN; PILOT GRPO + FULL-POOL SWEEP BOTH RUNNING
+## ★★★★★ 0.0-M1 2026-08-10 ~03:30 KST — **M1 ACHIEVED: FIRST NON-ZERO GRADIENT.** raw_grad_norm=0.309 @ step 1, NO OOM at seq 40,590
+
+**Pilot 1294340 completed training step 1: `raw_grad_norm: 0.30859375`, `policy_update_steps: 1`,
+lr 8e-6 applied, NO OOM — `chunked gathered log-softmax ACTIVE (seq=41110)` carried the exact
+shape that killed all 7 census passes. `policy_train` 1403s, `timing/step` 3586s. One trial
+scored reward 1.0 (r2egym band task) → its group had variance → avg_pass_at_4=0.031,
+|advantages|≈0.14. THE OOM STORY WAS A LOST ENV VAR: SKYRL_CHUNKED_LOGPROBS now rides
+container.extra_env (OT-Agent ceaa9e3d) and everything fits at FSDP4 / 1 policy node.**
+
+⚠ **The batch was quota-degraded** (97/128 masked BridgeOperationError — see below), so step 1
+proves MACHINERY + memory, not learning quality. The real multi-epoch pilot needs a clean rerun:
+same YAML recipe, BAND_LR=8e-6, raise epochs (~20 steps), hf_save_interval=5, heldout split.
+
+⚠ **QUOTA INCIDENT ~03:00 KST:** 288 concurrent trials flooded `/p/scratch/reformo` staging
+(STAGING_BASE of the fleets — a DIFFERENT project than synthlaion, whose quota I had checked).
+3,673 apt_env dirs accumulated (5 smokes' zombies + failure-retry churn); sweep pass 1 (1294349/50)
+produced ~4k junk results (BridgeOperationError: Disk quota exceeded) and was CANCELLED; staging
+swept to 0; sweep pass 2 relaunched (1294479/80, ports 18322/23, conc 128×2) WITH the 15-min
+quota watch. Rule: budget BOTH the synthlaion AND reformo /p/scratch quotas (reformo: 4.0M soft
+inodes, ~1.2M baseline; bytes 77/96.6 TB — TIGHT on bytes); sweep staging between EVERY pass.
+
+---
+
+## (superseded same night) 0.0-LIVE 2026-08-10 ~03:00 KST — TRAINER-FREE SWEEP PROVEN; PILOT GRPO + FULL-POOL SWEEP BOTH RUNNING
 
 **Three jobs live on Jupiter (submitted ~02:40 KST 08-10): `1294340 band44_pilot` (REAL GRPO,
 lr=8e-6, KL off, 44 band tasks, max_steps=2 — the M1 gate is step 1 completing with finite
