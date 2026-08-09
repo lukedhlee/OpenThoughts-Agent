@@ -1,5 +1,54 @@
 ---
 
+## ★★★★★ 0.0-LIVE 2026-08-10 ~03:00 KST — TRAINER-FREE SWEEP PROVEN; PILOT GRPO + FULL-POOL SWEEP BOTH RUNNING
+
+**Three jobs live on Jupiter (submitted ~02:40 KST 08-10): `1294340 band44_pilot` (REAL GRPO,
+lr=8e-6, KL off, 44 band tasks, max_steps=2 — the M1 gate is step 1 completing with finite
+nonzero grad_norm; watch `grad_norm` EXCLUDING the `max_grad_norm` config echo), `1294350
+sweep_s0` + `1294349 sweep_s1` (full 4,469 allowlist, p@4, generate mode, conc 128 each, 6h
+walls — QOS rejects 24h; per-trial results are durable, pass 2 = rerun with fill-in lists à la
+mk_pass3). Fleets: JUWELS `14188442` (16n, 24h, MAX_CHAIN=1, sweep) + `14188205` (8n, pilot).
+Forwards 18316/18320/18321 armed via the HARDENED arm script; 18315 manual. Bridge = 9920 (9921 is DEAD).**
+
+**What was proven tonight (band_gen_smoke6, 31/32 scored, 0 infra exceptions):** the
+trainer-free sweep path works end-to-end. The engine crash-loop that forced the lr=0 hack is
+FIXED by `SKYRL_ENGINE_INIT_BATCH` (ported from marianna13/SkyRL `b07f04a`). The generate
+entrypoint needed 4 more fixes, all committed on MarinSkyRL `lukedhlee/engine-init-batch`
+(`ac83030→2a37a21`): batch-size clamp, `prepare_generator_input` (p@4 expansion +
+trajectory_ids), `startup()/shutdown()`, and the endpoint override placed AFTER client spin-up
+/ BEFORE generator init (either side alone breaks: 127.0.0.1 baseURL vs server-never-starts).
+OT-Agent `lukedhlee/band-8b-subset` (`fa344504→ceaa9e3d` + `f613749d`): BAND_GENERATE /
+BAND_ENDPOINT_HOST (JUWELS=10.13.0.158) / BAND_LR knobs, SKYRL_CHUNKED_LOGPROBS via
+container.extra_env, hardened arm_rollout_forward_juwels.sh (log discovered from jobid, NOT
+band512r_s* port math; generate mode skips the sync-marker wait — no weight sync exists there).
+
+**M1 smoking gun:** the census pass-ender OOM ran with CHUNKED_LOGPROBS **never active** — zero
+ACTIVE markers in any band512r log, zero refs in their sbatch (shell export didn't propagate).
+The pilot carries it via extra_env; if step 1 survives, the OOM story was just a lost env var.
+micro_train_batch was ALREADY 1 in base8b.yaml — NEXT_SESSION's old "micro_train_batch 1" fix
+suggestion was stale; the 23.5 GiB spike is ONE sequence's logits (41k×151936×fp32).
+
+**Measured tonight:** ~0.9 trials/min at conc 32 (avg trial ≈ 35 min, thinking off) ⇒ full pool
+17.9k trials ≈ 40h at conc 256. Inode baseline is now 2.13M (NOT 3.2M) ⇒ ~512 concurrent fits
+under the 4.0M soft limit. Jupiter GPU use respects the standing ≤16-node cap (3+6+6=15).
+
+**Marianna fork intel (subagent, full reports in session):** her sweep infra IS public —
+harbor fork `marianna/beam` = apptainer_bridge env + terminus-structured agent source + flock
+resume; SkyRL fork tip `b07f04a` = the engine fixes (incl. per-engine weight-update PGs +
+begin/end_weight_update hooks = scaffolding for the batch-64 admission-gating fix). Her band
+DRIVER scripts are cluster-only; DCAgent HF band datasets are public (parquet only);
+r2egym_learnable_heldout is PRIVATE (401). Local clones in this session's scratchpad.
+
+**NEXT ACTIONS:** (1) read pilot verdict: `grep grad_norm | grep -v max_grad_norm` +
+`chunked gathered log-softmax ACTIVE` in band44_pilot log — if step 1-2 pass, M1 is DONE and the
+real multi-epoch pilot (~20 steps, HF ckpt every 5) is a config tweak (epochs; add heldout split);
+if OOM persists → policy_num_nodes=2/fsdp_size=8 next. (2) sweep passes: count result.json per
+shard after the 6h walls, build fill-in lists, resubmit (same YAMLs, new ports, sweep staging
+between passes). (3) SWE-bench-100 model eval still NEVER run — needed as step-0 baseline before
+pilot checkpoints mean anything. (4) NO PRs (Luke's instruction); branches ride the forks.
+
+---
+
 ## ★★★★ 0.0-DONE 2026-08-09 ~07:00 KST — BAND512 CENSUS IS FINAL. THE MILESTONE IS DELIVERED.
 
 **The 512-task pass@4 probe of `g1_diverse_tezos_100k_8b` (frozen, lr=0, OpenCode agent) is COMPLETE
