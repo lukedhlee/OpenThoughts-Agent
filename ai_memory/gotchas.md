@@ -2674,3 +2674,35 @@ Debugging lessons paid for in ~6 hours:
 - Real fixes if a full single run is ever needed: policy over 8 GPUs (10 nodes,
   policy_num_nodes=2, fsdp_size=8) to fit the backward; or fork-side: gate request admission
   during the reload bracket (the correct fix — add to MarinSkyRL via PR, not hand-edit).
+- 2026-08-08 addendum: workers=64 ALSO fires the meta-crash race (s0: 142 errs, s1: 21 errs)
+  — 32 is the only proven-safe value; treat the safe set as {32}, not "below 128".
+- Dataloader assert: `dataset should be at least as large as train_batch_size` — a shrunk
+  per-shard task list must be padded (repeat already-covered tasks; extra samples are free)
+  to reach batch=32 on final fill-in passes.
+- 2026-08-08 (twice burned): NEVER use absolute `-newermt` cutoffs for staging sweeps from a
+  Mac session — KST(operator)/CEST(cluster) arithmetic produced future cutoffs TWICE, matching
+  ACTIVE staging dirs and deleting live sandboxes mid-run. Use relative age only:
+  `find -maxdepth 1 -name 'apt_env-*' -mmin +60`. Also: `pkill -f <pattern>` self-matches the
+  invoking ssh bash (pattern is in its cmdline) and may die before signaling targets — kill
+  xargs sweeps with `pkill -9 -x xargs` (exact name). And staging zombies re-accumulate after
+  EVERY crashed/cancelled pass (~250 dirs ≈ 600k inodes each) — sweep between EVERY pass, not
+  once per day; pass-4/5 hit reformo quota errors because of skipped sweeps.
+
+## 2026-08-10 — three staging-quota lessons from the sweep launch night
+
+1. **Fleets are a SHARED worker pool, not per-job.** Every worker polling the bridge serves
+   EVERY running job. A fleet whose STAGING_BASE points at a broken/full quota poisons ALL
+   jobs' trials (sweep pass 3 failed mostly on the OLD fleet's reformo staging while the new
+   synthlaion fleet sat healthy). Before launching any job, enumerate ALL live fleets and
+   their STAGING_BASE — cancel or drain any with a bad staging target.
+2. **/p/scratch/reformo staging is BROKEN in a way jutil cannot see** (08-10, unresolved):
+   [Errno 122] on every apt_env mkdir/write while jutil (3h-stale) showed 1.17M/4.0M inodes
+   and df showed 41.9TB free. Persisted after sweeping staging to 0 dirs. Do NOT stage on
+   reformo /p/scratch until understood — ask JSC support. (exact submit-line to reproduce is
+   in Slurm acct for job 14188442.)
+3. **Quota failures CASCADE via churn.** Once staging touches a quota edge, failed trials
+   leave dirs faster than teardown clears them (create ≈ seconds, GPFS rm ≈ 15s/dir):
+   256-conc went 32 → 1,108 dirs and punched the synthlaion hard limit within ~30 min —
+   a load the census sustained fine at the same steady-state. The tell: staging dir count
+   RISING while clean-result rate is ~0. Response: cancel, sweep, restart at HALF the
+   concurrency; never "ride it out" — the cascade is self-sustaining.
