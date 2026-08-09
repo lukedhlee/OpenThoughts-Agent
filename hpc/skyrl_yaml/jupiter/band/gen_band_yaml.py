@@ -83,6 +83,14 @@ ENV_GMU = float(os.environ.get("BAND_GMU", "0") or 0)
 # terminus_2/openhands/mini_swe_agent only), but leaving them at false while the
 # model actually thinks is a lie in the config that will mislead the next reader.
 ENV_HARBOR_THINK = os.environ.get("BAND_HARBOR_THINK", "")
+# BAND_GENERATE=1 -> TRAINER-FREE sweep via main_tbench_generate: no policy/ref
+# model, no optimizer, no weight sync, no lr=0 training-step OOM pass-ender, and
+# no batch=mini=workers concurrency pin. Requires MarinSkyRL branch
+# lukedhlee/engine-init-batch (SKYRL_ENGINE_INIT_BATCH, ported from
+# marianna13/SkyRL b07f04a) — the generate path crash-looped on smoke 1235333
+# from concurrent engine-constructor contention, which that knob serializes.
+ENV_GENERATE = os.environ.get("BAND_GENERATE", "") not in ("", "0", "false", "False")
+ENV_ENGINE_INIT_BATCH = int(os.environ.get("BAND_ENGINE_INIT_BATCH", "4"))
 if ENV_MAX_TASKS:
     shards = [s[:ENV_MAX_TASKS] for s in shards]
 
@@ -105,7 +113,11 @@ for i, shard in enumerate(shards):
     # never move, so every rollout comes from the base policy and p@4 stays a
     # measurement OF THAT MODEL. Without it, later steps would sample a drifted
     # policy and the band would be measured against a moving target.
-    c["entrypoint"] = "examples.terminal_bench.entrypoints.main_tbench"
+    c["entrypoint"] = (
+        "examples.terminal_bench.entrypoints.main_tbench_generate"
+        if ENV_GENERATE
+        else "examples.terminal_bench.entrypoints.main_tbench"
+    )
 
     # The launcher accepts exactly ONE context declaration and derives the seven
     # downstream fields itself; declaring any of them is a hard error. These values
@@ -141,7 +153,9 @@ for i, shard in enumerate(shards):
     # strict-spread PG would reserve whole nodes away from the vLLM engines.
     # main_tbench DOES create a policy worker, so keep the working config's
     # placement: 1 policy node (FSDP4) + 1 rollout node per shard.
-    c["trainer"]["placement"]["policy_strict_spread_pg"] = True
+    # generate mode: no policy worker exists, so force the spread PG off —
+    # otherwise whole nodes get reserved away from the vLLM engines.
+    c["trainer"]["placement"]["policy_strict_spread_pg"] = not ENV_GENERATE
     TBS = 32
     c["trainer"]["train_batch_size"] = TBS
     c["trainer"]["policy_mini_batch_size"] = TBS   # fully-async asserts equality
@@ -186,7 +200,9 @@ for i, shard in enumerate(shards):
     if ENV_NO_THINK:
         g["engine_init_kwargs"]["default_chat_template_kwargs"] = {"enable_thinking": False}
     g["n_samples_per_prompt"] = 4          # p@4 -- the band filter itself
-    g["num_inference_engines"] = 4 * (NODES - 1)  # rollout nodes only; node 1 is policy
+    # trainer mode: node 1 is the policy node, rollout nodes are the rest.
+    # generate mode: there is no policy node — every node serves engines.
+    g["num_inference_engines"] = 4 * NODES if ENV_GENERATE else 4 * (NODES - 1)
     # 8B in bf16 is ~16GB of a 96GB GH200, so KV has room the 35B never had.
     # This is the lever that lifts concurrency from 32 to the hundreds.
     g["max_num_seqs"] = ENV_MAX_NUM_SEQS
@@ -276,6 +292,11 @@ for i, shard in enumerate(shards):
     # dies with EACCES 52s into the job. /tmp is node-local, which is correct --
     # Ray logs are per-node anyway.
     e["OT_AGENT_RAY_LOG_DIR"] = "/tmp/ray_logs"
+    if ENV_GENERATE:
+        # Serialize engine constructor bringup in batches of N — the fix for the
+        # generate-path crash-loop (concurrent TP NCCL/TCPStore bringup contends
+        # across engines at 8+ nodes). Needs MarinSkyRL lukedhlee/engine-init-batch.
+        e["SKYRL_ENGINE_INIT_BATCH"] = str(ENV_ENGINE_INIT_BATCH)
     # MUST be set. The default is 600s, which is SHORTER than the 1800s agent
     # cap, so the bridge kills the exec mid-task. Measured on the 35B canary:
     # 76% of trials cut off mid-task, which flattens reward to 0 and would make
