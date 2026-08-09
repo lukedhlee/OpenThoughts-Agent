@@ -46,6 +46,25 @@ settings are unknown.**
   reproducing "her band" means reproducing a non-degenerate learnable set in
   the hundreds, not a 36% pass rate.
 
+## FINAL head-to-head (our band512 census, 2026-08-09 — measurement complete)
+
+| | Marianna | us (band512 final) |
+|---|---|---|
+| Agent | terminus-structured | OpenCode 1.18.8 |
+| Model | g1_diverse_tezos_100k_8b (same) | same, frozen lr=0 probe |
+| Sampling | pass@4 over 4.5k pool | pass@4 over 512 sampled allowlist tasks (500 fully covered) |
+| Band (0<p@4<1) | ~1.6k/4.5k ≈ **32–36%** (her def ≈ headroom p@4<1; for her these nearly coincide) | **44/500 = 8.8%** strict-mixed |
+| Saturated (4/4) | many (headroom filter drops them) | **ZERO** — headroom def is vacuous for us (500/500) |
+| Never-solved | minority | **456/500 = 91.2%** |
+| Wall-clock | <10h, one eval run | ~24h compute / ~3 days calendar, 7 passes (trainer-OOM pass-ender; <10h recipe in NEXT_SESSION §0.0-DONE) |
+| Her training result (verbatim ref) | band arm: same ~45.5 SWB p@1 as raw, 60 vs 120 steps, 48k vs 60k rollouts — compute win, no final boost | our extrapolated pool: ~390 band tasks over the 4,469 allowlist — non-degenerate ✓ |
+
+**Interpretation (settled):** the 8.8%-vs-32% gap is the agent scaffold — OpenCode's per-trial
+success is far lower (8B not SFT'd on OpenCode tool schema; malformed/hallucinated tool calls),
+so tasks that sit inside her band fall to 0/4 for us. Same measurement, distribution shifted down.
+Band fraction was stable 8.6–10.5% across coverage 257→500, so 8.8% is converged.
+Band list: `ai_memory/artifacts/band512_census_final.json` → `band_tasks_first4` (44 names).
+
 ## Why our setup was "lossy" here (operator's criticism, accepted)
 
 The prior session's parity block in `gen_band_yaml.py` captured steps/sampling

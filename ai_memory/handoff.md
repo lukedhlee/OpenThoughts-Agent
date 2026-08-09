@@ -1,18 +1,21 @@
-# Handoff — lukedhlee · updated 2026-08-06 (17:30 KST)
+# Handoff — lukedhlee · updated 2026-08-09 (~07:30 KST)
 
-> ## ⛔ THIS FILE IS TWO DAYS BEHIND. START AT `NEXT_SESSION.md` §0.0-FINAL (2026-08-06).
+> ## ⛔ THIS FILE IS HISTORY. START AT `NEXT_SESSION.md` §0.0-DONE (2026-08-09).
 >
-> Everything below predates the 2026-08-05/06 pivot to the **8B band-reproduction goal** and the
-> 2026-08-06 **task-pool validation campaign**. The current truth, in one paragraph:
-> the r2egym harness is validated model-free; the pool is measured — **allowlist v3 = 4,469 of
-> 4,568 tasks solvable (97.8%)**, the 99 exclusions diagnosed (env-sensitive grading, not broken
-> harness); zero free-pass tasks exist on the raw path; the edit-rate stall was root-caused to
-> malformed bare-JSON tool calls (parser repair `d1e3ecb8` shipped + deployed) plus missing `rg`
-> (harbor `1019a36` staged, needs the next fleet); pandas' 1,332 "dead" tasks were recovered by a
-> config-strip shim (harbor `55c416cd`) + a **narrow oracle** (envgate `fa5acdd6`).
-> The model-side bring-up is a copy-paste RUNBOOK in `NEXT_SESSION.md`, gated only on the operator's
-> Jupiter→JURECA ControlMaster TOTP. Historical context below remains valid as history; where it
-> conflicts with `NEXT_SESSION.md` or `gotchas.md` (2026-08-06 entries), the newer docs win.
+> The current truth, in one paragraph: **the band512 milestone is DELIVERED.** The 512-task pass@4
+> probe of the frozen `g1_diverse_tezos_100k_8b` (lr=0, OpenCode agent) is final after 7 harvest
+> passes: **strict band 44/500 = 8.8%** (0<pass@4<1, first-4 samples), **zero saturated tasks**,
+> 456/500 never solved; band list + full census committed at
+> `ai_memory/artifacts/band512_census_final.json` (cluster master:
+> `/e/fscratch/reformo/lee27/band512_census_final.json`). Comparator: **Marianna's band = ~1.6k of
+> 4.5k ≈ 32–36%** (terminus-structured agent; see `marianna_parity.md` + verbatim
+> `reference/marianna_band_experiment_result.md`) — the gap is the OpenCode-vs-terminus pass-rate
+> gap, not a harness defect. Extrapolated over the 4,469 allowlist: **~390 learnable tasks = a
+> non-degenerate GRPO pool.** The vLLM meta-tensor engine-death race was root-caused and durably
+> fixed (sync-gated tunnel arming; gotchas 2026-08-08). Sandboxes now run on **JUWELS** (fleet
+> recipe + tunnels in NEXT_SESSION/gotchas); the old JURECA sections below are historical.
+> Next decisions live in NEXT_SESSION §0.0-DONE "NEXT ACTIONS". Where anything below conflicts
+> with `NEXT_SESSION.md`, `gotchas.md`, or `marianna_parity.md` (newest entries), the newer docs win.
 
 > **OLD START HERE: § "Live state — 2026-08-04 10:30 KST" in this file.** It supersedes the 2026-08-03
 > block below it and `notes/qwen36_resume_brief.md`, both of which are now two framings behind.

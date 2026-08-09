@@ -37,6 +37,24 @@ CM + all forwards (9923, 18300-03) still UP on jwlogin08 (10.13.0.158). **JURECA
 Monitors stopped. Probe gotcha: the JUWELS forward listeners bind **10.13.0.158, not 127.0.0.1** — a
 127.0.0.1 curl returns 000 and looks like a dead tunnel when everything is healthy.
 
+**NEXT ACTIONS (fresh session — in order):**
+1. **Operator decision first:** train band-filtered GRPO on the 44 (512-scale pilot) OR sweep the full
+   4,469 allowlist to get the ~390-task band before training. Her evidence (verbatim ref): band buys
+   convergence speed + ~20% compute, NOT final performance — so the full sweep is only worth it if we
+   want the bigger training pool, not for the comparison itself.
+2. **Before ANY next sweep, kill the pass-ender:** make the lr=0 training step survivable
+   (micro_train_batch 1 / cap train seq-len; rollouts unaffected) or skip the update. Then 512-scale
+   census = ONE ~5–6h submission; 4.5k ≈ 9× rollouts ⇒ ~2 days at 4 shards (36 Jupiter GPU nodes),
+   <10h needs ~12 shards. CPU workers are NOT the constraint (JUWELS had ~744 idle batch nodes).
+3. Reuse as-is: sync-gated `arm_rollout_forward_juwels.sh`, `mk_pass3.py` (fill-in builder),
+   `band_census_final.py`, the 32/32/32 trio, submission recipe (gotchas 08-08: submit from
+   `OpenThoughts-Agent-r2egym-bridge-next`, `WANDB_API_KEY=offline-dummy`, sweep staging BETWEEN passes).
+4. Housekeeping owed: Luke cancels JURECA 15506490/501 (TOTP); revert canary_harbor.yaml DEBUG→INFO
+   (deferred since 08-08); optionally ask Marianna what her **358** figure actually is (best guess:
+   `r2egym_learnable_heldout` eval-split size — see marianna_parity.md).
+5. If the scaffold gap itself becomes the target: the band would widen by fixing OpenCode-side
+   pass rate (tool-schema SFT mismatch, §0.3 of the 08-06 sections) — separate workstream, operator call.
+
 ---
 
 ## ★★★ 0.0-QUOTA 2026-08-08 ~02:30 KST — BAND PROBE #1 DIED ON INODE QUOTA; RETRY STAGED AT CONC 64
