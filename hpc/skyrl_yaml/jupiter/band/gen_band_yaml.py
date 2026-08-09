@@ -289,7 +289,9 @@ for i, shard in enumerate(shards):
     # It never bit the 35B canary because OpenCode is Node and its resolver picks
     # the working address; terminus-2 is Python/httpx and does not. Cost of missing
     # it: 512 trials, every one APIConnectionError with a null reward.
-    e["SKYRL_ROLLOUT_HTTP_ENDPOINT_HOST"] = "10.14.0.46"
+    # 10.14.0.46 = JURECA jrlogin05i (fleet 155xxxxx era). For a JUWELS fleet
+    # the listeners bind 10.13.0.158 (jwlogin08i) — set BAND_ENDPOINT_HOST.
+    e["SKYRL_ROLLOUT_HTTP_ENDPOINT_HOST"] = os.environ.get("BAND_ENDPOINT_HOST", "10.14.0.46")
     e["SKYRL_ROLLOUT_HTTP_ENDPOINT_PORT"] = str(PORTBASE + i)
     # Probe bridge, NOT the 9920 bridge serving the 35B milestone run.
     e["APPTAINER_BRIDGE_URL"] = f"http://10.128.1.2:{ENV_BRIDGE_PORT}"
