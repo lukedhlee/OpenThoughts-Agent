@@ -157,6 +157,12 @@ for i, shard in enumerate(shards):
     # otherwise whole nodes get reserved away from the vLLM engines.
     c["trainer"]["placement"]["policy_strict_spread_pg"] = not ENV_GENERATE
     TBS = 32
+    if ENV_GENERATE:
+        # main_tbench_generate has no trainer, but get_train_dataset keeps the
+        # trainer's `dataset >= train_batch_size` assert — clamp to the shard so
+        # small smokes pass. Batch size has no other meaning on this path
+        # (generate() takes the whole dataset in one call).
+        TBS = min(TBS, len(shard))
     c["trainer"]["train_batch_size"] = TBS
     c["trainer"]["policy_mini_batch_size"] = TBS   # fully-async asserts equality
     # Walk the entire shard: ceil(tasks / prompts-per-step).
