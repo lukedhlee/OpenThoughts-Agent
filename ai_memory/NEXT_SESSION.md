@@ -1,5 +1,27 @@
 ---
 
+## ⛔ 0.0-SWEEP-BLOCKED 2026-08-10 ~05:30 KST — SWEEP HALTED ON UNEXPLAINED /p/scratch QUOTA; 4 PASSES TORCHED; M1 UNAFFECTED
+
+**The full-pool sweep is STOPPED (operator rule: no further overnight iteration).** Four attempts
+all mass-failed with `[Errno 122] Disk quota exceeded` on apt_env staging: pass1+2 on
+/p/scratch/reformo (3,673-zombie flood, then STILL failing with 0 dirs staged), pass3+4 on
+freshly-swept /p/scratch/synthlaion at conc 128 total with only **164 dirs staged** (≈380k
+inodes over a ~2.4M baseline — nowhere near the 4.0M soft limit per the LAST jutil snapshot,
+which is 3h stale). **Our inode/byte arithmetic cannot explain the failures on EITHER project.**
+Hypotheses for morning: (a) GPFS in-doubt quota inflation from the night's create/delete storms
+(millions of creates+deletes in hours — needs time or JSC support to reconcile), (b) another
+project member filled synthlaion/reformo since the 17:21 snapshot, (c) a per-user or per-fileset
+limit jutil doesn't display. **MORNING PLAYBOOK:** 1. fresh `jutil project dataquota -p
+synthlaion` + `-p reformo` (login shell) — the snapshots refresh periodically; compare vs 08-09
+17:21 values (synthlaion 2.365M/4.0M inodes 64.4/96.6TB; reformo 1.17M/4.0M 77.1/96.6TB).
+2. single-sandbox probe: stage ONE env by hand (mkdir + a few GB write) on each project to see
+which limit trips. 3. if in-doubt inflation → just WAIT a few hours and retry conc 64.
+4. else ask JSC support / Marianna. **Cluster state left: fleet 14188977 (16n JUWELS, synthlaion
+staging, MAX_CHAIN=1) left RUNNING for instant relaunch; all sweep shards + old fleets cancelled;
+staging swept on both projects; ports used tonight: 18310-18327 (next: 18328).** Sweep results
+so far are ~all junk EXCEPT smoke6's 31 clean trials; the 4,469-pool coverage is effectively 0 —
+pass numbering restarts when the quota is understood.
+
 ## ★★★★★ 0.0-M1 2026-08-10 ~03:30 KST — **M1 ACHIEVED: FIRST NON-ZERO GRADIENT.** raw_grad_norm=0.309 @ step 1, NO OOM at seq 40,590
 
 **Pilot 1294340 completed training step 1: `raw_grad_norm: 0.30859375`, `policy_update_steps: 1`,
