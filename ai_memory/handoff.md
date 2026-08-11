@@ -1,21 +1,22 @@
-# Handoff — lukedhlee · updated 2026-08-09 (~07:30 KST)
+# Handoff — lukedhlee · updated 2026-08-10 (~05:45 KST)
 
-> ## ⛔ THIS FILE IS HISTORY. START AT `NEXT_SESSION.md` §0.0-DONE (2026-08-09).
+> ## ⛔ THIS FILE IS HISTORY. START AT `NEXT_SESSION.md` §0.0-SWEEP-BLOCKED then §0.0-M1 (2026-08-10).
 >
-> The current truth, in one paragraph: **the band512 milestone is DELIVERED.** The 512-task pass@4
-> probe of the frozen `g1_diverse_tezos_100k_8b` (lr=0, OpenCode agent) is final after 7 harvest
-> passes: **strict band 44/500 = 8.8%** (0<pass@4<1, first-4 samples), **zero saturated tasks**,
-> 456/500 never solved; band list + full census committed at
-> `ai_memory/artifacts/band512_census_final.json` (cluster master:
-> `/e/fscratch/reformo/lee27/band512_census_final.json`). Comparator: **Marianna's band = ~1.6k of
-> 4.5k ≈ 32–36%** (terminus-structured agent; see `marianna_parity.md` + verbatim
-> `reference/marianna_band_experiment_result.md`) — the gap is the OpenCode-vs-terminus pass-rate
-> gap, not a harness defect. Extrapolated over the 4,469 allowlist: **~390 learnable tasks = a
-> non-degenerate GRPO pool.** The vLLM meta-tensor engine-death race was root-caused and durably
-> fixed (sync-gated tunnel arming; gotchas 2026-08-08). Sandboxes now run on **JUWELS** (fleet
-> recipe + tunnels in NEXT_SESSION/gotchas); the old JURECA sections below are historical.
-> Next decisions live in NEXT_SESSION §0.0-DONE "NEXT ACTIONS". Where anything below conflicts
-> with `NEXT_SESSION.md`, `gotchas.md`, or `marianna_parity.md` (newest entries), the newer docs win.
+> The current truth, in one paragraph: **M1 IS ACHIEVED — the first non-zero gradient in the
+> project** (`raw_grad_norm 0.309` at step 1, lr 8e-6, NO OOM at seq 41k; pilot 1294340 on the 44
+> band tasks). The census-era training-step OOM was a LOST ENV VAR: `SKYRL_CHUNKED_LOGPROBS=1` now
+> rides `container.extra_env` (OT-Agent `ceaa9e3d`) and everything fits at FSDP4. Separately, the
+> **trainer-free sweep path is PROVEN end-to-end** (main_tbench_generate revived: engine-init
+> batching from marianna13/SkyRL `b07f04a` + 4 entrypoint fixes, MarinSkyRL branch
+> `lukedhlee/engine-init-batch`; smoke6 scored 31/32 clean) — no lr=0 hack, no 32-concurrency pin.
+> **BUT the full 4,469-pool sweep is HALTED:** four passes mass-failed on `[Errno 122]` staging
+> quota on BOTH /p/scratch/reformo AND /p/scratch/synthlaion, in ways our inode/byte arithmetic
+> cannot explain (164 staged dirs failing against ~1.6M apparent headroom; suspect GPFS in-doubt
+> inflation from the night's create/delete storms). Morning playbook + relaunch-ready cluster
+> state (fleet 14188977 idling, staging swept, next port 18328) in NEXT_SESSION §0.0-SWEEP-BLOCKED.
+> Band512 census (44/500 = 8.8%, artifacts committed) and the Marianna comparator stand unchanged
+> (§0.0-DONE, `marianna_parity.md`). Where anything below conflicts with `NEXT_SESSION.md`,
+> `gotchas.md` (new 08-10 staging-quota section), or `marianna_parity.md`, the newer docs win.
 
 > **OLD START HERE: § "Live state — 2026-08-04 10:30 KST" in this file.** It supersedes the 2026-08-03
 > block below it and `notes/qwen36_resume_brief.md`, both of which are now two framings behind.
