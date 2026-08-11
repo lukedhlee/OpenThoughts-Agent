@@ -37,6 +37,9 @@ Readable-vs-not map (tested 08-12, do NOT re-assume):
   paths parameterized via `SKYRL_HOME` / `DC_AGENT` sed overrides — designed to be re-homed.
 
 ## Standing courtesy note
-We read+copied her unpublished working files (group-readable ≠ offered). Luke is telling
-her in the 08-12 meeting and asking blessing before we train on her splits. Do not publish
-or upload any of it externally.
+We read+copied her unpublished working files (group-readable ≠ offered). **Operator decision
+2026-08-12 (Luke): no blessing needed — proceed using her files/splits.** Still do not publish
+or upload any of it externally. Eval-harness ask deferred (Luke: "later"). Remaining ask to
+her: LR/list provenance only. NOTE 08-12: the `reformo` Slurm reservation NO LONGER EXISTS on
+Jupiter (`scontrol` empty) — her `--reservation=reformo` submits would fail today too; a new
+reservation would be a PI-level JSC request.
