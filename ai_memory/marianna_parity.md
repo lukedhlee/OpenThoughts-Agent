@@ -1,9 +1,19 @@
 # Marianna-parity sheet (authoritative, from her actual launch script)
 
+> **2026-08-12 SUPERSEDING UPDATE — her FULL launch script + band pipeline FOUND READABLE
+> on-cluster and copied. Read `reference/marianna_deepswe_repro_inventory.md`.** Confirmed
+> from `run_rl_deepswe_8b_repro_apptainer_seqmean_r2egym_learnable.sh`: **group size
+> n_samples_per_prompt=8** (eval 2) — NOT 4; the "pass@4" everyone quotes is the band
+> FILTER; **training N_CONCURRENT_TRIALS=128**; ctx max_model_len=40960; bs 64; TIMEOUT
+> 1800; MAX_EPISODES 50; `LR=${LR:-3e-6}` ("override 1e-6") — CONFLICTS with the 8e-6
+> below from the partial paste; which LR the reported band experiment used = open
+> provenance question for her. The "NOT readable by lee27" claim below is now WRONG for
+> `/p/project1/laionize/marianna/**` and `/p/scratch/{laionize,synthlaion}/marianna/`
+> (still true for `/e/project1/jureap59/`).
+
 Source: `ai_memory/reference/marianna_rl_launch.sh` — verbatim (partial) copy of
 her r2egym RL launch script, pasted by the operator 2026-08-07 after a prior
-session failed to persist it. Her cluster checkout is NOT readable by lee27;
-this file is the durable record. **Check here BEFORE claiming any of her
+session failed to persist it. **Check here BEFORE claiming any of her
 settings are unknown.**
 
 ## The numbers that keep getting lost

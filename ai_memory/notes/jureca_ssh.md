@@ -17,12 +17,14 @@ Read when a JURECA login breaks — most often after a cafe/home IP change.
 - Every JuDoor key **must** include `from="IP-or-range"` — cafe/home IP changes → login fails until you update `from=`
 - Same private key is fine; re-paste pubkey with new `from=` (comma-separate multiple IPs/ranges)
 - No allow-from-anywhere. Prefer VPN/fixed egress if available
+- **IPv6 trap (2026-08-10):** Mac can connect to `jureca` via IPv6 while JuDoor `from=` is IPv4-only → looks like pubkey deny even with the right IP listed. SSH config forces `AddressFamily inet`. Quick check: `ssh -4 jureca`.
 
 ## Quick workflow (IP changed)
 ```bash
 ai_memory/scripts/jureca_from_clause.sh          # print paste line
 # → JuDoor → Manage SSH-keys (JURECA) → paste → wait ≤15m → ssh jureca
 ```
+- Current (2026-08-10): `135.180.125.128` — keep prior IPs comma-separated if you still use those networks
 - Also JUWELS: same key line, **separate** JuDoor upload — see `ai_memory/notes/juwels_ssh.md` (`ssh juwels` / `ssh juwels-booster`)
 
 ## After login — original check target

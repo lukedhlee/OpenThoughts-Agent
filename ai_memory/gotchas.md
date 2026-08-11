@@ -2728,3 +2728,14 @@ Debugging lessons paid for in ~6 hours:
 3. **Workers hang in D-state if staging is being rm -rf'd while they boot** (fleet 14192785:
    worker.py sat in uninterruptible sleep on its staging-base scan until the delete storm
    finished). Sweep staging BEFORE submitting the fleet, never concurrently.
+
+## 2026-08-12 — two lessons
+
+1. **NEVER assume a collaborator's dir is unreadable — `ls` it.** "Her checkout is not
+   readable by lee27" was true only for /e/project1/jureap59; her ENTIRE band pipeline sat
+   group-readable under /p/project1/laionize/marianna for months while we re-derived it
+   from outputs. lee27's groups: laionize + synthlaion + reformo. Cost: weeks.
+2. **ckpt_interval must be < steps-per-wall-leg or resume is theater.** pilot4 leg1
+   (6h wall, ~1 step/h) ran with ckpt_interval=5, timed out at step 3 → zero resumable
+   state, leg2 restarted from step 1. Set ckpt_interval ≤ floor(wall_hours × steps_per_hour) − 1
+   (we now use 2 for 6h legs).

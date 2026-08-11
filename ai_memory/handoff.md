@@ -1,6 +1,20 @@
-# Handoff — lukedhlee · updated 2026-08-10 (~05:45 KST)
+# Handoff — lukedhlee · updated 2026-08-12
 
-> ## ⛔ THIS FILE IS HISTORY. START AT `NEXT_SESSION.md` §0.0-SWEEP-BLOCKED then §0.0-M1 (2026-08-10).
+> ## ⛔ THIS FILE IS HISTORY. START AT `NEXT_SESSION.md` §0.0-PIVOT (2026-08-12) + `reference/marianna_deepswe_repro_inventory.md`.
+>
+> **08-12 in one paragraph:** the strategy PIVOTED to exact replication of Marianna's setup —
+> her entire band pipeline, full launch script (group size **8**, bs 64, training conc **128**,
+> LR provenance open), and ID lists were found GROUP-READABLE under
+> `/p/project1/laionize/marianna/dc_agent/deepswe_repro/` and copied to
+> `/e/fscratch/reformo/lee27/marianna_deepswe_repro_copy_0812/`. Next: terminus-structured
+> smoke via HER stack → conc-512 full-pool sweep (<10h target) → her filter scripts = our band
+> → her training runs. Quota mystery fully decomposed (gotchas 08-12/08-11): in-doubt inflation
+> (self-heals) + shared-synthlaion blindness (stage on reformo) + OpenCode fail-fast churn
+> (fixed by her agent). Clean GRPO is REAL: pilot3 completed 2 undegraded steps (pass@4
+> 0.3125); pilot4 leg2 (1321721) running 20 steps resumable. Meeting brief:
+> https://claude.ai/code/artifact/1312f2cc-cbc9-4318-b465-cc04f63cac80
+
+> ## (superseded 08-12) older banner — START AT `NEXT_SESSION.md` §0.0-SWEEP-BLOCKED then §0.0-M1 (2026-08-10).
 >
 > The current truth, in one paragraph: **M1 IS ACHIEVED — the first non-zero gradient in the
 > project** (`raw_grad_norm 0.309` at step 1, lr 8e-6, NO OOM at seq 41k; pilot 1294340 on the 44

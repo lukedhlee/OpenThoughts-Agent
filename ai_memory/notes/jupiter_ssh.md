@@ -30,9 +30,9 @@ Read when a Jupiter login breaks — most often after a cafe/home IP change.
 ## IP / paste line
 ```bash
 ai_memory/scripts/jureca_from_clause.sh
-# Current (2026-07-28 evening): 118.235.5.36
+# Current (2026-08-10): 135.180.125.128
 # Prefer keeping prior cafe/home IPs comma-separated, e.g.:
-# from="118.235.5.36,61.72.135.209,211.54.32.170,121.162.145.92,61.253.228.193" <pubkey>
+# from="135.180.125.128,211.54.32.170,118.235.5.36,61.72.135.209" <pubkey>
 ```
 
 ## After first login — quick sanity

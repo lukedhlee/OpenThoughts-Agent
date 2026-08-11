@@ -1,5 +1,50 @@
 ---
 
+## ★★★★★ 0.0-PIVOT 2026-08-12 — STRATEGY: EXACT REPLICATION OF MARIANNA'S SETUP. Her band pipeline FOUND READABLE + COPIED. READ `reference/marianna_deepswe_repro_inventory.md` FIRST.
+
+**The goal changed (operator decision, 08-12): stop building a sibling stack — run HER experiment
+verbatim on our allocation. Sweep first (<10h target), training later.** Basis: her entire band
+pipeline + full launch script + ID lists turned out GROUP-READABLE at
+`/p/project1/laionize/marianna/dc_agent/deepswe_repro/` (copied to
+`/e/fscratch/reformo/lee27/marianna_deepswe_repro_copy_0812/`). Full inventory, the
+readable-vs-not map, and ALL confirmed hyperparameters (group size **8**, bs 64, conc **128**
+training, TIMEOUT 1800, ctx 40960, LR 3e-6/1e-6-vs-8e-6 provenance question) are in
+`reference/marianna_deepswe_repro_inventory.md`; parity sheet updated.
+
+**Why we believe replication fixes the quota problem too:** the churn amplifier was OpenCode
+fail-fast trials (schema mismatch → dead episodes → 10-25× dir churn/slot → EDQUOT cascade).
+Her agent's high success rate + her fcntl cleanup harness keep staging at steady state
+(conc-32 pilot ran ALL DAY pinned at staged=32, zero errors, on reformo). <10h full sweep
+math: 17,876 trials needs terminus-structured AND conc ~512 (32-node fleet) — OpenCode at any
+conc cannot reach <10h (35 min/trial avg).
+
+**NEXT ACTIONS (in order):** ① terminus-structured smoke ~32 tasks — run HER stack directly
+(her harbor_patched + launch path; swap paths/account via her SKYRL_HOME/DC_AGENT overrides),
+NOT a port into our configs. ② If success rate jumps: full-pool p@4 sweep, her agent, conc
+512 (32n JUWELS fleet, reformo staging `/p/scratch/reformo/lee27/apt_staging_*`), then HER
+filter scripts on the output = our band. ③ Training arms (raw + band) from her launch script;
+port her b07f04a begin/end_weight_update hooks for conc-128 training. **Blocked on nothing
+technical; courtesy gate = Luke told/asks Marianna in the 08-12 meeting (blessing + which
+list/LR = the reported experiment + the 1.6k band list location + watch_and_eval harness).**
+
+**Sampling provenance settled (operator asked):** `band_sample_512_names.txt` is uniform over
+the allowlist (index quartiles 1041/2119/3164 of 0-4193) — 8.8% band estimate unbiased;
+repo-clustering only widens the CI. Marianna's `easy_vs_hard_per_repo.png` shows she studied
+per-repo difficulty too.
+
+**Meeting artifact (keep updated for Luke):**
+https://claude.ai/code/artifact/1312f2cc-cbc9-4318-b465-cc04f63cac80 — status board, §4 Q&A,
+§5 hiccup postmortem, §6 code-reuse table, §7 asks 1-9 (reframed post-find), §8 Jennia/JSC
+asks J1-J4 (live quota telemetry / in-doubt / dedicated fileset / node-local staging).
+
+**Live at handoff:** pilot4 leg2 `1321721` RUNNING (44-band OpenCode pilot, lr 8e-6, 20 steps,
+ckpt+HF every 2 — leg1 `1313366` TIMED OUT at step 3 with NO ckpt because interval was 5 >
+leg capacity; lesson in gotchas), port 18333 (next 18334), fleet `14192849` (3n JUWELS,
+staging `/p/scratch/reformo/lee27/apt_staging_pilot`), tmux armfwd333, local monitor watching.
+pilot3 `1310703` COMPLETED: 2 clean steps, pass@4 0.3125, HF export
+`experiments/band44_pilot3/band44_pilot3/exports/global_step_2`. The OpenCode pilot is now a
+BASELINE track (scaffold-sensitivity datapoint), not the main line.
+
 ## ★★ 0.0-PILOT-CLEAN 2026-08-11 ~11:30 CEST — pilot3 COMPLETED 2 CLEAN GRPO STEPS (pass@4 0.3125, no quota masking); pilot4 (20-step) LIVE
 
 **pilot3 (1310703) on reformo staging: COMPLETED exit 0 — 2 steps, FULL 128-sample batches,
