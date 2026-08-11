@@ -169,20 +169,28 @@ for i, shard in enumerate(shards):
     c["trainer"]["train_batch_size"] = TBS
     c["trainer"]["policy_mini_batch_size"] = TBS   # fully-async asserts equality
     # Walk the entire shard: ceil(tasks / prompts-per-step). BAND_MAX_STEPS
-    # overrides for multi-epoch training runs (the dataloader cycles).
+    # overrides for multi-epoch training runs — max_steps only TRUNCATES, the
+    # trainer still stops at trainer.epochs dataset passes (pilot3 ended at
+    # step 2 of 20 because epochs stayed 1), so raise epochs to cover it.
     ENV_MAX_STEPS = int(os.environ.get("BAND_MAX_STEPS", "0"))
-    c["trainer"]["max_steps"] = ENV_MAX_STEPS or -(-len(shard) // TBS)
+    steps_per_epoch = -(-len(shard) // TBS)
+    c["trainer"]["max_steps"] = ENV_MAX_STEPS or steps_per_epoch
+    if ENV_MAX_STEPS:
+        c["trainer"]["epochs"] = -(-ENV_MAX_STEPS // steps_per_epoch)
     c["trainer"]["policy"]["optimizer_config"]["lr"] = ENV_LR
     # use_tis needs sampling_params.logprobs, which is None here, and TIS is
     # meaningless at lr=0 anyway.
     c["trainer"]["algorithm"]["use_tis"] = False
     c["trainer"]["eval_before_train"] = False
     c["trainer"]["eval_interval"] = 999999
-    c["trainer"]["ckpt_interval"] = 999999
     # BAND_HF_SAVE_INTERVAL: periodic HF-format checkpoint dumps for real
-    # training runs (band census probes never save).
-    c["trainer"]["hf_save_interval"] = int(os.environ.get("BAND_HF_SAVE_INTERVAL", "999999"))
-    c["trainer"]["resume_mode"] = "none"
+    # training runs (band census probes never save). Multi-step runs also get
+    # resumable trainer ckpts at the same cadence + resume_mode=latest so a
+    # 6h-wall leg continues where the last one stopped.
+    _hf_int = int(os.environ.get("BAND_HF_SAVE_INTERVAL", "999999"))
+    c["trainer"]["hf_save_interval"] = _hf_int
+    c["trainer"]["ckpt_interval"] = _hf_int if ENV_MAX_STEPS else 999999
+    c["trainer"]["resume_mode"] = "latest" if ENV_MAX_STEPS else "none"
     c["trainer"]["project_name"] = "jupiter-r2egym-band-probe-8b"
 
     g = c["generator"]
