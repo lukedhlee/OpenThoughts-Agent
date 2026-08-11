@@ -1,6 +1,26 @@
 ---
 
-## ⛔ 0.0-SWEEP-BLOCKED 2026-08-10 ~05:30 KST — SWEEP HALTED ON UNEXPLAINED /p/scratch QUOTA; 4 PASSES TORCHED; M1 UNAFFECTED
+## ✅ 0.0-RELAUNCHED 2026-08-11 ~08:40 CEST — QUOTA MYSTERY SOLVED (GPFS in-doubt inflation, self-healed); SWEEP5 + CLEAN PILOT LIVE
+
+**Quota verdict:** fresh jutil 08-11 01:21 shows both projects healthy (synthlaion 2.47M/4.0M inodes
+64.5TB; reformo 1.51M/4.0M **51.3TB — 26TB of phantom usage reconciled** vs 77.1TB on 08-09).
+3GB+200-file probes clean on BOTH projects. Confirmed: the 4 torched passes died to GPFS in-doubt
+quota inflation from the create/delete storm; it heals with ~a day of quiet. Rule: after a churn
+storm, WAIT, don't debug arithmetic. Separately: old fleet 14188977 died to HARDWARE (node jwc04n245
+failure), not our stack.
+
+**Live (all submitted 08-11 ~08:35 CEST):** fleet `14192785` (16n JUWELS "apptainer_workers_sweep3",
+same recipe + exclude jwc04n245, MAX_CHAIN=1, 24h); sweep5 shards `1310370` (port 18328) +
+`1310371` (18329), conc 64 each, 6h walls, 12 GPU nodes; clean pilot `1310372` band44_pilot2
+(3 nodes, lr 8e-6, **max_steps=20, hf_save_interval=5** via new BAND_MAX_STEPS /
+BAND_HF_SAVE_INTERVAL knobs, OT-Agent `f5b0086d`), port 18330. Forwards armed in tmux
+armfwd328/329/330. 6h wall ⇒ pilot leg ≈ 5 steps + HF ckpt at step 5; sweep needs fill-in
+re-submissions across legs (ports next: 18331). Staging swept to ~0 on both projects pre-launch;
+NOTE workers hang in D-state if you `rm -rf` staging while they boot — sweep staging BEFORE
+submitting the fleet. Meeting artifact for the co-lead sync published (claude.ai/code/artifact/
+1312f2cc-cbc9-4318-b465-cc04f63cac80).
+
+## ⛔ (RESOLVED 08-11, see above) 0.0-SWEEP-BLOCKED 2026-08-10 ~05:30 KST — SWEEP HALTED ON UNEXPLAINED /p/scratch QUOTA; 4 PASSES TORCHED; M1 UNAFFECTED
 
 **The full-pool sweep is STOPPED (operator rule: no further overnight iteration).** Four attempts
 all mass-failed with `[Errno 122] Disk quota exceeded` on apt_env staging: pass1+2 on
