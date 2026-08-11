@@ -1,5 +1,48 @@
 ---
 
+## ★★★★★ 0.0-SMOKE-LIVE 2026-08-12 (evening) — HER STACK RE-HOMED; TERMINUS SMOKE `1322326` SUBMITTED. OpenCode ruled NON-VIABLE by managers (Luke, mid-session).
+
+**Smoke ① is BUILT and IN QUEUE: job `1322326` (Jupiter booster, 1 node, 6h wall, PENDING/Priority
+— reservation=reformo REJECTED, lee27 not on ACL → new ask #10).** It runs HER stack directly:
+sbatch = re-homed copy of her `gen_pass_for_learnable_filter.sh` + `eval_swebench_bridge_100folders.sbatch`
+(single-node path) at `/e/fscratch/reformo/lee27/marianna_repro/marianna_repro_genpass.sbatch`.
+32 tasks (8 smoke6 tasks + 24 evenly spaced from allowlist v3; list `marianna_repro/smoke32_ids.txt`,
+symlink dataset `marianna_repro/datasets/r2egym_smoke32`) × n_attempts=4, conc 32, terminus-structured,
+temp 1.0, no_summarize, max_model_len 40960, in/out 15384/24576, max_episodes 50, timeout_mult 2.0.
+Results land in `marianna_repro/slurm_logs/jobs/mrepro_genpass_smoke32_*/`; success-rate read =
+her `learnable_subset_filter.py --trials <jobdir> --n 4`.
+
+**Re-homing map (all verified this session):**
+- HER code (readable, used in place): `HARBOR_PATCHED=/p/project1/laionize/marianna/dc_agent/harbor_patched/src`
+  (terminus-structured agent + BridgeApptainerEnvironment import OK under our venv), her dc-agent /
+  BenSkyRL / bash-scripts under `/p/project1/laionize/marianna/dc_agent/`, her generated sbatches
+  readable at `/e/scratch/reformo/nezhurina1/experiments/sbatch_scripts/` (recent r2egym runs 08-09..08-11
+  use LRseqmean 8e-6 and 1e-5 — LR-provenance clue).
+- OUR swaps (her paths are group-locked: `/e/data1/datasets` = group `datasets`, `/e/scratch/jureap59` =
+  jureap59; lee27 in neither): python env = `/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl-megatron`
+  venv (vllm + harbor CLI + litellm all work; module load GCC/14.3.0 + nvidia-compilers/25.9-CUDA-13);
+  model = `laion/GLM-4_7-swesmith-…-fixthink` downloaded to `/e/fscratch/reformo/lee27/hf_hub`
+  (snapshot `0e3bff0c…` — SAME hash her scripts pin); tasks = `/e/fscratch/reformo/lee27/tasks/r2egym-raw`
+  (4,578 dirs, harbor layout); SIFs = `/p/scratch/synthlaion/lee27/r2egym_sif` (4,583); bridge =
+  ours `10.128.1.2:9920` (alive, workers_alive, fleet 14192849 RUNNING 3n JUWELS); staging probe-write OK.
+- Her SWEEP path is `harbor jobs` (NO trainer): `gen_pass_for_learnable_filter.sh` → eval sbatch →
+  multi-node vLLM DP fanout + `vllm_router_async.py` (in harbor_patched) + `harbor jobs start/resume`;
+  `shard_genpass_resume.py` for K-orchestrator process parallelism (single orchestrator caps ~48 eff conc).
+  Full sweep ② = same sbatch, N nodes>1 (router path), her resume machinery for fill-ins.
+
+**OpenCode verdict (Luke mid-session): managers say NOT viable — lost time; escalate such framework
+choices proactively (memory saved). pilot4 leg2 `1321721` still PENDING(Priority) — keep as
+scaffold-sensitivity baseline only; don't grow it.**
+
+**Watchers live at handoff:** local bg watcher on 1322326 start; model-dl tmux `modeldl` (done, 16G);
+staging at 32 dirs (leg1 leftovers, watch it when either job starts). Meeting artifact updated
+same URL (pivot callout + ask #10 reservation ACL).
+
+**NEXT: when 1322326 runs** — tail `marianna_repro/logs/mrepro_genpass_*_1322326.out`: bridge check →
+vLLM ready (~10-15 min incl. compile) → trials flow; watch staging count ≈ conc; at completion run her
+filter script for pass@4/success-rate; compare vs OpenCode 8.8% band / 5/160 clean-pass. If jump →
+sweep ② (her sbatch multi-node, conc ~512 needs ~32n fleet + reformo staging + probe-write ritual).
+
 ## ★★★★★ 0.0-PIVOT 2026-08-12 — STRATEGY: EXACT REPLICATION OF MARIANNA'S SETUP. Her band pipeline FOUND READABLE + COPIED. READ `reference/marianna_deepswe_repro_inventory.md` FIRST.
 
 **The goal changed (operator decision, 08-12): stop building a sibling stack — run HER experiment
