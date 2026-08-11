@@ -1,5 +1,16 @@
 ---
 
+## ★★ 0.0-PILOT-CLEAN 2026-08-11 ~11:30 CEST — pilot3 COMPLETED 2 CLEAN GRPO STEPS (pass@4 0.3125, no quota masking); pilot4 (20-step) LIVE
+
+**pilot3 (1310703) on reformo staging: COMPLETED exit 0 — 2 steps, FULL 128-sample batches,
+avg_pass_at_4=0.3125 (vs 0.031 on M1's quota-degraded batch), grad_norm 1.84 @ step 2, zero
+EDQUOT, HF export at `experiments/band44_pilot3/band44_pilot3/exports/global_step_2`.** It ended
+at step 2 because trainer.epochs=1 ends the run at dataset exhaustion (max_steps only truncates)
+— gen_band_yaml `f924373a` now raises epochs, sets ckpt_interval=hf interval, resume_mode=latest
+when BAND_MAX_STEPS is set. **pilot4 (1313366) live: 20 steps / ckpt every 5 / resumable, port
+18332, conc 32, fleet 14192849 (3n JUWELS, reformo staging /p/scratch/reformo/lee27/
+apt_staging_pilot — healthy steady-state = staged dirs ≈ conc).** Ports used: …18332 (next 18333).
+
 ## ⚠ 0.0-SWEEP5-TORCHED 2026-08-11 ~09:10 CEST — sweep5 died in 20 min to SYNTHLAION SHARED-PROJECT INODES; pilot moved to REFORMO staging
 
 **Sweep5 (1310370/71) burned all 17.9k trials as EDQUOT junk in ~20 min** despite clean pre-launch
