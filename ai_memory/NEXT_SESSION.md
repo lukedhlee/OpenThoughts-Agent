@@ -1,6 +1,20 @@
 ---
 
-## ✅ 0.0-RELAUNCHED 2026-08-11 ~08:40 CEST — QUOTA MYSTERY SOLVED (GPFS in-doubt inflation, self-healed); SWEEP5 + CLEAN PILOT LIVE
+## ⚠ 0.0-SWEEP5-TORCHED 2026-08-11 ~09:10 CEST — sweep5 died in 20 min to SYNTHLAION SHARED-PROJECT INODES; pilot moved to REFORMO staging
+
+**Sweep5 (1310370/71) burned all 17.9k trials as EDQUOT junk in ~20 min** despite clean pre-launch
+probes: synthlaion scratch inodes are PROJECT-SHARED (~18 users incl. marianna/nezhurina1) and
+jutil is an hours-stale cache — the live budget was already gone at launch. Staged dirs hit 5,876
+(~250 inodes each ≈ 1.47M = the entire apparent free budget); mkdir failed even from login nodes.
+All three jobs cancelled, fleet 14192785 cancelled, staging swept. **Decomposition (gotchas
+08-11): 08-10 halt = in-doubt inflation (self-heals); 08-11 failure = plain shared-project inode
+arithmetic invisible to stale jutil.** RULES: stage only where we dominate (reformo), probe-write
+seconds before launch, watch dir count from minute 1, sweep staging BEFORE fleet submit (workers
+D-state-hang if rm -rf runs during boot). **Pilot re-run: fleet 14192849 (3n JUWELS,
+STAGING_BASE=/p/scratch/reformo/lee27/apt_staging_pilot) + pilot resubmission at port 18331 —
+see live state at session end. Full sweep stays DOWN pending quota visibility (meeting ask #5).**
+
+## ✅ (partly superseded above — sweep part torched) 0.0-RELAUNCHED 2026-08-11 ~08:40 CEST — QUOTA MYSTERY SOLVED (GPFS in-doubt inflation, self-healed); SWEEP5 + CLEAN PILOT LIVE
 
 **Quota verdict:** fresh jutil 08-11 01:21 shows both projects healthy (synthlaion 2.47M/4.0M inodes
 64.5TB; reformo 1.51M/4.0M **51.3TB — 26TB of phantom usage reconciled** vs 77.1TB on 08-09).

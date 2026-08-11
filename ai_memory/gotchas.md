@@ -2706,3 +2706,25 @@ Debugging lessons paid for in ~6 hours:
    a load the census sustained fine at the same steady-state. The tell: staging dir count
    RISING while clean-result rate is ~0. Response: cancel, sweep, restart at HALF the
    concurrency; never "ride it out" — the cascade is self-sustaining.
+
+## 2026-08-11 — the quota "mystery" decomposed: it was TWO different failure modes
+
+1. **The 08-10 halt WAS GPFS in-doubt inflation and it DOES self-heal.** Fresh jutil 08-11
+   01:21: reformo dropped 77.1→51.3TB with nothing deleted (26TB phantom reconciled);
+   3GB+200-file probes passed on both projects after ~30 quiet hours. After a churn storm:
+   WAIT, don't debug arithmetic.
+2. **The 08-11 sweep5 failure was PLAIN INODE ARITHMETIC on a SHARED project.** synthlaion
+   scratch quota is project-wide (marianna, nezhurina1, cherti1, +15 others share it) and
+   jutil is a STALE CACHE (hours old) — the 2.47M "baseline" told us nothing about live
+   usage at launch. Envs stage ~100-320 inodes each; staged dirs hit 5,876 ≈ 1.47M inodes
+   ≈ exactly the apparent free budget. EDQUOT from trial #1 ⇒ the budget was already gone
+   (other members' live activity and/or fresh in-doubt from our own pre-launch rm -rf).
+   Sweep5 (1310370/71) burned all 17.9k trials as junk in ~20 min; pilot 1310372 degraded;
+   all cancelled. **Rule: stage ONLY on a project where we dominate usage (reformo scratch:
+   we are ~the only heavy scratch user) and probe-write from a login node seconds before
+   launch, not an hour.** Also: live probes can pass and the budget STILL dies minutes later
+   if trials fail-fast and the replacement churn stacks dirs 20× faster than the 15s/dir
+   teardown — dir count must be watched from minute 1, not minute 15.
+3. **Workers hang in D-state if staging is being rm -rf'd while they boot** (fleet 14192785:
+   worker.py sat in uninterruptible sleep on its staging-base scan until the delete storm
+   finished). Sweep staging BEFORE submitting the fleet, never concurrently.
