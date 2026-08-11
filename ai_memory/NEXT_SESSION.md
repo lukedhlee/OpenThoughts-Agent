@@ -1,5 +1,30 @@
 ---
 
+## ★★★★★ 0.0-SWEEP-LIVE 2026-08-12 (night) — SMOKE GATE PASSED (band 50% vs OpenCode 8.8%); FULL SWEEP `1324162` + FLEET `14194204` SUBMITTED
+
+**Smoke4 `1323378` COMPLETE, 128/128 results, staging self-swept to 0.** Her filter verdict on
+our 32 tasks: **learnable 16/32 = 50%** (all_fail 44%, all_pass 2, pass-fraction median 0.25);
+per-trial pass 34/128 = 26.6% (OpenCode: 3.1%). AgentTimeoutError 114/128 (89%, starved 1-node
+regime) BUT timed-out trials still verify and often pass — timeout ≠ fail. List:
+`marianna_repro/smoke32_learnable.txt`. Debug chain lessons (each cost minutes): ① /p/* paths are
+LOGIN-ONLY on Jupiter compute → harbor_patched copied to `marianna_repro/harbor_patched_src`;
+② our vLLM 0.22 fork's --data-parallel-size spawns colliding API servers (EADDRINUSE) → run 4
+independent TP=1 engines/node + her `vllm_router_async.py`; ③ her harbor factory imports beam →
+beta9 + betterproto-beta9 + friends installed --no-deps into `marianna_repro/pydeps` sidecar
+(venv untouched); preflight in sbatch asserts the full import chain before GPU spend.
+
+**LIVE: sweep `1324162`** — 16 Jupiter booster nodes (64 TP=1 engines, her fanout+router path in
+the same sbatch), conc 384, `--begin=02:10` CEST (after pilot4 wall; ≤16-node cap), 12h wall,
+dataset `marianna_repro/datasets/r2egym_sweep4469` (4,469 allowlist symlinks), n_attempts=4
+(operator: sweep=4, training maybe 8). **Fleet `14194204`** — 24n JUWELS *batch* partition,
+account *laionize* (dc-cpu/reformo invalid on JUWELS; cpus-per-task=48 explicit), staging
+`/p/scratch/reformo/lee27/apt_staging_sweep` (created fresh BEFORE fleet), bridge via
+jwlogin08i:9923 forward (verified). Projection at her operating point (~8 agents/engine,
+unstarved ≈10 min/trial): **~7.5h**. Resume net: RESUME_JOB_DIR env in the sbatch → harbor jobs
+resume. **NEXT: read sweep results → her filter → band list (stage ③) → her training script
+raw+band arms (stage ④, group size 8).** Pilot4 (OpenCode baseline) ends at its 6h wall ~02:04.
+
+
 ## ★★★★★ 0.0-SMOKE-LIVE 2026-08-12 (evening) — HER STACK RE-HOMED; smoke attempt 2 = `1323166` (attempt 1 `1322326` FAILED fast: /p/project1 NOT MOUNTED on Jupiter COMPUTE nodes → PYTHONPATH entry silently dropped → harbor CLI fell back to OUR harbor, no terminus-structured. Fix: harbor_patched copied to `/e/fscratch/reformo/lee27/marianna_repro/harbor_patched_src` + preflight assert before vLLM bring-up. vLLM itself came up clean in 16 min, bridge OK. GOTCHA: /p/* paths are LOGIN-ONLY on Jupiter — use /e/fscratch for anything compute-side). OpenCode ruled NON-VIABLE by managers (Luke, mid-session).
 
 **Smoke ① is BUILT and IN QUEUE: job `1322326` (Jupiter booster, 1 node, 6h wall, PENDING/Priority
