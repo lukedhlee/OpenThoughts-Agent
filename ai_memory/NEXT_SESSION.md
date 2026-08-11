@@ -1,6 +1,6 @@
 ---
 
-## ★★★★★ 0.0-SMOKE-LIVE 2026-08-12 (evening) — HER STACK RE-HOMED; TERMINUS SMOKE `1322326` SUBMITTED. OpenCode ruled NON-VIABLE by managers (Luke, mid-session).
+## ★★★★★ 0.0-SMOKE-LIVE 2026-08-12 (evening) — HER STACK RE-HOMED; smoke attempt 2 = `1323166` (attempt 1 `1322326` FAILED fast: /p/project1 NOT MOUNTED on Jupiter COMPUTE nodes → PYTHONPATH entry silently dropped → harbor CLI fell back to OUR harbor, no terminus-structured. Fix: harbor_patched copied to `/e/fscratch/reformo/lee27/marianna_repro/harbor_patched_src` + preflight assert before vLLM bring-up. vLLM itself came up clean in 16 min, bridge OK. GOTCHA: /p/* paths are LOGIN-ONLY on Jupiter — use /e/fscratch for anything compute-side). OpenCode ruled NON-VIABLE by managers (Luke, mid-session).
 
 **Smoke ① is BUILT and IN QUEUE: job `1322326` (Jupiter booster, 1 node, 6h wall, PENDING/Priority
 — reservation=reformo REJECTED, lee27 not on ACL → new ask #10).** It runs HER stack directly:
