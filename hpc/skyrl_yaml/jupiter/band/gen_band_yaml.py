@@ -168,8 +168,10 @@ for i, shard in enumerate(shards):
         TBS = min(TBS, len(shard))
     c["trainer"]["train_batch_size"] = TBS
     c["trainer"]["policy_mini_batch_size"] = TBS   # fully-async asserts equality
-    # Walk the entire shard: ceil(tasks / prompts-per-step).
-    c["trainer"]["max_steps"] = -(-len(shard) // TBS)
+    # Walk the entire shard: ceil(tasks / prompts-per-step). BAND_MAX_STEPS
+    # overrides for multi-epoch training runs (the dataloader cycles).
+    ENV_MAX_STEPS = int(os.environ.get("BAND_MAX_STEPS", "0"))
+    c["trainer"]["max_steps"] = ENV_MAX_STEPS or -(-len(shard) // TBS)
     c["trainer"]["policy"]["optimizer_config"]["lr"] = ENV_LR
     # use_tis needs sampling_params.logprobs, which is None here, and TIS is
     # meaningless at lr=0 anyway.
@@ -177,7 +179,9 @@ for i, shard in enumerate(shards):
     c["trainer"]["eval_before_train"] = False
     c["trainer"]["eval_interval"] = 999999
     c["trainer"]["ckpt_interval"] = 999999
-    c["trainer"]["hf_save_interval"] = 999999
+    # BAND_HF_SAVE_INTERVAL: periodic HF-format checkpoint dumps for real
+    # training runs (band census probes never save).
+    c["trainer"]["hf_save_interval"] = int(os.environ.get("BAND_HF_SAVE_INTERVAL", "999999"))
     c["trainer"]["resume_mode"] = "none"
     c["trainer"]["project_name"] = "jupiter-r2egym-band-probe-8b"
 
