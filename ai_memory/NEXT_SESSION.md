@@ -13,7 +13,9 @@ independent TP=1 engines/node + her `vllm_router_async.py`; ③ her harbor facto
 beta9 + betterproto-beta9 + friends installed --no-deps into `marianna_repro/pydeps` sidecar
 (venv untouched); preflight in sbatch asserts the full import chain before GPU spend.
 
-**LIVE: sweep `1324162`** — 16 Jupiter booster nodes (64 TP=1 engines, her fanout+router path in
+**SUPERSEDED (02:20): 1324162 CANCELLED — Jupiter booster MAINTENANCE fence today (~17:00 window; ≥6h walltime unschedulable, 16n block was estimated 21:00). Replaced by 4 SHARDS `1324458-61` (her shard pattern): 4n × 4 shards, disjoint quarter-slices (datasets/r2egym_sweep_shard0-3), conc 96 each, 5h walls — ALL RUNNING since 02:18, end 07:18. Expect ~60% of trials; post-maintenance: RESUME_JOB_DIR=<shard jobdir> resubmits (jobs mrepro_sweep4469_p4_s0-3). Slurm gotchas banked: JUWELS fleet needs --partition=batch --account=laionize --cpus-per-task=48; sbatch --test-only probes maintenance-fence walltime cutoffs.**
+
+**(orig) sweep `1324162`** — 16 Jupiter booster nodes (64 TP=1 engines, her fanout+router path in
 the same sbatch), conc 384, `--begin=02:10` CEST (after pilot4 wall; ≤16-node cap), 12h wall,
 dataset `marianna_repro/datasets/r2egym_sweep4469` (4,469 allowlist symlinks), n_attempts=4
 (operator: sweep=4, training maybe 8). **Fleet `14194204`** — 24n JUWELS *batch* partition,
