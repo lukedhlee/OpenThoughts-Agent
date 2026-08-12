@@ -2767,3 +2767,20 @@ bridge/SIFs, no proxy tunnel) + operator-decided deltas (n_attempts=4, 4×4n sha
 backend-deregistration trap. Residual unverifiable divergence: our bridge/worker fork vs hers
 (reward-validated on r2egym by census+smoke), and task-dir content vs her
 r2egym_harbor_tasks_apptainer (locked; ours oracle-validated separately).
+
+## 2026-08-12 ~03:45 — r3 shard round: engines FIXED (16/16 ×4), then reformo /p/scratch EDQUOT cascade; cancelled in 4 min
+
+Sequence: r3 shards (1324553-56) came up with all 64 engines (stride + env -u VLLM_PORT fix
+verified at scale) — then staging exploded 384→2,590 dirs in ~20 min. Cause chain: /p/scratch/
+reformo ("just" scratch, 4.4M hard; 1.27M baseline at 01:20) was punched by tonight's cumulative
+churn (r1's crippled-backend retry storm + in-doubt inflation from ~13k create/delete env
+cycles) → live EDQUOT → every staging attempt fails as RuntimeError → harbor retries
+(max_retries was 100!) → each retry stages a fresh partial env → self-amplifying. 4,726 retry
+errors in ~15 min. Shards cancelled inside 4 minutes of the alarm (guard threshold 900 dirs).
+FIXES: (1) bridge_eval_config max_retries 100→5 (documented delta from her config — quota-fuse;
+her environment never saw EDQUOT so her 100 was safe for her); (2) orphan sweep 8-way tmux
+`sweepclean`; (3) hourly probe-write watcher until recovery, relaunch target = the 13:06 CEST
+pre-maintenance slot (3h45 walls). NOTE the fileset split (jutil rows): /p/scratch/<proj> =
+"just" scratch (4M soft) vs /e/scratch/<proj> = "exa_scratch" (8M soft) — DIFFERENT quotas;
+never tail/grep-truncate jutil output. /e/scratch/reformo sits at 8.69M/8.8M hard (venv +
+nezhurina1 exports live there) — project-level cleanup flag, not a staging issue.
