@@ -2739,3 +2739,31 @@ Debugging lessons paid for in ~6 hours:
    (6h wall, ~1 step/h) ran with ckpt_interval=5, timed out at step 3 → zero resumable
    state, leg2 restarted from step 1. Set ckpt_interval ≤ floor(wall_hours × steps_per_hour) − 1
    (we now use 2 for 6h legs).
+
+## 2026-08-12 — ★ ADAPT COLLABORATOR SCRIPTS BY DIFF, NEVER BY REWRITE (cost: 2 dead shard rounds)
+
+**The mistake:** re-homing Marianna's `eval_swebench_bridge_100folders.sbatch` by REWRITING it
+"in her pattern" instead of starting from her file and changing only locked paths. The rewrite
+silently dropped two lines that looked like incidental plumbing and were actually load-bearing:
+1. `RANK_PORT_STRIDE=100` — engine API ports must be 100 apart, because each vLLM EngineCore
+   port-scans UPWARD from its port for a distributed-init port; packed ports (18000-18003) make
+   4 concurrent cores race onto the same free port → 14/16 engines dead at bring-up
+   (shards 1324458-61: "Proceeding with 1-2/16 backends", 96 agents on 1-2 engines,
+   BadGatewayError storm, 0 results in 1h).
+2. `env -u VLLM_PORT` on the `vllm serve` line — the VLLM_PORT env var REDIRECTS the core's
+   dist-init port scan to a common base, recreating the same race even WITH the stride.
+   She unset it deliberately.
+
+**The rule (operator, 2026-08-12): when re-homing any of her scripts — sweep sbatch, launch
+script, filter drivers — start from HER file verbatim; change ONLY lines forced by locked paths
+(env, caches, bridge, dataset, output dirs); finish with a side-by-side diff where EVERY delta
+must be justifiable as "her path is inaccessible". Anything unexplained stays. Assume every
+line survived her production debugging for a reason you cannot see.**
+
+Audit of the current `marianna_repro/marianna_repro_genpass.sbatch` (r3 era, 03:30 08-12):
+full parity with her script except justified swaps (venv, HF cache, our task copies, our
+bridge/SIFs, no proxy tunnel) + operator-decided deltas (n_attempts=4, 4×4n shards conc 96,
+5h maintenance walls). Also ported her VLLM_CONFIG_ROOT, workers_alive check, cleanup_node
+backend-deregistration trap. Residual unverifiable divergence: our bridge/worker fork vs hers
+(reward-validated on r2egym by census+smoke), and task-dir content vs her
+r2egym_harbor_tasks_apptainer (locked; ours oracle-validated separately).
