@@ -2784,3 +2784,13 @@ pre-maintenance slot (3h45 walls). NOTE the fileset split (jutil rows): /p/scrat
 "just" scratch (4M soft) vs /e/scratch/<proj> = "exa_scratch" (8M soft) — DIFFERENT quotas;
 never tail/grep-truncate jutil output. /e/scratch/reformo sits at 8.69M/8.8M hard (venv +
 nezhurina1 exports live there) — project-level cleanup flag, not a staging issue.
+
+### 2026-08-14 · ★★★ `sacct SubmitLine` does NOT capture exported env — marianna_repro shards silently reran smoke32
+Recovering shard submissions via `sacct --format=SubmitLine` reproduces only the command line; the
+original sweep rounds passed `DATASET_PATH` (+ `RUN_TAG`, `N_CONCURRENT`) as shell exports, and
+`marianna_repro_genpass.sbatch` line 23 defaults `DATASET_PATH` to `datasets/r2egym_smoke32`. Result:
+r5 shards (1360472-75) came up green (16/16 engines, trials flowing) while re-running the 32-task smoke
+— only the `jobs/mrepro_genpass_smoke32_*` run dir name gave it away. r4 would have done the same.
+**Rule: resubmitting this sbatch requires explicit `--export=ALL,DATASET_PATH=…/r2egym_sweep_shard${S},RUN_TAG=…,N_CONCURRENT=…`;
+verify the dataset by counting distinct task ids in the log (32 = smoke), never by job state alone.**
+Correct r6 submit (2026-08-14): `sbatch --nodes=4 --time=05:00:00 --job-name=mrepro_sweep_s${S}r6 --export=ALL,DATASET_PATH=/e/fscratch/reformo/lee27/marianna_repro/datasets/r2egym_sweep_shard${S},RUN_TAG=mrepro_genpass_sweep_s${S}r6,N_CONCURRENT=96 marianna_repro_genpass.sbatch`
