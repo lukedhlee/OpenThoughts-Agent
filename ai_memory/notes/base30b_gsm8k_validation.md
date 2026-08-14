@@ -355,6 +355,17 @@ jpbo-034) and 1371443 (lr8e6-v4, on dirty jpbo-044) predate the fix — expected
 death-watchers armed, relaunch-with-exclusions + resume on death.
 Tally: 10 incidents / ~11 arm-hours (6 hang, 1 sick-node, 3 ghost-memory OOM).
 
+**16:0x incidents #11-12 + hypothesis shake-out.** nokl-v2 (1370717) OOM'd at s2 on
+FRESH jpbo-026 nodes → ghost-memory can't be the whole story (unless another user's dead
+job dirtied them — unverifiable). lr3e6-v4 (1371287) died 2 min into STARTUP
+(WorkerCrashedError) on the wedged jpbo-034-18 (node refuses srun steps), then hung 25
+min in Ray teardown — sick node, not race/OOM. **Counter-evidence that CLEARS the env
+change: lr8e6-v4 (1371443, post-fix env, "dirty" jpbo-044) trains healthily past s11.**
+Working model: random hang-race + several genuinely sick/ghost nodes; env change kept.
+Fleet rebuilt with exclusions VERIFIED in rendered sbatch: lr3e6-v5 **1372782**
+(resume@10, dir _6), lr1e6-v4 **1372785** (fresh, dir _5), nokl-v3 **1372789** (fresh,
+dir _4), lr8e6-v4 **1371443** (s11+, dir _5). Tally: 12 incidents / ~12 arm-hours.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
