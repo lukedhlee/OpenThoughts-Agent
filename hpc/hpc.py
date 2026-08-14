@@ -1009,7 +1009,11 @@ jupiter = HPC(
     # ~20GB attributed to live processes); Slurm reallocates the freshly-freed nodes to the
     # relaunch, which then OOMs in the first allgather that needs headroom (jobs 1369951,
     # 1370390, 1370635). Prune after JSC resets/reboots these nodes.
-    node_exclusion_list="jpbo-031-[01-48],jpbo-011-[01-48],jpbo-038-38,jpbo-004-46,jpbo-065-17,jpbo-074-22,jpbo-074-40,jpbo-048-41,jpbo-091-05,jpbo-044-0[1-5],jpbo-014-[18,24-25,27,31-32],jpbo-034-[18,23-25,27-29],jpbo-044-[07,11-15],jpbo-060-[05-06,10,12,14,16],jpbo-100-[43-48],jpbo-115-[42,44-48]",
+    # jpbo-003 + jpbo-102/103/122 subsets added 2026-08-14 evening: ghost memory is left
+    # behind by watchdog self-aborts too, not just scancel — lr8e6-v6 (1376820) OOM'd at
+    # model load (39MiB free) on the nodes its watchdog-aborted predecessor had spun on.
+    # Protocol: exclude every hang site immediately at death, before the relaunch.
+    node_exclusion_list="jpbo-031-[01-48],jpbo-011-[01-48],jpbo-038-38,jpbo-004-46,jpbo-065-17,jpbo-074-22,jpbo-074-40,jpbo-048-41,jpbo-091-05,jpbo-044-0[1-5],jpbo-014-[18,24-25,27,31-32],jpbo-034-[18,23-25,27-29],jpbo-044-[07,11-15],jpbo-060-[05-06,10,12,14,16],jpbo-100-[43-48],jpbo-115-[42,44-48],jpbo-003-[35,37,39-40,42,45,47],jpbo-102-23,jpbo-103-20,jpbo-122-[02-03]",
     # Stage 4: eval-listener cluster config (single source of truth — was eval/clusters/jupiter.yaml).
     # User-scoped paths mirror that yaml (zhuang1's); parameterizing via dotenv is a follow-up.
     eval_cluster_view={
