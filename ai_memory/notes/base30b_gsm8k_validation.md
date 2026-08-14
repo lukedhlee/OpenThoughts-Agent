@@ -309,6 +309,10 @@ jpbo-100-[43-48], not jpbo-115; evidence = 17-min log freeze). Verify resumes vi
 `configs/*_rl_config.json` hydra list, NOT the sbatch (overrides live there).
 Tally: 5 incidents / ~8 arm-hours.
 
+**14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
+stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
+global_step_10). No arm pathological; no kills at the gate.
+
 ## Open/parked items
 
 - Sweep-shards mystery RESOLVED: the other session's sweep was operator-PARKED 08-14
