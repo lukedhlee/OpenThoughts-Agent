@@ -375,6 +375,22 @@ a new ckpt → relaunched **1374136** (dir _6, sidecar v5) resume@10 with
 **CKPT_INTERVAL=5** to bank progress inside the groundhog window.
 Tally: 13 incidents / ~13 arm-hours.
 
+**17:0x incidents #14 + THE BLOCKING-WAIT VERDICT (revert 5f9bcb44).** lr1e6-v4
+(1372785) OOM'd at s2 on definitively FRESH nodes — 5th OOM, ghost-node theory dead.
+Final pattern: **every post-729704dd OOM victim is a LONG-generation arm**
+(lr1e6/lr3e6/nokl, p50 300-450 tok); the only survivor lr8e6 generates short (ent~0.3).
+Mechanism: without NCCL_BLOCKING_WAIT the CPU thread races ahead and FSDP2's allgather
+pipeline holds more concurrent buffers → +few GB peak → long-gen arms (near the 95GB
+ceiling) OOM at s1-13; short-gen fits. GH200 NVML per-process attribution is garbage
+(20GB attributed on a genuinely full device) — trust cudaMemGetInfo, not the process
+list. **REVERTED 5f9bcb44** (blocking-wait restored, exclusions kept): watchdog
+self-abort is sacrificed; stall-watchers resume hang duty. Daylight task: buy memory
+headroom (micro-batching, gpu_memory_utilization, activation offload) before retrying
+watchdog mode. Fleet: lr1e6-v5 **1374467** (reverted env, verified in sbatch),
+lr3e6-v5 1372782 (s12+, condemned env but surviving), lr8e6-v5 1374136 (startup),
+nokl-v3 1372789 (s2+). Condemned-env jobs stay up while healthy; watchers decide.
+Tally: 14 incidents / ~13 arm-hours.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
