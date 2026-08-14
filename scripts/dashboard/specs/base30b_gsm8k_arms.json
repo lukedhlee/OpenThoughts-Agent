@@ -1,0 +1,106 @@
+{
+  "id": "base30b_gsm8k_arms",
+  "title": "GSM8K Arms Race",
+  "eyebrow": "Jupiter · booster partition · Qwen3-30B-A3B-Base · GRPO",
+  "subtitle": "Four learning-rate arms training the same 30B MoE base model with RL on grade-school math, racing to step 80. How each arm is trending, what every metric means, and what actually happened to all those Slurm jobs.",
+  "status_line": "4 arms alive — babysat around the clock",
+  "wandb_project": "lukeleeai/jupiter-base30b-gsm8k-grpo",
+  "timezone": "Europe/Berlin",
+  "tz_label": "CEST",
+  "step_target": 80,
+  "metrics": "rl_default",
+  "charts": "rl_default",
+  "glossary": "rl_default",
+  "eval_key_label": "held-out eval (greedy, n=1,319)",
+  "series": [
+    { "key": "lr1e6", "name": "lr1e6", "label": "LR 1e-6 · KL on", "color_slot": 1, "group": "base30b_gsm8k_lr1e6" },
+    { "key": "lr3e6", "name": "lr3e6", "label": "LR 3e-6 · KL on", "color_slot": 2, "group": "base30b_gsm8k_lr3e6" },
+    { "key": "lr8e6", "name": "lr8e6", "label": "LR 8e-6 · KL on", "color_slot": 3, "group": "base30b_gsm8k_lr8e6" },
+    { "key": "lr3e6_nokl", "name": "nokl", "label": "LR 3e-6 · no KL", "color_slot": 4, "group": "base30b_gsm8k_lr3e6_nokl" }
+  ],
+  "evals": [
+    { "step": 0, "v": 0.5777, "label": "eval 57.8%", "dx": 10, "dy": -8 },
+    { "step": 40, "v": 0.884, "series": "lr8e6", "label": "eval 88.4%", "dx": -66, "dy": -12 }
+  ],
+  "tiles": [
+    { "hero": true, "label": "Held-out accuracy after 40 RL steps (best arm)", "value": "88.4%",
+      "delta": "▲ +30.6 pts vs the untrained base",
+      "detail": "lr8e6 · greedy, 1,319 test questions · success bar was +10" },
+    { "label": "Baseline accuracy (step 0)", "value": "57.8%", "detail": "same test, before any RL" },
+    { "label": "Racing gate at step 30", "value": "4 / 4", "detail": "arms healthy — none killed for pathology" },
+    { "label": "Job relaunches survived", "value": "__DEATHS__", "detail": "hangs, OOMs & sick nodes — see the timeline below" }
+  ],
+  "explainer": {
+    "title": "What is this experiment?",
+    "paragraphs": [
+      "The question being answered is an **infrastructure** one, not a science one: does our RL training stack (SkyRL GRPO on FSDP2, 6 GH200 nodes per arm) actually work end-to-end on a 30B mixture-of-experts model — stable training, upward reward, checkpoints, evals? GSM8K math is just the test cargo because it gives fast, unambiguous reward.",
+      "All four arms are **identical except one lever**: the learning rate (1e-6 / 3e-6 / 8e-6), plus a fourth arm that re-runs 3e-6 with the KL leash removed. Same seed, same data, same everything else — so any difference between the curves is caused by that one lever."
+    ],
+    "chips": [
+      "model Qwen3-30B-A3B-Base", "algo GRPO · 8 samples/question", "6 nodes/arm · GH200",
+      "target 80 steps", "eval @ steps 0 · 40 · 80", "seed 42 everywhere"
+    ]
+  },
+  "fleet": [
+    { "key": "lr1e6", "job": "1379097", "state": "training", "note": "resumed from step 10 after a hang" },
+    { "key": "lr3e6", "job": "1379307", "state": "restarting", "note": "resuming from step 30 — hang, then a ghost-OOM strike" },
+    { "key": "lr8e6", "job": "1379329", "state": "restarting", "note": "eval@40: 88.4% — resuming from step 40 after a hang at s44" },
+    { "key": "lr3e6_nokl", "job": "1378378", "state": "training", "note": "no-KL probe arm, steady climb" }
+  ],
+  "timeline": {
+    "title": "The job war — every Slurm attempt, 11:00 → now",
+    "how": "Each bar is one Slurm job; the dot at its end is how it died. The enemy is a known NCCL/EP collective deadlock (~1 hang per 2–3 arm-hours, no upstream fix) plus the ghost GPU memory those hangs leave behind, which then OOMs whoever lands on the node next. The defense: checkpoint every 5 steps, resume, exclude the crime scene, relaunch. Times approximate; nothing but the steps since the last checkpoint was ever lost.",
+    "t0": "11:00", "t1": "23:59", "tick_min": 120, "auto_now": true
+  },
+  "attempts": {
+    "lr1e6": [
+      { "v": "v1", "job": "1366671", "start": "11:04", "end": "12:22", "steps": "1-4", "fate": "hang", "note": "backward deadlock mid-s4; py-spy'd live, all 16 ranks spinning" },
+      { "v": "v2", "job": "1368006", "start": "12:33", "end": "14:17", "steps": "1-11", "fate": "hang", "note": "second backward hang, same nodeset (jpbo-014)" },
+      { "v": "v3", "job": "1369951", "start": "14:26", "end": "16:10", "steps": "1-7", "fate": "oom", "note": "fresh-start OOM — ghost GPU memory from predecessor's kill" },
+      { "v": "v4", "job": "1372785", "start": "16:21", "end": "17:00", "steps": "1-2", "fate": "oom", "note": "OOM at s2 on fresh nodes (sick-pool storm)" },
+      { "v": "v5", "job": "1374467", "start": "16:51", "end": "17:05", "steps": "-", "fate": "node", "note": "worker OS-kill during engine bring-up (jpbo-012)" },
+      { "v": "v6", "job": "1374955", "start": "17:12", "end": "17:45", "steps": "1", "fate": "oom", "note": "OOM at s1; killer node jpbo-009-03 drained by JSC minutes later" },
+      { "v": "v7", "job": "1375864", "start": "17:52", "end": "19:40", "steps": "1-9", "fate": "hang", "note": "hang at s9 — but banked the arm's first ckpt (gs5)" },
+      { "v": "v8", "job": "", "start": "19:45", "end": "19:52", "steps": "-", "fate": "oom", "note": "ghost-OOM at model load (jpbo-020)" },
+      { "v": "v9", "job": "", "start": "19:55", "end": "20:05", "steps": "-", "fate": "oom", "note": "ghost-OOM at load (jpbo-022) → arm parked ~90 min" },
+      { "v": "v10", "job": "1378384", "start": "21:16", "end": "22:33", "steps": "6-12", "fate": "hang", "note": "resume@gs5; froze mid-s13; scancel + nodes excluded" },
+      { "v": "v11", "job": "1379097", "start": "22:47", "end": "", "steps": "13+", "fate": "run", "note": "resume@gs10, fresh nodes" }
+    ],
+    "lr3e6": [
+      { "v": "v1", "job": "1366672", "start": "11:12", "end": "13:12", "steps": "1-14", "fate": "node", "note": "stall at s15; head node refused srun (sick)" },
+      { "v": "v2", "job": "1368822", "start": "13:25", "end": "15:05", "steps": "1-11", "fate": "hang", "note": "backward hang ~s11 (jpbo-044), py-spy confirmed" },
+      { "v": "v3", "job": "1370635", "start": "15:18", "end": "15:39", "steps": "-", "fate": "node", "note": "all 4 vLLM engine procs OS-killed on one engine node" },
+      { "v": "v4", "job": "1371287", "start": "15:40", "end": "15:45", "steps": "-", "fate": "node", "note": "startup WorkerCrashedError on wedged jpbo-034-18" },
+      { "v": "v5", "job": "1372782", "start": "16:21", "end": "16:55", "steps": "11", "fate": "node", "note": "worker OS-kill class (resume@10)" },
+      { "v": "v6", "job": "1374664", "start": "17:01", "end": "17:45", "steps": "11-12", "fate": "node", "note": "worker OS-kill class" },
+      { "v": "v7", "job": "1375865", "start": "17:52", "end": "20:05", "steps": "11-24", "fate": "hang", "note": "reached s24, banked gs15+gs20, then hung (jpbo-105)" },
+      { "v": "v8", "job": "", "start": "20:15", "end": "20:22", "steps": "-", "fate": "oom", "note": "ghost-OOM (jpbo-020 again)" },
+      { "v": "v9", "job": "", "start": "20:25", "end": "20:40", "steps": "-", "fate": "oom", "note": "ghost-OOM (jpbo-100) → both racks excluded rack-level" },
+      { "v": "v10", "job": "1378002", "start": "20:46", "end": "22:33", "steps": "21-31", "fate": "hang", "note": "resume@gs20; froze at s32 batch 10/32; scancel + nodes excluded" },
+      { "v": "v11", "job": "1379098", "start": "22:47", "end": "23:02", "steps": "-", "fate": "oom", "note": "ghost-OOM at ckpt load (jpbo-030, 37 MiB free at job start)" },
+      { "v": "v12", "job": "1379307", "start": "23:05", "end": "", "steps": "32+", "fate": "run", "note": "resume@gs30 — only s31 lost" }
+    ],
+    "lr8e6": [
+      { "v": "v1", "job": "1366674", "start": "11:12", "end": "12:30", "steps": "1-8", "fate": "hang", "note": "backward hang entering s9 (jpbo-115) — killed fabric theory" },
+      { "v": "v2", "job": "1368098", "start": "12:44", "end": "14:50", "steps": "1-15", "fate": "hang", "note": "fresh restart; froze at s15" },
+      { "v": "v3", "job": "1370390", "start": "14:57", "end": "15:35", "steps": "11-12", "fate": "oom", "note": "resume@10; CUDA OOM at s13 in weight-sync allgather" },
+      { "v": "v4", "job": "1371443", "start": "15:55", "end": "16:59", "steps": "11-16", "fate": "hang", "note": "hang at s16 — first watchdog self-abort validated in anger" },
+      { "v": "v5", "job": "1374136", "start": "16:51", "end": "19:15", "steps": "11-23", "fate": "hang", "note": "broke through: banked gs15+gs20; hang after s23, watchdog abort" },
+      { "v": "v6", "job": "1376820", "start": "19:24", "end": "19:35", "steps": "-", "fate": "oom", "note": "ghost-OOM at MODEL LOAD (39 MiB free) on predecessor's nodes" },
+      { "v": "v7", "job": "1376990", "start": "19:25", "end": "19:31", "steps": "-", "fate": "hang", "note": "hung in startup (jpbo-069)" },
+      { "v": "v8", "job": "1377151", "start": "19:33", "end": "22:56", "steps": "21-43", "fate": "hang", "note": "passed s30 gate, eval@40 = 88.40%; froze mid-s44 (jpbo-112)" },
+      { "v": "v9", "job": "1379329", "start": "23:05", "end": "", "steps": "44+", "fate": "run", "note": "resume@gs40 — only s41-43 lost" }
+    ],
+    "lr3e6_nokl": [
+      { "v": "v1", "job": "1366675", "start": "11:12", "end": "15:20", "steps": "1-32", "fate": "hang", "note": "the marathon — s32 with no ckpt (interval 40) → full restart" },
+      { "v": "v2", "job": "1370717", "start": "15:24", "end": "15:45", "steps": "1-2", "fate": "oom", "note": "OOM at s2 on definitively fresh nodes" },
+      { "v": "v3", "job": "1372789", "start": "16:21", "end": "17:15", "steps": "1-3", "fate": "hang", "note": "hang at s3; second watchdog self-abort validation" },
+      { "v": "v4", "job": "1375221", "start": "17:22", "end": "20:50", "steps": "1-28", "fate": "hang", "note": "reached s28, banked gs25; hang at s28" },
+      { "v": "v5", "job": "1378378", "start": "21:02", "end": "", "steps": "26+", "fate": "run", "note": "resume@gs25; passed the s30 gate" }
+    ]
+  },
+  "notes": [
+    { "lead": "Provenance.", "text": "Metrics pulled from the WandB project lukeleeai/jupiter-base30b-gsm8k-grpo (every trainer attempt, stitched per arm, latest attempt wins per step); eval numbers from the trainer's dumped eval files on Jupiter; job fates from the operator incident log. Regenerate with scripts/dashboard/pull_wandb.py + build.py." },
+    { "lead": "Framing.", "text": "This campaign validates the RL **infrastructure**. GSM8K was retired as a research vehicle for MoE science — treat the accuracy numbers as a stack health check, not a result to report." }
+  ]
+}
