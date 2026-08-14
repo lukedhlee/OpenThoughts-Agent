@@ -366,6 +366,15 @@ Fleet rebuilt with exclusions VERIFIED in rendered sbatch: lr3e6-v5 **1372782**
 (resume@10, dir _6), lr1e6-v4 **1372785** (fresh, dir _5), nokl-v3 **1372789** (fresh,
 dir _4), lr8e6-v4 **1371443** (s11+, dir _5). Tally: 12 incidents / ~12 arm-hours.
 
+**16:4x incident #13 — WATCHDOG FIX VALIDATED IN ANGER.** lr8e6-v4 (1371443) hit the
+hang-race at ~s16 and the fixed env **self-aborted it** (abort stacks show
+`ProcessGroupNCCL::HeartbeatMonitor::runLoop()` — heartbeat monitor teardown), FAILED
+1:03:25, death-watcher fired within a minute. Hang detection is now fully automatic
+(was: 45-min manual py-spy hunt). lr8e6 keeps dying pre-s20 (s13, s16) so it never banks
+a new ckpt → relaunched **1374136** (dir _6, sidecar v5) resume@10 with
+**CKPT_INTERVAL=5** to bank progress inside the groundhog window.
+Tally: 13 incidents / ~13 arm-hours.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
