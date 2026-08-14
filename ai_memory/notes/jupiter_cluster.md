@@ -112,3 +112,20 @@ During the Jul 28 outage `sinfo` showed 5655 "idle" nodes while **5542 were in `
 running cluster-wide. Full-machine maintenance set via node state, **not** a reservation — so
 `scontrol show res` shows nothing and Slurm gives no start estimate. Check
 `sinfo -p booster -o "%.14T %.7D"` for real state.
+
+## LAION JSC ops doc (operator-supplied 2026-08-14) — AUTHORITATIVE, read before big runs
+Source: https://iffmd.fz-juelich.de/WPHnb-DoTAKN3BN0afc9MQ (fetch raw via URL+/download; JS page otherwise)
+Dedicated JUPITER guide: https://iffmd.fz-juelich.de/4N5ubi2lRUOpaoBVzfG8RQ
+- **JUPITER >64-node jobs "high chance to hang or crash"** (stability, not quota). Ladder: 2→4-8→≤128
+  nodes SHORT scaling checks only; full training needs Samples/GPU/s scaling plots + GPU-hour estimate doc.
+- **Inode policy is official & punitive**: ~3-4M files/project; crossing LOCKS the project for all users,
+  repeat = user ban. Their prescribed fix = background jutil watchdog + cleanup at ~3M threshold.
+  Add `ulimit -c 0` to every sbatch (core dumps). Prefer few-large-tar workflows.
+- Scratch purge: 90d (fscratch 30d per JUPITER FAQ); venvs/SIFs/caches are expected-disposable —
+  keep rebuild recipes, archive results off scratch.
+- ssh flapping ↔ JuDoor key `from=` clause vs reverse-DNS of current IP (`nslookup $(curl ipinfo.io/ip)`);
+  try `ssh -4`.
+- Joinable JUPITER budgets beyond ours: open-sci-mm, transfernetx. Dataset projects (>1TB data):
+  /p/data1/{cstdl,datasets,mmlaion} — compute-node accessible. Transfers via judac.fz-juelich.de (rsync).
+- Dev partitions for 1-4n prototyping: develbooster (JUWELS), dc-gpu-devel (JURECA), dc-hwai (H100/westai0066).
+- JUPITER: replace ALL /p/ with /e/ for compute-side (matches our login-only gotcha).
