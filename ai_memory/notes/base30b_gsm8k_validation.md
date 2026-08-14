@@ -333,6 +333,16 @@ global_step_10 resume and is training (s12+). Relaunched **1371287** (dir `_5`, 
 v4, same resume). If jpbo-044's engine node kills it again → exclude that node.
 Tally: 8 incidents / ~10 arm-hours (6 hang-class, 1 sick-node, 1 engine-node OOM/segv).
 
+**15:5x incident #9 — lr8e6-v3 (1370390) CUDA OOM at ~s13**: trained s11-12 post-resume,
+then a 384 MiB alloc failed inside the weight-sync `ProcessGroupNCCL::allgather` (96 MiB
+free / 95 GiB GPU — policy+ref colocated + fragmentation). Both resumed jobs have now
+died memory-flavored (lr3e6-v3 engine-node OS kill incl. possible host OOM; lr8e6-v3
+device OOM) → **resume-memory-watermark hypothesis, 1 more data point wanted**: lr8e6
+relaunched **1371443** (dir `_5`, sidecar v4) with the SAME resume. Second identical OOM
+⇒ pattern confirmed ⇒ switch failed-arm relaunches to FRESH starts (no resume) and flag
+resume memory behavior as a daylight bug. lr3e6-v4 (1371287, same resume) is the
+parallel test. Tally: 9 incidents / ~11 arm-hours.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
