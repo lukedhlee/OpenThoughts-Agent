@@ -316,6 +316,15 @@ confirm+cancel+relaunch heredoc DIED silently after its srun probe (ssh channel)
 1368822 kept running unnoticed until a state re-check; ALWAYS verify scancel took
 effect with a separate squeue call before relaunching. Tally: 6 incidents / ~9 arm-hours.
 
+**15:2x incident #7 — nokl (1366675) hung at s32/33** (frozen 14:59:55, jpbo-034), the
+last original arm — CKPT_INTERVAL=40 meant **no ckpt, full restart** as **1370717**
+(dir `_3`, sidecar v2, CKPT_INTERVAL=10, use_kl_loss=false verified). Its s32 gate-pass
+data survives in wandb/diag exports. Ops lesson (hit twice): srun --overlap probes into
+a hung job's nodes can WEDGE the whole ssh session — the combined heredoc dies silently
+mid-script. Confirm hangs by log mtime + step-stop alone; py-spy only as a separate,
+expendable call; ALWAYS verify scancel with an independent squeue check.
+Tally: 7 incidents / ~10 arm-hours; every arm has now hung ≥1×.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
