@@ -253,6 +253,19 @@ ep_comm_backend/nccl-env mitigations. Sidecar lr1e6 restarted → dir `_3`, run
 `base30b_gsm8k_lr1e6_v2`; arms_sync loop rewritten to resolve latest dir per arm each
 cycle (no more stale `_2` pins).
 
+**12:30 incident #2 — lr8e6 (1366674) SAME backward deadlock on a DIFFERENT nodeset**
+(jpbo-115), frozen since 12:13 entering step-9 policy_train; py-spy identical (all ranks
+`_engine_run_backward`, GPUs 100%). **Fabric theory dead → routing-dependent NCCL/EP race
+in the grouped-GEMM/FSDP2 backward, ~1 hang per 2-3 arm-hours.** Caught in 17 min by the
+new stall-watcher (log-mtime silence >15 min; threshold now tightened to 10 min).
+Killed → relaunched as **1368098** (dir `_3`, sidecar run base30b_gsm8k_lr8e6_v2) with
+**CKPT_INTERVAL=10** so future hangs resume instead of restarting (RESUME_MODE/RESUME_PATH
+launcher knobs exist, run script lines 188-192). Standing relaunch policy for any arm that
+hangs: kill, relaunch with CKPT_INTERVAL=10 (+RESUME_MODE=latest RESUME_PATH=<prev dir>/
+checkpoints if a ckpt exists); healthy arms are NOT touched. Root-cause hunt (upstream
+MarinSkyRL diff on EP backward, NCCL env mitigations) is a daylight task — flagged for
+Luke/Ben, not an overnight experiment.
+
 ## Open/parked items
 
 - Sweep-shards mystery RESOLVED: the other session's sweep was operator-PARKED 08-14
