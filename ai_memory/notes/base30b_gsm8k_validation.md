@@ -141,6 +141,19 @@ Mac plan file: `/Users/lukedhlee/.claude/plans/shimmying-juggling-turtle.md` (fu
    (imp_ratio≈1); KL finite; **diag/* metrics in wandb + diag_rollouts JSONL written +
    sidecar --once produces panels**; ckpt written; warm step time recorded → final wall
    math (>480s/step ⇒ eval_interval 20 and/or MAX_STEPS 80).
+3a. **Smoke LAUNCHED 2026-08-14: job 1363397** (attempts 1363394/95 self-canceled during
+   config debugging — 95 was actually fine). Verified rendered config: rl-fa python,
+   Base snapshot, max_steps=2, ckpt_interval=1, eval_interval=5, gen 2048 / model_len
+   3072 (G2b decision), FA on, lr 3e-6. **Launch-cmd gotchas fixed this session:**
+   (i) `JSC_SCRATCH=$F` is MANDATORY — run script line ~125 forces SCRATCH=$JSC_SCRATCH
+   (default /e/scratch) AFTER dotenvs; (ii) `hpc/dotenv/jupiter.env` + `jupiter.lee27.env`
+   (sourced preferentially!) both relocated to fscratch (commits b3a4fd89, +lee27 sync);
+   (iii) arms_fa.yaml env block had stale rl-megatron/old-scratch pins — fixed cb8cd2e9
+   (RL_PYTHON/RL_ENV_DIR/DCFT_RL_ENV/LD_LIBRARY_PATH → $F/envs/rl-fa, secrets → $F/keys);
+   (iv) secrets copied to $F/keys/secrets.env; (v) MODEL_PATH must be passed explicitly
+   (auto-search looks for Instruct under HF_HUB_CACHE). Launcher relaunches rename the
+   experiment dir (_2, _3…) — always re-resolve the dir from smoke_launch.log before
+   inspecting sbatch/config.
 3b. Also start per-arm sidecar tmux + the wandb offline sync loop at arms launch.
 4. **Stage-4 arms:** 4 launches, same command as smoke minus smoke overrides, plus
    JOB_NAME/POLICY_LR per the arms table (arm D adds USE_KL_LOSS=false),
