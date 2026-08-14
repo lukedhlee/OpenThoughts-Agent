@@ -20,7 +20,8 @@
   ],
   "evals": [
     { "step": 0, "v": 0.5777, "label": "eval 57.8%", "dx": 10, "dy": -8 },
-    { "step": 40, "v": 0.884, "series": "lr8e6", "label": "eval 88.4%", "dx": -66, "dy": -12 }
+    { "step": 40, "v": 0.884, "series": "lr8e6", "label": "eval 88.4%", "dx": -66, "dy": -12 },
+    { "step": 40, "v": 0.8522, "series": "lr3e6_nokl", "label": "eval 85.2%", "dx": 10, "dy": 14 }
   ],
   "tiles": [
     { "hero": true, "label": "Held-out accuracy after 40 RL steps (best arm)", "value": "88.4%",
