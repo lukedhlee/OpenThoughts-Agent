@@ -159,12 +159,14 @@ export TORCH_SHOW_CPP_STACKTRACES=1
 export CUDA_LAUNCH_BLOCKING=0
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=1800
-# NCCL_BLOCKING_WAIT=1 makes the NCCL collective itself error out at the
-# call boundary rather than spinning while the watchdog races to abort.
-# Combined with TORCH_NCCL_ASYNC_ERROR_HANDLING above, this surfaces the
-# real failure point (often a peer-node HSN socket close on Perlmutter)
-# instead of a downstream SIGABRT in a NCCL destructor.
-export NCCL_BLOCKING_WAIT=1
+# Do NOT set NCCL_BLOCKING_WAIT / TORCH_NCCL_BLOCKING_WAIT here. The legacy
+# blocking-wait alias selects a wait mode in which a hung EP/FSDP collective
+# survives past its process-group deadline indefinitely — 16 ranks spin at
+# 100% GPU and no watchdog ever fires (three such hangs on Jupiter GH200,
+# 2026-08-14; upstream MarinSkyRL 449d1eb reached the same conclusion and
+# strips these vars before torch import). Async error handling + the heartbeat
+# timeout below are what convert a hang into an abort with FlightRecorder
+# dumps; blocking-wait silently defeats both.
 # TORCH_NCCL_TRACE_BUFFER_SIZE > 0 enables PyTorch's NCCL FlightRecorder,
 # which captures rank-by-rank stack traces of the most recent N collective
 # operations. On crash, ProcessGroupNCCL.cpp emits these traces — the
