@@ -417,6 +417,14 @@ Fleet: lr1e6-v7 1375864 (fresh, dir _8), lr3e6-v7 1375865 (resume@10, dir _8),
 lr8e6-v5 1374136 (s15+, jpbo-003), nokl-v4 1375221 (startup, jpbo-068).
 Tally: 18 incidents / ~15 arm-hours.
 
+**19:0x incident #19 — lr8e6-v5 hang at s23-24, watchdog abort #3, RESUME LADDER WORKS.**
+Hung after s23 (18:05 silence), heartbeat monitor self-aborted at 2:24:23 elapsed
+(~30 min, on schedule). Ckpt ladder paid off: gs15 AND gs20 banked → relaunched
+**1376820** (dir _7, sidecar v6) resuming from **global_step_20** — net loss only s21-23.
+lr8e6 cumulative: s1-16 (v1) + 10-23 (v3/v4/v5 replays) → now monotone from s20 with
+5-step banking. 19:00 fleet: lr1e6-v7 s6 (0.375), lr3e6-v7 s16 (0.656), nokl-v4 s11
+(0.555) — post-storm calm, all healthy. Tally: 19 incidents / ~17 arm-hours.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
