@@ -391,6 +391,18 @@ lr3e6-v5 1372782 (s12+, condemned env but surviving), lr8e6-v5 1374136 (startup)
 nokl-v3 1372789 (s2+). Condemned-env jobs stay up while healthy; watchers decide.
 Tally: 14 incidents / ~13 arm-hours.
 
+**17:10 sweep + incidents #15-16.** lr1e6-v5 (1374467, reverted env) died 10 min in —
+worker OS-kill during engine bring-up on jpbo-012-[34-36,38,41,45] (logged, NOT excluded
+yet — one strike). Relaunched lr1e6-v6 **1374955** (dir _7, CKPT_INTERVAL=5). nokl-v3
+(1372789) hung at s3 on the condemned env and **the watchdog self-aborted it — 2nd
+in-anger validation** — deliberately NOT scancel'd (kills on spinning ranks are what
+strand ghost memory). lr3e6-v6 **1374664** (dir _7) + lr1e6-v6 in clean startup on
+reverted env. lr8e6-v5 (1374136, condemned env, short-gen) thriving: s11 rew 0.930,
+ent 0.20, KL 0.077 — near train ceiling, gate call at s30. Standing rule: hung jobs on
+the condemned env get ~35 min for watchdog self-abort before any scancel; reverted-env
+hangs need scancel (watchdog blind) — accept the ghost risk, exclusions absorb it.
+Tally: 16 incidents / ~14 arm-hours.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
