@@ -1020,8 +1020,9 @@ jupiter = HPC(
     # jpbo-112-[05,08-12] added 2026-08-14 23:0x: backward-hang site (lr8e6 1377151 at s44).
     # jpbo-025-[17,22-23,29-30,32] added 2026-08-14 23:2x: ghost-OOM at first ppo_train
     # jpbo-081-[10-15] added 2026-08-15 00:3x: backward-hang site (nokl 1378378 at s53).
+    # jpbo-003-[20,23-24,26-27,30] added 2026-08-15 01:0x: ghost-OOM at engine load (lr3e6 1379307, 18MiB free).
     # (lr1e6 1379097, 58MiB free).
-    node_exclusion_list="jpbo-031-[01-48],jpbo-011-[01-48],jpbo-038-38,jpbo-004-46,jpbo-065-17,jpbo-074-22,jpbo-074-40,jpbo-048-41,jpbo-091-05,jpbo-044-0[1-5],jpbo-014-[18,24-25,27,31-32],jpbo-034-[18,23-25,27-29],jpbo-044-[07,11-15],jpbo-060-[05-06,10,12,14,16],jpbo-100-[01-48],jpbo-115-[42,44-48],jpbo-003-[35,37,39-40,42,45,47],jpbo-102-23,jpbo-103-20,jpbo-122-[02-03,20,23,26-29],jpbo-046-[27-32],jpbo-069-[01-02,05-08],jpbo-020-[01-48],jpbo-105-[42-46,48],jpbo-022-[33,36-40],jpbo-068-[09-13,16],jpbo-067-[06,08-12],jpbo-030-[33,36,39,41,44,46],jpbo-112-[05,08-12],jpbo-025-[17,22-23,29-30,32],jpbo-081-[10-15]",
+    node_exclusion_list="jpbo-031-[01-48],jpbo-011-[01-48],jpbo-038-38,jpbo-004-46,jpbo-065-17,jpbo-074-22,jpbo-074-40,jpbo-048-41,jpbo-091-05,jpbo-044-0[1-5],jpbo-014-[18,24-25,27,31-32],jpbo-034-[18,23-25,27-29],jpbo-044-[07,11-15],jpbo-060-[05-06,10,12,14,16],jpbo-100-[01-48],jpbo-115-[42,44-48],jpbo-003-[35,37,39-40,42,45,47],jpbo-102-23,jpbo-103-20,jpbo-122-[02-03,20,23,26-29],jpbo-046-[27-32],jpbo-069-[01-02,05-08],jpbo-020-[01-48],jpbo-105-[42-46,48],jpbo-022-[33,36-40],jpbo-068-[09-13,16],jpbo-067-[06,08-12],jpbo-030-[33,36,39,41,44,46],jpbo-112-[05,08-12],jpbo-025-[17,22-23,29-30,32],jpbo-081-[10-15],jpbo-003-[20,23-24,26-27,30]",
     # Stage 4: eval-listener cluster config (single source of truth — was eval/clusters/jupiter.yaml).
     # User-scoped paths mirror that yaml (zhuang1's); parameterizing via dotenv is a follow-up.
     eval_cluster_view={
