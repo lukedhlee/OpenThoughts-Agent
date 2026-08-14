@@ -16,19 +16,29 @@ Mac plan file: `/Users/lukedhlee/.claude/plans/shimmying-juggling-turtle.md` (fu
    greedy n=1 eval; gsm8k-domain ctx lengths (probe-decided), not her 40960/28000.
    Source of truth: her script copy `/e/fscratch/reformo/lee27/marianna_deepswe_repro_copy_0812/
    run_rl_deepswe_8b_repro_apptainer_seqmean_r2egym_learnable.sh` (line 321: strategy=fsdp2).
-2. **USE FLASHATTENTION for the trainer — Luke INSISTS (2026-08-14). Smoke/arms GATED on FA.**
-   Path: get lee27 into unix group **`datasets`** and use HER env:
-   `source /e/data1/datasets/playground/ot/envs/mamba/bin/activate
-    /e/data1/datasets/playground/ot/envs/py3.12` (her script lines 166-172). lee27 NOT in
-   the group today (verified). Luke fires the ask (Marianna/Jennia/JuDoor).
-   Facts behind this: mjun0812 has NO torch2.11 aarch64 FA wheel (checked 08-14, last 5
-   releases); source build quasi-blocked (Jupiter has no CUDA-12 module vs rl-megatron's
-   torch 2.11+cu128; plus FA-cute/cutlass-dsl breakage — fix_flash_attn_cute.sh era).
-   The committed arms YAML currently carries the SDPA trio as FALLBACK ONLY.
-   ⚠ When her env lands: it was built for HER torch/SkyRL — before arms, smoke OUR
-   MarinSkyRL branch inside it (import vllm._C, flash_attn, torchtitan EP path, ray) and
-   build a `..._fa.yaml` variant (flash_attn true, attn_backend auto, use_sample_packing
-   true restored, RL_PYTHON/LD_LIBRARY_PATH rebuilt for her env layout). Keep SDPA yaml.
+2. **FA gate RESOLVED 2026-08-14 — own env `$F/envs/rl-fa`; datasets-group ask NOT needed.**
+   The "no torch2.11 aarch64 FA wheel" claim was WRONG (only the last 5 mjun0812 releases
+   were checked): release **v0.9.22** ships `flash_attn-2.8.3+cu128torch2.11-cp312`
+   manylinux_2_34 aarch64 — exact tag match for the validated stack, and Ben's otagent
+   conda (ENVIRONMENT_MAP §2a) is standing proof FA-2.8.3-wheel + torch 2.11 works on
+   Jupiter GH200. Built `$F/envs/rl-fa` (13G, uv venv py3.12.13, builder script + logs at
+   `$F/envs/build_rl_fa_env.sh` / `build_rl_fa.log`): exact `--no-deps` replication of the
+   rl-megatron freeze (`$F/envs/rl-megatron.freeze`; vLLM 0.22.0 official aarch64 PyPI
+   wheel, torch 2.11.0+cu128) + git pins (torchtitan a1fdd7e, harbor 725fc069,
+   dynamic-semaphore 4d5f49f) + skyrl-train/skyrl-gym editables re-pointed at
+   `$F/repos/MarinSkyRL` + the FA wheel. Freeze diff vs rl-megatron = conda machinery
+   dropped, `transformer_engine_torch` absent (Megatron-only, FSDP2 path never imports
+   it), flash_attn added — otherwise identical.
+   **Smokes PASSED:** login import smoke (flash_attn, vllm._C, fully_shard, _StridedShard,
+   torchtitan, skyrl editables, ray — needs `module load GCC/14.3.0
+   nvidia-compilers/25.9-CUDA-13` for vllm._C's libcudart.so.13, same as rl-megatron;
+   hpc.py:862 already loads it in jobs) + GPU smoke job **1362688** COMPLETED on GH200
+   (fa2 fwd/bwd, fa2-vs-sdpa max|diff| 0.004, varlen/sample-packing path, HF
+   is_flash_attn_2_available, vllm._C — `$F/envs/rl_fa_smoke_1362688.out`).
+   **Use:** `RL_VENV=$F/envs/rl-fa` +
+   `RL_CONFIG=./hpc/skyrl_yaml/jupiter/6node_qwen3_30b_a3b_base_gsm8k_grpo_fsdp2_arms_fa.yaml`
+   (committed; 3-knob diff: flash_attn true, use_sample_packing true, attn_backend auto).
+   SDPA yaml kept as fallback. Her `/e/data1/datasets` env: no longer on the critical path.
 3. **4 racing arms × 6 nodes** (PI approved up to 64 nodes; sweep coexistence fine):
    | JOB_NAME | POLICY_LR | extra | basis |
    |---|---|---|---|
@@ -117,12 +127,12 @@ Mac plan file: `/Users/lukedhlee/.claude/plans/shimmying-juggling-turtle.md` (fu
    **MAX_GENERATE_LENGTH=2048 / MAX_MODEL_LEN=3072**. G2a borderline: 60.5% sits AT the 60% ceiling
    — signal is strong (74.6% mixed groups), recommendation = proceed; flagged to Luke.
    JSON also copied to Mac scratchpad; full copy must ride the campaign harvest tar.
-2. **FA gate (BLOCKING per Luke):** datasets-group ask → env import smoke → `..._fa.yaml`
-   variant → only then stages 3-4. (If the ask stalls, Luke decides: wait vs SDPA fallback.)
+2. **FA gate: DONE (see item 2 above).** Env `$F/envs/rl-fa` + `..._arms_fa.yaml` smoked
+   and committed. Stages 3-4 run with `RL_VENV=$F/envs/rl-fa` + the `_fa.yaml` config.
 3. **Stage-3 smoke (2 steps, 6n, ~1.5-2h):** from `$F/repos/OpenThoughts-Agent`:
-   `JSC_SCRATCH=$F RL_VENV=<env> DATA_DIR=$F/data/gsm8k EXPERIMENTS_DIR=$F/experiments \
+   `JSC_SCRATCH=$F RL_VENV=$F/envs/rl-fa DATA_DIR=$F/data/gsm8k EXPERIMENTS_DIR=$F/experiments \
     RL_REPO_DIR=$F/repos/MarinSkyRL WANDB_DIR=$F/wandb RESERVATION=none NUM_NODES=6 \
-    RL_CONFIG=./hpc/skyrl_yaml/jupiter/6node_qwen3_30b_a3b_base_gsm8k_grpo_fsdp2_arms.yaml \
+    RL_CONFIG=./hpc/skyrl_yaml/jupiter/6node_qwen3_30b_a3b_base_gsm8k_grpo_fsdp2_arms_fa.yaml \
     JOB_NAME=base30b_gsm8k_smoke MAX_STEPS=2 EVAL_BEFORE_TRAIN=true CKPT_INTERVAL=1 \
     TIME_LIMIT=01:45:00 bash hpc/skyrl_standard/jupiter/run_gsm8k_moe30b_grpo.sh`
    G3 gates: 8 engines up (≥12-min post-load patience — FlashInfer autotune silence);
@@ -150,5 +160,6 @@ Mac plan file: `/Users/lukedhlee/.claude/plans/shimmying-juggling-turtle.md` (fu
 - Sweep-shards mystery RESOLVED: the other session's sweep was operator-PARKED 08-14
   (~18:15 PT) after 3 failed rounds — see NEXT_SESSION `0.0-SWEEP-PARKED`. Not our concern.
 - Optional: wandb-workspaces saved view (Reward/Learnability/Parser/Lengths/Stability).
-- FA long-term: torch-2.9/cu130 coherent env rebuild with FA + source vLLM (own gated task).
+- ~~FA long-term: torch-2.9/cu130 coherent env rebuild~~ MOOT — `$F/envs/rl-fa` (torch
+  2.11+cu128 + exact-tag FA wheel) resolved it 2026-08-14; no torch downgrade needed.
 - /e/scratch/reformo + lee27 $HOME quota cleanups (meeting asks; nothing for this run).
