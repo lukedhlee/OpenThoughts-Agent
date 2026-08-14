@@ -2867,3 +2867,14 @@ varlen, HF `is_flash_attn_2_available`, vllm._C) — COMPLETED in 61s.
 its DOCUMENTED recipe + a readable sibling env's freeze are a sufficient oracle to replicate
 from; (3) exact freeze replication with `--no-deps` is the low-risk way to clone a validated
 env — never re-resolve it.
+**META-LESSON (why prior sessions stayed stuck and this one didn't):** a documented negative
+("no wheel exists") is a fact about a SEARCH, not about the world — and its scope qualifier
+("checked last 5 releases") is the tell. Once written down, it gets inherited as ground truth and
+whole plans (group asks, torch-downgrade rebuilds, SDPA fallbacks) get built on top; each next
+session re-reads the conclusion, never the search. Two habits break this: (1) negative claims in
+memory must carry their search scope, and readers must treat that scope as an invitation to widen
+it — minutes of re-checking vs a day of workaround engineering; (2) COLLIDE the docs: the
+contradiction (handoff "no torch2.11 wheel" vs ENVIRONMENT_MAP §2a "FA 2.8.3 wheel installed on
+torch 2.11, June") sat in the repo for weeks — a working sibling setup is an existence proof that
+outranks any impossibility claim, so when one exists, the question changes from "how do we work
+around X" to "X is misdiagnosed — find the difference."
