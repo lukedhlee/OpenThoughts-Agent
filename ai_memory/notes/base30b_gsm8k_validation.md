@@ -236,6 +236,23 @@ Login-node tmux: `arms_sync` (10-min wandb sync loop, --no-skip-synced) +
 `sidecar_<arm>` ×4 (watch mode, online). Per-arm 60s death-watchers running Mac-side.
 Racing gate step ~30: kill ONLY pathological (reward→0, entropy→~0.01, grad explosion).
 
+**12:20 incident — lr1e6 (1366671) backward-pass deadlock, py-spy'd live, killed, relaunched
+as 1368006.** Log froze at 11:41 mid-step-4 (siblings at s8-9). py-spy per [[pyspy]] method:
+driver idle in `ray.get`; **all 16 policy ranks in `_engine_run_backward`
+(fsdp_strategy.py:186 backward) with GPUs pinned 100%** for 45+ min — symmetric NCCL/EP
+collective deadlock (EP=4 all-to-all / FSDP2 reduce-scatter ordering race is the suspect;
+routing-dependent). **Neither 30-min NCCL watchdog fired** (TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC
+/ BLOCKING_WAIT both 1800s) — spinning collective kernels apparently keep the heartbeat
+alive, so this hang class does NOT self-abort; only the log-silence + py-spy caught it.
+Nodes jpbo-014-[18,24-25,27,31-32] (same set ran smoke2 cleanly → race > fabric; also
+25/27 are the vLLM engine nodes — 0% util 85.9GB during train phase is NORMAL, don't
+misread). SBATCH_EXCLUDE was silently dropped by the launcher pipeline — 1368006 landed
+on the SAME nodes; accepted deliberately (recurrence would be diagnostic). Watch item:
+if backward-hang recurs, hand-edit the rendered sbatch with --exclude and consider
+ep_comm_backend/nccl-env mitigations. Sidecar lr1e6 restarted → dir `_3`, run
+`base30b_gsm8k_lr1e6_v2`; arms_sync loop rewritten to resolve latest dir per arm each
+cycle (no more stale `_2` pins).
+
 ## Open/parked items
 
 - Sweep-shards mystery RESOLVED: the other session's sweep was operator-PARKED 08-14
