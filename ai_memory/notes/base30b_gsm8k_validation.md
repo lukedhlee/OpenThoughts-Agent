@@ -309,6 +309,13 @@ jpbo-100-[43-48], not jpbo-115; evidence = 17-min log freeze). Verify resumes vi
 `configs/*_rl_config.json` hydra list, NOT the sbatch (overrides live there).
 Tally: 5 incidents / ~8 arm-hours.
 
+**15:0x incident #6 — lr3e6 (1368822) backward hang at ~s11** (py-spy confirmed same
+signature, jpbo-044). Resume-relaunched as **1370635** from `_3/.../global_step_10`
+(verified in configs json; dir `_4`, sidecar v3). Gotcha: the combined
+confirm+cancel+relaunch heredoc DIED silently after its srun probe (ssh channel) —
+1368822 kept running unnoticed until a state re-check; ALWAYS verify scancel took
+effect with a separate squeue call before relaunching. Tally: 6 incidents / ~9 arm-hours.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
