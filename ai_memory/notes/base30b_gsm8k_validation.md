@@ -266,6 +266,16 @@ checkpoints if a ckpt exists); healthy arms are NOT touched. Root-cause hunt (up
 MarinSkyRL diff on EP backward, NCCL env mitigations) is a daylight task — flagged for
 Luke/Ben, not an overnight experiment.
 
+**13:12 incident #3 — lr3e6 (1366672) stalled at s15** (log frozen 12:59:58 entering
+policy_train). Mixed cause: head node jpbo-060-05 refused srun task launch
+("Communication connection failure") — sick node, likely triggered/accompanied the freeze.
+Killed → relaunched **1368822** on fresh nodes jpbo-044-[07,11-15], CKPT_INTERVAL=10,
+sidecar run base30b_gsm8k_lr3e6_v2 (dir `_3`). Stall-watcher caught it in 11 min.
+Sweep-glob lesson (also fixed in sync loop + stall-watcher): `base30b_gsm8k_lr3e6*`
+matches the NOKL dir — always resolve arm dirs with exact-name + `_[0-9]` globs.
+Background subagent auditing upstream MarinSkyRL for post-07-21 EP/backward hang fixes.
+Current fleet: lr1e6→1368006, lr3e6→1368822, lr8e6→1368098, nokl→1366675.
+
 ## Open/parked items
 
 - Sweep-shards mystery RESOLVED: the other session's sweep was operator-PARKED 08-14
