@@ -1,5 +1,70 @@
 ---
 
+## ★★★★★ 0.0-SWEEP-PARKED 2026-08-14 (~18:15 PT) — OPERATOR CANCELLED the sweep after 3 failed rounds in one night; ~1,750/17,876 trials BANKED and RESUME-READY; ALL COMPUTE RELEASED
+
+**State: nothing running anywhere.** Jupiter queue empty, JUWELS fleet `14196058` cancelled, local
+relauncher killed before r8 ever submitted. The sweep is NOT dead — it is parked with a clean resume
+path (below). Operator call (Luke): stop burning rounds, bank the lessons, rethink before relaunch.
+
+### The night in sequence (r5→r7), what broke, what fixed it
+1. **/e/fscratch stale-handle outage (JSC, post-maintenance)** killed r4 in 8s and blocked ~24h.
+   Auto-recovery watcher released fleet + resubmitted when 2 consecutive probes passed. JSC ssh auth
+   also FLAPPED (publickey↔TOTP) during this window — indistinguishable from fs-stale in probes.
+2. **r5 `1360472-75`: ran the WRONG DATASET (smoke32) while 100% green.** Submit lines were recovered
+   via `sacct SubmitLine`, which DROPS shell-exported env; sbatch line 23 defaults DATASET_PATH to
+   smoke32. Caught only via the run-dir name + counting 32 distinct task ids in the log. (gotcha banked)
+3. **r6 `1360640-43`: correct datasets, EDQUOT cascade on /p/scratch/reformo in ~40 min.** Root cause
+   was NOT our churn: project was 99.2% block-full BEFORE launch — du survey: blanchon1 86.7TB,
+   clapv2 8.8TB, singhvi1 2.2TB, us 133GB. Cancelled per the "never ride it out" rule.
+4. **Staging symlink-swapped to /p/scratch/laionize/lee27** (fleet path unchanged → no fleet restart);
+   probes green, setgid→group laionize verified.
+5. **r7 `1361546-49`: ~1,750 clean trials in ~30 min, then laionize EDQUOT'd IDENTICALLY** with only
+   ~17GB/300k-inode real usage from us. Login-node repro: symlink FAIL, direct laionize FAIL,
+   synthlaion OK, no user quotas ⇒ **GPFS in-doubt inflation follows the CHURN (conc 384 create/delete
+   across 24 client nodes), not the fileset. Moving filesets only resets a ~1h clock.** (gotcha banked)
+6. **r8 was prepped but operator-cancelled:** plan was 3h fileset rest → 300-file probe gate →
+   `harbor jobs resume` on the r7 job dirs at HALF conc (48/shard). The sbatch resume filter now
+   includes `-f RuntimeError` (line 263 edit ON CLUSTER, deliberate delta) — without it the ~8k
+   quota-failed trials stay recorded as failures and POISON pass@4.
+
+### To resume the sweep later (exact, lossless)
+```
+cd /e/fscratch/reformo/lee27/marianna_repro && for S in 0 1 2 3; do
+  sbatch --nodes=4 --time=05:00:00 --job-name=mrepro_sweep_s${S}r8 \
+    --export=ALL,RESUME_JOB_DIR=/e/fscratch/reformo/lee27/marianna_repro/slurm_logs/jobs/mrepro_genpass_sweep_s${S}r7,RUN_TAG=mrepro_genpass_sweep_s${S}r7,N_CONCURRENT=48,DATASET_PATH=/e/fscratch/reformo/lee27/marianna_repro/datasets/r2egym_sweep_shard${S} \
+    marianna_repro_genpass.sbatch; done
+```
+Preconditions: (a) rebuild a JUWELS fleet first (batch partition, account laionize, cpus-per-task=48,
+STAGING_BASE=/p/scratch/reformo/lee27/apt_staging_sweep — still a symlink → laionize; JUWELS queue wait
+was ~9h last time); (b) probe-gate the staging path (mkdir+300 files) SECONDS before submit; (c) the
+banked r7 results live in `slurm_logs/jobs/mrepro_genpass_sweep_s{0-3}r7/` — resume skips them.
+
+### How to do better next time (operator + agent)
+- **Size staging load to CHURN, not capacity**: conc ≤ ~48/shard (192 total) on any shared GPFS fileset;
+  dir-count watched from minute 1 (alarm >900); expect in-doubt exhaustion at 384+ regardless of headroom.
+- Consider a **fundamentally different staging home** before relaunch: node-local tmpfs/NVMe on JUWELS
+  workers (kills GPFS churn entirely — needs worker change), or ask JSC for a dedicated fileset/quota
+  bump, or throttle env create rate in the bridge.
+- **Never trust SubmitLine for resubmission** — always re-specify the full --export env explicitly.
+- **Whole-project quota is a pre-launch check** (jutil is a stale hourly cache; du the neighbors —
+  blanchon1's 87TB on reformo scratch needs a team ping from Luke regardless).
+- Every failed round was detected by the babysit watchers within minutes — keep that pattern; the
+  expensive mistakes were the ones baked in at submit time (env loss, unchecked quota context).
+
+### Meanwhile-threads from this session (not cluster ops)
+- **RL stack validation plan (Discord, Ben)**: base = Qwen/Qwen3-30B-A3B-Base; SFT arm = NOT
+  opencode-SFT (ruled out; wrong harness format), agent = terminus-structured (or terminus_2);
+  options = train own SFT on terminus-format AgentTrove traces (axolotl MoE recipe carries over,
+  base has NO chat template — must set tools-aware template explicitly) vs Qwen3-30B-A3B-Instruct-2507
+  fallback. No Qwen3-30B-A3B-Base SFT exists in-house; the only MoE SFT is thinking-2507+opencode
+  (`laion/qwen3-30b-a3b-thinking-opencode-sft-densemixer-serveparity`), now excluded.
+- **Easy agentic dataset pick**: TaskTrove `DCAgent__exp_rpt_curriculum-easy` (514 tasks; 504 share ONE
+  3-line python:3.10-slim+pytest Dockerfile → 1-2 SIFs total; zero verifier env keys; spec→code→pytest
+  binary reward; LLM-simplified rewrites of real-repo functions). Scale-up: `mix_h4_binary_easy` (2,010).
+  Pre-flight: pass@8 probe of the base model before any 4-day RL commit.
+  Full 150-subset count table generated this session (~2.59M tasks; scratchpad tasktrove_counts.tsv).
+
+
 ## ★★★★★ 0.0-SWEEP-LIVE 2026-08-12 (night) — SMOKE GATE PASSED (band 50% vs OpenCode 8.8%); FULL SWEEP `1324162` + FLEET `14194204` SUBMITTED
 
 **Smoke4 `1323378` COMPLETE, 128/128 results, staging self-swept to 0.** Her filter verdict on
