@@ -862,6 +862,7 @@ jupiter = HPC(
     modules=["GCC/14.3.0", "nvidia-compilers/25.9-CUDA-13"],
     env_vars={
         "WANDB_MODE": "offline",  # Compute nodes have no internet
+        "LD_LIBRARY_PATH": "/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/cu13/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/cublas/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/cuda_cupti/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/cudnn/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/cufft/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/cufile/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/curand/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/cusolver/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/cusparse/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/cusparselt/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/nccl/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/nvjitlink/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/nvshmem/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/nvidia/nvtx/lib:/e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/lib/python3.12/site-packages/torch/lib",
         # Force GLOO and NCCL to use IPv4 (IPv6 doesn't work on Jupiter compute nodes)
         "GLOO_USE_IPV6": "0",
         "NCCL_SOCKET_FAMILY": "AF_INET",
@@ -936,7 +937,7 @@ jupiter = HPC(
         # and any new file creation under $DCFT/experiments/logs/ EDQUOTs.
         # Symlink fix isn't viable because creating the symlink itself needs
         # a new inode. See reference_jupiter_inode_quota.md.
-        "OT_AGENT_RAY_LOG_DIR": "/e/data1/datasets/playground/ot-baf/experiments/_ray_logs",
+        "OT_AGENT_RAY_LOG_DIR": "/e/fscratch/reformo/lee27/experiments/_ray_logs",
         # Redirect Ray's object-store SPILL directory to GPFS /e/scratch
         # (multi-PB free) instead of the compute node's LOCAL disk (default
         # /tmp/ray, a small node-local fs that fills). The 80B Qwen3-Next
@@ -958,7 +959,7 @@ jupiter = HPC(
         # limit, which lives under --temp-dir, NOT here).
         "RAY_object_spilling_config": (
             '{"type":"filesystem","params":'
-            '{"directory_path":"/e/scratch/jureap59/feuer1/ray_spill"}}'
+            '{"directory_path":"/e/fscratch/reformo/lee27/ray_spill"}}'
         ),
     },
     # NOTE: Do NOT use master_addr_suffix="i" - the "i" suffixed hostname is not DNS-resolvable
@@ -972,13 +973,14 @@ jupiter = HPC(
     },
     training_launcher="accelerate",
     needs_ssh_tunnel=True,
-    proxychains_binary="/e/scratch/jureap59/feuer1/proxychains-ng-aarch64/bin/proxychains4",
+    # lee27: no access to feuer1 proxychains; gsm8k standard GRPO is offline-local
+    proxychains_binary="",
     # Enable NUMA monitoring for GH200 unified memory debugging
     enable_numa_monitoring=True,
     # GH200 NUMA: --gpu-bind=closest restricts CPU affinity to NUMA node 0 only
     # and overrides --cpu-bind=none. Use gpu_bind="none" + disable_cpu_bind=True
     # to let SKYRL_ENABLE_NUMA_AFFINITY handle per-GPU NUMA binding at app level.
-    conda_activate="source /e/scratch/jureap59/feuer1/miniforge3/etc/profile.d/conda.sh && conda activate otagent",
+    conda_activate="source /e/scratch/reformo/lee27/miniforge3/etc/profile.d/conda.sh && true",
     gpu_bind="none",
     disable_cpu_bind=True,
     pre_run_commands=["ulimit -c 0"],
