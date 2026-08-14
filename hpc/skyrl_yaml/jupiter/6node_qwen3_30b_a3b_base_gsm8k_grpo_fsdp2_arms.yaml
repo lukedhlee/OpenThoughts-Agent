@@ -145,6 +145,12 @@ data:
 container:
   extra_env:
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    # lee27 $HOME is over quota: every default ~/.cache consumer must be redirected.
+    VLLM_CACHE_ROOT: /e/fscratch/reformo/lee27/cache/vllm
+    XDG_CACHE_HOME: /e/fscratch/reformo/lee27/cache/xdg
+    TRITON_CACHE_DIR: /e/fscratch/reformo/lee27/cache/triton
+    TORCHINDUCTOR_CACHE_DIR: /e/fscratch/reformo/lee27/cache/inductor
+    FLASHINFER_WORKSPACE_BASE: /e/fscratch/reformo/lee27/cache/flashinfer
     NCCL_DEBUG: WARN
     SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
     VLLM_ATTENTION_BACKEND: FLASH_ATTN
