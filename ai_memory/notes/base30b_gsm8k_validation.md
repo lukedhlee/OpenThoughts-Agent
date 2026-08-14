@@ -107,7 +107,16 @@ Mac plan file: `/Users/lukedhlee/.claude/plans/shimmying-juggling-turtle.md` (fu
 
 ## Runbook — remaining stages in order
 
-1. **Read probe** → apply G2a/b/c (above).
+1. **Read probe** → apply G2a/b/c (above). **DONE 2026-08-14 — probe 1362199 COMPLETED (42:50):**
+   strict@full = strict@1024 = strict@2048 = **60.50%** (798/1319, zero paired flips — answers land
+   before token 1024; overage is post-answer rambling), flexible@full 49.96% (< strict: Base keeps
+   generating after `####`, last-number extraction grabs ramble). Tokens: mean 1135, 20.1% at 4096
+   cap (Base never EOSes), 28% >1024. Band (264 probs, pass@4 @ T=1.0): all_wrong 20.5% / **mixed
+   74.6%** / all_correct 4.9%, grp_std 0.341; lengths p50 332 / p90 2133 / >2048 10.5%.
+   **Gates:** G2c PASS (mixed ≫10%). G2b → T=1.0 lengths + round-UP rule ⇒
+   **MAX_GENERATE_LENGTH=2048 / MAX_MODEL_LEN=3072**. G2a borderline: 60.5% sits AT the 60% ceiling
+   — signal is strong (74.6% mixed groups), recommendation = proceed; flagged to Luke.
+   JSON also copied to Mac scratchpad; full copy must ride the campaign harvest tar.
 2. **FA gate (BLOCKING per Luke):** datasets-group ask → env import smoke → `..._fa.yaml`
    variant → only then stages 3-4. (If the ask stalls, Luke decides: wait vs SDPA fallback.)
 3. **Stage-3 smoke (2 steps, 6n, ~1.5-2h):** from `$F/repos/OpenThoughts-Agent`:
