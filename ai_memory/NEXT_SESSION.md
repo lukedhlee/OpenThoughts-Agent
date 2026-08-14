@@ -1,5 +1,24 @@
 ---
 
+## ★★★★★ GSM8K-VALIDATION 2026-08-14 (evening PT) — SEPARATE WORKSTREAM LIVE: Base-30B GSM8K GRPO stack validation. READ `notes/base30b_gsm8k_validation.md` FIRST if picking up THIS workstream.
+
+**Two parallel workstreams.** This section = Luke's RL-stack validation (its own session);
+the 0.0-* sections = the r2egym/Marianna sweep (now PARKED, next section). NOTE the parked
+section's "nothing running anywhere" refers to SWEEP compute — this workstream's probe
+**job 1362199 IS RUNNING** at handoff. Full state/runbook/BINDING decisions:
+`notes/base30b_gsm8k_validation.md`. Summary: validate the production RL stack (FSDP2 +
+Marianna's exact algorithm block; 4 racing LR arms incl. a KL-off arm; n=8, temp 1.0, TIS
+on) by RL-ing **Qwen3-30B-A3B-Base** on GSM8K ≥80 steps on Jupiter, with a new
+observability stack (diag_utils on MarinSkyRL branch `lukedhlee/jupiter-worktree-0814` @
+4f62f79; sidecar → wandb `jupiter-base30b-gsm8k-grpo`; AI-readable JSONL traces +
+diag_summary.json). **⚠ /e/scratch/reformo hit its HARD inode limit AND lee27 $HOME is over
+quota → everything relocated to /e/fscratch/reformo/lee27/repos/* with ~/.cache redirects
+(gotchas 08-14).** At handoff: Base snapshot downloaded+verified (G1 ✓); probe 1362199
+(step-0 budget sweep + pass@4 band @20% T1.0) running with a Mac-side watcher; smoke + arms
+NOT launched — **GATED on FlashAttention per Luke: join unix group `datasets` to use
+Marianna's env `/e/data1/datasets/playground/ot/envs/py3.12` (SDPA yaml `d4b07e90` is
+committed as FALLBACK only)**. OT-Agent branch `lukedhlee/vista-moe-grpo-30b` @ d4b07e90.
+
 ## ★★★★★ 0.0-SWEEP-PARKED 2026-08-14 (~18:15 PT) — OPERATOR CANCELLED the sweep after 3 failed rounds in one night; ~1,750/17,876 trials BANKED and RESUME-READY; ALL COMPUTE RELEASED
 
 **State: nothing running anywhere.** Jupiter queue empty, JUWELS fleet `14196058` cancelled, local

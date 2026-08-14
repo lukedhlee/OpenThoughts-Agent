@@ -2807,3 +2807,24 @@ Recovery path used: `harbor jobs resume -p slurm_logs/jobs/mrepro_genpass_sweep_
 resume filter list REQUIRED adding `-f RuntimeError` (line 263) or the ~8k quota-failed trials would stay
 recorded as failures and poison pass@4. r8 = resume of the r7 job dirs at conc 48 via detached local
 relauncher (3h rest + 300-file probe gate, retries 30 min ×16).
+
+## 2026-08-14 — ONE launch can hit THREE quota walls (gsm8k-validation bring-up)
+
+1. `/e/scratch/reformo` is at its HARD inode limit (8.796M/8.8M): even `git remote add`
+   (one lockfile) dies EDQUOT. Treat the whole fileset as READ-ONLY; deploy targets are
+   fresh clones under `/e/fscratch/reformo/lee27/repos/`. Never `git pull` the old
+   /e/scratch clones.
+2. lee27 `$HOME` is ALSO over quota, and vLLM 0.22's torch-aot-compile cache writes to
+   `~/.cache/vllm/...` → EngineCore dies with EDQUOT at startup (killed probe 1362190)
+   even though `~/.cache` itself is nearly empty and /e/home has 58T free (per-USER quota).
+   Mandatory redirects for ANY GPU job: VLLM_CACHE_ROOT, XDG_CACHE_HOME, TRITON_CACHE_DIR,
+   TORCHINDUCTOR_CACHE_DIR, FLASHINFER_WORKSPACE_BASE → /e/fscratch/.../cache/* (now baked
+   into the arms YAML extra_env).
+3. `#SBATCH --output=` does NOT expand env vars — gsm8k_budget_probe.sbatch hardcodes an
+   /e/scratch log path that EDQUOTs. Override on the command line:
+   `sbatch --output=/e/fscratch/.../logs/%x_%j.out ...`.
+
+Related traps hit the same night: `rsync`/`scp` to Jupiter must use the `jupiter` ssh
+ALIAS (ControlMaster socket) — the raw hostname prompts TOTP and fails in batch (use
+`ssh jupiter 'cat file' > local` as the fallback). And `PROBE_MODEL` in the probe sbatch
+defaults to the INSTRUCT model — always pin the Base snapshot dir explicitly.
