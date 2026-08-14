@@ -456,6 +456,12 @@ killed at the gate.** Attrition cycles #25-27: lr3e6-v8/v9 ghost-OOMs (jpbo-020 
 nokl 1378378. Cumulative best: lr8e6 30, nokl 28, lr3e6 24, lr1e6 9.
 Tally: 27 incidents / ~21 arm-hours.
 
+**22:04 sweep 12 — QUIET HOUR, all arms at new high-water marks.** lr1e6 s10 (0.383),
+lr3e6 s29 (0.703), lr8e6 s39 (0.852, eval@40 imminent — first greedy-acc readout vs
+57.8% baseline), nokl s32 (0.773). Zero incidents in the hour — the rack-level
+exclusions + drained pool are holding. Upward reward curves now unambiguous on all
+four arms. Tally still 27 / ~22 arm-hours.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
