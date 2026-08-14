@@ -276,6 +276,23 @@ matches the NOKL dir — always resolve arm dirs with exact-name + `_[0-9]` glob
 Background subagent auditing upstream MarinSkyRL for post-07-21 EP/backward hang fixes.
 Current fleet: lr1e6→1368006, lr3e6→1368822, lr8e6→1368098, nokl→1366675.
 
+**13:2x — upstream audit verdict + watchdog root cause FIXED (729704dd).** Subagent
+compared our snapshot vs marin-community main (e1c2dff, 08-13): EP all_to_all
+dispatch/combine code is byte-identical — **upstream has NO root-cause fix for the hang
+class** (their 449d1eb: "the initiating fault in natural training remains unknown"; they
+hit the SAME 16-rank spin on the SAME Jupiter GH200s). But 449d1eb found WHY nothing
+aborts: the legacy **`NCCL_BLOCKING_WAIT=1` alias selects a wait mode whose deadline
+never fires**. WE inject it — `universal_rl.sbatch:167` (old Perlmutter debugging) +
+`TORCH_NCCL_BLOCKING_WAIT_TIMEOUT_MS` in hpc.py's jupiter env. Removed both in
+**729704dd** (pushed + cluster pulled): future (re)launches get functional watchdogs —
+hang → abort ≤30 min (heartbeat 1800s) with FlightRecorder dumps (TRACE_BUFFER=2000
+already on). Currently-running arms keep the old env; watchers remain their only cover.
+Verify next rendered sbatch has no NCCL_BLOCKING_WAIT export.
+Daylight port candidates from the audit: **eb1e229** (real numerics bug in our exact
+moe_grouped_gemm path — `torch._grouped_mm` leaves ALIGN_SIZE_M pad rows uninitialized
+→ eval/train forward divergence; our moe.py lacks the routed_rows zeroing) and
+**ebed3f4** (collective phase diagnostics — localizes the diverging rank).
+
 ## Open/parked items
 
 - Sweep-shards mystery RESOLVED: the other session's sweep was operator-PARKED 08-14
