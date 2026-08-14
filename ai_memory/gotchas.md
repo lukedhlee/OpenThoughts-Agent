@@ -56,9 +56,12 @@ while `rl` — which does need it — ships none. Don't infer env health from a 
 **Fix:** always gate on `import vllm._C`, never `import vllm`. Use `envs/rl-megatron`; `module load
 GCC/14.3.0 nvidia-compilers/25.9-CUDA-13` **alone** is sufficient (it puts CUDA/13 `lib64` on
 `LD_LIBRARY_PATH`; no manual export needed), and `hpc.py:862` already sets those modules for Jupiter.
-⚠ `rl-megatron` has **no `flash_attn`** and the known aarch64 wheel targets torch 2.9/cu130 while this
-env is 2.11/cu128 ⇒ use `trainer.flash_attn: false` (SDPA). "megatron" is only the directory name;
-`strategy: fsdp2` works there (torch 2.11 `fully_shard` + `_StridedShard` both import clean).
+⚠ `rl-megatron` has **no `flash_attn`** ~~and the known aarch64 wheel targets torch 2.9/cu130 while
+this env is 2.11/cu128 ⇒ use `trainer.flash_attn: false` (SDPA)~~ **[CORRECTED 2026-08-14: the
+torch2.11 wheel DOES exist — mjun0812 v0.9.22 has cu126/cu128/cu130 × torch2.11 × cp312 aarch64;
+the FA-capable replacement env is `$F/envs/rl-fa` — see the 08-14 entry below]**. "megatron" is only
+the directory name; `strategy: fsdp2` works there (torch 2.11 `fully_shard` + `_StridedShard` both
+import clean).
 
 ### 2026-07-29 · ★ Daytona is UNREACHABLE from Jupiter compute nodes — agentic RL cannot use it as-is
 **Symptom:** an agentic RL run executes flawlessly end-to-end (weight sync, generation, fwd_logprobs,
@@ -681,7 +684,8 @@ need a sync-await timeout to be caught.
 2.11.0+cu128 and source-builds flash-attn + transformer-engine. Production avoids this with a prebuilt
 wheel cache (the gpu-rl Docker image).
 **Fix:** borrow an env that already has a compiled `flash_attn`, or build from prebuilt wheels. Details:
-[[jureca_agentic_daytona_plan]].
+[[jureca_agentic_daytona_plan]]. **[2026-08-14: on Jupiter this is solved — `$F/envs/rl-fa` has the
+prebuilt FA wheel; see the 08-14 entry below for the recipe.]**
 
 ### 2026-07-14 · `examples.terminal_bench...` entrypoint won't resolve in a borrowed env
 **Cause:** a rogue `examples` **regular** package in the borrowed env's site-packages shadows
@@ -2828,3 +2832,38 @@ Related traps hit the same night: `rsync`/`scp` to Jupiter must use the `jupiter
 ALIAS (ControlMaster socket) — the raw hostname prompts TOTP and fails in batch (use
 `ssh jupiter 'cat file' > local` as the fallback). And `PROBE_MODEL` in the probe sbatch
 defaults to the INSTRUCT model — always pin the Base snapshot dir explicitly.
+
+### 2026-08-14 · ★★★ "No FA wheel for torch 2.11 aarch64" was a SEARCH-DEPTH ARTIFACT — the FA gate cost a day it didn't need to
+**Symptom:** the base30b smoke/arms sat gated on FlashAttention: the handoff said mjun0812 has no
+torch2.11 aarch64 flash-attn wheel (checked "last 5 releases"), source build is blocked (no CUDA-12
+module vs torch cu128), so the only paths looked like (a) borrow Marianna's group-locked env or
+(b) rebuild the world on torch 2.9.
+**Cause:** the wheel check only covered the 5 most recent releases. mjun0812 release **v0.9.22**
+(an OLDER release) ships `flash_attn-2.8.3+{cu126,cu128,cu130}torch2.11-cp312` manylinux_2_34
+aarch64 — including an EXACT tag match (`cu128torch2.11-cp312`) for the validated rl-megatron
+stack. Release recency ≠ torch-version coverage: enumerate ALL releases with
+`gh api repos/mjun0812/flash-attention-prebuild-wheels/releases --paginate` and grep the asset
+names before declaring a wheel nonexistent. Corroborating oracle: Ben's otagent conda
+(ENVIRONMENT_MAP §2a) had been running an FA 2.8.3 v0.9.22 wheel on torch 2.11 GH200 since June.
+**Fix (the durable one):** `$F/envs/rl-fa` — lee27-owned, built in ~1h on the login node, no GPU,
+no source builds, no group asks. Recipe (script: `$F/envs/build_rl_fa_env.sh`, log alongside):
+1. `pip list --format=freeze` the validated env → **install the freeze with `--no-deps`** (it is
+   already a closed set; re-RESOLVING it fails because conda-built envs hold pin pairs a resolver
+   rejects, e.g. fsspec 2026.6.0 vs datasets 5.0.0's `<=2026.4.0` cap).
+2. Strip conda machinery (`conda*`, `libmambapy`, `menuinst`, `pycosat`) — a conda env's pip
+   freeze lists them but PyPI can't serve them.
+3. Recover every non-PyPI package in ONE pass — scan `site-packages/*.dist-info/direct_url.json`
+   (found: torchtitan a1fdd7e, harbor 725fc069, dynamic-semaphore 4d5f49f, 2 skyrl editables) —
+   instead of whack-a-mole on resolver errors.
+4. Re-point editables at the current clone (`$F/repos/MarinSkyRL`), add the FA wheel `--no-deps`.
+5. vLLM 0.22.0 needs NO source build: PyPI ships an official `cp38-abi3 manylinux_2_28_aarch64`
+   wheel (pins torch==2.11.0 exactly).
+   `transformer_engine_torch` won't wheel/build on aarch64 → drop it; FSDP2 never imports TE.
+**Gates:** login import smoke incl. `import vllm._C` (needs `module load GCC/14.3.0
+nvidia-compilers/25.9-CUDA-13`), then GPU smoke job **1362688** (fa2 fwd/bwd, sdpa parity 4e-3,
+varlen, HF `is_flash_attn_2_available`, vllm._C) — COMPLETED in 61s.
+**Lessons:** (1) before accepting "no wheel exists," exhaust the release list — 2 minutes of
+`gh api` vs a day of gating; (2) when a teammate's env demonstrably works but is unreadable,
+its DOCUMENTED recipe + a readable sibling env's freeze are a sufficient oracle to replicate
+from; (3) exact freeze replication with `--no-deps` is the low-risk way to clone a validated
+env — never re-resolve it.

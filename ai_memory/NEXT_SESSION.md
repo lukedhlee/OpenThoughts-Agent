@@ -15,9 +15,11 @@ diag_summary.json). **⚠ /e/scratch/reformo hit its HARD inode limit AND lee27 
 quota → everything relocated to /e/fscratch/reformo/lee27/repos/* with ~/.cache redirects
 (gotchas 08-14).** At handoff: Base snapshot downloaded+verified (G1 ✓); probe 1362199
 (step-0 budget sweep + pass@4 band @20% T1.0) running with a Mac-side watcher; smoke + arms
-NOT launched — **GATED on FlashAttention per Luke: join unix group `datasets` to use
-Marianna's env `/e/data1/datasets/playground/ot/envs/py3.12` (SDPA yaml `d4b07e90` is
-committed as FALLBACK only)**. OT-Agent branch `lukedhlee/vista-moe-grpo-30b` @ d4b07e90.
+NOT launched. **FA gate RESOLVED 2026-08-14 (no datasets-group ask needed): new env
+`$F/envs/rl-fa` (torch 2.11+cu128 + flash_attn 2.8.3 cu128torch2.11 wheel, mjun0812
+v0.9.22) — login + GPU smokes passed (job 1362688). Launch with `RL_VENV=$F/envs/rl-fa` +
+`..._arms_fa.yaml`; SDPA yaml kept as fallback. Details: [[base30b_gsm8k_validation]] item 2
++ gotchas 08-14 FA entry.** OT-Agent branch `lukedhlee/vista-moe-grpo-30b` @ bc6952bb.
 
 ## ★★★★★ 0.0-SWEEP-PARKED 2026-08-14 (~18:15 PT) — OPERATOR CANCELLED the sweep after 3 failed rounds in one night; ~1,750/17,876 trials BANKED and RESUME-READY; ALL COMPUTE RELEASED
 
