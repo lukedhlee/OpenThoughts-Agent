@@ -425,6 +425,15 @@ lr8e6 cumulative: s1-16 (v1) + 10-23 (v3/v4/v5 replays) → now monotone from s2
 5-step banking. 19:00 fleet: lr1e6-v7 s6 (0.375), lr3e6-v7 s16 (0.656), nokl-v4 s11
 (0.555) — post-storm calm, all healthy. Tally: 19 incidents / ~17 arm-hours.
 
+**19:2x incident #20 — WATCHDOG ABORTS GHOST NODES TOO.** lr8e6-v6 (1376820) OOM'd at
+MODEL LOAD (20MiB alloc, 39MiB free — GPU full at job start) after landing on 5/6 of its
+watchdog-aborted predecessor's nodes. So BOTH scancel and heartbeat self-abort strand
+GPU memory when ranks die inside spinning NCCL kernels; only JSC drain/reset clears it.
+**New protocol: exclude every hang site immediately at death, BEFORE relaunching**
+(c6986883 adds jpbo-003 + nokl-v3's jpbo-102/103/122 sites; exclusion list now ~100
+nodes — prune when JSC resets). lr8e6-v7 **1376990** (dir _8, sidecar v7, resume@gs20).
+Tally: 20 incidents / ~17 arm-hours.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
