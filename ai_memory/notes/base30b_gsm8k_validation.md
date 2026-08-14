@@ -343,6 +343,18 @@ relaunched **1371443** (dir `_5`, sidecar v4) with the SAME resume. Second ident
 resume memory behavior as a daylight bug. lr3e6-v4 (1371287, same resume) is the
 parallel test. Tally: 9 incidents / ~11 arm-hours.
 
+**16:1x — OOM ROOT CAUSE: ghost GPU memory on scancel'd deadlock nodes (fix b132d7aa).**
+lr1e6-v3's fresh-start OOM broke the resume hypothesis; full OOM message shows 95GB at
+capacity with only ~20GB attributed to live processes — **~75GB is ghost memory left by
+the predecessor job killed mid-NCCL-spin**, and Slurm reallocated each relaunch onto its
+predecessor's nodes (all 3 OOM'd jobs; nokl-v2 on fresh jpbo-026 runs clean). Fix:
+appended the 6 dirty nodesets (jpbo-014/034/044/060/100/115 subsets, ~36 nodes) to
+jupiter `node_exclusion_list` in hpc.py (b132d7aa, cluster pulled) — prune after JSC
+resets them; consider reporting to JSC. AT-RISK: 1371287 (lr3e6-v4, on nokl's dirty
+jpbo-034) and 1371443 (lr8e6-v4, on dirty jpbo-044) predate the fix — expected to OOM;
+death-watchers armed, relaunch-with-exclusions + resume on death.
+Tally: 10 incidents / ~11 arm-hours (6 hang, 1 sick-node, 3 ghost-memory OOM).
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
