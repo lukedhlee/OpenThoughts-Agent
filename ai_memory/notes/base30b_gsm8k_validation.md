@@ -163,6 +163,15 @@ Mac plan file: `/Users/lukedhlee/.claude/plans/shimmying-juggling-turtle.md` (fu
    → EP=4 assert "no grouped MoE experts". July runs never exercised KL-with-ref.
    Fix: MarinSkyRL d9946bd on lukedhlee/jupiter-worktree-0814 (pass both kwargs from
    ref.fsdp_config). **Current smoke attempt: 1363765.**
+   Provenance audit (2 subagents, 08-14): ALL prior MoE-30B runs (Ben's June yamls, July
+   vista/jupiter campaigns) ran use_kl_loss=false — KL+ref+EP first combined in our
+   08-13 arms yamls. Marianna = dense-only (32B/8B; her 8B DID use KL, no MoE ever).
+   **Upstream marin-community main already fixed this same bug 08-07: a906145 (#339,
+   Ben) via a shared `_fsdp_moe_model_kwargs()` helper that ALSO passes
+   moe_router_replay to the ref.** Our branch diverged 07-21 (36fdbc0), predating it;
+   d9946bd is an independent re-fix, behaviorally identical while
+   moe_router_replay=false (our arms). TODO post-smoke: reconcile to the upstream shape
+   (cherry-pick a906145 or add moe_router_replay passthrough) before the arms.
 3b. Also start per-arm sidecar tmux + the wandb offline sync loop at arms launch.
 4. **Stage-4 arms:** 4 launches, same command as smoke minus smoke overrides, plus
    JOB_NAME/POLICY_LR per the arms table (arm D adds USE_KL_LOSS=false),
