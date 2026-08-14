@@ -2794,3 +2794,16 @@ r5 shards (1360472-75) came up green (16/16 engines, trials flowing) while re-ru
 **Rule: resubmitting this sbatch requires explicit `--export=ALL,DATASET_PATH=…/r2egym_sweep_shard${S},RUN_TAG=…,N_CONCURRENT=…`;
 verify the dataset by counting distinct task ids in the log (32 = smoke), never by job state alone.**
 Correct r6 submit (2026-08-14): `sbatch --nodes=4 --time=05:00:00 --job-name=mrepro_sweep_s${S}r6 --export=ALL,DATASET_PATH=/e/fscratch/reformo/lee27/marianna_repro/datasets/r2egym_sweep_shard${S},RUN_TAG=mrepro_genpass_sweep_s${S}r6,N_CONCURRENT=96 marianna_repro_genpass.sbatch`
+
+### 2026-08-14 · ★★★ r7 round: laionize staging died the SAME WAY in 1h — GPFS in-doubt inflation follows the CHURN, not the fileset
+r7 (1361546-49, conc 96/shard, staging symlinked to fresh /p/scratch/laionize/lee27) ran clean for
+~30 min (~1,750 trials banked) then EDQUOT'd exactly like reformo — with laionize at only ~17GB/300k
+inodes of REAL usage from us (probes: symlink FAIL, direct laionize FAIL, synthlaion OK, no user quotas).
+Conclusion: at conc 384 the create/delete cycle rate inflates GPFS in-doubt quota shares across the 24
+JUWELS client nodes until ANY host fileset EDQUOTs; moving filesets just resets the clock. In-doubt
+reconciles only during QUIET hours. **Staging load must be sized to churn rate: conc 48/shard (192 total),
+purge orphans, rest the fileset ~3h, probe-gate before relaunch.**
+Recovery path used: `harbor jobs resume -p slurm_logs/jobs/mrepro_genpass_sweep_s{S}r7` — the sbatch's
+resume filter list REQUIRED adding `-f RuntimeError` (line 263) or the ~8k quota-failed trials would stay
+recorded as failures and poison pass@4. r8 = resume of the r7 job dirs at conc 48 via detached local
+relauncher (3h rest + 300-file probe gate, retries 30 min ×16).
