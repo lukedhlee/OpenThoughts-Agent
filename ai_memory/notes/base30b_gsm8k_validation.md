@@ -293,6 +293,15 @@ moe_grouped_gemm path — `torch._grouped_mm` leaves ALIGN_SIZE_M pad rows unini
 → eval/train forward divergence; our moe.py lacks the routed_rows zeroing) and
 **ebed3f4** (collective phase diagnostics — localizes the diverging rank).
 
+**14:17 incident #4 — lr1e6 (1368006) second backward hang at ~s11** (same py-spy
+signature, jpbo-014 nodeset again — that arm/nodeset has now hung twice, but jpbo-115
+also hung, so still race-not-fabric). Killed → **1369951** (dir `_4`, sidecar
+base30b_gsm8k_lr1e6_v3), CKPT_INTERVAL=10, **first launch through the fixed template —
+rendered sbatch verified clean of blocking-wait exports**, so this arm's watchdogs
+should actually fire on the next hang (expect abort ≤30 min + FlightRecorder dump in
+the job log — grep for "Flight Recorder" / ProcessGroupNCCL abort on its next death).
+Hang tally: 4 incidents / ~7 arm-hours (lr1e6 ×2, lr8e6 ×1, lr3e6 ×1 sick-node).
+
 ## Open/parked items
 
 - Sweep-shards mystery RESOLVED: the other session's sweep was operator-PARKED 08-14
