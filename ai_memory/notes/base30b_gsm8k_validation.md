@@ -6,6 +6,79 @@ Operator: Luke. Goal: validate the RL stack end-to-end — GSM8K GRPO on
 validation (decisions.md L141: gsm8k retired as MoE-science vehicle — do not report as science).
 Mac plan file: `/Users/lukedhlee/.claude/plans/shimmying-juggling-turtle.md` (full staged plan).
 
+## RESUME-HERE — new-session bootstrap (updated 2026-08-14 ~22:15 CEST)
+
+**Task**: babysit 4 GRPO arms to ≥80 steps each, then verdict (INFRA framing) + harvest.
+Racing gate (s30) DONE — all arms passed, zero kills. Reward curves clearly upward:
+lr1e6 0.34→0.38 (s10), lr3e6 →0.70 (s29), lr8e6 →0.85-0.95 (s39), nokl →0.77 (s32).
+WandB (all runs, group by name, take newest per arm):
+https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
+
+**Fleet at handoff** (job / newest dir under `$F/experiments/` / resume source):
+| arm | job | dir | resumed from |
+|---|---|---|---|
+| lr1e6 | 1378384 | base30b_gsm8k_lr1e6_11 | _8/ckpt gs5 |
+| lr3e6 | 1378002 | base30b_gsm8k_lr3e6_11 | _8/ckpt gs20 |
+| lr8e6 | 1377151 | base30b_gsm8k_lr8e6_9 | _6/ckpt gs20 |
+| lr3e6_nokl | 1378378 | base30b_gsm8k_lr3e6_nokl_6 | _5/ckpt gs25 |
+
+ETAs to s80 at ~7.5 min/step (if no more incidents): lr8e6 ~02:30, nokl ~04:30,
+lr3e6 ~05:00, lr1e6 ~07:00+. Eval@40 + ckpt@40 land automatically (EVAL_INTERVAL=40,
+step-0 baseline 57.77% greedy; lr8e6's eval@40 was in-flight at handoff).
+
+**FIRST ACTIONS in a new session** (Mac-side watchers die with the old session):
+1. Restart per-job 60s death-watchers (background `squeue -h -j <id>` poll → sacct on
+   exit) + ONE stall-watcher (per-arm log-mtime >600s while RUNNING → alert; resolve
+   dirs with EXACT globs `..._$a`, `..._${a}_[0-9]`, `..._${a}_[0-9][0-9]` — a bare
+   `lr3e6*` glob matches the NOKL dir).
+2. Sidecars + sync loop live in LOGIN-NODE tmux (survive sessions): `arms_sync` +
+   `sidecar_<arm>` ×4. Verify with `tmux ls`; sync loop pushes offline runs every 10 min
+   (`<dir>/wandb/wandb/offline-run-*`, `wandb sync --no-skip-synced`; live-file EOF
+   errors are cosmetic).
+
+**Incident runbook (the whole night was this loop, 27 incidents):**
+- STALL alert → confirm log mtime + last `WANDB_MIRROR kind=train step=` → `scancel`
+  → **verify with separate squeue** (heredocs died mid-script twice) → **immediately
+  add the job's nodeset to `node_exclusion_list` in hpc.py** (jupiter cluster, ~line
+  1005; commit+push+`git pull` on cluster — kills/aborts strand ~75GB ghost GPU memory
+  and Slurm re-hands the nodes) → relaunch resuming from the NEWEST `global_step_N`
+  across the arm's dirs → restart that arm's sidecar tmux (new dir, bump -vN run name)
+  → new death-watcher + rebuilt stall-watcher.
+- Death (job left queue, FAILED): same minus scancel. OOM-at-load = ghost node
+  (exclude); `HeartbeatMonitor::runLoop` frames = watchdog abort of the EP hang.
+- The EP/FSDP2 backward hang race (~1 per 2 arm-hr, no root fix upstream) + sick/ghost
+  nodes are the only real enemies. NEVER py-spy/srun-probe INTO a hung job's nodes from
+  a combined script — it wedges the ssh session. All current jobs run blocking-wait env
+  (revert 5f9bcb44) → hangs do NOT self-abort → stall-watcher is the only hang net.
+
+**Relaunch command template** (from `$F/repos/OpenThoughts-Agent`, F=/e/fscratch/reformo/lee27;
+drop RESUME_* if no ckpt; POLICY_LR/JOB_NAME per arm; nokl adds USE_KL_LOSS=false):
+```
+env JSC_SCRATCH=$F SCRATCH=$F DCFT=$F/repos/OpenThoughts-Agent \
+  MODEL_PATH=$F/hf_hub/models--Qwen--Qwen3-30B-A3B-Base/snapshots/1b75feb79f60b8dc6c5bc769a898c206a1c6a4f9 \
+  RL_VENV=$F/envs/rl-fa RESERVATION=none NUM_NODES=6 \
+  RL_CONFIG=$F/repos/OpenThoughts-Agent/hpc/skyrl_yaml/jupiter/6node_qwen3_30b_a3b_base_gsm8k_grpo_fsdp2_arms_fa.yaml \
+  WANDB_PROJECT=jupiter-base30b-gsm8k-grpo \
+  JOB_NAME=base30b_gsm8k_<arm> POLICY_LR=<lr> \
+  MAX_STEPS=80 EVAL_INTERVAL=40 EVAL_BEFORE_TRAIN=false CKPT_INTERVAL=5 \
+  RESUME_MODE=from_path RESUME_PATH=<.../checkpoints/global_step_N> \
+  TIME_LIMIT=11:59:00 MAX_GENERATE_LENGTH=2048 MAX_MODEL_LEN=3072 \
+  bash hpc/skyrl_standard/jupiter/run_gsm8k_moe30b_grpo.sh
+```
+Verify a launch via `<dir>/configs/*_rl_config.json` (hydra args incl. resume/lr) — NOT
+the sbatch. Launcher renames dirs `_N`; always re-resolve newest.
+
+**After all arms hit 80 (or walltime)**: final `wandb sync` per arm; verdict per
+BINDING DECISIONS §3 (EMA-5 train reward + eval strict ≥+10pts by s80 in ≥1 arm —
+lr8e6/nokl already far past this on train reward, confirm with eval@80); write verdict
+into this note; **prune ckpts keep-last-2 per arm** (interval-5 banking left many
+197GB ckpts — check `du`); cleanup per rl-standard-job-cleanup; NO HF uploads; harvest
+per §Stage 6 / [[jsc_storage_map]]; report the sick-node/ghost-memory saga to JSC
+(node list = the 2026-08-14 additions in hpc.py node_exclusion_list; commits b132d7aa,
+c6986883..). Daylight code tasks: port upstream eb1e229 (grouped-GEMM pad-row numerics
+bug) + ebed3f4 (collective phase diagnostics); memory-headroom work to re-enable
+watchdog env (449d1eb analysis).
+
 ## BINDING OPERATOR DECISIONS (do not re-litigate)
 
 1. **Use Marianna's setup** = FSDP2 + her algorithm block verbatim: use_kl_loss true /
