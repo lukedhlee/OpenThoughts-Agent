@@ -130,6 +130,11 @@ Mac plan file: `/Users/lukedhlee/.claude/plans/shimmying-juggling-turtle.md` (fu
    EDQUOT scan, `sacct -j <id> -X` before any cause-of-death claim.
 5. **Verdict + report** (frame INFRA), update this note + NEXT_SESSION + tracker; cleanup
    per rl-standard-job-cleanup; NO HF uploads.
+6. **Harvest before the purge clock** (agent task, `crud-archive-run` + the standing rule in
+   [[jsc_storage_map]] §Purge exposure): wandb sync confirmed → tar each run dir as ONE file →
+   durable tier → checksum → rm. Hard deadlines from 08-14 mtimes: hf_hub snapshot purge-eligible
+   ~09-10; experiments/results ~09-13 (30d fscratch); rl-megatron venv dies ~10-23 (90d scratch,
+   not rebuildable in place — scratch inode-locked).
 
 ## Open/parked items
 

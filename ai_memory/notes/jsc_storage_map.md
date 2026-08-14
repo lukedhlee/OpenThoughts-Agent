@@ -53,6 +53,23 @@ budget; Marianna=nezhurina1 is a member). jutil refuses quota queries for non-me
 - Staging for agentic rollouts: fileset with ≥2M free inodes, conc sized to churn (≤~192 total),
   dir-count watchdog from minute 1 (alarm >900), probe-write seconds before submit.
 
+## Purge exposure — lee27 base30b campaign (mtimes surveyed 2026-08-14; per-FILE clocks)
+| Asset | Tier/clock | mtime | Purge from | If lost |
+|---|---|---|---|---|
+| hf_hub Base-30B snapshot (oldest blobs) | fscratch/30d | 2026-08-11 | **~2026-09-10** | re-download (recipe in base30b note) |
+| repos, gsm8k parquets, experiments/, cache/ | fscratch/30d | 2026-08-14 | ~2026-09-13 | rebuildable EXCEPT experiments/ (results/JSONLs/ckpts — must be harvested) |
+| envs/rl-megatron venv | /e/scratch/90d | 2026-07-25 | **~2026-10-23** | rebuild is expensive; also scratch is inode-locked so pip CANNOT write there — plan replacement env on another tier before this date |
+| Marianna's env (/e/data1/datasets) | data1/no purge | — | never | — |
+
+**Standing rule — campaign harvest (agent-runnable, use `crud-archive-run`):** within ~2 weeks of an
+arm/campaign concluding: (1) confirm wandb sync complete (metrics cloud-side = zero inodes), (2) tar
+each run dir AS ONE FILE (diag_rollouts JSONLs, dumped_evals, wandb offline dirs are exactly the
+many-small-files trees the inode policy punishes), (3) copy tar → durable tier (/e/project1/
+transfernetx candidate; mmlaion after write-probe), checksum, (4) only then rm the scratch tree.
+Winner checkpoints → HF `laion/`. Never copy a file TREE to an inode-tight durable tier.
+Long-term the 30d purge is a feature (caches/ray logs self-clean); the only real risk is skipping
+this harvest step — a monitor sweep should flag concluded-but-unarchived runs.
+
 ## Compute budgets (Aug 2026)
 reformo@JUPITER 66M core-h left (33%; expires 2026-12-31 — USE IT). laionize@JUPITER 37.5M (90%).
 laionize@JUWELS 4.1M (83%; CPU fleets). synthlaion@JURECA CPU 2.0M / GPU 6.8M. transfernetx@JUPITER
