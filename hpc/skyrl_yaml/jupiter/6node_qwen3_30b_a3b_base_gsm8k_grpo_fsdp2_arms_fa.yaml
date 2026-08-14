@@ -141,6 +141,11 @@ generator:
 
   engine_init_kwargs:
     max_model_len: 2048
+    # FlashInfer's fused-MoE JIT .so links the GCC-14 module libstdc++
+    # (GLIBCXX_3.4.32) but dlopen resolves the old system /lib64 one — engines
+    # crash-loop (job 1363397). Triton MoE needs no runtime build; same call the
+    # probe made (job 1085876 postmortem). FA attention backend is unaffected.
+    moe_backend: triton
 
 data:
   train_data: []
