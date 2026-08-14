@@ -445,6 +445,17 @@ protocol: jpbo-046/069/020/105/022 sites (c6986883..). 20:05 fleet: 3 arms activ
 (nokl s21 the from-scratch leader), lr1e6 parked. Cumulative best steps: nokl 21,
 lr3e6 24, lr8e6 23, lr1e6 9. Tally: 24 incidents / ~19 arm-hours.
 
+**21:05 sweep 11 — lr8e6 PASSES the s30 racing gate; ALL ARMS PASS.** lr8e6-v8 at s30:
+rew 0.891, ent 0.166 (plateaued, not collapsing), KL 0.072 bounded → healthy fast-
+converger, no kill. Gate summary: nokl PASSED (s32, morning run), lr8e6 PASSED (s30),
+lr3e6 healthy s21 (0.688) — gate moot for it and lr1e6 (no pathology). **Zero arms
+killed at the gate.** Attrition cycles #25-27: lr3e6-v8/v9 ghost-OOMs (jpbo-020 AGAIN
++ jpbo-100 disjoint subset → BOTH racks now excluded rack-level), nokl-v4 hang at
+**s28** with gs25 banked → v5 1378378 resume@25. lr1e6 UNPARKED as v10 1378384
+(resume@gs5). Fleet 21:05: lr1e6 1378384, lr3e6 1378002 (s21+), lr8e6 1377151 (s30+),
+nokl 1378378. Cumulative best: lr8e6 30, nokl 28, lr3e6 24, lr1e6 9.
+Tally: 27 incidents / ~21 arm-hours.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
