@@ -44,7 +44,7 @@
   },
   "fleet": [
     { "key": "lr1e6", "job": "1379349", "state": "restarting", "note": "resuming from step 10 — hang, then a ghost-OOM strike" },
-    { "key": "lr3e6", "job": "1379307", "state": "restarting", "note": "resuming from step 30 — hang, then a ghost-OOM strike" },
+    { "key": "lr3e6", "job": "1380047", "state": "queued", "note": "resuming from step 30 — third ghost-OOM strike (jpbo-003)" },
     { "key": "lr8e6", "job": "1379329", "state": "restarting", "note": "eval@40: 88.4% — resuming from step 40 after a hang at s44" },
     { "key": "lr3e6_nokl", "job": "1379844", "state": "queued", "note": "no-KL probe arm; resume@gs50 after s53 hang" }
   ],
@@ -80,7 +80,8 @@
       { "v": "v9", "job": "", "start": "20:25", "end": "20:40", "steps": "-", "fate": "oom", "note": "ghost-OOM (jpbo-100) → both racks excluded rack-level" },
       { "v": "v10", "job": "1378002", "start": "20:46", "end": "22:33", "steps": "21-31", "fate": "hang", "note": "resume@gs20; froze at s32 batch 10/32; scancel + nodes excluded" },
       { "v": "v11", "job": "1379098", "start": "22:47", "end": "23:02", "steps": "-", "fate": "oom", "note": "ghost-OOM at ckpt load (jpbo-030, 37 MiB free at job start)" },
-      { "v": "v12", "job": "1379307", "start": "23:05", "end": "", "steps": "32+", "fate": "run", "note": "resume@gs30 — only s31 lost" }
+      { "v": "v12", "job": "1379307", "start": "00:42", "end": "00:56", "steps": "0", "fate": "oom", "note": "ghost-OOM at engine load (jpbo-003, 18MiB free)" },
+      { "v": "v13", "job": "1380047", "start": "00:57", "end": "", "steps": "0", "fate": "run", "note": "resume@gs30, jpbo-003-[20..] excluded" }
     ],
     "lr8e6": [
       { "v": "v1", "job": "1366674", "start": "11:12", "end": "12:30", "steps": "1-8", "fate": "hang", "note": "backward hang entering s9 (jpbo-115) — killed fabric theory" },

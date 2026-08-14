@@ -26,7 +26,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 | arm | job | dir | resumed from |
 |---|---|---|---|
 | lr1e6 | 1379349 | base30b_gsm8k_lr1e6_13 | _11/ckpt gs10 |
-| lr3e6 | 1379307 | base30b_gsm8k_lr3e6_13 | _11/ckpt gs30 |
+| lr3e6 | 1380047 | base30b_gsm8k_lr3e6_14 | _11/ckpt gs30 |
 | lr8e6 | 1379329 | base30b_gsm8k_lr8e6_10 | _9/ckpt gs40 |
 | lr3e6_nokl | 1379844 | base30b_gsm8k_lr3e6_nokl_7 | _6/ckpt gs50 |
 
@@ -593,6 +593,14 @@ use_kl_loss=false, exclusion in sbatch). 1379844 PENDING behind the same busy
 queue as the other three (start est was 02:32 for those). Death-watcher b47nablpt,
 stall-watcher bthrf4lde rebuilt. Cumulative best: lr8e6 43, nokl 52, lr3e6 31,
 lr1e6 12. Tally: 33 incidents / ~25 arm-hours.
+**00:42 — queue broke early: ALL FOUR arms started** (est was 02:33). New nodesets:
+lr3e6 jpbo-003-[20,...], lr8e6 jpbo-054, lr1e6 jpbo-066, nokl jpbo-107.
+**00:56 incident #34 — lr3e6-v12 (1379307) ghost-OOM at engine load 13:55 in**
+(jpbo-003-[20,23-24,26-27,30], GPU had 18.88 MiB free of 95 GiB pre-load; different
+sub-range of already-partially-excluded jpbo-003 rack) → excluded (8c18896e) →
+v13 **1380047** resume@_11/gs30 (dir _14, sidecar v13; config verified: from_path
+gs30, lr 3e-6, exclusion in sbatch). Death-watcher blgvr1n46. Other three arms
+survived their load window (RUNNING 15+ min). Tally: 34 / ~25 arm-hours.
 
 **NEW TOOL: `scripts/dashboard/` (Runboard, commits c8fbcaa9+f78d6c82)** — local
 self-contained analysis website (operator-requested). `pull_wandb.py specs/<exp>.json`
