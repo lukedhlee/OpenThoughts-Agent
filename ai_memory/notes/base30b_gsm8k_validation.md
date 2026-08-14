@@ -434,6 +434,17 @@ GPU memory when ranks die inside spinning NCCL kernels; only JSC drain/reset cle
 nodes — prune when JSC resets). lr8e6-v7 **1376990** (dir _8, sidecar v7, resume@gs20).
 Tally: 20 incidents / ~17 arm-hours.
 
+**19:30-20:05 — attrition cycles #21-24, lr1e6 PARKED.** lr1e6 suffered 4 straight
+infant deaths (v7 hang s9 → banked its FIRST ckpt gs5; v8 ghost-OOM at load jpbo-020;
+v9 ghost-OOM jpbo-022) → **parked ~90 min** (triage: lr3e6/lr8e6/nokl carry the
+campaign; unpark timer set). lr8e6-v7 hung in startup (jpbo-069) → v8 **1377151**
+resume@gs20 now s21+ on jpbo-112. lr3e6-v7 reached **s24, banked gs15+gs20** before
+hanging (jpbo-105) → v8 **1377427** resume@its own gs20. nokl-v4 healthy **s21,
+banked gs5+gs20** (one clipped grad spike 40 — watching). Exclusions grown per
+protocol: jpbo-046/069/020/105/022 sites (c6986883..). 20:05 fleet: 3 arms active
+(nokl s21 the from-scratch leader), lr1e6 parked. Cumulative best steps: nokl 21,
+lr3e6 24, lr8e6 23, lr1e6 9. Tally: 24 incidents / ~19 arm-hours.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
