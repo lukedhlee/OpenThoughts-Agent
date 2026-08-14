@@ -919,12 +919,13 @@ jupiter = HPC(
         # Jupiter IB, one rank occasionally straggles past 10 min on a single
         # collective. 30 min lets the run survive transient stragglers without
         # masking permanent hangs (those still die, just 20 min later).
-        # Never add NCCL_BLOCKING_WAIT / TORCH_NCCL_BLOCKING_WAIT(_TIMEOUT_MS)
-        # here: the blocking-wait alias puts NCCL in a wait mode whose deadline
-        # never fires, so a hung collective spins forever instead of aborting
-        # (observed 3x on Jupiter EP/FSDP2 backward, 2026-08-14; matches
-        # upstream MarinSkyRL 449d1eb, which strips these vars pre-import).
+        # Blocking-wait mode is memory-load-bearing on 30B EP/FSDP2 RL (see the
+        # NCCL_BLOCKING_WAIT comment in sbatch_rl/universal_rl.sbatch): removing
+        # it OOM'd every long-generation arm within steps 1-13 on 2026-08-14.
+        # Trade-off accepted: hung collectives spin without watchdog abort —
+        # external stall-watchers are the detection layer.
         "TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC": "1800",
+        "TORCH_NCCL_BLOCKING_WAIT_TIMEOUT_MS": "1800000",
         # Bump shm_broadcast ring slot count 10 → 240 to widen the buffer
         # for the cross-node DP+MoE+EP coordination bus. Hardcoded default
         # in MessageQueue is 10 slots; with our patches it's overridable

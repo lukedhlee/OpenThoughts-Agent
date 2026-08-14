@@ -159,14 +159,17 @@ export TORCH_SHOW_CPP_STACKTRACES=1
 export CUDA_LAUNCH_BLOCKING=0
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=1800
-# Do NOT set NCCL_BLOCKING_WAIT / TORCH_NCCL_BLOCKING_WAIT here. The legacy
-# blocking-wait alias selects a wait mode in which a hung EP/FSDP collective
-# survives past its process-group deadline indefinitely — 16 ranks spin at
-# 100% GPU and no watchdog ever fires (three such hangs on Jupiter GH200,
-# 2026-08-14; upstream MarinSkyRL 449d1eb reached the same conclusion and
-# strips these vars before torch import). Async error handling + the heartbeat
-# timeout below are what convert a hang into an abort with FlightRecorder
-# dumps; blocking-wait silently defeats both.
+# NCCL_BLOCKING_WAIT=1 is memory-load-bearing on the 30B EP/FSDP2 GRPO config,
+# not just a debugging aid. 2026-08-14 A/B on the base30b gsm8k arms: removing
+# it (to let the heartbeat watchdog abort hung collectives, per upstream
+# MarinSkyRL 449d1eb) made every LONG-generation arm CUDA-OOM within steps
+# 1-13 (594MiB alloc, device-global ~95GB full; five jobs) while the exact
+# same yaml ran hours OOM-free with it set — blocking wait serializes the
+# FSDP2 allgather pipeline and caps peak memory. The cost: a hung EP
+# collective spins at 100% GPU forever with NO watchdog abort (six such
+# hangs) — pair any long run with an external log-mtime stall-watcher.
+# Do not remove again without first buying back memory headroom.
+export NCCL_BLOCKING_WAIT=1
 # TORCH_NCCL_TRACE_BUFFER_SIZE > 0 enables PyTorch's NCCL FlightRecorder,
 # which captures rank-by-rank stack traces of the most recent N collective
 # operations. On crash, ProcessGroupNCCL.cpp emits these traces — the
