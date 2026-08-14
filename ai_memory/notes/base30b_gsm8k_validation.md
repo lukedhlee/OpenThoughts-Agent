@@ -302,6 +302,13 @@ should actually fire on the next hang (expect abort ≤30 min + FlightRecorder d
 the job log — grep for "Flight Recorder" / ProcessGroupNCCL abort on its next death).
 Hang tally: 4 incidents / ~7 arm-hours (lr1e6 ×2, lr8e6 ×1, lr3e6 ×1 sick-node).
 
+**14:50 incident #5 — lr8e6 (1368098) froze at s15 → FIRST RESUME-FROM-CKPT relaunch:
+1370390** resumes from `_3/checkpoints/global_step_10` (RESUME_MODE=from_path; only
+s11-15 lost). Signature unconfirmed (I py-spy'd the WRONG nodeset — 1368098 ran on
+jpbo-100-[43-48], not jpbo-115; evidence = 17-min log freeze). Verify resumes via
+`configs/*_rl_config.json` hydra list, NOT the sbatch (overrides live there).
+Tally: 5 incidents / ~8 arm-hours.
+
 ## Open/parked items
 
 - Sweep-shards mystery RESOLVED: the other session's sweep was operator-PARKED 08-14
