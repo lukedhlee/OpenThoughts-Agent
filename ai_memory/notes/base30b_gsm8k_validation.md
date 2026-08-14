@@ -325,6 +325,14 @@ mid-script. Confirm hangs by log mtime + step-stop alone; py-spy only as a separ
 expendable call; ALWAYS verify scancel with an independent squeue check.
 Tally: 7 incidents / ~10 arm-hours; every arm has now hung ≥1×.
 
+**15:31 incident #8 — lr3e6-v3 (1370635) FAILED 21 min in, exit 1** — NOT a hang: all 4
+vLLM engine processes on ONE engine node (10.128.32.158, jpbo-044 set) were killed at
+OS level (OOM-killer/segfault per raylet) during `broadcast_to_inference_engines`, which
+took the job down cleanly. Resume itself is EXONERATED — lr8e6-v3 did the identical
+global_step_10 resume and is training (s12+). Relaunched **1371287** (dir `_5`, sidecar
+v4, same resume). If jpbo-044's engine node kills it again → exclude that node.
+Tally: 8 incidents / ~10 arm-hours (6 hang-class, 1 sick-node, 1 engine-node OOM/segv).
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
