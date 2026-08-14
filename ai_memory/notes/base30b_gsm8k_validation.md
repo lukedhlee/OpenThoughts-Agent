@@ -186,6 +186,56 @@ Mac plan file: `/Users/lukedhlee/.claude/plans/shimmying-juggling-turtle.md` (fu
    ~09-10; experiments/results ~09-13 (30d fscratch); rl-megatron venv dies ~10-23 (90d scratch,
    not rebuildable in place — scratch inode-locked).
 
+## 2026-08-14 overnight: G3 PASS + arms LIVE
+
+**Re-smoke 1365265 (base30b_gsm8k_smoke2_2) = G3 PASS, all gates.** COMPLETED 0:0 in
+1:01:47 on MarinSkyRL c5ca635 (surgical upstream-shape `_fsdp_moe_model_kwargs()` —
+the a906145 reconciliation TODO above is DONE; full cherry-pick 8706320 was abandoned
+after a NameError from bad conflict resolution killed 1364558 in 4 min).
+Numbers: steps 469/521/452s (sync_weights fixed ~178s/step, NOT one-time);
+reward 0.336→0.359→0.398; **eval@3 64.5% vs 57.8% step-0** (probe strict 60.5%);
+KL 0.004–0.005, entropy 1.0→0.85, grad_norm 2.1–4.4, TIS ≈1.00.
+**eval_batch_size 256 ⇒ eval 1183s (~20 min), 4× faster than bs=32.**
+**Diag sanity PASS:** step-3 recompute from diag_rollouts JSONL == trainer diag/*
+EXACTLY (mixed .9375 / all-wrong .0625 / p50 292 / trunc .0938 / full phat);
+sidecar acc 0.6447 vs trainer 0.6452 (≤1 row). Quirks: end-of-training saves an extra
+ckpt as global_step_N+1 (no extra train step); trainer offline wandb run lives in
+`<exp_dir>/wandb/wandb/offline-run-*` (NOT $WANDB_DIR); `WANDB_MIRROR kind=eval` line
+absent for end-of-run eval (dumped_evals JSONL is authoritative).
+
+**wandb project override gotcha:** run script line 178 passes
+`trainer.project_name=$WANDB_PROJECT` (default jupiter-moe-gsm8k-grpo) as a hydra
+override that BEATS the yaml — WANDB_PROJECT must be set in the launch env. Smoke2
+trainer run re-synced into the right project as id `smoke2-trainer`
+(`wandb sync --no-skip-synced -p jupiter-base30b-gsm8k-grpo --id ...`).
+
+**QOS cap:** partition MaxTime=UNLIMITED is a lie for scheduling — QOS `part_booster`
+MaxWall=12:00:00 rejects >12h (`QOSMaxWallDurationPerJobLimit`, first arm volley
+bounced at 16h). 11:59:00 is the real ceiling.
+
+**Ckpt sizing:** 197GB/ckpt (6-node FSDP2 30B + optimizer). fscratch reformo at
+30/42.9TB soft → CKPT_INTERVAL=40 for arms (~0.6TB/arm). Smoke2 left 2×197GB
+(global_step_3/4) — reclaim at harvest.
+
+**Arms LAUNCHED 11:0x, all RUNNING immediately (verified in rendered sbatch):**
+| arm | job | POLICY_LR | kl |
+|---|---|---|---|
+| lr1e6 | 1366671 | 1.0e-6 | on |
+| lr3e6 | 1366672 | 3.0e-6 | on |
+| lr8e6 | 1366674 | 8.0e-6 | on |
+| lr3e6_nokl | 1366675 | 3.0e-6 | **use_kl_loss=false** |
+
+Common: 6 nodes, TIME_LIMIT=11:59:00, MAX_STEPS=80, **EVAL_INTERVAL=40,
+EVAL_BEFORE_TRAIN=false** (wall math at 481s/step: 80 steps + evals@{0,40,80} does not
+fit 12h; step-0 baseline already measured twice at 57.77%), CKPT_INTERVAL=40,
+gen 2048/model_len 3072, WANDB_PROJECT=jupiter-base30b-gsm8k-grpo. Expected ~11.8h;
+ckpt-before-eval ordering means worst-case walltime kill costs only the final eval.
+Experiment dirs: `$F/experiments/base30b_gsm8k_<arm>_2` (the `_2` is real — the bounced
+16h volley consumed the bare names). Launch logs: `$F/experiments/launch_logs/`.
+Login-node tmux: `arms_sync` (10-min wandb sync loop, --no-skip-synced) +
+`sidecar_<arm>` ×4 (watch mode, online). Per-arm 60s death-watchers running Mac-side.
+Racing gate step ~30: kill ONLY pathological (reward→0, entropy→~0.01, grad explosion).
+
 ## Open/parked items
 
 - Sweep-shards mystery RESOLVED: the other session's sweep was operator-PARKED 08-14
