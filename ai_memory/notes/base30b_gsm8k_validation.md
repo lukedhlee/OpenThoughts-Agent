@@ -154,6 +154,15 @@ Mac plan file: `/Users/lukedhlee/.claude/plans/shimmying-juggling-turtle.md` (fu
    (auto-search looks for Instruct under HF_HUB_CACHE). Launcher relaunches rename the
    experiment dir (_2, _3…) — always re-resolve the dir from smoke_launch.log before
    inspecting sbatch/config.
+3a-cont. **Smoke crash-fix ladder (all committed):** 1363397 died — FlashInfer fused-MoE
+   JIT .so needs GLIBCXX_3.4.32 (GCC-14 module) but dlopen resolves old system
+   /lib64/libstdc++ → engine crash-loop. Fix: `engine_init_kwargs.moe_backend: triton`
+   in arms_fa.yaml (same call as the probe; FA attention unaffected) + wiped
+   $F/cache/flashinfer. 1363512 died at 9 min — MarinSkyRL RefWorker built its
+   HFModelWrapper WITHOUT moe_grouped_gemm/use_grouped_mm kwargs → KL ref model unswapped
+   → EP=4 assert "no grouped MoE experts". July runs never exercised KL-with-ref.
+   Fix: MarinSkyRL d9946bd on lukedhlee/jupiter-worktree-0814 (pass both kwargs from
+   ref.fsdp_config). **Current smoke attempt: 1363765.**
 3b. Also start per-arm sidecar tmux + the wandb offline sync loop at arms launch.
 4. **Stage-4 arms:** 4 launches, same command as smoke minus smoke overrides, plus
    JOB_NAME/POLICY_LR per the arms table (arm D adds USE_KL_LOSS=false),
