@@ -403,6 +403,20 @@ the condemned env get ~35 min for watchdog self-abort before any scancel; revert
 hangs need scancel (watchdog blind) — accept the ghost risk, exclusions absorb it.
 Tally: 16 incidents / ~14 arm-hours.
 
+**17:5x — SICK-NODE STORM confirmed, blocking-wait theory DEAD, fleet cycled again.**
+lr1e6-v6 OOM'd at s1 ON THE REVERTED ENV → the NCCL_BLOCKING_WAIT revert did NOT cause/
+fix the OOMs (revert 5f9bcb44 stays anyway — harmless, pre-fix-proven). Real story:
+**a pool of sick/ghost-memory GPUs circulating in the idle pool** (any user's crashed EP
+job seeds them); relaunches roll dice. Direct evidence: jpbo-009-03 (killed lr1e6-v6)
+went DOWN/DRAINED minutes later — JSC health automation drains them one victim late.
+Attrition 15:00-18:00 ≈ 70% infant mortality; expect it to subside as the pool drains.
+lr3e6-v5/v6 deaths = same worker-OS-kill class (ActorDiedError, no OOM/heartbeat lines).
+**lr8e6-v5 (1374136) broke through: s15 done, ckpt global_step_15 BANKED** (future lr8e6
+resumes from 15). The "resume jobs die s12-16" pattern was storm coincidence.
+Fleet: lr1e6-v7 1375864 (fresh, dir _8), lr3e6-v7 1375865 (resume@10, dir _8),
+lr8e6-v5 1374136 (s15+, jpbo-003), nokl-v4 1375221 (startup, jpbo-068).
+Tally: 18 incidents / ~15 arm-hours.
+
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
