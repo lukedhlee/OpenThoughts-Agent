@@ -1002,7 +1002,13 @@ jupiter = HPC(
     # jpbo-044-0[1-5] added 2026-04-22: repeated NCCL TCPStore broken-pipe stalls on Qwen3.5-9B chain (4 consecutive failures)
     # jpbo-074-40 added 2026-05-20: SSH tunnel to login jpbl-s01-01 "No route to host" — proxychains setup fails at job start (exit 127 in 29s, job 475717)
     # 2026-05-22: briefly excluded jpbo-063-40 + jpbo-063-36 after GLM-4.7 v6 (493343) shm_broadcast cascade was heavily attributed to those nodes. Rolled back after MiniMax (493421) on disjoint nodes jpbo-001-[23,32] hit the same hang at a comparable serving-time mark (~55min) with jpbo-001-32 as the primary offender (5/7 warnings). Two disjoint node sets, two distinct configs, same failure mode → the issue is a wheel-level cross-node sustained-load bug, not a per-node interconnect flake. Don't add per-incident -063 / -001 exclusions to mask it.
-    node_exclusion_list="jpbo-031-[01-48],jpbo-011-[01-48],jpbo-038-38,jpbo-004-46,jpbo-065-17,jpbo-074-22,jpbo-074-40,jpbo-048-41,jpbo-091-05,jpbo-044-0[1-5]",
+    # 2026-08-14 (base30b gsm8k arms): six nodesets that hosted scancel'd deadlock-spinning
+    # EP/FSDP2 jobs. Killing a job whose ranks spin inside a hung NCCL kernel leaves ~75GB
+    # of unattributed ghost GPU memory behind (torch OOM shows 95GB at capacity with only
+    # ~20GB attributed to live processes); Slurm reallocates the freshly-freed nodes to the
+    # relaunch, which then OOMs in the first allgather that needs headroom (jobs 1369951,
+    # 1370390, 1370635). Prune after JSC resets/reboots these nodes.
+    node_exclusion_list="jpbo-031-[01-48],jpbo-011-[01-48],jpbo-038-38,jpbo-004-46,jpbo-065-17,jpbo-074-22,jpbo-074-40,jpbo-048-41,jpbo-091-05,jpbo-044-0[1-5],jpbo-014-[18,24-25,27,31-32],jpbo-034-[18,23-25,27-29],jpbo-044-[07,11-15],jpbo-060-[05-06,10,12,14,16],jpbo-100-[43-48],jpbo-115-[42,44-48]",
     # Stage 4: eval-listener cluster config (single source of truth — was eval/clusters/jupiter.yaml).
     # User-scoped paths mirror that yaml (zhuang1's); parameterizing via dotenv is a follow-up.
     eval_cluster_view={
