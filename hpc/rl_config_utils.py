@@ -523,6 +523,8 @@ def build_skyrl_hydra_args(
     model_path = exp_args.get("model_path")
     if model_path:
         trainer.setdefault("policy", {}).setdefault("model", {})["path"] = model_path
+        if "ref" in trainer:
+            trainer.setdefault("ref", {}).setdefault("model", {})["path"] = model_path
 
         # Compute served_model_name: extract just the model name from "org/model" format.
         # Harbor/LiteLLM requires model names with exactly one '/' (e.g., "hosted_vllm/Qwen3-8B"),
@@ -530,10 +532,11 @@ def build_skyrl_hydra_args(
         served_model_name = model_path.split("/")[-1] if "/" in model_path else model_path
         generator.setdefault("engine_init_kwargs", {})["served_model_name"] = served_model_name
 
-    # HuggingFace Hub upload settings (for automatic checkpoint uploads)
-    # Default to laion/<job_name> if not explicitly provided
+    # HuggingFace Hub upload settings (for automatic checkpoint uploads).
+    # Default to laion/<job_name> only when the YAML did not mention the key.
+    # An explicit `hf_hub_repo_id: null` means uploads are disabled.
     hf_hub_repo_id = exp_args.get("hf_hub_repo_id")
-    if not hf_hub_repo_id and job_name:
+    if not hf_hub_repo_id and "hf_hub_repo_id" not in trainer and job_name:
         hf_hub_repo_id = f"laion/{job_name}"
         print(f"HF Hub upload auto-defaulted to: {hf_hub_repo_id}")
     if hf_hub_repo_id:
@@ -565,10 +568,24 @@ def build_skyrl_hydra_args(
     # - engine_init_kwargs: vLLM engine settings vary by config
     # - hf_hub_*: HuggingFace upload settings not in base config
     # - enable_db_registration: database registration setting
+    # - *_config_kwargs: Megatron/MegatronBridge passthrough kwargs vary by version
     # - wrap_policy: fsdp_config.wrap_policy.transformer_layer_cls_to_wrap is not in
     #   SkyRL's base fsdp_config struct, so a bare override is rejected
     #   ("Key 'wrap_policy' is not in struct"); ++ adds-or-overrides it.
-    optional_patterns = {".engine_init_kwargs", ".hf_hub_", ".enable_db_registration", ".optimizer_kwargs", ".rope_scaling", ".wrap_policy"}
+    optional_patterns = {
+        ".engine_init_kwargs",
+        ".hf_hub_",
+        ".enable_db_registration",
+        ".optimizer_kwargs",
+        ".save_optimizer_states",
+        ".load_optimizer_states",
+        ".save_lr_scheduler_states",
+        ".load_lr_scheduler_states",
+        ".model_config_kwargs",
+        ".rope_scaling",
+        ".transformer_config_kwargs",
+        ".wrap_policy",
+    }
 
     for section, values in [("trainer", trainer), ("generator", generator), ("data", data)]:
         for key, val in _flatten_dict(values, section).items():

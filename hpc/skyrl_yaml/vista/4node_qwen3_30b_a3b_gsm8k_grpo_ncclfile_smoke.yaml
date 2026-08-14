@@ -1,0 +1,160 @@
+# Vista 4-node gh-dev smoke: verify file-backed NCCL_DEBUG=INFO under Ray.
+# Expect files at /scratch/11584/lukedhlee/nccl_debug/nccl_<host>_<pid>.log
+# with real "NCCL INFO" lines after init / first sync_weights.
+#   NUM_NODES=4 PARTITION=gh-dev TIME_LIMIT=02:00:00 \
+#   RL_CONFIG=./hpc/skyrl_yaml/vista/4node_qwen3_30b_a3b_gsm8k_grpo_ncclfile_smoke.yaml \
+#   JOB_NAME=vista_moe30b_ncclfile_smoke_4n \
+#   bash hpc/skyrl_standard/vista/run_gsm8k_moe30b_grpo.sh
+entrypoint: skyrl_train.entrypoints.main_base
+
+trainer:
+  strategy: fsdp2
+  flash_attn: true
+  gradient_checkpointing: true
+  gradient_checkpointing_use_reentrant: true
+  algorithm:
+    advantage_estimator: grpo
+    use_kl_loss: false
+    kl_loss_coef: 0.0
+    eps_clip_low: 0.2
+    eps_clip_high: 0.2
+    loss_reduction: sequence_mean
+    use_tis: false
+
+  epochs: 1
+  max_steps: 2
+  update_epochs_per_batch: 1
+
+  train_batch_size: 4
+  policy_mini_batch_size: 4
+  eval_batch_size: 8
+
+  micro_forward_batch_size_per_gpu: 1
+  micro_train_batch_size_per_gpu: 1
+
+  max_prompt_length: 512
+
+  eval_interval: 999999
+  eval_before_train: false
+  seed: 42
+  ckpt_interval: 999999
+  resume_mode: null
+  hf_save_interval: 999999
+  hf_hub_repo_id: null
+  hf_hub_private: false
+  hf_hub_revision: main
+
+  enable_db_registration: false
+
+  project_name: OpenThoughts-Agent
+  log_level: INFO
+  tracker_commit_each_step: true
+  logger: wandb
+
+  run_name: null
+  ckpt_path: null
+  export_path: null
+
+  policy:
+    model:
+      path: Qwen/Qwen3-30B-A3B
+    optimizer_config:
+      lr: 1.0e-6
+      weight_decay: 0.0
+      adam_betas: [0.9, 0.999]
+      max_grad_norm: 1.0
+    fsdp_config:
+      cpu_offload: true
+      reshard_after_forward: true
+      fsdp_size: 1
+      expert_model_parallel_size: 2
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+  ref:
+    model:
+      path: Qwen/Qwen3-30B-A3B
+    fsdp_config:
+      cpu_offload: true
+      reshard_after_forward: true
+      fsdp_size: 1
+      expert_model_parallel_size: 2
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+
+  placement:
+    colocate_all: false
+    colocate_policy_ref: true
+    policy_num_nodes: 2
+    ref_num_nodes: 2
+    policy_num_gpus_per_node: 1
+    ref_num_gpus_per_node: 1
+    critic_num_nodes: 1
+    critic_num_gpus_per_node: 1
+
+generator:
+  backend: vllm
+  timeout_multiplier: 1.0
+  model_dtype: bfloat16
+  enforce_eager: true
+
+  inference_engine_tensor_parallel_size: 1
+  num_inference_engines: 2
+  inference_engine_expert_parallel_size: 1
+
+  n_samples_per_prompt: 2
+  eval_n_samples_per_prompt: 1
+
+  gpu_memory_utilization: 0.90
+
+  max_num_seqs: 4
+  max_num_batched_tokens: 4096
+
+  enable_prefix_caching: true
+  enable_chunked_prefill: true
+
+  run_engines_locally: true
+  weight_sync_backend: nccl
+  async_engine: true
+  batched: true
+
+  sampling_params:
+    max_generate_length: 1024
+    temperature: 0.7
+    top_p: 0.95
+    top_k: 20
+
+  engine_init_kwargs:
+    max_model_len: 1536
+    enable_return_routed_experts: false
+
+data:
+  train_data: []
+  val_data: []
+
+container:
+  extra_env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    NCCL_DEBUG: INFO
+    NCCL_DEBUG_SUBSYS: INIT,NET,COLL
+    # Ray often drops NCCL stderr from Slurm .out — write per-rank files instead.
+    NCCL_DEBUG_FILE: /scratch/11584/lukedhlee/nccl_debug/nccl_%h_%p.log
+    TORCH_NCCL_DEBUG_INFO_TEMP_FILE: /scratch/11584/lukedhlee/nccl_fr/nccl_trace_
+    TORCH_FR_DUMP_TEMP_FILE: /scratch/11584/lukedhlee/nccl_fr/nccl_trace_
+    SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
+    VLLM_ATTENTION_BACKEND: FLASH_ATTN
+    FLASHINFER_WORKSPACE_BASE: /scratch/11584/lukedhlee/flashinfer_ws
+    CC: /opt/apps/gcc/14.2.0/bin/gcc
+    CXX: /opt/apps/gcc/14.2.0/bin/g++
+    TRITON_CC: /opt/apps/gcc/14.2.0/bin/gcc
+    LD_PRELOAD: /opt/apps/gcc/14.2.0/lib64/libstdc++.so.6
+    CONDA_EXE: /scratch/10635/penfever/miniconda3/bin/conda
+    RL_PYTHON: /scratch/10635/penfever/miniconda3/envs/otagent/bin/python
+    RL_REPO_DIR: /scratch/11584/lukedhlee/MarinSkyRL
+    SKYRL_HOME: /scratch/11584/lukedhlee/MarinSkyRL
+    PYTHONUSERBASE: /scratch/11584/lukedhlee/python_user
+    PYTHONPATH: /scratch/11584/lukedhlee/python_user/lib/python3.12/site-packages:/scratch/11584/lukedhlee/harbor/src:/scratch/11584/lukedhlee/MarinSkyRL/skyrl-train:/scratch/11584/lukedhlee/MarinSkyRL/skyrl-gym:/scratch/11584/lukedhlee/OpenThoughts-Agent
+    WANDB_PROJECT: vista-moe-gsm8k-grpo
+    WANDB_MODE: online
+    DC_AGENT_SECRET_ENV: /scratch/11584/lukedhlee/keys.env

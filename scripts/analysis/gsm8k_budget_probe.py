@@ -69,6 +69,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--temperature", type=float, default=0.7)
     p.add_argument("--top-p", type=float, default=0.95)
     p.add_argument("--seed", type=int, default=42)
+    # --- band mode (default OFF; --n-samples 1 keeps the original single-pass
+    # behaviour byte-identical). With --n-samples > 1, ALSO run a pass@k probe:
+    # a random subset of problems, n samples each at --band-temperature, scored
+    # STRICT at the full generation budget, reported as a "band" section in the
+    # results JSON. The budget-sweep pass above still runs unchanged.
+    p.add_argument("--n-samples", type=int, default=1, help="Band mode: samples per problem (1 = band off)")
+    p.add_argument("--subset-frac", type=float, default=1.0, help="Band mode: fraction of the val set to probe")
+    p.add_argument("--subset-seed", type=int, default=42, help="Band mode: RNG seed for the subset draw")
+    p.add_argument(
+        "--band-temperature",
+        type=float,
+        default=None,
+        help="Band mode sampling temperature (default: same as --temperature)",
+    )
     p.add_argument("--tensor-parallel-size", type=int, default=4)
     p.add_argument("--max-model-len", type=int, default=8192)
     p.add_argument("--gpu-memory-utilization", type=float, default=0.85)
@@ -171,6 +185,96 @@ def summarize(name: str, scores: list[float]) -> dict:
     # per-arm figure, not the SE of a between-arm difference.
     se = (acc * (1 - acc) / n) ** 0.5 if n else 0.0
     return {"arm": name, "n": n, "correct": correct, "accuracy": acc, "se": se, "ci95": 1.96 * se}
+
+
+def run_band(llm, prompts: list[str], rows: list[dict], compute_score: Callable[..., float], args) -> dict:
+    """Pass@k band probe: n samples per problem on a random subset, each scored
+    with the STRICT scorer at the full generation budget. Reuses the already
+    loaded engine; only called when --n-samples > 1."""
+    import random  # noqa: PLC0415
+
+    from vllm import SamplingParams  # noqa: PLC0415
+
+    n_total = len(rows)
+    k = max(1, min(n_total, round(args.subset_frac * n_total)))
+    indices = sorted(random.Random(args.subset_seed).sample(range(n_total), k))
+    band_temp = args.temperature if args.band_temperature is None else args.band_temperature
+
+    sp = SamplingParams(
+        n=args.n_samples,
+        temperature=band_temp,
+        top_p=args.top_p,
+        max_tokens=args.max_generate_length,
+        seed=args.seed,
+    )
+    t0 = time.time()
+    outs = llm.generate([prompts[i] for i in indices], sp)
+    band_secs = time.time() - t0
+    print(
+        f"[probe] band generation done in {band_secs:.1f}s "
+        f"({k} problems x {args.n_samples} samples @ T={band_temp})",
+        flush=True,
+    )
+
+    per_problem: list[dict] = []
+    hist = [0] * (args.n_samples + 1)
+    group_stds: list[float] = []
+    all_lengths: list[int] = []
+    for idx, out in zip(indices, outs):
+        gt = rows[idx]["ground_truth"]
+        rewards = [compute_score(comp.text, gt, method="strict") for comp in out.outputs]
+        tok_lens = [len(comp.token_ids) for comp in out.outputs]
+        num_correct = int(sum(1 for r in rewards if r > 0))
+        hist[num_correct] += 1
+        mu = sum(rewards) / len(rewards)
+        group_stds.append((sum((r - mu) ** 2 for r in rewards) / len(rewards)) ** 0.5)
+        all_lengths.extend(tok_lens)
+        per_problem.append(
+            {
+                "index": idx,
+                "num_correct": num_correct,
+                "p_hat": num_correct / args.n_samples,
+                "token_lengths": tok_lens,
+            }
+        )
+
+    xs = sorted(all_lengths)
+    m = len(xs)
+
+    def pct(q: float) -> int:
+        # Nearest-rank percentile over the pre-sorted band sample lengths.
+        return xs[max(0, min(m - 1, int(round(q / 100.0 * (m - 1)))))] if m else 0
+
+    return {
+        "config": {
+            "n_samples": args.n_samples,
+            "subset_frac": args.subset_frac,
+            "subset_seed": args.subset_seed,
+            "temperature": band_temp,
+            "subset_size": k,
+            "max_generate_length": args.max_generate_length,
+        },
+        "generation_seconds": band_secs,
+        "per_problem": per_problem,
+        "aggregates": {
+            "n_problems": k,
+            "frac_all_wrong": hist[0] / k,
+            "frac_mixed": sum(hist[1 : args.n_samples]) / k,
+            "frac_all_correct": hist[args.n_samples] / k,
+            "mean_within_group_reward_std": sum(group_stds) / k,
+            "num_correct_histogram": {str(c): hist[c] for c in range(args.n_samples + 1)},
+        },
+        "token_lengths": {
+            "n_samples_total": m,
+            "mean": (sum(xs) / m) if m else 0.0,
+            "p50": pct(50),
+            "p90": pct(90),
+            "p99": pct(99),
+            "max": xs[-1] if xs else 0,
+            "frac_over_1024": (sum(1 for length in xs if length > 1024) / m) if m else 0.0,
+            "frac_over_2048": (sum(1 for length in xs if length > 2048) / m) if m else 0.0,
+        },
+    }
 
 
 def main() -> int:
@@ -302,6 +406,9 @@ def main() -> int:
         "samples": samples,
     }
 
+    if args.n_samples > 1:
+        results["band"] = run_band(llm, prompts, rows, compute_score, args)
+
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "w") as fh:
         json.dump(results, fh, indent=2)
@@ -318,6 +425,16 @@ def main() -> int:
     for b in budgets:
         print(f"  would exceed {b:>5}: {over[b]} ({over[b]/n*100:.1f}%)")
     print(f"  mean tokens  correct={t['mean_tokens_correct']:.0f}  incorrect={t['mean_tokens_incorrect']:.0f}")
+    if args.n_samples > 1:
+        band = results["band"]
+        ag, tl = band["aggregates"], band["token_lengths"]
+        print("-" * 72)
+        print(f"  band (n={band['config']['n_samples']} @ T={band['config']['temperature']}, "
+              f"{ag['n_problems']} problems): all_wrong={ag['frac_all_wrong']*100:.1f}%  "
+              f"mixed={ag['frac_mixed']*100:.1f}%  all_correct={ag['frac_all_correct']*100:.1f}%")
+        print(f"  band mean within-group reward std = {ag['mean_within_group_reward_std']:.3f}")
+        print(f"  band tokens: mean={tl['mean']:.0f}  p50={tl['p50']}  p90={tl['p90']}  p99={tl['p99']}  "
+              f"max={tl['max']}  >1024: {tl['frac_over_1024']*100:.1f}%  >2048: {tl['frac_over_2048']*100:.1f}%")
     print("=" * 72)
     print("\nInterpretation: if strict@1024 lands near 0.451 while strict@full is far")
     print("higher, the old curve was a truncation artifact. If flexible@full is much")

@@ -192,8 +192,15 @@ class RayCluster:
 
         # Enable proxychains if the HPC cluster has it configured (e.g., JSC/Jupiter)
         # This allows Ray workers to make proxied external calls (e.g., Daytona API)
-        # Prefer wrapped binary approach (proxychains_binary) over LD_PRELOAD (proxychains_preload)
-        proxychains_binary = getattr(hpc, "proxychains_binary", "")
+        # Prefer wrapped binary approach (proxychains_binary) over LD_PRELOAD (proxychains_preload).
+        # Skip a configured binary that isn't executable (Permission denied → exit 126).
+        proxychains_binary = getattr(hpc, "proxychains_binary", "") or ""
+        if proxychains_binary and not os.access(proxychains_binary, os.X_OK):
+            print(
+                f"[ray] proxychains binary not executable, skipping wrap: {proxychains_binary}",
+                flush=True,
+            )
+            proxychains_binary = ""
         use_proxychains = bool(proxychains_binary or getattr(hpc, "proxychains_preload", ""))
 
         # Enable NUMA monitoring if configured for this cluster (e.g., Jupiter GH200)

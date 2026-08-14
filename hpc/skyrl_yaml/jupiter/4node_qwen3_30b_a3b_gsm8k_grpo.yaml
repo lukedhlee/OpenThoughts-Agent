@@ -1,0 +1,155 @@
+entrypoint: skyrl_train.entrypoints.main_base
+
+trainer:
+  strategy: fsdp2
+  # FA2 wheel + cute subtree disabled (see hpc/skyrl_standard/jupiter/fix_flash_attn_cute.sh).
+  flash_attn: true
+  gradient_checkpointing: true
+  gradient_checkpointing_use_reentrant: true
+  algorithm:
+    advantage_estimator: grpo
+    use_kl_loss: false
+    kl_loss_coef: 0.0
+    eps_clip_low: 0.2
+    eps_clip_high: 0.2
+    loss_reduction: sequence_mean
+    use_tis: false
+
+  epochs: 1
+  max_steps: 50
+  update_epochs_per_batch: 1
+
+  train_batch_size: 32
+  policy_mini_batch_size: 32
+  eval_batch_size: 32
+
+  micro_forward_batch_size_per_gpu: 1
+  micro_train_batch_size_per_gpu: 1
+
+  max_prompt_length: 512
+
+  eval_interval: 5
+  eval_before_train: true
+  seed: 42
+  ckpt_interval: 5
+  resume_mode: null
+  hf_save_interval: 999999
+  hf_hub_repo_id: null
+  hf_hub_private: false
+  hf_hub_revision: main
+
+  enable_db_registration: false
+
+  project_name: jupiter-moe-gsm8k-grpo
+  log_level: INFO
+  tracker_commit_each_step: true
+  logger: wandb
+
+  run_name: null
+  ckpt_path: null
+  export_path: null
+
+  policy:
+    model:
+      path: Qwen/Qwen3-30B-A3B
+    optimizer_config:
+      lr: 1.0e-6
+      weight_decay: 0.0
+      adam_betas: [0.9, 0.999]
+      max_grad_norm: 1.0
+    fsdp_config:
+      cpu_offload: true
+      reshard_after_forward: true
+      # 8 policy GPUs: EP=4 × FSDP=2 (fits develbooster max 4 nodes / 16 GPUs)
+      fsdp_size: 2
+      expert_model_parallel_size: 4
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+  ref:
+    model:
+      path: Qwen/Qwen3-30B-A3B
+    fsdp_config:
+      cpu_offload: true
+      reshard_after_forward: true
+      fsdp_size: 2
+      expert_model_parallel_size: 4
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+
+  placement:
+    colocate_all: false
+    colocate_policy_ref: true
+    # 2 policy nodes (8 GPU) + 2 infer nodes (8 GPU) = 4 nodes / 16 GPU
+    policy_num_nodes: 2
+    ref_num_nodes: 2
+    policy_num_gpus_per_node: 4
+    ref_num_gpus_per_node: 4
+    critic_num_nodes: 1
+    critic_num_gpus_per_node: 4
+    policy_strict_spread_pg: true
+    policy_per_gpu_bundles: true
+    policy_force_cvd_mask: true
+
+generator:
+  backend: vllm
+  timeout_multiplier: 1.0
+  model_dtype: bfloat16
+  enforce_eager: true
+
+  # TP=1 on Jupiter: stock vLLM TP>1 uses c10d→localhost which resolves to
+  # IPv6 (::1) and dies with errno 97 (no IPv6 on compute). Lab VLLM_FORCE_IPV4
+  # patch is not in pip vllm==0.13. Keep 8 infer GPUs via engine count.
+  inference_engine_tensor_parallel_size: 1
+  num_inference_engines: 8
+  inference_engine_expert_parallel_size: 1
+
+  n_samples_per_prompt: 4
+  eval_n_samples_per_prompt: 1
+
+  gpu_memory_utilization: 0.85
+
+  max_num_seqs: 8
+  max_num_batched_tokens: 4096
+
+  enable_prefix_caching: true
+  enable_chunked_prefill: true
+
+  run_engines_locally: true
+  weight_sync_backend: nccl
+  async_engine: true
+  batched: true
+
+  sampling_params:
+    max_generate_length: 1024
+    temperature: 0.7
+    top_p: 0.95
+    top_k: 20
+
+  engine_init_kwargs:
+    max_model_len: 2048
+    # enable_return_routed_experts needs lab-patched vLLM; omit on stock 0.13
+
+data:
+  train_data: []
+  val_data: []
+
+container:
+  extra_env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    NCCL_DEBUG: WARN
+    SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
+    VLLM_ATTENTION_BACKEND: FLASH_ATTN
+    VLLM_FORCE_IPV4: "1"
+    GLOO_USE_IPV6: "0"
+    NCCL_SOCKET_FAMILY: AF_INET
+    WANDB_PROJECT: jupiter-moe-gsm8k-grpo
+    WANDB_MODE: offline
+    WANDB_DIR: /e/scratch/reformo/lee27/wandb
+    DC_AGENT_SECRET_ENV: /e/scratch/reformo/lee27/keys/secrets.env
+    RL_REPO_DIR: /e/scratch/reformo/lee27/MarinSkyRL
+    SKYRL_HOME: /e/scratch/reformo/lee27/MarinSkyRL
+    CONDA_EXE: /e/scratch/reformo/lee27/miniforge3/bin/conda
+    RL_PYTHON: /e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/bin/python
+    PYTHONPATH: /e/scratch/reformo/lee27/MarinSkyRL/skyrl-train:/e/scratch/reformo/lee27/MarinSkyRL/skyrl-gym:/e/scratch/reformo/lee27/OpenThoughts-Agent

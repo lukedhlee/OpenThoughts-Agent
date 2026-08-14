@@ -97,6 +97,13 @@ fi
 # region_id is left None when creating snapshots. This must stay aligned with
 # prebuild_daytona_snapshots() in hpc/rl_launch_utils.py, which is also region-less.
 
+# --- RL config env, early ---
+# Some yaml-provided environment values affect venv activation itself
+# (notably RL_ENV_DIR for non-default RL envs). Emit them before activation; the
+# existing later emissions still provide the intended last-write behavior after
+# hardcoded defaults.
+{rl_container_env}
+
 # --- RL Environment Activation ---
 # The RL environment is separate from datagen due to dependency conflicts.
 # Options:

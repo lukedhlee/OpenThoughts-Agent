@@ -1321,8 +1321,12 @@ def check_rl_environment() -> Optional[Path]:
     candidates.append(Path(__file__).parent.parent / "envs" / "rl")
 
     for candidate in candidates:
-        if candidate.exists() and (candidate / "bin" / "activate").exists():
-            return candidate
+        try:
+            if candidate.exists() and (candidate / "bin" / "activate").exists():
+                return candidate
+        except PermissionError:
+            # e.g. dotenv points at another project's scratch we can't read
+            continue
 
     return None
 

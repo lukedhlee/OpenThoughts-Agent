@@ -55,6 +55,14 @@ GPU_UTIL="${PROBE_GPU_UTIL:-0.85}"
 MOE_BACKEND="${PROBE_MOE_BACKEND:-triton}"
 LIMIT="${PROBE_LIMIT:-0}"
 OUT_JSON="${PROBE_OUT:-$RUN_DIR/results/probe_${SLURM_JOB_ID:-manual}.json}"
+# Band mode (default OFF: N_SAMPLES=1 keeps the single-pass probe as-is).
+# N_SAMPLES>1 adds a pass@k "band" section: n samples per problem on a random
+# subset, strict-scored at the full budget. Empty BAND_TEMPERATURE = python
+# default (same as the main generation temperature).
+N_SAMPLES="${N_SAMPLES:-1}"
+SUBSET_FRAC="${SUBSET_FRAC:-1.0}"
+SUBSET_SEED="${SUBSET_SEED:-42}"
+BAND_TEMPERATURE="${BAND_TEMPERATURE:-}"
 
 # --- modules (same as the RL run) -------------------------------------------
 module load GCC/14.3.0
@@ -120,6 +128,7 @@ echo "  max_generate : $MAX_GEN   (re-scored at: $TRUNCATE_AT)"
 echo "  TP           : $TP        max_model_len: $MAX_MODEL_LEN"
 echo "  moe_backend  : $MOE_BACKEND"
 echo "  limit        : ${LIMIT} (0 = all 1319)"
+echo "  band         : n_samples=$N_SAMPLES  subset_frac=$SUBSET_FRAC  subset_seed=$SUBSET_SEED  band_temp=${BAND_TEMPERATURE:-default}"
 echo "  out          : $OUT_JSON"
 echo "=============================================================="
 nvidia-smi --query-gpu=index,name,memory.total --format=csv || true
@@ -164,6 +173,10 @@ srun --ntasks=1 python "$WORKDIR/scripts/analysis/gsm8k_budget_probe.py" \
   --max-model-len "$MAX_MODEL_LEN" \
   --gpu-memory-utilization "$GPU_UTIL" \
   --moe-backend "$MOE_BACKEND" \
-  --limit "$LIMIT"
+  --limit "$LIMIT" \
+  --n-samples "$N_SAMPLES" \
+  --subset-frac "$SUBSET_FRAC" \
+  --subset-seed "$SUBSET_SEED" \
+  ${BAND_TEMPERATURE:+--band-temperature "$BAND_TEMPERATURE"}
 
 echo "Probe complete. Results: $OUT_JSON"

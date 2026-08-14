@@ -1,0 +1,160 @@
+entrypoint: skyrl_train.entrypoints.main_base
+
+# 6-node COLOCATED variant (open booster, 24 GPU) — bake-off arm B vs the
+# disaggregated 6node_..._fast.yaml (arm A). colocate_all=true: policy+ref+vLLM
+# engines TIME-SHARE all 24 GPUs. Weight "sync" becomes a local update (no 30B
+# network broadcast — the ~192s sync_weights of the disagg arm should ~vanish),
+# but training & generation can't overlap and memory is tight.
+# ⚠️ COLOCATION IS OOM-PRONE on 30B-A3B (vista 843025/843198 OOM'd at util 0.90 /
+# no offload). Recipe mirrors the surviving vista colocated config:
+#   cpu_offload: true, gpu_memory_utilization: 0.70, max_model_len: 1536.
+# Topology: EP=4 (intra-node NVLink) × FSDP=6 (across 6 nodes) = 24 policy GPUs;
+# 24 vLLM engines (TP=1, 1 per GPU). WATCH the first weight-sync/wake for OOM.
+# Everything measurement-relevant matches arm A: seed 42, train_batch 32 × 4
+# samples, lr 1e-6, TIS off. (max_model_len 1536 = 512 prompt + 1024 gen — no
+# handicap for gsm8k.)
+trainer:
+  strategy: fsdp2
+  flash_attn: true
+  gradient_checkpointing: true
+  gradient_checkpointing_use_reentrant: true
+  algorithm:
+    advantage_estimator: grpo
+    use_kl_loss: false
+    kl_loss_coef: 0.0
+    eps_clip_low: 0.2
+    eps_clip_high: 0.2
+    loss_reduction: sequence_mean
+    use_tis: false
+
+  epochs: 1
+  max_steps: 50
+  update_epochs_per_batch: 1
+
+  train_batch_size: 32
+  policy_mini_batch_size: 32
+  eval_batch_size: 32
+
+  micro_forward_batch_size_per_gpu: 1
+  micro_train_batch_size_per_gpu: 1
+
+  max_prompt_length: 512
+
+  eval_interval: 5
+  eval_before_train: true
+  seed: 42
+  ckpt_interval: 5
+  resume_mode: null
+  hf_save_interval: 999999
+  hf_hub_repo_id: null
+  hf_hub_private: false
+  hf_hub_revision: main
+
+  enable_db_registration: false
+
+  project_name: jupiter-moe-gsm8k-grpo
+  log_level: INFO
+  tracker_commit_each_step: true
+  logger: wandb
+
+  run_name: null
+  ckpt_path: null
+  export_path: null
+
+  policy:
+    model:
+      path: Qwen/Qwen3-30B-A3B
+    optimizer_config:
+      lr: 1.0e-6
+      weight_decay: 0.0
+      adam_betas: [0.9, 0.999]
+      max_grad_norm: 1.0
+    fsdp_config:
+      # colocate needs training states OFF-GPU to leave room for the vLLM engine.
+      cpu_offload: true
+      reshard_after_forward: true
+      fsdp_size: 6
+      expert_model_parallel_size: 4
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+  ref:
+    model:
+      path: Qwen/Qwen3-30B-A3B
+    fsdp_config:
+      cpu_offload: true
+      reshard_after_forward: true
+      fsdp_size: 6
+      expert_model_parallel_size: 4
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+
+  placement:
+    colocate_all: true
+    policy_num_nodes: 6
+    ref_num_nodes: 6
+    policy_num_gpus_per_node: 4
+    ref_num_gpus_per_node: 4
+
+generator:
+  backend: vllm
+  timeout_multiplier: 1.0
+  model_dtype: bfloat16
+  enforce_eager: true
+
+  inference_engine_tensor_parallel_size: 1
+  num_inference_engines: 24
+  inference_engine_expert_parallel_size: 1
+
+  n_samples_per_prompt: 4
+  eval_n_samples_per_prompt: 1
+
+  # 30B-A3B weights ~57G; colocate needs headroom for FSDP gather + engine wake
+  # (vista OOM'd at 0.90). 0.70 survived there.
+  gpu_memory_utilization: 0.70
+
+  max_num_seqs: 8
+  max_num_batched_tokens: 4096
+
+  enable_prefix_caching: true
+  enable_chunked_prefill: true
+
+  run_engines_locally: true
+  weight_sync_backend: nccl
+  async_engine: true
+  batched: true
+
+  sampling_params:
+    max_generate_length: 1024
+    temperature: 0.7
+    top_p: 0.95
+    top_k: 20
+
+  engine_init_kwargs:
+    max_model_len: 1536
+
+data:
+  train_data: []
+  val_data: []
+
+container:
+  extra_env:
+    # NB: NO expandable_segments here — colocate_all uses a vLLM CUDA memory pool
+    # (sleep/wake) that is incompatible with expandable_segments (PyTorch #147851;
+    # asserts at engine-core init). Disagg configs keep expandable_segments; colocated must not.
+    NCCL_DEBUG: WARN
+    SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
+    VLLM_ATTENTION_BACKEND: FLASH_ATTN
+    VLLM_FORCE_IPV4: "1"
+    GLOO_USE_IPV6: "0"
+    NCCL_SOCKET_FAMILY: AF_INET
+    WANDB_PROJECT: jupiter-moe-gsm8k-grpo
+    WANDB_MODE: offline
+    WANDB_DIR: /e/scratch/reformo/lee27/wandb
+    DC_AGENT_SECRET_ENV: /e/scratch/reformo/lee27/keys/secrets.env
+    RL_REPO_DIR: /e/scratch/reformo/lee27/MarinSkyRL
+    SKYRL_HOME: /e/scratch/reformo/lee27/MarinSkyRL
+    CONDA_EXE: /e/scratch/reformo/lee27/miniforge3/bin/conda
+    RL_PYTHON: /e/scratch/reformo/lee27/OpenThoughts-Agent/envs/rl/bin/python
+    PYTHONPATH: /e/scratch/reformo/lee27/MarinSkyRL/skyrl-train:/e/scratch/reformo/lee27/MarinSkyRL/skyrl-gym:/e/scratch/reformo/lee27/OpenThoughts-Agent
