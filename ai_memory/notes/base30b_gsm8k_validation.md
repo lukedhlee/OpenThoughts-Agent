@@ -6,21 +6,29 @@ Operator: Luke. Goal: validate the RL stack end-to-end — GSM8K GRPO on
 validation (decisions.md L141: gsm8k retired as MoE-science vehicle — do not report as science).
 Mac plan file: `/Users/lukedhlee/.claude/plans/shimmying-juggling-turtle.md` (full staged plan).
 
-## RESUME-HERE — new-session bootstrap (updated 2026-08-14 ~22:15 CEST)
+## RESUME-HERE — new-session bootstrap (updated 2026-08-14 ~22:40 CEST, session 2)
 
 **Task**: babysit 4 GRPO arms to ≥80 steps each, then verdict (INFRA framing) + harvest.
 Racing gate (s30) DONE — all arms passed, zero kills. Reward curves clearly upward:
 lr1e6 0.34→0.38 (s10), lr3e6 →0.70 (s29), lr8e6 →0.85-0.95 (s39), nokl →0.77 (s32).
+**lr8e6 eval@40 = 88.40% greedy pass@1 (n=1319) vs 57.77% step-0 = +30.6 pts — the
+verdict criterion (≥+10 pts in ≥1 arm) is already exceeded at s40** (formal verdict
+still waits for s80 per BINDING §3). Eval took 564s (~9.4 min — short generations),
+ckpt@40 banked (gs25/30/35/40). Session-2 bootstrap DONE 22:30: watchers restarted
+(4 death + 1 stall, Mac-side), login tmux verified (arms_sync + 4 sidecars alive).
+Eval facts: dumps at `<dir>/<job_name>/exports/dumped_evals/global_step_N_evals/`
+(aggregated_results.jsonl has the score; openai_gsm8k.jsonl has n=1319 rows); NO
+`WANDB_MIRROR kind=eval` line — the step-N train mirror logs right after eval ends.
 WandB (all runs, group by name, take newest per arm):
 https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 
-**Fleet at handoff** (job / newest dir under `$F/experiments/` / resume source):
+**Fleet as of 23:30 CEST** (job / newest dir under `$F/experiments/` / resume source):
 | arm | job | dir | resumed from |
 |---|---|---|---|
-| lr1e6 | 1378384 | base30b_gsm8k_lr1e6_11 | _8/ckpt gs5 |
-| lr3e6 | 1378002 | base30b_gsm8k_lr3e6_11 | _8/ckpt gs20 |
-| lr8e6 | 1377151 | base30b_gsm8k_lr8e6_9 | _6/ckpt gs20 |
-| lr3e6_nokl | 1378378 | base30b_gsm8k_lr3e6_nokl_6 | _5/ckpt gs25 |
+| lr1e6 | 1379349 | base30b_gsm8k_lr1e6_13 | _11/ckpt gs10 |
+| lr3e6 | 1379307 | base30b_gsm8k_lr3e6_13 | _11/ckpt gs30 |
+| lr8e6 | 1379329 | base30b_gsm8k_lr8e6_10 | _9/ckpt gs40 |
+| lr3e6_nokl | 1379844 | base30b_gsm8k_lr3e6_nokl_7 | _6/ckpt gs50 |
 
 ETAs to s80 at ~7.5 min/step (if no more incidents): lr8e6 ~02:30, nokl ~04:30,
 lr3e6 ~05:00, lr1e6 ~07:00+. Eval@40 + ckpt@40 land automatically (EVAL_INTERVAL=40,
@@ -534,6 +542,65 @@ lr3e6 s29 (0.703), lr8e6 s39 (0.852, eval@40 imminent — first greedy-acc reado
 57.8% baseline), nokl s32 (0.773). Zero incidents in the hour — the rack-level
 exclusions + drained pool are holding. Upward reward curves now unambiguous on all
 four arms. Tally still 27 / ~22 arm-hours.
+
+**22:30 sweep 13 (session 2 start) — bootstrap done, lr8e6 eval@40 = 88.40% (+30.6).**
+All 4 arms RUNNING and fresh (lr1e6 s12, lr3e6 s31, lr8e6 s41 rew 0.875/ent 0.165/
+KL 0.083, nokl s35). Watchers rebuilt Mac-side (4 death + 1 stall, scripts in session
+scratchpad); login tmux intact. lr8e6 eval@40: 88.40% pass@1 vs 57.77% baseline —
++30.6 pts at half-way; ckpts gs25-40 banked. Quiet since 21:05 — zero new incidents.
+Tally holds 27 / ~22 arm-hours.
+
+**22:3x incidents #28-29 — DOUBLE backward hang (lr1e6 + lr3e6, ~simultaneous).**
+lr1e6 (1378384) froze 22:21:51 mid-s13 policy_train (jpbo-122-[20,23,26-29]); lr3e6
+(1378002) froze 22:20:24 at s32 batch 10/32 (jpbo-067-[06,08-12]). Both on reverted
+env (no self-abort); stall-watcher caught both in ~11-13 min. lr8e6/nokl unaffected
+(fs fine). scancel'd + verified via separate squeue → both nodesets excluded
+(4749bce3, cluster pulled) → relaunched: **lr1e6 1379097 (dir _12, resume@gs10),
+lr3e6 1379098 (dir _12, resume@its gs30 — only s31 lost)**. Configs verified (resume
+paths, LR overrides, exclusions in sbatch, blocking-wait present). Sidecars restarted
+(v11 ×2); death-watchers + stall-watcher rebuilt. New fleet: lr1e6 1379097,
+lr3e6 1379098, lr8e6 1377151 (s41+), nokl 1378378 (s35+).
+Tally: 29 incidents / ~23 arm-hours.
+
+**22:5x-23:2x incidents #30-32 — restart storm on the relaunches; nokl the lone survivor.**
+#30: lr3e6-v11 (1379098) ghost-OOM at ckpt load 14:45 in (jpbo-030, 37MiB free) →
+excluded (585764dc) → v12 **1379307** resume@gs30 (dir _13, sidecar v12).
+#31: lr8e6-v8 (1377151) backward hang mid-s44 (last mirror s43, froze 22:42:45,
+jpbo-112) → scancel+verified → excluded (50b42140) → v9 **1379329** resume@gs40
+(dir _10, sidecar v9; only s41-43 lost, eval@40 + gs40 safely banked).
+#32: lr1e6-v11 (1379097) ghost-OOM at first ppo_train 21 min in (jpbo-025, 58MiB
+free) → excluded (f8929615) → v12 **1379349** resume@gs10 (dir _13, sidecar v12).
+Fleet 23:25: lr1e6 1379349, lr3e6 1379307, lr8e6 1379329 (all PENDING→starting),
+nokl 1378378 RUNNING s39. Cumulative best: lr8e6 43, nokl 39, lr3e6 31, lr1e6 12.
+Tally: 32 incidents / ~24 arm-hours (16 hang / 11 OOM / 6 node per attempt table).
+**23:05 sweep 13: queue turned BUSY** — booster 4354 alloc / 1236 planned / 13 idle;
+our 3 relaunches are TOP of pending (prio 350057, nobody ahead) with Slurm start
+estimate **01:36**. NOT a config problem — evening instant-starts are over. Wall
+math from 01:36 still fits all arms (worst lr1e6: 70 steps ≈ 8.8h → ~10:45).
+nokl healthy s39 rew 0.75 ent 0.39. Expect a ~2.5h quiet gap; death-watchers idle
+on PENDING (normal), stall-watcher ignores PENDING dirs.
+**23:2x — nokl eval@40 = 85.22% greedy pass@1 (+27.4 vs 57.77 baseline), ckpt@40
+banked (gs30/35/40), s40 train mirror logged, job healthy.** Second arm past the
++10 verdict bar — and it's the NO-KL arm. Its KL-on comparator is lr3e6's eval@40
+(fires after 1379307 starts and passes s40). Scoreboard: eval@40 lr8e6 88.40,
+nokl 85.22, baseline 57.77.
+**00:2x-00:4x incident #33 — nokl-v5 (1378378) backward hang mid-s53** (progress
+emitter froze 00:18:04 at policy_train 8/32, log silent 786s+, jpbo-081-[10-15];
+gs50 banked → ≤3 steps lost). scancel+verified → excluded jpbo-081-[10-15]
+(d974514e; note: push goes to remote `fork`, not `origin`) → v6 **1379844**
+resume@gs50 (dir _7, sidecar v6; verified in config: from_path gs50, lr 3e-6,
+use_kl_loss=false, exclusion in sbatch). 1379844 PENDING behind the same busy
+queue as the other three (start est was 02:32 for those). Death-watcher b47nablpt,
+stall-watcher bthrf4lde rebuilt. Cumulative best: lr8e6 43, nokl 52, lr3e6 31,
+lr1e6 12. Tally: 33 incidents / ~25 arm-hours.
+
+**NEW TOOL: `scripts/dashboard/` (Runboard, commits c8fbcaa9+f78d6c82)** — local
+self-contained analysis website (operator-requested). `pull_wandb.py specs/<exp>.json`
+→ `build.py` → open `dist/dashboard.html` (dist/ is gitignored; rebuild anywhere).
+Spec-driven + drag-drop JSON loading; gsm8k arms campaign is the first spec, incl.
+the full per-attempt fate table (keep it updated on incidents). Also published once
+as artifact https://claude.ai/code/artifact/c192387b-b103-4c6d-b2d4-070fee769430
+(operator prefers the LOCAL site; artifact optional).
 
 **14:55 sweep — nokl PASSES the step-30 racing gate** (s32: rew 0.805 rising, ent ~0.35
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,

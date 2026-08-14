@@ -46,7 +46,7 @@
     { "key": "lr1e6", "job": "1379349", "state": "restarting", "note": "resuming from step 10 — hang, then a ghost-OOM strike" },
     { "key": "lr3e6", "job": "1379307", "state": "restarting", "note": "resuming from step 30 — hang, then a ghost-OOM strike" },
     { "key": "lr8e6", "job": "1379329", "state": "restarting", "note": "eval@40: 88.4% — resuming from step 40 after a hang at s44" },
-    { "key": "lr3e6_nokl", "job": "1378378", "state": "training", "note": "no-KL probe arm, steady climb" }
+    { "key": "lr3e6_nokl", "job": "1379844", "state": "queued", "note": "no-KL probe arm; resume@gs50 after s53 hang" }
   ],
   "timeline": {
     "title": "The job war — every Slurm attempt, 11:00 → now",
@@ -98,7 +98,8 @@
       { "v": "v2", "job": "1370717", "start": "15:24", "end": "15:45", "steps": "1-2", "fate": "oom", "note": "OOM at s2 on definitively fresh nodes" },
       { "v": "v3", "job": "1372789", "start": "16:21", "end": "17:15", "steps": "1-3", "fate": "hang", "note": "hang at s3; second watchdog self-abort validation" },
       { "v": "v4", "job": "1375221", "start": "17:22", "end": "20:50", "steps": "1-28", "fate": "hang", "note": "reached s28, banked gs25; hang at s28" },
-      { "v": "v5", "job": "1378378", "start": "21:02", "end": "", "steps": "26+", "fate": "run", "note": "resume@gs25; passed the s30 gate" }
+      { "v": "v5", "job": "1378378", "start": "21:02", "end": "00:30", "steps": "28", "fate": "hang", "note": "resume@gs25; eval@40 85.2%; backward hang mid-s53 (jpbo-081), gs50 banked" },
+      { "v": "v6", "job": "1379844", "start": "00:33", "end": "", "steps": "0", "fate": "run", "note": "resume@gs50; queued behind busy booster queue" }
     ]
   },
   "notes": [
