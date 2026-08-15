@@ -26,7 +26,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 | arm | job | dir | resumed from |
 |---|---|---|---|
 | lr1e6 | 1380924 | base30b_gsm8k_lr1e6_18 | _13/ckpt gs20 |
-| lr3e6 | 1380822 | base30b_gsm8k_lr3e6_15 | _14/ckpt gs40 |
+| lr3e6 | 1381010 | base30b_gsm8k_lr3e6_16 | _15/ckpt gs50 |
 | lr8e6 | 1380912 | base30b_gsm8k_lr8e6_14 | _10/ckpt gs50 |
 | lr3e6_nokl | 1380985 | base30b_gsm8k_lr3e6_nokl_9 | _8/ckpt gs75 |
 
@@ -700,6 +700,12 @@ jpbo-016-[02,05,08-09,11,13]) → excluded (ad8b9a2c) → v8 **1380985** resume@
 (dir _9, sidecar v8, watchers beommtupb/b79elmt3o). nokl needs 5 steps + eval@80 +
 final ckpt once it starts. Cumulative: nokl 75, lr8e6 54, lr3e6 45+, lr1e6 22.
 Tally: 46 / ~30 arm-hours.
+**05:2x incident #47 — lr3e6-v14 (1380822) backward hang at s51** (1:41h streak,
++10 net: gs45+gs50 banked this attempt; froze 04:40:48 mid-s51 policy_train on
+jpbo-060-[01-02,07,09,11,13] — OTHER half of rack 060, second disjoint hit →
+**rack-level [01-48]** (85a1bcc1)) → v15 **1381010** resume@_15/gs50 (dir _16,
+sidecar v15, watchers bzoiwzs0h/bsga1gc1j). Cumulative: nokl 75, lr8e6 54,
+lr3e6 50, lr1e6 22. Tally: 47 / ~30 arm-hours.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
