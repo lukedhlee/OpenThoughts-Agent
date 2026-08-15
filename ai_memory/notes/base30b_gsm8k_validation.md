@@ -27,7 +27,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 |---|---|---|---|
 | lr1e6 | 1380924 | base30b_gsm8k_lr1e6_18 | _13/ckpt gs20 |
 | lr3e6 | 1381010 | base30b_gsm8k_lr3e6_16 | _15/ckpt gs50 |
-| lr8e6 | 1380912 | base30b_gsm8k_lr8e6_14 | _10/ckpt gs50 |
+| lr8e6 | 1381037 | base30b_gsm8k_lr8e6_15 | _14/ckpt gs55 |
 | lr3e6_nokl | 1380985 | base30b_gsm8k_lr3e6_nokl_9 | _8/ckpt gs75 |
 
 ETAs to s80 at ~7.5 min/step (if no more incidents): lr8e6 ~02:30, nokl ~04:30,
@@ -706,6 +706,13 @@ jpbo-060-[01-02,07,09,11,13] — OTHER half of rack 060, second disjoint hit →
 **rack-level [01-48]** (85a1bcc1)) → v15 **1381010** resume@_15/gs50 (dir _16,
 sidecar v15, watchers bzoiwzs0h/bsga1gc1j). Cumulative: nokl 75, lr8e6 54,
 lr3e6 50, lr1e6 22. Tally: 47 / ~30 arm-hours.
+**05:3x incident #48 — lr8e6-v13 (1380912) backward hang at s56** (broke the 50s
+barrier: gs55 BANKED, new cumulative high; froze 04:55:13 mid-s56,
+jpbo-083-[05-06,09,13,15-16]) → excluded (d4755a0c) → v14 **1381037** resume@gs55
+(dir _15, sidecar v14, watchers bd11ut9x7/b2va176rl). Cumulative: nokl 75, lr8e6 55,
+lr3e6 50, lr1e6 22. Tally: 48 / ~30 arm-hours. Hang cadence has TIGHTENED (~25-40
+min/hang since 04:30 vs 2-3h earlier) — pre-dawn queue churn handing us more
+marginal nodesets; resume machinery keeping net progress positive regardless.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
