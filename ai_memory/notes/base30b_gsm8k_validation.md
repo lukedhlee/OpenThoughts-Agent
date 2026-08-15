@@ -25,15 +25,17 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 **Fleet as of 23:30 CEST** (job / newest dir under `$F/experiments/` / resume source):
 | arm | job | dir | resumed from |
 |---|---|---|---|
-| lr1e6 | 1385118 | base30b_gsm8k_lr1e6_32 | _31/ckpt gs70 |
+| lr1e6 | DONE (1385118) | base30b_gsm8k_lr1e6_32 | eval@80 66.41% |
 | lr3e6 | DONE (1382325) | base30b_gsm8k_lr3e6_19 | eval@80 87.04% |
 | lr8e6 | DONE (1381829) | base30b_gsm8k_lr8e6_18 | eval@80 89.39% |
 | lr3e6_nokl | DONE (1380985) | base30b_gsm8k_lr3e6_nokl_9 | eval@80 87.49% |
 
-THREE ARMS DONE (eval@80: lr8e6 89.39% > nokl 87.49% > lr3e6 87.04%; baseline
-57.77% → verdict MET, lr8e6 best). Remaining: lr1e6-v31 only, from gs70 (10 steps
-+ eval@80, ~1.5h if clean; its eval@40 = 62.09%, +4.3 — the do-little arm).
-Eval@80 lands automatically (EVAL_INTERVAL=40).
+**CAMPAIGN COMPLETE 2026-08-15 ~20:00 CEST — ALL 4 ARMS 80/80. VERDICT: PASS.**
+Final eval@80 scoreboard (greedy pass@1, n=1319; baseline 57.77%):
+lr8e6 **89.39%** (+31.6) > nokl 87.49% (+29.7) > lr3e6 87.04% (+29.3) >
+lr1e6 66.41% (+8.6). BINDING §3 (≥+10 pts in ≥1 arm) met by THREE arms.
+Monotone LR story: 1e-6 undertrained at 80 steps; 8e-6 best; no-KL at 3e-6 beats
+KL-on 3e-6 by +0.45. 68 incidents / ~48 arm-hours survived; zero training corruption.
 
 **FIRST ACTIONS in a new session** (Mac-side watchers die with the old session):
 1. Restart per-job 60s death-watchers (background `squeue -h -j <id>` poll → sacct on
@@ -825,6 +827,15 @@ of the same EP-collective race; jpbo-026-[01,03-07], rack 026 1st hit → node-l
 (905547ed)). Another +16 stint (56→71), gs70 banked. → v31 **1385118** resume@gs70
 (dir _32, sidecar v31, death watcher b45015g5g, stall bjfy2pwu8). 10 steps + eval@80
 to go (~1.5h). Tally: 68 / ~46 arm-hours.
+**★★ ~20:00 CEST 08-15 — lr1e6 COMPLETE = CAMPAIGN COMPLETE (4/4 arms, 80/80).**
+1385118 COMPLETED 0:0 (1:56:21, jpbo-107-[43-48], v31's final stint 71→80 + eval
+clean). lr1e6 eval@80 = 66.41% (+8.6; from 62.09 @s40 — climbing but slow; the
+1e-6 arm needed 19 attempts and 13 ghost nodesets to get here). FINAL SCOREBOARD:
+lr8e6 89.39 > nokl 87.49 > lr3e6 87.04 > lr1e6 66.41 vs baseline 57.77. VERDICT
+PASS (3 arms clear the +10 bar; infra framing per decisions.md). Endgame executed:
+final wandb sync, sidecars+arms_sync torn down, stall watcher stopped, ckpts pruned
+keep-last-2/arm. NO HF uploads (per checklist). JSC ghost-GPU ticket file ready for
+operator to send (jsc_ghost_gpu_memory_ticket.md).
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
