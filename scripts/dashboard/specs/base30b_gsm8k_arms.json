@@ -97,7 +97,8 @@
       { "v": "v13", "job": "1380047", "start": "00:57", "end": "03:23", "steps": "12", "fate": "hang", "note": "resume@gs30; eval@40 ran, gs40 banked; hang at s43 (jpbo-013)" },
       { "v": "v14", "job": "1380822", "start": "03:26", "end": "05:22", "steps": "10", "fate": "hang", "note": "resume@gs40; offload validated; hang at s51 (jpbo-060 → rack-level), gs50 banked" },
       { "v": "v15", "job": "1381010", "start": "05:25", "end": "08:25", "steps": "13", "fate": "hang", "note": "resume@gs50; gs55+gs60 banked; hang at s64 (jpbo-009)" },
-      { "v": "v16", "job": "1381529", "start": "08:28", "end": "", "steps": "0", "fate": "run", "note": "resume@gs60 — 20 to go" }
+      { "v": "v16", "job": "1381529", "start": "08:28", "end": "09:18", "steps": "0", "fate": "node", "note": "NCCL cuda error in EP all-to-all, first forward (jpbo-001)" },
+      { "v": "v17", "job": "1381636", "start": "09:24", "end": "", "steps": "0", "fate": "run", "note": "resume@gs60 — 20 to go" }
     ],
     "lr8e6": [
       { "v": "v1", "job": "1366674", "start": "11:12", "end": "12:30", "steps": "1-8", "fate": "hang", "note": "backward hang entering s9 (jpbo-115) — killed fabric theory" },
