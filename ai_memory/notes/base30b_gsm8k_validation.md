@@ -623,6 +623,13 @@ verified: from_path gs20, lr 1e-6, exclusion in sbatch). Death-watcher besvlmrdt
 stall-watcher bjr5pzg4f. Fleet: lr3e6 RUNNING 1:50 (approaching s45+), lr8e6-v10
 RUNNING 10 min, nokl-v7 RUNNING 16 min, lr1e6-v13 PENDING. Cumulative best:
 nokl 61, lr8e6 54, lr3e6 31+, lr1e6 22. Tally: 37 / ~27 arm-hours.
+**03:1x OPERATOR-APPROVED mid-campaign config change (2f5ad088): arms yaml
+`ref.fsdp_config.cpu_offload: false→true`** (e9fc5e8 semantics; placement-only, loss
+math identical; policy offload stays false; nokl has no ref → unaffected). Takes
+effect at each KL arm's NEXT incident relaunch — do NOT scancel healthy runs for it.
+First relaunch with it = first-time combo on our branch (ref offload never smoke-tested
+here): watch ref init closely; if it crashes at ref build, revert yaml + relaunch.
+JSC ticket draft for the ghost-memory nodes: ai_memory/notes/jsc_ghost_gpu_memory_ticket.md.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
