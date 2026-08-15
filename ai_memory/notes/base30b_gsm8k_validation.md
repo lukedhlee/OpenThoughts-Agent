@@ -25,8 +25,8 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 **Fleet as of 23:30 CEST** (job / newest dir under `$F/experiments/` / resume source):
 | arm | job | dir | resumed from |
 |---|---|---|---|
-| lr1e6 | 1380812 | base30b_gsm8k_lr1e6_14 | _13/ckpt gs20 |
-| lr3e6 | 1380047 | base30b_gsm8k_lr3e6_14 | _11/ckpt gs30 |
+| lr1e6 | 1380821 | base30b_gsm8k_lr1e6_15 | _13/ckpt gs20 |
+| lr3e6 | 1380822 | base30b_gsm8k_lr3e6_15 | _14/ckpt gs40 |
 | lr8e6 | 1380813 | base30b_gsm8k_lr8e6_12 | _10/ckpt gs50 |
 | lr3e6_nokl | 1380775 | base30b_gsm8k_lr3e6_nokl_8 | _7/ckpt gs60 |
 
@@ -638,6 +638,25 @@ sidecar v11). **v11 is the FIRST job carrying ref.cpu_offload=true** (verified i
 config: policy false + ref true) — watch ref init at start. Death-watcher bxbxg0fja.
 Fleet 03:1x: lr3e6 1:56 (longest current streak), lr1e6-v13 RUNNING 7 min,
 nokl-v7 RUNNING 23 min, lr8e6-v11 PENDING. Tally: 38 / ~27 arm-hours.
+**03:2x incidents #39+#40 (double)**: #39 lr1e6-v13 (1380812) ghost-OOM at ckpt load
+19:43 in (jpbo-033-[33-36,45,48], 666MiB free; never resumed — 0 steps lost) →
+excluded → v14 **1380821** resume@_13/gs20 (dir _15). #40 lr3e6-v13 (1380047)
+backward hang at s43 (froze 03:00:25 mid-policy_train; **gs40 + eval@40 banked this
+attempt**, s41-42 lost) → scancel+verified → excluded jpbo-013-[17-18,20,23,25-26]
+→ v14 **1380822** resume@_14/gs40 (dir _15). Both exclusions in 023a48c1. Both v14
+configs verified incl. **ref cpu_offload=true** (jobs 2-3 carrying the flip; lr8e6-v11
+was 1st). Sidecars v14 ×2; death-watchers bph7acgof (lr1e6), bd8t5f978 (lr3e6).
+lr3e6 cumulative best now 42 (+eval@40 dump exists in _14 exports — HARVEST IT).
+Tally: 40 / ~28 arm-hours.
+**PEER-SESSION FINDING (probe session, 03:2x): compute→login ssh DEMANDS TOTP even
+from internal 10.x source** (tested from jpbo-013-17; JSC docs: account-level TOTP
+fires after pubkey regardless of source; only FIDO/ssh-certs exempt) → the sbatch
+SOCKS tunnel is dead-on-arrival for lee27 as-is. Peer's fallback: login-side listener
+(login→compute reverse ssh works, no TOTP on compute sshd) + tiny additive hpc.py
+_setup_proxy change to honor an existing listener. Luke checking JuDoor TOTP disable
+(feuer1-parity). My bridge tmux (harbor apptainer server on 10.128.1.2:9920) PROVES
+compute→login-listener TCP works without ssh — simplest fix is a login-side SOCKS5
+server + preset PROXYCHAINS_SOCKS5_HOST/PORT.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;

@@ -67,7 +67,8 @@
       { "v": "v10", "job": "1378384", "start": "21:16", "end": "22:33", "steps": "6-12", "fate": "hang", "note": "resume@gs5; froze mid-s13; scancel + nodes excluded" },
       { "v": "v11", "job": "1379097", "start": "22:47", "end": "23:08", "steps": "-", "fate": "oom", "note": "ghost-OOM at first train step (jpbo-025, 58 MiB free)" },
       { "v": "v12", "job": "1379349", "start": "00:42", "end": "02:55", "steps": "12", "fate": "hang", "note": "resume@gs10; hang at s23 (jpbo-066), gs20 banked" },
-      { "v": "v13", "job": "1380812", "start": "02:58", "end": "", "steps": "0", "fate": "run", "note": "resume@gs20 — 60 steps to go" }
+      { "v": "v13", "job": "1380812", "start": "02:58", "end": "03:22", "steps": "0", "fate": "oom", "note": "ghost-OOM at ckpt load (jpbo-033, 666MiB free)" },
+      { "v": "v14", "job": "1380821", "start": "03:25", "end": "", "steps": "0", "fate": "run", "note": "resume@gs20; ref offload on" }
     ],
     "lr3e6": [
       { "v": "v1", "job": "1366672", "start": "11:12", "end": "13:12", "steps": "1-14", "fate": "node", "note": "stall at s15; head node refused srun (sick)" },
@@ -82,7 +83,8 @@
       { "v": "v10", "job": "1378002", "start": "20:46", "end": "22:33", "steps": "21-31", "fate": "hang", "note": "resume@gs20; froze at s32 batch 10/32; scancel + nodes excluded" },
       { "v": "v11", "job": "1379098", "start": "22:47", "end": "23:02", "steps": "-", "fate": "oom", "note": "ghost-OOM at ckpt load (jpbo-030, 37 MiB free at job start)" },
       { "v": "v12", "job": "1379307", "start": "00:42", "end": "00:56", "steps": "0", "fate": "oom", "note": "ghost-OOM at engine load (jpbo-003, 18MiB free)" },
-      { "v": "v13", "job": "1380047", "start": "00:57", "end": "", "steps": "0", "fate": "run", "note": "resume@gs30, jpbo-003-[20..] excluded" }
+      { "v": "v13", "job": "1380047", "start": "00:57", "end": "03:23", "steps": "12", "fate": "hang", "note": "resume@gs30; eval@40 ran, gs40 banked; hang at s43 (jpbo-013)" },
+      { "v": "v14", "job": "1380822", "start": "03:26", "end": "", "steps": "0", "fate": "run", "note": "resume@gs40; ref offload on" }
     ],
     "lr8e6": [
       { "v": "v1", "job": "1366674", "start": "11:12", "end": "12:30", "steps": "1-8", "fate": "hang", "note": "backward hang entering s9 (jpbo-115) — killed fabric theory" },
