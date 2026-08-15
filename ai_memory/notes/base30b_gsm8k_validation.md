@@ -25,7 +25,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 **Fleet as of 23:30 CEST** (job / newest dir under `$F/experiments/` / resume source):
 | arm | job | dir | resumed from |
 |---|---|---|---|
-| lr1e6 | 1381632 | base30b_gsm8k_lr1e6_25 | _13/ckpt gs20 |
+| lr1e6 | 1381758 | base30b_gsm8k_lr1e6_26 | _13/ckpt gs20 |
 | lr3e6 | 1381636 | base30b_gsm8k_lr3e6_18 | _16/ckpt gs60 |
 | lr8e6 | 1381493 | base30b_gsm8k_lr8e6_17 | _15/ckpt gs60 |
 | lr3e6_nokl | 1380985 | base30b_gsm8k_lr3e6_nokl_9 | _8/ckpt gs75 |
@@ -771,6 +771,9 @@ all_to_all_single during FIRST forward** (jpbo-001-[17-19,25,27,29]; NEW failure
 mode for this campaign — the loud fail-fast cousin of the silent EP hang; sick GPU
 suspected; 0 steps lost) → excluded (a59a4251) → v17 **1381636** resume@gs60
 (dir _18, sidecar v17, watcher live). Tally: 59 / ~35 arm-hours.
+**09:3x incident #60 — lr1e6-v24 (1381632) ghost-OOM at load** (jpbo-051-[17-22],
+67MiB free; 11th ghost nodeset) → excluded (2744ab5c) → v25 **1381758**
+resume@gs20 (dir _26, sidecar v25, watcher live). Tally: 60 / ~35 arm-hours.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
