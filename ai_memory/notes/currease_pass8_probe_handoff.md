@@ -160,3 +160,21 @@ RL read (instruct start): GO. 107 partial-band tasks are prime GRPO signal; grou
 mixes on them by construction. Base leg (3 pooled jobs) still running for the base profile;
 early base pass@1 ≈ 4% genuine — the base-vs-instruct gap is categorical (termination,
 format, focus), not raw capability.
+
+## RESULTS UPDATE — base leg (2026-08-15 evening), CORRECTED for dead-engine trials
+
+Two of three pooled base jobs lost their vLLM engine mid-run (b/1382373: NCCL watchdog
+"Invalid access of peer GPU memory over nvlink or a hardware error" ~1 h in on jpbo-006-47
+— node now excluded; c/1382374: EngineDeadError at ~9 h). Trials after engine death time out
+with ZERO LLM interaction but still write reward-0 results — 998/3,637 pooled base trials
+were such artifacts. **Validity filter: agent_result.n_output_tokens > 0** (n_episodes is NOT
+a valid filter — dead trials still report n_episodes=1).
+
+Valid base data (runs 7+b+c): 2,617 trials, 4–7 attempts/task, pass@1 = 4.1%,
+pass@any(4–7) = 83/511 = 16.2%. Top-up job d (1385854, 4 attempts, HF_TOKEN in env this
+time) running to complete ≥8 valid attempts/task. Per-task table:
+ai_memory/artifacts/currease_pass8_per_task.csv (base counts are valid-only).
+
+Traces: lukeleeai/qwen3-30b-a3b-base-currease-pass8{,-b,-c} — note the b repo has only 65
+rows because the exporter (correctly) drops zero-conversation trials; realness checks on
+trace repos should compare against VALID trials, not result.json counts.
