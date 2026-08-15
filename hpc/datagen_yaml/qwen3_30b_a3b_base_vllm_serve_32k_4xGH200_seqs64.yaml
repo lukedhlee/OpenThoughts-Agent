@@ -1,0 +1,41 @@
+engine:
+  type: vllm_local
+  model: /e/fscratch/reformo/lee27/hf_hub/models--Qwen--Qwen3-30B-A3B-Base/snapshots/1b75feb79f60b8dc6c5bc769a898c206a1c6a4f9
+  max_output_tokens: 8192
+  healthcheck_interval: 300
+  request_params:
+    temperature: 0.7
+    top_p: 0.95
+  vllm_local: {}
+backend:
+  type: ray
+  wait_for_endpoint: true
+  healthcheck_max_attempts: 160
+  healthcheck_retry_delay: 15
+vllm_server:
+  model_path: /e/fscratch/reformo/lee27/hf_hub/models--Qwen--Qwen3-30B-A3B-Base/snapshots/1b75feb79f60b8dc6c5bc769a898c206a1c6a4f9
+  num_replicas: 1
+  tensor_parallel_size: 2
+  pipeline_parallel_size: 1
+  data_parallel_size: 2
+  time_limit: '11:59:00'
+  max_model_len: 32768
+  max_num_seqs: 64
+  gpu_memory_utilization: 0.9
+  swap_space: 12
+  enable_expert_parallel: false
+  enable_auto_tool_choice: true
+  tool_call_parser: hermes
+  reasoning_parser: qwen3
+  use_flashinfer_sampler: false
+  extra_args:
+  - --dtype
+  - bfloat16
+  - --block-size
+  - '16'
+  - --enable-chunked-prefill
+  - --enable-prefix-caching
+  # GH200 + lee27 rl-fa env: FlashInfer fused-MoE JIT needs GLIBCXX_3.4.32 (crash-loop);
+  # force the triton MoE path, same fix as skyrl arms_fa.yaml engine_init_kwargs.
+  - --moe-backend
+  - triton
