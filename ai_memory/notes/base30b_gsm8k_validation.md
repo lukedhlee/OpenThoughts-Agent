@@ -27,7 +27,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 |---|---|---|---|
 | lr1e6 | 1380821 | base30b_gsm8k_lr1e6_15 | _13/ckpt gs20 |
 | lr3e6 | 1380822 | base30b_gsm8k_lr3e6_15 | _14/ckpt gs40 |
-| lr8e6 | 1380813 | base30b_gsm8k_lr8e6_12 | _10/ckpt gs50 |
+| lr8e6 | 1380847 | base30b_gsm8k_lr8e6_13 | _10/ckpt gs50 |
 | lr3e6_nokl | 1380775 | base30b_gsm8k_lr3e6_nokl_8 | _7/ckpt gs60 |
 
 ETAs to s80 at ~7.5 min/step (if no more incidents): lr8e6 ~02:30, nokl ~04:30,
@@ -657,6 +657,16 @@ _setup_proxy change to honor an existing listener. Luke checking JuDoor TOTP dis
 (feuer1-parity). My bridge tmux (harbor apptainer server on 10.128.1.2:9920) PROVES
 compute→login-listener TCP works without ssh — simplest fix is a login-side SOCKS5
 server + preset PROXYCHAINS_SOCKS5_HOST/PORT.
+**03:5x incident #41 — lr8e6-v11 (1380813) OOM at FIRST ppo_train, 19 min in**
+(8 OOMs, 607MiB free, jpbo-008-[18,23,26-27,29,32]) — the first ref-offload run;
+it loaded clean, generated, computed rewards (0.836), then OOM'd in the first
+policy_train backward. **AMBIGUOUS: partially-dirty node (cf. #32 same signature,
+pre-offload) vs the offload flip itself. A/B in flight**: lr1e6-v14 (1380821) +
+lr3e6-v14 (1380822) carry the same flip on other nodes — if their first train steps
+pass, it was the node; if they OOM too, REVERT yaml cpu_offload→false and relaunch
+all three (flip needs upstream code, not just config). Excluded (0435c0c0) →
+v12 **1380847** resume@gs50 (dir _13, sidecar v12, watcher b1y0p4xcq).
+Tally: 41 / ~28 arm-hours.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
