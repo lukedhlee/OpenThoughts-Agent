@@ -25,7 +25,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 **Fleet as of 23:30 CEST** (job / newest dir under `$F/experiments/` / resume source):
 | arm | job | dir | resumed from |
 |---|---|---|---|
-| lr1e6 | 1380859 | base30b_gsm8k_lr1e6_16 | _13/ckpt gs20 |
+| lr1e6 | 1380911 | base30b_gsm8k_lr1e6_17 | _13/ckpt gs20 |
 | lr3e6 | 1380822 | base30b_gsm8k_lr3e6_15 | _14/ckpt gs40 |
 | lr8e6 | 1380847 | base30b_gsm8k_lr8e6_13 | _10/ckpt gs50 |
 | lr3e6_nokl | 1380775 | base30b_gsm8k_lr3e6_nokl_8 | _7/ckpt gs60 |
@@ -678,6 +678,11 @@ mirror step 41 + 2 reward batches, 0 OOMs, with the identical offload config v11
 under → #41 was a partially-dirty jpbo-008 node. Offload flip validated through a full
 train step; keep it for all future relaunches. Fleet 04:2x: ALL FOUR RUNNING —
 nokl s67 (1:04h streak), lr3e6 past s41, lr8e6-v12 17min (loading), lr1e6-v15 7min.
+**04:3x incident #44(=tally 43) — lr1e6-v15 (1380859) partial-ghost OOM at first
+ppo_train 21:29 in** (jpbo-078-[01-02,04,14-16], 146MiB free; loaded+generated then
+OOM at train peak — third dirty nodeset in a row for lr1e6) → excluded (801aca9c) →
+v16 **1380911** resume@_13/gs20 (dir _17, sidecar v16, watcher live).
+Tally: 43 / ~29 arm-hours.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
