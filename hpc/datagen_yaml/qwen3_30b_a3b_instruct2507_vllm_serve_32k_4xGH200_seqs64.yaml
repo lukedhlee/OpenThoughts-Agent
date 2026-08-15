@@ -1,0 +1,45 @@
+engine:
+  type: vllm_local
+  model: /e/fscratch/reformo/lee27/hf_hub/models--Qwen--Qwen3-30B-A3B-Instruct-2507/snapshots/0d7cf23991f47feeb3a57ecb4c9cee8ea4a17bfe
+  max_output_tokens: 8192
+  healthcheck_interval: 300
+  request_params:
+    temperature: 0.7
+    top_p: 0.95
+  vllm_local: {}
+backend:
+  type: ray
+  wait_for_endpoint: true
+  healthcheck_max_attempts: 160
+  healthcheck_retry_delay: 15
+vllm_server:
+  model_path: /e/fscratch/reformo/lee27/hf_hub/models--Qwen--Qwen3-30B-A3B-Instruct-2507/snapshots/0d7cf23991f47feeb3a57ecb4c9cee8ea4a17bfe
+  num_replicas: 1
+  tensor_parallel_size: 2
+  pipeline_parallel_size: 1
+  data_parallel_size: 2
+  time_limit: '11:59:00'
+  max_model_len: 32768
+  max_num_seqs: 64
+  gpu_memory_utilization: 0.9
+  swap_space: 12
+  enable_expert_parallel: false
+  # BASE model: no reasoning/tool parsers. The qwen3 reasoning parser + hermes
+  # tool parser swallow the entire chat completion for a base model (78 tokens
+  # generated, content AND reasoning_content returned empty — verified live on
+  # job 1380946), so terminus-2 saw only empty messages: 1282/1282 steps were
+  # "No valid JSON" parse errors. Terminus parses JSON from plain text content
+  # and needs neither server-side parser.
+  enable_auto_tool_choice: false
+  use_flashinfer_sampler: false
+  extra_args:
+  - --dtype
+  - bfloat16
+  - --block-size
+  - '16'
+  - --enable-chunked-prefill
+  - --enable-prefix-caching
+  # GH200 + lee27 rl-fa env: FlashInfer fused-MoE JIT needs GLIBCXX_3.4.32 (crash-loop);
+  # force the triton MoE path, same fix as skyrl arms_fa.yaml engine_init_kwargs.
+  - --moe-backend
+  - triton
