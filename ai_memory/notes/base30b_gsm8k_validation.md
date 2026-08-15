@@ -892,3 +892,6 @@ pre-flight for the agentic RL campaign: Qwen3-30B-A3B-Base × TaskTrove
 - ~~FA long-term: torch-2.9/cu130 coherent env rebuild~~ MOOT — `$F/envs/rl-fa` (torch
   2.11+cu128 + exact-tag FA wheel) resolved it 2026-08-14; no torch downgrade needed.
 - /e/scratch/reformo + lee27 $HOME quota cleanups (meeting asks; nothing for this run).
+- Post-prune leftovers (2026-08-15): 3 smoke-run ckpts survive (base30b_gsm8k_smoke_5
+  gs1, smoke2_2 gs3-4) — pre-campaign G3 artifacts, outside the arms keep-last-2 scope;
+  delete whenever disk is wanted. $F/experiments now 3.8T total (was ~58 ckpts heavier).
