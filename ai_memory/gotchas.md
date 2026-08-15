@@ -2904,3 +2904,21 @@ on 10.128.1.2:9920).
 feuer1/marianna's accounts — a working sibling setup proves the MECHANISM, not that YOUR
 account satisfies its preconditions. Auth-layer differences (TOTP enrollment) are invisible
 in code and only show up by testing the exact hop with the exact account.
+
+## 2026-08-15 — vLLM reasoning/tool parsers silently blank out BASE-model chat completions (currease probe, 3 burned launches)
+
+**Symptom:** datagen agent produced 1282/1282 "No valid JSON" parse errors with EMPTY messages;
+all trials burned full timeout; looked exactly like "base model can't drive the harness."
+**Cause:** serve config inherited `reasoning_parser: qwen3` + `tool_call_parser: hermes` from
+Ben's INSTRUCT-model Qwen3 configs. A base model never emits `</think>`/tool markup, so vLLM
+returned content='' AND reasoning_content='' while usage counted real completion tokens
+(verified live: /v1/completions fine, /v1/chat/completions 78 tokens generated, both fields empty).
+Nothing fails loudly — serve healthy, 200s, health check passes.
+**Fix:** drop both parsers for base models (commit 8e6cbce2). After fix: content real, parse
+errors 100%→~17% (recoverable), 27% of trials end naturally.
+**Rules:** (1) output-format flags (reasoning/tool parsers, chat-template kwargs, stop tokens)
+are MODEL-CLASS-dependent — re-derive on any instruct↔base change, never inherit as boilerplate;
+(2) before trusting any new serve config, run ONE live /v1/chat/completions probe and check
+message.content is non-empty — 30 seconds that would have saved ~6 h and 3 launches.
+**Dataset defect found:** curriculum-easy-0297 / 0506 / 0508 pass their verifier with ZERO agent
+actions (nop-pass) — exclude or flag in any pass@k scoring of DCAgent__exp_rpt_curriculum-easy.
