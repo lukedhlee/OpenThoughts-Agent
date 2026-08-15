@@ -722,6 +722,13 @@ nokl 75, lr8e6 55, lr3e6 50, lr1e6 24. Tally: 49 / ~31 arm-hours.
 resume@gs20 (dir _20, sidecar v19, watcher live). Tally: 50 / ~31 arm-hours.
 **06:1x — nokl-v8 at s79. ONE step from campaign-first finish**; eval@80 + final
 ckpt follow s80; finish-check scheduled (ba62qoalb).
+**★ 06:4x — nokl COMPLETE (first arm to finish): 1380985 COMPLETED 0:0, 80/80 steps,
+eval@80 = 87.49% greedy pass@1 (+29.7 vs 57.77 baseline; eval@40 was 85.22 → still
+improving 40→80). gs80+gs81 banked in _9. BINDING §3 VERDICT: formally MET at s80
+(bar was +10; nokl delivered +29.7 at completion). Campaign verdict = PASS regardless
+of the three stragglers; they continue for completeness (lr8e6 55, lr3e6 50, lr1e6 24).
+nokl endgame remaining: final wandb sync (arms_sync auto), ckpt prune at harvest,
+NO further relaunches for this arm.**
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;

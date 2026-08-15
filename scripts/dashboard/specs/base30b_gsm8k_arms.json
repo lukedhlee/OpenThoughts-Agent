@@ -21,7 +21,8 @@
   "evals": [
     { "step": 0, "v": 0.5777, "label": "eval 57.8%", "dx": 10, "dy": -8 },
     { "step": 40, "v": 0.884, "series": "lr8e6", "label": "eval 88.4%", "dx": -66, "dy": -12 },
-    { "step": 40, "v": 0.8522, "series": "lr3e6_nokl", "label": "eval 85.2%", "dx": 10, "dy": 14 }
+    { "step": 40, "v": 0.8522, "series": "lr3e6_nokl", "label": "eval 85.2%", "dx": 10, "dy": 14 },
+    { "step": 80, "v": 0.8749, "series": "lr3e6_nokl", "label": "eval@80 87.5%", "dx": -14, "dy": -10 }
   ],
   "tiles": [
     { "hero": true, "label": "Held-out accuracy after 40 RL steps (best arm)", "value": "88.4%",
@@ -46,7 +47,7 @@
     { "key": "lr1e6", "job": "1379349", "state": "restarting", "note": "resuming from step 10 — hang, then a ghost-OOM strike" },
     { "key": "lr3e6", "job": "1380047", "state": "queued", "note": "resuming from step 30 — third ghost-OOM strike (jpbo-003)" },
     { "key": "lr8e6", "job": "1379329", "state": "restarting", "note": "eval@40: 88.4% — resuming from step 40 after a hang at s44" },
-    { "key": "lr3e6_nokl", "job": "1379844", "state": "queued", "note": "no-KL probe arm; resume@gs50 after s53 hang" }
+    { "key": "lr3e6_nokl", "job": "1380985", "state": "done", "note": "FINISHED 80/80 — eval@80 87.49%; first arm home" }
   ],
   "timeline": {
     "title": "The job war — every Slurm attempt, 11:00 → now",
@@ -116,7 +117,7 @@
       { "v": "v5", "job": "1378378", "start": "21:02", "end": "00:30", "steps": "28", "fate": "hang", "note": "resume@gs25; eval@40 85.2%; backward hang mid-s53 (jpbo-081), gs50 banked" },
       { "v": "v6", "job": "1379844", "start": "00:42", "end": "02:30", "steps": "11", "fate": "hang", "note": "resume@gs50; hang at s61 (jpbo-107), gs60 banked" },
       { "v": "v7", "job": "1380775", "start": "02:42", "end": "05:12", "steps": "16", "fate": "hang", "note": "resume@gs60; hang at s76 (jpbo-016) — gs75 banked, 5 from done" },
-      { "v": "v8", "job": "1380985", "start": "05:15", "end": "", "steps": "0", "fate": "run", "note": "resume@gs75 — final 5 steps + eval@80" }
+      { "v": "v8", "job": "1380985", "start": "05:41", "end": "06:44", "steps": "5", "fate": "done", "note": "FINISHED 80/80 — eval@80 87.49% (+29.7 vs baseline)" }
     ]
   },
   "notes": [
