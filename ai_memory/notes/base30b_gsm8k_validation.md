@@ -27,7 +27,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 |---|---|---|---|
 | lr1e6 | 1379349 | base30b_gsm8k_lr1e6_13 | _11/ckpt gs10 |
 | lr3e6 | 1380047 | base30b_gsm8k_lr3e6_14 | _11/ckpt gs30 |
-| lr8e6 | 1379329 | base30b_gsm8k_lr8e6_10 | _9/ckpt gs40 |
+| lr8e6 | 1380786 | base30b_gsm8k_lr8e6_11 | _10/ckpt gs50 |
 | lr3e6_nokl | 1380775 | base30b_gsm8k_lr3e6_nokl_8 | _7/ckpt gs60 |
 
 ETAs to s80 at ~7.5 min/step (if no more incidents): lr8e6 ~02:30, nokl ~04:30,
@@ -607,6 +607,15 @@ excluded (ccecd14e) → v7 **1380775** resume@gs60 (dir _8, sidecar v7, verified
 nokl needs only 20 more steps. Death-watcher booaycjnb, stall-watcher b24r64uhc.
 Cumulative best: nokl 61, lr8e6 43+ (running 1:49), lr3e6 31+, lr1e6 12+.
 Tally: 35 / ~26 arm-hours.
+**02:45 incident #36 — lr8e6-v9 (1379329) backward hang at s55** (last mirror s54,
+froze 02:24:40 in ref-forward dispatch, jpbo-054-[01-03,09,12-13]; gs50 banked, s51-54
+lost — that attempt still netted +10) → excluded (37f49f0e) → v10 **1380786**
+resume@gs50 (dir _11, sidecar v10, verified: from_path gs50, lr 8e-6, exclusion in
+sbatch). nokl-v7 1380775 RUNNING (started 02:4x, booting). Death-watcher bwah069ja,
+stall-watcher bibbltqgh. Cumulative best: nokl 61, lr8e6 54, lr3e6 31+, lr1e6 12+.
+Tally: 36 / ~26 arm-hours. Probe HANDED OFF to second session —
+ai_memory/notes/currease_pass8_probe_handoff.md (865335c5); this session does NOT
+relaunch it.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
