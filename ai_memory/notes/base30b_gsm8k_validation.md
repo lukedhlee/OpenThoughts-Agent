@@ -28,7 +28,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 | lr1e6 | 1380924 | base30b_gsm8k_lr1e6_18 | _13/ckpt gs20 |
 | lr3e6 | 1380822 | base30b_gsm8k_lr3e6_15 | _14/ckpt gs40 |
 | lr8e6 | 1380912 | base30b_gsm8k_lr8e6_14 | _10/ckpt gs50 |
-| lr3e6_nokl | 1380775 | base30b_gsm8k_lr3e6_nokl_8 | _7/ckpt gs60 |
+| lr3e6_nokl | 1380985 | base30b_gsm8k_lr3e6_nokl_9 | _8/ckpt gs75 |
 
 ETAs to s80 at ~7.5 min/step (if no more incidents): lr8e6 ~02:30, nokl ~04:30,
 lr3e6 ~05:00, lr1e6 ~07:00+. Eval@40 + ckpt@40 land automatically (EVAL_INTERVAL=40,
@@ -694,6 +694,12 @@ attempt at the 50s. Tally: 44 / ~29 arm-hours.
 requeue-often → get-dirtiest-nodes vicious cycle; rack 013/014/015 corner is filthy)
 → excluded (ad5b3637) → v17 **1380924** resume@_13/gs20 (dir _18, sidecar v17,
 watcher live). Tally: 45 / ~29 arm-hours.
+**05:1x incident #46 — nokl-v7 (1380775) backward hang at s76, FIVE steps from done**
+(2:09h streak, gs75 BANKED, froze 04:30:06 mid-s76 policy_train,
+jpbo-016-[02,05,08-09,11,13]) → excluded (ad8b9a2c) → v8 **1380985** resume@gs75
+(dir _9, sidecar v8, watchers beommtupb/b79elmt3o). nokl needs 5 steps + eval@80 +
+final ckpt once it starts. Cumulative: nokl 75, lr8e6 54, lr3e6 45+, lr1e6 22.
+Tally: 46 / ~30 arm-hours.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;

@@ -111,7 +111,8 @@
       { "v": "v4", "job": "1375221", "start": "17:22", "end": "20:50", "steps": "1-28", "fate": "hang", "note": "reached s28, banked gs25; hang at s28" },
       { "v": "v5", "job": "1378378", "start": "21:02", "end": "00:30", "steps": "28", "fate": "hang", "note": "resume@gs25; eval@40 85.2%; backward hang mid-s53 (jpbo-081), gs50 banked" },
       { "v": "v6", "job": "1379844", "start": "00:42", "end": "02:30", "steps": "11", "fate": "hang", "note": "resume@gs50; hang at s61 (jpbo-107), gs60 banked" },
-      { "v": "v7", "job": "1380775", "start": "02:33", "end": "", "steps": "0", "fate": "run", "note": "resume@gs60 — 20 steps to go" }
+      { "v": "v7", "job": "1380775", "start": "02:42", "end": "05:12", "steps": "16", "fate": "hang", "note": "resume@gs60; hang at s76 (jpbo-016) — gs75 banked, 5 from done" },
+      { "v": "v8", "job": "1380985", "start": "05:15", "end": "", "steps": "0", "fate": "run", "note": "resume@gs75 — final 5 steps + eval@80" }
     ]
   },
   "notes": [
