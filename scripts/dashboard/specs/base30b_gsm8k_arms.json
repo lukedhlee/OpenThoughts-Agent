@@ -23,7 +23,8 @@
     { "step": 40, "v": 0.884, "series": "lr8e6", "label": "eval 88.4%", "dx": -66, "dy": -12 },
     { "step": 40, "v": 0.8522, "series": "lr3e6_nokl", "label": "eval 85.2%", "dx": 10, "dy": 14 },
     { "step": 80, "v": 0.8749, "series": "lr3e6_nokl", "label": "eval@80 87.5%", "dx": -14, "dy": 14 },
-    { "step": 80, "v": 0.8939, "series": "lr8e6", "label": "eval@80 89.4%", "dx": -14, "dy": -10 }
+    { "step": 80, "v": 0.8939, "series": "lr8e6", "label": "eval@80 89.4%", "dx": -14, "dy": -10 },
+    { "step": 80, "v": 0.8704, "series": "lr3e6", "label": "eval@80 87.0%", "dx": -14, "dy": 32 }
   ],
   "tiles": [
     { "hero": true, "label": "Held-out accuracy after 80 RL steps (best arm)", "value": "89.4%",
@@ -46,7 +47,7 @@
   },
   "fleet": [
     { "key": "lr1e6", "job": "1382326", "state": "running", "note": "16th attempt, resumed from step 25 — training at s26+, 55 to go" },
-    { "key": "lr3e6", "job": "1382325", "state": "running", "note": "resumed from step 75 — final 5 steps + eval@80 in flight" },
+    { "key": "lr3e6", "job": "1382325", "state": "done", "note": "FINISHED 80/80 — eval@80 87.04%; just under its no-KL twin" },
     { "key": "lr8e6", "job": "1381829", "state": "done", "note": "FINISHED 80/80 — eval@80 89.39%; best arm" },
     { "key": "lr3e6_nokl", "job": "1380985", "state": "done", "note": "FINISHED 80/80 — eval@80 87.49%; first arm home" }
   ],
@@ -104,7 +105,7 @@
       { "v": "v15", "job": "1381010", "start": "05:25", "end": "08:25", "steps": "13", "fate": "hang", "note": "resume@gs50; gs55+gs60 banked; hang at s64 (jpbo-009)" },
       { "v": "v16", "job": "1381529", "start": "08:28", "end": "09:18", "steps": "0", "fate": "node", "note": "NCCL cuda error in EP all-to-all, first forward (jpbo-001)" },
       { "v": "v17", "job": "1381636", "start": "09:24", "end": "11:15", "steps": "15", "fate": "hang", "note": "60→75, gs75 banked; hang at s76 (jpbo-066 → rack-level) — 5 from done" },
-      { "v": "v18", "job": "1382325", "start": "11:20", "end": "", "steps": "0", "fate": "run", "note": "resume@gs75 — final 5 + eval@80" }
+      { "v": "v18", "job": "1382325", "start": "11:20", "end": "12:29", "steps": "5", "fate": "done", "note": "FINISHED 80/80 — eval@80 87.04% (+29.3 vs baseline)" }
     ],
     "lr8e6": [
       { "v": "v1", "job": "1366674", "start": "11:12", "end": "12:30", "steps": "1-8", "fate": "hang", "note": "backward hang entering s9 (jpbo-115) — killed fabric theory" },

@@ -26,13 +26,13 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 | arm | job | dir | resumed from |
 |---|---|---|---|
 | lr1e6 | 1382326 | base30b_gsm8k_lr1e6_29 | _28/ckpt gs25 |
-| lr3e6 | 1382325 | base30b_gsm8k_lr3e6_19 | _18/ckpt gs75 |
+| lr3e6 | DONE (1382325) | base30b_gsm8k_lr3e6_19 | eval@80 87.04% |
 | lr8e6 | DONE (1381829) | base30b_gsm8k_lr8e6_18 | eval@80 89.39% |
 | lr3e6_nokl | DONE (1380985) | base30b_gsm8k_lr3e6_nokl_9 | eval@80 87.49% |
 
-TWO ARMS DONE (eval@80: lr8e6 89.39%, nokl 87.49%; baseline 57.77% → verdict MET,
-lr8e6 now best arm). Remaining: lr3e6-v18 from gs75 (~4 steps + eval@80), lr1e6-v28
-from gs25 (55 steps, ~7h if clean). Eval@80 lands automatically (EVAL_INTERVAL=40).
+THREE ARMS DONE (eval@80: lr8e6 89.39% > nokl 87.49% > lr3e6 87.04%; baseline
+57.77% → verdict MET, lr8e6 best). Remaining: lr1e6-v28 only, from gs25 (55 steps,
+~7h if clean). Eval@80 lands automatically (EVAL_INTERVAL=40).
 
 **FIRST ACTIONS in a new session** (Mac-side watchers die with the old session):
 1. Restart per-job 60s death-watchers (background `squeue -h -j <id>` poll → sacct on
@@ -802,6 +802,10 @@ ran clean in 2:02h.** Post-compaction bootstrap: watchers rebuilt (death bfchl2j
 1382326, bj29egdt9 → 1382325, stall bx7ift5wo); the 10:1x stall alert on the _28/_18
 dirs was a FALSE ALARM — dir-resolution race before the relaunches created _29/_19
 (both confirmed live: lr3e6 at s76 sync_weights, lr1e6 at s26 generate).
+**★ 11:05 CEST 08-15 — lr3e6 COMPLETE (third arm): 1382325 COMPLETED 0:0, 80/80,
+eval@80 = 87.04% greedy pass@1 (+29.3 vs baseline). v18's final stint gs75→80 + eval
+clean in 1:08h. Final eval order: lr8e6 89.39 > nokl 87.49 > lr3e6 87.04 — KL-on
+3e-6 lands just under its no-KL twin. Only lr1e6 still running (1382326, healthy).**
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
