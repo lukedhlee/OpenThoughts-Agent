@@ -25,7 +25,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 **Fleet as of 23:30 CEST** (job / newest dir under `$F/experiments/` / resume source):
 | arm | job | dir | resumed from |
 |---|---|---|---|
-| lr1e6 | 1379349 | base30b_gsm8k_lr1e6_13 | _11/ckpt gs10 |
+| lr1e6 | 1380812 | base30b_gsm8k_lr1e6_14 | _13/ckpt gs20 |
 | lr3e6 | 1380047 | base30b_gsm8k_lr3e6_14 | _11/ckpt gs30 |
 | lr8e6 | 1380786 | base30b_gsm8k_lr8e6_11 | _10/ckpt gs50 |
 | lr3e6_nokl | 1380775 | base30b_gsm8k_lr3e6_nokl_8 | _7/ckpt gs60 |
@@ -616,6 +616,13 @@ stall-watcher bibbltqgh. Cumulative best: nokl 61, lr8e6 54, lr3e6 31+, lr1e6 12
 Tally: 36 / ~26 arm-hours. Probe HANDED OFF to second session —
 ai_memory/notes/currease_pass8_probe_handoff.md (865335c5); this session does NOT
 relaunch it.
+**02:55 incident #37 — lr1e6-v12 (1379349) backward hang at s23** (last mirror s22,
+froze 02:35:50 in policy_train, jpbo-066-[17-18,20-22,24]; gs20 banked — that attempt
+netted +10) → excluded (203f6e01) → v13 **1380812** resume@gs20 (dir _14, sidecar v13,
+verified: from_path gs20, lr 1e-6, exclusion in sbatch). Death-watcher besvlmrdt,
+stall-watcher bjr5pzg4f. Fleet: lr3e6 RUNNING 1:50 (approaching s45+), lr8e6-v10
+RUNNING 10 min, nokl-v7 RUNNING 16 min, lr1e6-v13 PENDING. Cumulative best:
+nokl 61, lr8e6 54, lr3e6 31+, lr1e6 22. Tally: 37 / ~27 arm-hours.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;

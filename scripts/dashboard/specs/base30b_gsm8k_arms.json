@@ -66,7 +66,8 @@
       { "v": "v9", "job": "", "start": "19:55", "end": "20:05", "steps": "-", "fate": "oom", "note": "ghost-OOM at load (jpbo-022) → arm parked ~90 min" },
       { "v": "v10", "job": "1378384", "start": "21:16", "end": "22:33", "steps": "6-12", "fate": "hang", "note": "resume@gs5; froze mid-s13; scancel + nodes excluded" },
       { "v": "v11", "job": "1379097", "start": "22:47", "end": "23:08", "steps": "-", "fate": "oom", "note": "ghost-OOM at first train step (jpbo-025, 58 MiB free)" },
-      { "v": "v12", "job": "1379349", "start": "23:25", "end": "", "steps": "13+", "fate": "run", "note": "resume@gs10, jpbo-025 excluded" }
+      { "v": "v12", "job": "1379349", "start": "00:42", "end": "02:55", "steps": "12", "fate": "hang", "note": "resume@gs10; hang at s23 (jpbo-066), gs20 banked" },
+      { "v": "v13", "job": "1380812", "start": "02:58", "end": "", "steps": "0", "fate": "run", "note": "resume@gs20 — 60 steps to go" }
     ],
     "lr3e6": [
       { "v": "v1", "job": "1366672", "start": "11:12", "end": "13:12", "steps": "1-14", "fate": "node", "note": "stall at s15; head node refused srun (sick)" },
