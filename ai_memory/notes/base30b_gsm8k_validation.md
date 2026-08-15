@@ -673,7 +673,11 @@ offload; dirty-node prior strengthens: 18/666/607/14 MiB tonight) → excluded
 (476cca69) → v15 **1380859** resume@_13/gs20 (dir _16, sidecar v15, watcher live).
 Peer's proxy fix (fff9333d etc.) now interleaved on the branch — env-gated, harmless;
 both sessions share this Mac clone, commits stack. Tally: 42 / ~28 arm-hours.
-A/B still open: lr3e6-v14 (clean load, 0 OOM) first train step is the decider.
+**04:2x A/B CLOSED — ref cpu_offload=true EXONERATED**: lr3e6-v14 (1380822) logged
+mirror step 41 + 2 reward batches, 0 OOMs, with the identical offload config v11 died
+under → #41 was a partially-dirty jpbo-008 node. Offload flip validated through a full
+train step; keep it for all future relaunches. Fleet 04:2x: ALL FOUR RUNNING —
+nokl s67 (1:04h streak), lr3e6 past s41, lr8e6-v12 17min (loading), lr1e6-v15 7min.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;

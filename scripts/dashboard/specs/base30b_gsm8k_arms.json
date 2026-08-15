@@ -85,7 +85,7 @@
       { "v": "v11", "job": "1379098", "start": "22:47", "end": "23:02", "steps": "-", "fate": "oom", "note": "ghost-OOM at ckpt load (jpbo-030, 37 MiB free at job start)" },
       { "v": "v12", "job": "1379307", "start": "00:42", "end": "00:56", "steps": "0", "fate": "oom", "note": "ghost-OOM at engine load (jpbo-003, 18MiB free)" },
       { "v": "v13", "job": "1380047", "start": "00:57", "end": "03:23", "steps": "12", "fate": "hang", "note": "resume@gs30; eval@40 ran, gs40 banked; hang at s43 (jpbo-013)" },
-      { "v": "v14", "job": "1380822", "start": "03:26", "end": "", "steps": "0", "fate": "run", "note": "resume@gs40; ref offload on" }
+      { "v": "v14", "job": "1380822", "start": "03:26", "end": "", "steps": "41+", "fate": "run", "note": "resume@gs40; ref offload validated (first train step clean)" }
     ],
     "lr8e6": [
       { "v": "v1", "job": "1366674", "start": "11:12", "end": "12:30", "steps": "1-8", "fate": "hang", "note": "backward hang entering s9 (jpbo-115) — killed fabric theory" },
