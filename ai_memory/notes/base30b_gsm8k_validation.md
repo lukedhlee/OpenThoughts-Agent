@@ -25,7 +25,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 **Fleet as of 23:30 CEST** (job / newest dir under `$F/experiments/` / resume source):
 | arm | job | dir | resumed from |
 |---|---|---|---|
-| lr1e6 | 1380911 | base30b_gsm8k_lr1e6_17 | _13/ckpt gs20 |
+| lr1e6 | 1380924 | base30b_gsm8k_lr1e6_18 | _13/ckpt gs20 |
 | lr3e6 | 1380822 | base30b_gsm8k_lr3e6_15 | _14/ckpt gs40 |
 | lr8e6 | 1380912 | base30b_gsm8k_lr8e6_14 | _10/ckpt gs50 |
 | lr3e6_nokl | 1380775 | base30b_gsm8k_lr3e6_nokl_8 | _7/ckpt gs60 |
@@ -689,6 +689,11 @@ jpbo-079-[03,05,10-13], silent 784s; only s51 lost, gs50 still the resume point)
 excluded (22dc69a1) → v13 **1380912** resume@gs50 (dir _14, sidecar v13). Watchers:
 death bur8v9heg, stall b61f4xbhy. lr8e6 stuck at cumulative 54 since 02:24 — 4th
 attempt at the 50s. Tally: 44 / ~29 arm-hours.
+**05:0x incident #45 — lr1e6-v16 (1380911) ghost-OOM at load 13:18 in**
+(jpbo-015-[17,19,21,23,29-30], 8.12MiB free; lr1e6's 4th dirty nodeset in a row —
+requeue-often → get-dirtiest-nodes vicious cycle; rack 013/014/015 corner is filthy)
+→ excluded (ad5b3637) → v17 **1380924** resume@_13/gs20 (dir _18, sidecar v17,
+watcher live). Tally: 45 / ~29 arm-hours.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
