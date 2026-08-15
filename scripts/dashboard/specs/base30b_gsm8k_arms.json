@@ -109,7 +109,8 @@
       { "v": "v11", "job": "1380813", "start": "03:12", "end": "03:50", "steps": "0", "fate": "oom", "note": "OOM at first train step (jpbo-008, 607MiB) — node-vs-offload A/B pending" },
       { "v": "v12", "job": "1380847", "start": "03:55", "end": "04:55", "steps": "1", "fate": "hang", "note": "trained s51 (offload OK), hang at s52 (jpbo-079)" },
       { "v": "v13", "job": "1380912", "start": "04:58", "end": "05:35", "steps": "5", "fate": "hang", "note": "broke the 50s: gs55 banked, hang at s56 (jpbo-083)" },
-      { "v": "v14", "job": "1381037", "start": "05:38", "end": "", "steps": "0", "fate": "run", "note": "resume@gs55 — 25 to go" }
+      { "v": "v14", "job": "1381037", "start": "05:38", "end": "07:25", "steps": "9", "fate": "hang", "note": "resume@gs55; gs60 banked; hang at s65 (jpbo-019)" },
+      { "v": "v15", "job": "1381457", "start": "07:28", "end": "", "steps": "0", "fate": "run", "note": "resume@gs60 — 20 to go" }
     ],
     "lr3e6_nokl": [
       { "v": "v1", "job": "1366675", "start": "11:12", "end": "15:20", "steps": "1-32", "fate": "hang", "note": "the marathon — s32 with no ckpt (interval 40) → full restart" },
