@@ -178,3 +178,36 @@ ai_memory/artifacts/currease_pass8_per_task.csv (base counts are valid-only).
 Traces: lukeleeai/qwen3-30b-a3b-base-currease-pass8{,-b,-c} — note the b repo has only 65
 rows because the exporter (correctly) drops zero-conversation trials; realness checks on
 trace repos should compare against VALID trials, not result.json counts.
+
+---
+## RL ARMS LAUNCHED — base-vs-instruct GRPO comparison (2026-08-16 ~00:35 CEST)
+
+Operator decision: run paths 1 (instruct-start) AND 3 (raw-base) GRPO side by side on
+curriculum-easy and measure the difference empirically.
+
+- Configs (commit 525f95f4): `hpc/skyrl_yaml/jupiter/6node_currease30b_grpo_{base,instr2507}.yaml`
+  — identical except policy/ref snapshot paths. Design: terminal_bench/terminus-2/Daytona
+  chassis (probe-parity: 32k ctx, no thinking-template bits, strict JSON, agent timeout
+  1800 s, verifier 120 s, n_concurrent 64) + the gsm8k-campaign-validated FSDP2 MoE
+  training block (rl-fa venv, flash-attn+packing, moe_backend triton, cu13
+  LD_LIBRARY_PATH baked, EP=4×FSDP=4, 4 policy nodes + 8 TP=1 engines, ref cpu_offload
+  true). GRPO n_samples_per_prompt=8, lr 3e-6 (mid arm of the validated gsm8k grid),
+  KL 0.001, TIS cap 2.0, seq_mean, temp 1.0/top_p 1.0/top_k -1, batch 16 prompts/step
+  (=128 rollouts), max_steps 50, ckpt_interval 5, eval off (probe = step-0 baseline),
+  seed 42. Train set: `$F/tasks/tasktrove_curriculum_easy_rl511` (514 minus the 3
+  nop-pass defects 0297/0506/0508).
+- Jobs (6 nodes each, 12h links, 5 chained restarts): base **1386478**→…→1386483;
+  instr2507 **1386484**→…→1386489. Both RUNNING since 2026-08-16 00:37 CEST.
+- Launch route: direct `hpc.launch --job_type rl` from rl-fa python, preset-SOCKS env
+  (microsocks 10.128.1.2:7011, tmux `currease_socks`) + PROXYCHAINS_BIN_OVERRIDE
+  `$F/tools/proxychains-ng-install/bin/proxychains4`; snapshot prebuild = 2 registry
+  hits, 0 new. **Gotcha: `--model_path` is MANDATORY** — omitting it crashes
+  rl_launch_utils.py:1081 (`ParsedRLConfig` has no `.model`); it only overrides
+  policy, so ref paths are baked in the yamls.
+- Expected shape: instruct arm reward ≈0.35-0.42 at step 0, mixed groups on the
+  107-task partial band; base arm ≈0.04 with mostly zero-advantage groups and
+  timeout-bound rollout waves (~2×30 min/step worst case vs ~2×3 min for instruct).
+  The cost/signal asymmetry IS part of the measurement.
+- Verdict read: compare train-reward slope + entropy/grad_norm over first ~10-20 steps;
+  watch for the EP/FSDP2 backward-hang race (gsm8k incident runbook applies verbatim —
+  stall = log mtime >600 s while RUNNING).
