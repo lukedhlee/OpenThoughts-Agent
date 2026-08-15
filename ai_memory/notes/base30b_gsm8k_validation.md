@@ -28,7 +28,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 | lr1e6 | 1379349 | base30b_gsm8k_lr1e6_13 | _11/ckpt gs10 |
 | lr3e6 | 1380047 | base30b_gsm8k_lr3e6_14 | _11/ckpt gs30 |
 | lr8e6 | 1379329 | base30b_gsm8k_lr8e6_10 | _9/ckpt gs40 |
-| lr3e6_nokl | 1379844 | base30b_gsm8k_lr3e6_nokl_7 | _6/ckpt gs50 |
+| lr3e6_nokl | 1380775 | base30b_gsm8k_lr3e6_nokl_8 | _7/ckpt gs60 |
 
 ETAs to s80 at ~7.5 min/step (if no more incidents): lr8e6 ~02:30, nokl ~04:30,
 lr3e6 ~05:00, lr1e6 ~07:00+. Eval@40 + ckpt@40 land automatically (EVAL_INTERVAL=40,
@@ -601,6 +601,24 @@ sub-range of already-partially-excluded jpbo-003 rack) → excluded (8c18896e) �
 v13 **1380047** resume@_11/gs30 (dir _14, sidecar v13; config verified: from_path
 gs30, lr 3e-6, exclusion in sbatch). Death-watcher blgvr1n46. Other three arms
 survived their load window (RUNNING 15+ min). Tally: 34 / ~25 arm-hours.
+**02:30 incident #35 — nokl-v6 (1379844) backward hang at s61** (froze 02:19 entering
+policy_train, jpbo-107-[07-12]; **gs60 banked** — net +10 steps that attempt) →
+excluded (ccecd14e) → v7 **1380775** resume@gs60 (dir _8, sidecar v7, verified).
+nokl needs only 20 more steps. Death-watcher booaycjnb, stall-watcher b24r64uhc.
+Cumulative best: nokl 61, lr8e6 43+ (running 1:49), lr3e6 31+, lr1e6 12+.
+Tally: 35 / ~26 arm-hours.
+**Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
+(a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
+fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
+(b) proxy skipped: PROXYCHAINS_BIN hardcoded to feuer1's build (perm-denied) →
+added `PROXYCHAINS_BIN_OVERRIDE` hook (40648803), built own aarch64 binary at
+`$F/tools/proxychains-ng-install/bin/proxychains4`; ALSO needs SSH_KEY for the
+compute→login SOCKS tunnel — local authorized_keys is IGNORED (JuDoor-only sshd);
+**BLOCKED on operator: JuDoor paste of intra key with from="10.0.0.0/8,134.94.0.0/16"**
+(reuse id_ed25519_jupiter2jureca). $F/OpenThoughts-Agent is a SYMLINK to
+repos/OpenThoughts-Agent (workdir was never wrong). Runner honors
+PROXYCHAINS_CONF_FILE (datagen_launch_utils L868+). PI note 08-15: /p/ going
+obsolete — store under /e/ (datasets → /e/data1/datasets/playground/mmlaion/).
 
 **NEW TOOL: `scripts/dashboard/` (Runboard, commits c8fbcaa9+f78d6c82)** — local
 self-contained analysis website (operator-requested). `pull_wandb.py specs/<exp>.json`
