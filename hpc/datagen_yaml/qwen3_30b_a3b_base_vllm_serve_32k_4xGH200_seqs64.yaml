@@ -24,9 +24,13 @@ vllm_server:
   gpu_memory_utilization: 0.9
   swap_space: 12
   enable_expert_parallel: false
-  enable_auto_tool_choice: true
-  tool_call_parser: hermes
-  reasoning_parser: qwen3
+  # BASE model: no reasoning/tool parsers. The qwen3 reasoning parser + hermes
+  # tool parser swallow the entire chat completion for a base model (78 tokens
+  # generated, content AND reasoning_content returned empty — verified live on
+  # job 1380946), so terminus-2 saw only empty messages: 1282/1282 steps were
+  # "No valid JSON" parse errors. Terminus parses JSON from plain text content
+  # and needs neither server-side parser.
+  enable_auto_tool_choice: false
   use_flashinfer_sampler: false
   extra_args:
   - --dtype
