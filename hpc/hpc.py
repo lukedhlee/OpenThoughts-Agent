@@ -1027,8 +1027,10 @@ jupiter = HPC(
     # jpbo-066-[17-18,20-22,24] added 2026-08-15 02:5x: backward-hang site (lr1e6-v12 1379349 at s23).
     # jpbo-014 escalated to RACK-LEVEL 2026-08-15 03:1x: second disjoint hit — [18,24-25,27,31-32]
     # was the first hang site (1366671); now [17,19,23,26,28-29] ghost-OOM'd lr8e6-v10 1380786 at ckpt load.
+    # jpbo-033-[33-36,45,48] added 2026-08-15 03:2x: ghost-OOM at ckpt load (lr1e6-v13 1380812, 666MiB free).
+    # jpbo-013-[17-18,20,23,25-26] added 2026-08-15 03:2x: backward-hang site (lr3e6-v13 1380047 at s43).
     # (lr1e6 1379097, 58MiB free).
-    node_exclusion_list="jpbo-031-[01-48],jpbo-011-[01-48],jpbo-038-38,jpbo-004-46,jpbo-065-17,jpbo-074-22,jpbo-074-40,jpbo-048-41,jpbo-091-05,jpbo-044-0[1-5],jpbo-014-[01-48],jpbo-034-[18,23-25,27-29],jpbo-044-[07,11-15],jpbo-060-[05-06,10,12,14,16],jpbo-100-[01-48],jpbo-115-[42,44-48],jpbo-003-[35,37,39-40,42,45,47],jpbo-102-23,jpbo-103-20,jpbo-122-[02-03,20,23,26-29],jpbo-046-[27-32],jpbo-069-[01-02,05-08],jpbo-020-[01-48],jpbo-105-[42-46,48],jpbo-022-[33,36-40],jpbo-068-[09-13,16],jpbo-067-[06,08-12],jpbo-030-[33,36,39,41,44,46],jpbo-112-[05,08-12],jpbo-025-[17,22-23,29-30,32],jpbo-081-[10-15],jpbo-003-[20,23-24,26-27,30],jpbo-107-[07-12],jpbo-054-[01-03,09,12-13],jpbo-066-[17-18,20-22,24]",
+    node_exclusion_list="jpbo-031-[01-48],jpbo-011-[01-48],jpbo-038-38,jpbo-004-46,jpbo-065-17,jpbo-074-22,jpbo-074-40,jpbo-048-41,jpbo-091-05,jpbo-044-0[1-5],jpbo-014-[01-48],jpbo-034-[18,23-25,27-29],jpbo-044-[07,11-15],jpbo-060-[05-06,10,12,14,16],jpbo-100-[01-48],jpbo-115-[42,44-48],jpbo-003-[35,37,39-40,42,45,47],jpbo-102-23,jpbo-103-20,jpbo-122-[02-03,20,23,26-29],jpbo-046-[27-32],jpbo-069-[01-02,05-08],jpbo-020-[01-48],jpbo-105-[42-46,48],jpbo-022-[33,36-40],jpbo-068-[09-13,16],jpbo-067-[06,08-12],jpbo-030-[33,36,39,41,44,46],jpbo-112-[05,08-12],jpbo-025-[17,22-23,29-30,32],jpbo-081-[10-15],jpbo-003-[20,23-24,26-27,30],jpbo-107-[07-12],jpbo-054-[01-03,09,12-13],jpbo-066-[17-18,20-22,24],jpbo-033-[33-36,45,48],jpbo-013-[17-18,20,23,25-26]",
     # Stage 4: eval-listener cluster config (single source of truth — was eval/clusters/jupiter.yaml).
     # User-scoped paths mirror that yaml (zhuang1's); parameterizing via dotenv is a follow-up.
     eval_cluster_view={
