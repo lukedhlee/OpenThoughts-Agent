@@ -177,7 +177,7 @@ generator:
   run_engines_locally: true
   weight_sync_backend: nccl
   async_engine: true
-  batched: true
+  batched: false
   enable_http_endpoint: true
   enable_ray_prometheus_stats: false
   vllm_stats_interval: 1
