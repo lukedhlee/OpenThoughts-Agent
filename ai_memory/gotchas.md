@@ -2878,3 +2878,29 @@ contradiction (handoff "no torch2.11 wheel" vs ENVIRONMENT_MAP §2a "FA 2.8.3 wh
 torch 2.11, June") sat in the repo for weeks — a working sibling setup is an existence proof that
 outranks any impossibility claim, so when one exists, the question changes from "how do we work
 around X" to "X is misdiagnosed — find the difference."
+
+## 2026-08-15 — JSC TOTP kills the compute→login `ssh -D` tunnel for lee27 (fix: login-node microsocks + preset-SOCKS env path)
+
+**Symptom:** currease pass@8 probe blocked — the JuDoor tunnel key for JUPITER, once pasted,
+was ACCEPTED by sshd ("Server accepts key") but auth then demanded `keyboard-interactive`
+(JSC TOTP) from EVERY source: login→login AND compute→login (verified from jpbo-013-17
+10.128.18.81 → jpbl-s01-01 10.128.1.1, fully internal; same on jpbl-s01-02/03/04).
+**Cause:** TOTP is an ACCOUNT-level JSC setting that fires after pubkey regardless of source
+IP or `from=` clause (jupiter access.html: only FIDO keys / ssh-certs are exempt). lee27 has
+TOTP on; feuer1/marianna evidently don't — which is why THEIR batch `ssh -D` tunnels
+(hpc.py `_setup_proxy`, marianna's `start_proxy_tunnel.sh`) work and ours never can. No
+JuDoor key paste, `from=` tweak, or login-node choice fixes this.
+**Second latent bug found on this branch:** `datagen_launch_utils.py` runners took
+`proxychains_binary` ONLY from cluster config, which `lukedhlee/vista-moe-grpo-30b` blanks
+for jupiter — so even a working tunnel would have left harbor's Daytona calls UNWRAPPED.
+**Fix (commit fff9333d):** (1) `_setup_proxy` honors `PROXYCHAINS_SOCKS5_PRESET_HOST/PORT/AUTH`
+— writes proxychains.conf against a preset SOCKS5 and skips tunnel creation; (2) runners
+honor `PROXYCHAINS_BIN_OVERRIDE`. Runtime: authenticated `microsocks` on the login node
+(tmux `currease_socks`, binds 10.128.1.2:7011, creds in `$F/keys/socks5_currease.env`,
+binary `$F/tools/microsocks/`), egress verified 200 to huggingface.co AND app.daytona.io.
+Compute→login-listener plain TCP needs no ssh at all (precedent: gsm8k session's `bridge`
+on 10.128.1.2:9920).
+**Lesson:** "paste the key and the tunnel works" was a false premise inherited from
+feuer1/marianna's accounts — a working sibling setup proves the MECHANISM, not that YOUR
+account satisfies its preconditions. Auth-layer differences (TOTP enrollment) are invisible
+in code and only show up by testing the exact hop with the exact account.

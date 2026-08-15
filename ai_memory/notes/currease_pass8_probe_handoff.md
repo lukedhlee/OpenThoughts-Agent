@@ -129,3 +129,14 @@ Flag traps: it's `--trace-n-attempts` (`--n_attempts` is REJECTED by the datagen
 - `ai_memory/notes/base30b_gsm8k_validation.md` § "SIDE CAMPAIGN" (probe history) and
   the incident log (what the OTHER session is doing — read, don't touch)
 - `.claude/projects/daytona/daytona.md` (snapshot/sandbox caps — HARD, never raise)
+
+---
+## ⚠ CORRECTION (2026-08-15, attempt 2): the GATE section above is OBSOLETE
+The JuDoor key paste is NOT sufficient and the login→login gate test can NEVER pass for
+lee27: JSC TOTP is account-level and fires after pubkey from ALL sources, including
+compute→login (see gotchas.md 2026-08-15 entry). The working route is the login-node
+microsocks + preset-SOCKS env path (commit fff9333d): tmux `currease_socks` on login02
+runs authenticated microsocks at 10.128.1.2:7011 (creds `$F/keys/socks5_currease.env`);
+submit with PROXYCHAINS_SOCKS5_PRESET_HOST/PORT/AUTH + PROXYCHAINS_BIN_OVERRIDE and NO
+SSH_KEY. Attempt 2 = job 1380855 (exp dir experiments/currease_base_pass8_2), launched
+2026-08-15 with this route; compute-node proxy test passed.
