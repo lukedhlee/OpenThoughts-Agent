@@ -614,6 +614,29 @@ as artifact https://claude.ai/code/artifact/c192387b-b103-4c6d-b2d4-070fee769430
 stable, trunc ~1-3%). lr8e6-v3 resume VERIFIED in-log (resume_mode from_path,
 global_step_10). No arm pathological; no kills at the gate.
 
+## SIDE CAMPAIGN 01:0x-01:4x — curriculum-easy pass@8 probe (operator-approved, Daytona route)
+
+**Job 1380770** `currease_base_pass8_traces`, 1 node, submitted ~01:40 CEST. The binding
+pre-flight for the agentic RL campaign: Qwen3-30B-A3B-Base × TaskTrove
+`DCAgent__exp_rpt_curriculum-easy` (514 tasks) × 8 attempts = 4,112 trials, verifier ON.
+- Tasks: HF `open-thoughts/TaskTrove` subset parquet → extracted to
+  `$F/tasks/tasktrove_curriculum_easy` (514 dirs; 504 share the 3-line python:3.10-slim
+  Dockerfile, 10 share one heavier sci-py image → exactly 2 Daytona snapshots, both built
+  at submit). NO Jureca/JUWELS involvement — Daytona cloud runs the terminals.
+- Launch: `hpc.launch --job_type datagen`, serve config
+  `hpc/datagen_yaml/qwen3_30b_a3b_base_vllm_serve_32k_4xGH200.yaml` (NEW, commit 8cbe1334:
+  tp2/dp2, 32k, temp 0.7/top_p 0.95, `--moe-backend triton` for the GH200 FlashInfer JIT
+  crash), harbor config `ctx32k_verified.yaml` (verifier enabled), `--trace-n-attempts 8`
+  (NOT `--n_attempts` — that flag is rejected), `--trace-n-concurrent 96`,
+  target repo `laion/qwen3-30b-a3b-base-currease-pass8`.
+- Daytona: lee27's `DAYTONA_API_KEY` audits as a 60-cap GENERAL org (23/60 used) — OK for
+  datagen per iris ops interchangeability; lee27 has NO `DAYTONA_DATA_API_KEY`.
+- **STALE-NOTE FIX: Qwen3-30B-A3B-Base DOES ship a tools-aware chat_template** (4,116
+  chars, in tokenizer_config.json) — NEXT_SESSION's "base has NO chat template" is wrong.
+- Verify-after-boot: `_vllm.log` serve OK, then trial dirs under the run's `trace_jobs/`
+  accumulating multi-turn trajectories (avg turns > 1). pass@8 = per-task any-success over
+  8 rewards at consolidation. Death-watcher bndiqtrzv.
+
 ## Open/parked items
 
 - Sweep-shards mystery RESOLVED: the other session's sweep was operator-PARKED 08-14
