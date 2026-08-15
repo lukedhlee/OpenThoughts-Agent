@@ -25,8 +25,8 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 **Fleet as of 23:30 CEST** (job / newest dir under `$F/experiments/` / resume source):
 | arm | job | dir | resumed from |
 |---|---|---|---|
-| lr1e6 | 1381857 | base30b_gsm8k_lr1e6_28 | _13/ckpt gs20 |
-| lr3e6 | 1381636 | base30b_gsm8k_lr3e6_18 | _16/ckpt gs60 |
+| lr1e6 | 1382326 | base30b_gsm8k_lr1e6_29 | _28/ckpt gs25 |
+| lr3e6 | 1382325 | base30b_gsm8k_lr3e6_19 | _18/ckpt gs75 |
 | lr8e6 | 1381829 | base30b_gsm8k_lr8e6_18 | _17/ckpt gs65 |
 | lr3e6_nokl | 1380985 | base30b_gsm8k_lr3e6_nokl_9 | _8/ckpt gs75 |
 
@@ -786,6 +786,15 @@ DONE, lr8e6 68, lr3e6 63, lr1e6 24. Tally: 62 / ~36 arm-hours.
 **10:4x incident #63 — lr1e6-v26 (1381815) ghost-OOM at load** (jpbo-018-[38-41,
 45-46], 20MiB free; 13th ghost nodeset) → excluded (53d75cf5) → v27 **1381857**
 resume@gs20 (dir _28, sidecar v27, watcher live). Tally: 63 / ~36 arm-hours.
+**11:1x incidents #64-65 — SIMULTANEOUS double hang (~30s apart, cf. #28-29)**:
+lr3e6-v17 (1381636) froze mid-s76 — **gs75 BANKED, 5 from done, same spot as nokl**
+(+15 net that attempt, 60→75); lr1e6-v27 (1381857) froze mid-s28 — **gs25 banked,
+lr1e6's first ckpt progress since 03:0x** (resume point now gs25). Racks 066+111
+escalated rack-level (54666fa6; 8 full racks now). → lr3e6-v18 **1382325**
+resume@gs75; lr1e6-v28 **1382326** resume@gs25 (dirs _19/_29, sidecars v18/v28,
+watchers btzb1ra9y/b33sq9zsp, stall bqjeyynds). lr8e6-v17 1:37h streak from gs65 —
+likely ~s76+, nearing finish. Probe session note: their currease job 1381627
+RUNNING 2:31h. Tally: 65 / ~37 arm-hours.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
