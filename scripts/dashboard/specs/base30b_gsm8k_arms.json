@@ -80,7 +80,8 @@
       { "v": "v22", "job": "1381465", "start": "07:46", "end": "08:40", "steps": "0", "fate": "oom", "note": "partial-ghost OOM (jpbo-112 → rack-level)" },
       { "v": "v23", "job": "1381546", "start": "08:46", "end": "09:02", "steps": "0", "fate": "oom", "note": "ghost-OOM at load (jpbo-016 → rack-level)" },
       { "v": "v24", "job": "1381632", "start": "09:08", "end": "09:30", "steps": "0", "fate": "oom", "note": "ghost-OOM at load (jpbo-051, 67MiB free)" },
-      { "v": "v25", "job": "1381758", "start": "09:38", "end": "", "steps": "0", "fate": "run", "note": "resume@gs20; 13th try" }
+      { "v": "v25", "job": "1381758", "start": "09:38", "end": "09:55", "steps": "0", "fate": "oom", "note": "ghost-OOM at load (jpbo-067 → rack-level)" },
+      { "v": "v26", "job": "1381815", "start": "10:05", "end": "", "steps": "0", "fate": "run", "note": "resume@gs20; 14th try" }
     ],
     "lr3e6": [
       { "v": "v1", "job": "1366672", "start": "11:12", "end": "13:12", "steps": "1-14", "fate": "node", "note": "stall at s15; head node refused srun (sick)" },
