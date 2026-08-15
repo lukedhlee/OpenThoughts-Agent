@@ -87,7 +87,11 @@ trainer:
     model:
       path: Qwen/Qwen3-30B-A3B-Base
     fsdp_config:
-      cpu_offload: false
+      # 2026-08-15 (operator-approved mid-campaign, applies from each arm's next
+      # relaunch): colocated FSDP2 ref with cpu_offload:false wholesale-bounces the
+      # full ref shard CPU<->GPU every step (upstream e9fc5e8 now FORCES true here).
+      # Placement-only change — loss math identical; policy offload stays false.
+      cpu_offload: true
       reshard_after_forward: true
       fsdp_size: 4
       expert_model_parallel_size: 4
