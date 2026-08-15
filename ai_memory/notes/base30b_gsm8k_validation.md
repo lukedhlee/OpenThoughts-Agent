@@ -25,14 +25,14 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 **Fleet as of 23:30 CEST** (job / newest dir under `$F/experiments/` / resume source):
 | arm | job | dir | resumed from |
 |---|---|---|---|
-| lr1e6 | 1384330 | base30b_gsm8k_lr1e6_31 | _30/ckpt gs55 |
+| lr1e6 | 1385118 | base30b_gsm8k_lr1e6_32 | _31/ckpt gs70 |
 | lr3e6 | DONE (1382325) | base30b_gsm8k_lr3e6_19 | eval@80 87.04% |
 | lr8e6 | DONE (1381829) | base30b_gsm8k_lr8e6_18 | eval@80 89.39% |
 | lr3e6_nokl | DONE (1380985) | base30b_gsm8k_lr3e6_nokl_9 | eval@80 87.49% |
 
 THREE ARMS DONE (eval@80: lr8e6 89.39% > nokl 87.49% > lr3e6 87.04%; baseline
-57.77% → verdict MET, lr8e6 best). Remaining: lr1e6-v30 only, from gs55 (25 steps,
-~3h if clean; its eval@40 = 62.09%, +4.3 — the 1e-6 arm barely moves, as expected).
+57.77% → verdict MET, lr8e6 best). Remaining: lr1e6-v31 only, from gs70 (10 steps
++ eval@80, ~1.5h if clean; its eval@40 = 62.09%, +4.3 — the do-little arm).
 Eval@80 lands automatically (EVAL_INTERVAL=40).
 
 **FIRST ACTIONS in a new session** (Mac-side watchers die with the old session):
@@ -819,6 +819,12 @@ policy_train batch 24/32 on jpbo-064-[09-13,16], rack 064 1st hit → node-level
 (49042760)). Another strong stint: 41→57 (+17 net), gs55 banked. → v30 **1384330**
 resume@gs55 (dir _31, sidecar v30, death watcher bo46h2g7j, stall b9ky0h918).
 25 steps to go (~3h). Tally: 67 / ~43 arm-hours.
+**18:1x CEST incident #68 — lr1e6-v30 (1384330) EP hang mid-s72 FORWARD** (frozen
+after WORKER_FORWARD_ENTER / MESH_DISPATCH forward at 18:04 — forward-phase variant
+of the same EP-collective race; jpbo-026-[01,03-07], rack 026 1st hit → node-level
+(905547ed)). Another +16 stint (56→71), gs70 banked. → v31 **1385118** resume@gs70
+(dir _32, sidecar v31, death watcher b45015g5g, stall bjfy2pwu8). 10 steps + eval@80
+to go (~1.5h). Tally: 68 / ~46 arm-hours.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
