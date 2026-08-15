@@ -490,7 +490,8 @@ elif [[ $NODE_HOST == jwb* ]]; then
 elif [[ $NODE_HOST == jpb* ]] || [[ $NODE_HOST == jpc* ]]; then
     LOGIN_NODE="jpbl-s01-01"
     # Jupiter uses aarch64 build - binary wrapper approach (LD_PRELOAD doesn't work reliably)
-    PROXYCHAINS_BIN="/e/scratch/jureap59/feuer1/proxychains-ng-aarch64/bin/proxychains4"
+    # Default is feuer1's build (other users get Permission denied) — override per-user at submit.
+    PROXYCHAINS_BIN="${PROXYCHAINS_BIN_OVERRIDE:-/e/scratch/jureap59/feuer1/proxychains-ng-aarch64/bin/proxychains4}"
     PROXYCHAINS_MODE="binary"
 elif [[ $NODE_HOST == lrdn* ]] || [[ $NODE_HOST == *.leonardo.local ]]; then
     LOGIN_NODE="login05-ext.leonardo.cineca.it"
