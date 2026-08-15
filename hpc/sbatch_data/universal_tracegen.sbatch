@@ -120,6 +120,15 @@ export PYTHONPATH="$WORKDIR:${PYTHONPATH:-}"
 # --- Ray defaults ---
 {ray_env_exports}
 
+# --- Optional user hook AFTER baked env exports (last word on env) ---
+# Needed when a dotenv-baked value is stale for this submitter, e.g. jupiter.env
+# bakes LD_LIBRARY_PATH from the retired /e/scratch envs/rl tree; a per-submit
+# override cannot win earlier because set_environment() overwrites the submit
+# shell env. No-op when unset.
+if [ -n "${DCFT_POST_ENV_EXPORTS:-}" ]; then
+  eval "$DCFT_POST_ENV_EXPORTS"
+fi
+
 # --- Triton/TorchInductor cache settings (node-local to avoid shared FS issues) ---
 export TRITON_CACHE_VERBOSE=1
 source "$WORKDIR/hpc/shell_utils/triton_cache.sh"
