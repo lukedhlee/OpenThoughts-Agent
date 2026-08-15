@@ -27,7 +27,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 |---|---|---|---|
 | lr1e6 | 1381815 | base30b_gsm8k_lr1e6_27 | _13/ckpt gs20 |
 | lr3e6 | 1381636 | base30b_gsm8k_lr3e6_18 | _16/ckpt gs60 |
-| lr8e6 | 1381493 | base30b_gsm8k_lr8e6_17 | _15/ckpt gs60 |
+| lr8e6 | 1381829 | base30b_gsm8k_lr8e6_18 | _17/ckpt gs65 |
 | lr3e6_nokl | 1380985 | base30b_gsm8k_lr3e6_nokl_9 | _8/ckpt gs75 |
 
 ETAs to s80 at ~7.5 min/step (if no more incidents): lr8e6 ~02:30, nokl ~04:30,
@@ -779,6 +779,10 @@ resume@gs20 (dir _26, sidecar v25, watcher live). Tally: 60 / ~35 arm-hours.
 v26 **1381815** resume@gs20 (dir _27, sidecar v26, watcher live). lr1e6: 12 ghost
 nodesets, 14th attempt. Wall: 60 steps from ~10:20 ≈ →17:50, still fits but
 tightening. Tally: 61 / ~36 arm-hours.
+**10:2x incident #62 — lr8e6-v16 (1381493) backward hang at s69** (1:20h streak,
+gs65 banked, +8 net; jpbo-120-[02,04-05,07-09]) → excluded (67b6e5bb) → v17
+**1381829** resume@gs65 (dir _18, sidecar v17, watcher live). Cumulative: nokl
+DONE, lr8e6 68, lr3e6 63, lr1e6 24. Tally: 62 / ~36 arm-hours.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
