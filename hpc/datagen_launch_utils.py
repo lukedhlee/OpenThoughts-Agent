@@ -48,6 +48,16 @@ DEFAULT_RAY_CGRAPH_MAX_INFLIGHT = os.environ.get("RAY_CGRAPH_MAX_INFLIGHT_DEFAUL
 HARBOR_MODEL_PLACEHOLDER = "placeholder/override-at-runtime"
 
 
+def _resolve_proxychains_binary(hpc) -> str:
+    """Proxychains binary for wrapping commands on no-internet clusters.
+
+    PROXYCHAINS_BIN_OVERRIDE (same env hook the sbatch tunnel block honors)
+    takes precedence over the cluster config value — needed on Jupiter where
+    the config default is empty for non-feuer1 users (perm-denied binary).
+    """
+    return os.environ.get("PROXYCHAINS_BIN_OVERRIDE", "") or getattr(hpc, "proxychains_binary", "") or ""
+
+
 def _count_tasks_in_path(tasks_path: str) -> int:
     """Count the number of tasks in a dataset directory or file.
 
@@ -715,7 +725,7 @@ class TaskgenJobRunner:
             else:
                 self._hpc = detect_hpc()
             # Stash proxychains binary for wrapping commands on no-internet clusters
-            self._proxychains_binary = getattr(self._hpc, "proxychains_binary", "") or ""
+            self._proxychains_binary = _resolve_proxychains_binary(self._hpc)
         return self._hpc
 
     def run(self) -> int:
@@ -759,7 +769,7 @@ class TaskgenJobRunner:
 
         hpc = self._get_hpc()
         # Stash proxychains binary for wrapping datagen script (needed on no-internet clusters like JSC)
-        self._proxychains_binary = getattr(hpc, "proxychains_binary", "") or ""
+        self._proxychains_binary = _resolve_proxychains_binary(hpc)
         num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", self.config.num_nodes))
 
         # Use config values (from CLI overrides) instead of cluster defaults
@@ -991,7 +1001,7 @@ class TracegenJobRunner:
             else:
                 self._hpc = detect_hpc()
             # Stash proxychains binary for wrapping commands on no-internet clusters
-            self._proxychains_binary = getattr(self._hpc, "proxychains_binary", "") or ""
+            self._proxychains_binary = _resolve_proxychains_binary(self._hpc)
         return self._hpc
 
     @staticmethod
@@ -1226,7 +1236,7 @@ class TracegenJobRunner:
 
         hpc = self._get_hpc()
         # Stash proxychains binary for wrapping Harbor CLI (needed on no-internet clusters like JSC)
-        self._proxychains_binary = getattr(hpc, "proxychains_binary", "") or ""
+        self._proxychains_binary = _resolve_proxychains_binary(hpc)
         num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", self.config.num_nodes))
 
         # Use config values (from CLI overrides) instead of cluster defaults
