@@ -27,12 +27,12 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 |---|---|---|---|
 | lr1e6 | 1382326 | base30b_gsm8k_lr1e6_29 | _28/ckpt gs25 |
 | lr3e6 | 1382325 | base30b_gsm8k_lr3e6_19 | _18/ckpt gs75 |
-| lr8e6 | 1381829 | base30b_gsm8k_lr8e6_18 | _17/ckpt gs65 |
-| lr3e6_nokl | 1380985 | base30b_gsm8k_lr3e6_nokl_9 | _8/ckpt gs75 |
+| lr8e6 | DONE (1381829) | base30b_gsm8k_lr8e6_18 | eval@80 89.39% |
+| lr3e6_nokl | DONE (1380985) | base30b_gsm8k_lr3e6_nokl_9 | eval@80 87.49% |
 
-ETAs to s80 at ~7.5 min/step (if no more incidents): lr8e6 ~02:30, nokl ~04:30,
-lr3e6 ~05:00, lr1e6 ~07:00+. Eval@40 + ckpt@40 land automatically (EVAL_INTERVAL=40,
-step-0 baseline 57.77% greedy; lr8e6's eval@40 was in-flight at handoff).
+TWO ARMS DONE (eval@80: lr8e6 89.39%, nokl 87.49%; baseline 57.77% → verdict MET,
+lr8e6 now best arm). Remaining: lr3e6-v18 from gs75 (~4 steps + eval@80), lr1e6-v28
+from gs25 (55 steps, ~7h if clean). Eval@80 lands automatically (EVAL_INTERVAL=40).
 
 **FIRST ACTIONS in a new session** (Mac-side watchers die with the old session):
 1. Restart per-job 60s death-watchers (background `squeue -h -j <id>` poll → sacct on
@@ -795,6 +795,13 @@ resume@gs75; lr1e6-v28 **1382326** resume@gs25 (dirs _19/_29, sidecars v18/v28,
 watchers btzb1ra9y/b33sq9zsp, stall bqjeyynds). lr8e6-v17 1:37h streak from gs65 —
 likely ~s76+, nearing finish. Probe session note: their currease job 1381627
 RUNNING 2:31h. Tally: 65 / ~37 arm-hours.
+**★ 10:20 CEST 08-15 — lr8e6 COMPLETE (second arm to finish): 1381829 COMPLETED 0:0,
+80/80 steps, eval@80 = 89.39% greedy pass@1 (+31.6 vs 57.77 baseline; eval@40 was
+88.40 → still improving at s80). New best arm (nokl 87.49). v17's final stint gs65→80
+ran clean in 2:02h.** Post-compaction bootstrap: watchers rebuilt (death bfchl2jna →
+1382326, bj29egdt9 → 1382325, stall bx7ift5wo); the 10:1x stall alert on the _28/_18
+dirs was a FALSE ALARM — dir-resolution race before the relaunches created _29/_19
+(both confirmed live: lr3e6 at s76 sync_weights, lr1e6 at s26 generate).
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;

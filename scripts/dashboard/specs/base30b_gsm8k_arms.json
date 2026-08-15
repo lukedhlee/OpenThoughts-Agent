@@ -22,11 +22,12 @@
     { "step": 0, "v": 0.5777, "label": "eval 57.8%", "dx": 10, "dy": -8 },
     { "step": 40, "v": 0.884, "series": "lr8e6", "label": "eval 88.4%", "dx": -66, "dy": -12 },
     { "step": 40, "v": 0.8522, "series": "lr3e6_nokl", "label": "eval 85.2%", "dx": 10, "dy": 14 },
-    { "step": 80, "v": 0.8749, "series": "lr3e6_nokl", "label": "eval@80 87.5%", "dx": -14, "dy": -10 }
+    { "step": 80, "v": 0.8749, "series": "lr3e6_nokl", "label": "eval@80 87.5%", "dx": -14, "dy": 14 },
+    { "step": 80, "v": 0.8939, "series": "lr8e6", "label": "eval@80 89.4%", "dx": -14, "dy": -10 }
   ],
   "tiles": [
-    { "hero": true, "label": "Held-out accuracy after 40 RL steps (best arm)", "value": "88.4%",
-      "delta": "▲ +30.6 pts vs the untrained base",
+    { "hero": true, "label": "Held-out accuracy after 80 RL steps (best arm)", "value": "89.4%",
+      "delta": "▲ +31.6 pts vs the untrained base",
       "detail": "lr8e6 · greedy, 1,319 test questions · success bar was +10" },
     { "label": "Baseline accuracy (step 0)", "value": "57.8%", "detail": "same test, before any RL" },
     { "label": "Racing gate at step 30", "value": "4 / 4", "detail": "arms healthy — none killed for pathology" },
@@ -44,9 +45,9 @@
     ]
   },
   "fleet": [
-    { "key": "lr1e6", "job": "1379349", "state": "restarting", "note": "resuming from step 10 — hang, then a ghost-OOM strike" },
-    { "key": "lr3e6", "job": "1380047", "state": "queued", "note": "resuming from step 30 — third ghost-OOM strike (jpbo-003)" },
-    { "key": "lr8e6", "job": "1379329", "state": "restarting", "note": "eval@40: 88.4% — resuming from step 40 after a hang at s44" },
+    { "key": "lr1e6", "job": "1382326", "state": "running", "note": "16th attempt, resumed from step 25 — training at s26+, 55 to go" },
+    { "key": "lr3e6", "job": "1382325", "state": "running", "note": "resumed from step 75 — final 5 steps + eval@80 in flight" },
+    { "key": "lr8e6", "job": "1381829", "state": "done", "note": "FINISHED 80/80 — eval@80 89.39%; best arm" },
     { "key": "lr3e6_nokl", "job": "1380985", "state": "done", "note": "FINISHED 80/80 — eval@80 87.49%; first arm home" }
   ],
   "timeline": {
@@ -122,7 +123,7 @@
       { "v": "v14", "job": "1381037", "start": "05:38", "end": "07:25", "steps": "9", "fate": "hang", "note": "resume@gs55; gs60 banked; hang at s65 (jpbo-019)" },
       { "v": "v15", "job": "1381457", "start": "07:28", "end": "07:58", "steps": "0", "fate": "oom", "note": "partial-ghost OOM at first train (jpbo-029, 88MiB)" },
       { "v": "v16", "job": "1381493", "start": "08:04", "end": "10:25", "steps": "8", "fate": "hang", "note": "resume@gs60; gs65 banked; hang at s69 (jpbo-120)" },
-      { "v": "v17", "job": "1381829", "start": "10:28", "end": "", "steps": "0", "fate": "run", "note": "resume@gs65 — 15 to go" }
+      { "v": "v17", "job": "1381829", "start": "10:28", "end": "12:30", "steps": "15", "fate": "done", "note": "FINISHED 80/80 — eval@80 89.39% (+31.6 vs baseline; best arm)" }
     ],
     "lr3e6_nokl": [
       { "v": "v1", "job": "1366675", "start": "11:12", "end": "15:20", "steps": "1-32", "fate": "hang", "note": "the marathon — s32 with no ckpt (interval 40) → full restart" },
