@@ -25,7 +25,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 **Fleet as of 23:30 CEST** (job / newest dir under `$F/experiments/` / resume source):
 | arm | job | dir | resumed from |
 |---|---|---|---|
-| lr1e6 | 1381815 | base30b_gsm8k_lr1e6_27 | _13/ckpt gs20 |
+| lr1e6 | 1381857 | base30b_gsm8k_lr1e6_28 | _13/ckpt gs20 |
 | lr3e6 | 1381636 | base30b_gsm8k_lr3e6_18 | _16/ckpt gs60 |
 | lr8e6 | 1381829 | base30b_gsm8k_lr8e6_18 | _17/ckpt gs65 |
 | lr3e6_nokl | 1380985 | base30b_gsm8k_lr3e6_nokl_9 | _8/ckpt gs75 |
@@ -783,6 +783,9 @@ tightening. Tally: 61 / ~36 arm-hours.
 gs65 banked, +8 net; jpbo-120-[02,04-05,07-09]) → excluded (67b6e5bb) → v17
 **1381829** resume@gs65 (dir _18, sidecar v17, watcher live). Cumulative: nokl
 DONE, lr8e6 68, lr3e6 63, lr1e6 24. Tally: 62 / ~36 arm-hours.
+**10:4x incident #63 — lr1e6-v26 (1381815) ghost-OOM at load** (jpbo-018-[38-41,
+45-46], 20MiB free; 13th ghost nodeset) → excluded (53d75cf5) → v27 **1381857**
+resume@gs20 (dir _28, sidecar v27, watcher live). Tally: 63 / ~36 arm-hours.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
