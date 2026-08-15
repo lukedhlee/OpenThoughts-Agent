@@ -140,3 +140,23 @@ runs authenticated microsocks at 10.128.1.2:7011 (creds `$F/keys/socks5_currease
 submit with PROXYCHAINS_SOCKS5_PRESET_HOST/PORT/AUTH + PROXYCHAINS_BIN_OVERRIDE and NO
 SSH_KEY. Attempt 2 = job 1380855 (exp dir experiments/currease_base_pass8_2), launched
 2026-08-15 with this route; compute-node proxy test passed.
+
+---
+## RESULTS — Instruct-2507 leg COMPLETE (2026-08-15, job 1382360, 4:47:31)
+
+Probe deliverable for the instruct arm (n=502 tasks with full 8 attempts; 3 nop-pass
+tasks excluded: 0297/0506/0508 pass with zero agent actions — dataset defect):
+
+- pass@1 = 34.2%, pass@8 = 41.8%
+- Band profile: 0/8 = 292 (58%) · partial 1–7 = 107 (21%) · 8/8 = 103 (21%)
+- Solves-of-8 histogram: {0:292, 1:12, 2:10, 3:9, 4:13, 5:13, 6:13, 7:37, 8:103}
+- Harness: 100% natural termination, 0% JSON parse errors, median trial 125 s
+- Traces: https://huggingface.co/datasets/lukeleeai/qwen3-30b-a3b-instr2507-currease-pass8
+  (laion/ upload 403'd — neither lee27's nor lukeleeai's token has laion write; move later
+  if wanted. Pipeline auto-upload also needs HF_TOKEN in the SUBMIT env — cached CLI token
+  is NOT read; all 4 probe jobs skipped auto-upload, manual uploads required.)
+
+RL read (instruct start): GO. 107 partial-band tasks are prime GRPO signal; group size 8
+mixes on them by construction. Base leg (3 pooled jobs) still running for the base profile;
+early base pass@1 ≈ 4% genuine — the base-vs-instruct gap is categorical (termination,
+format, focus), not raw capability.
