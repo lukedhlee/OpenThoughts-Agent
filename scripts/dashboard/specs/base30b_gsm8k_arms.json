@@ -22,6 +22,7 @@
     { "step": 0, "v": 0.5777, "label": "eval 57.8%", "dx": 10, "dy": -8 },
     { "step": 40, "v": 0.884, "series": "lr8e6", "label": "eval 88.4%", "dx": -66, "dy": -12 },
     { "step": 40, "v": 0.8522, "series": "lr3e6_nokl", "label": "eval 85.2%", "dx": 10, "dy": 14 },
+    { "step": 40, "v": 0.6209, "series": "lr1e6", "label": "eval 62.1%", "dx": 10, "dy": 14 },
     { "step": 80, "v": 0.8749, "series": "lr3e6_nokl", "label": "eval@80 87.5%", "dx": -14, "dy": 14 },
     { "step": 80, "v": 0.8939, "series": "lr8e6", "label": "eval@80 89.4%", "dx": -14, "dy": -10 },
     { "step": 80, "v": 0.8704, "series": "lr3e6", "label": "eval@80 87.0%", "dx": -14, "dy": 32 }
@@ -46,7 +47,7 @@
     ]
   },
   "fleet": [
-    { "key": "lr1e6", "job": "1382326", "state": "running", "note": "16th attempt, resumed from step 25 — training at s26+, 55 to go" },
+    { "key": "lr1e6", "job": "1383332", "state": "queued", "note": "17th attempt — resuming from step 40 (eval@40 62.1%); last arm standing" },
     { "key": "lr3e6", "job": "1382325", "state": "done", "note": "FINISHED 80/80 — eval@80 87.04%; just under its no-KL twin" },
     { "key": "lr8e6", "job": "1381829", "state": "done", "note": "FINISHED 80/80 — eval@80 89.39%; best arm" },
     { "key": "lr3e6_nokl", "job": "1380985", "state": "done", "note": "FINISHED 80/80 — eval@80 87.49%; first arm home" }
@@ -85,7 +86,8 @@
       { "v": "v25", "job": "1381758", "start": "09:38", "end": "09:55", "steps": "0", "fate": "oom", "note": "ghost-OOM at load (jpbo-067 → rack-level)" },
       { "v": "v26", "job": "1381815", "start": "10:05", "end": "10:40", "steps": "0", "fate": "oom", "note": "ghost-OOM at load (jpbo-018, 20MiB free)" },
       { "v": "v27", "job": "1381857", "start": "10:47", "end": "11:15", "steps": "7", "fate": "hang", "note": "20→27, gs25 banked (first ckpt progress in hours); hang at s28 (jpbo-111 → rack-level)" },
-      { "v": "v28", "job": "1382326", "start": "11:20", "end": "", "steps": "0", "fate": "run", "note": "resume@gs25; 16th try" }
+      { "v": "v28", "job": "1382326", "start": "11:20", "end": "12:50", "steps": "15", "fate": "hang", "note": "best lr1e6 stint: 25→40, gs40 banked, eval@40 62.1%; hang mid-s41 (jpbo-029 → rack-level)" },
+      { "v": "v29", "job": "1383332", "start": "13:35", "end": "", "steps": "0", "fate": "run", "note": "resume@gs40 — 40 to go, last arm standing" }
     ],
     "lr3e6": [
       { "v": "v1", "job": "1366672", "start": "11:12", "end": "13:12", "steps": "1-14", "fate": "node", "note": "stall at s15; head node refused srun (sick)" },
