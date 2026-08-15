@@ -27,7 +27,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 |---|---|---|---|
 | lr1e6 | 1380812 | base30b_gsm8k_lr1e6_14 | _13/ckpt gs20 |
 | lr3e6 | 1380047 | base30b_gsm8k_lr3e6_14 | _11/ckpt gs30 |
-| lr8e6 | 1380786 | base30b_gsm8k_lr8e6_11 | _10/ckpt gs50 |
+| lr8e6 | 1380813 | base30b_gsm8k_lr8e6_12 | _10/ckpt gs50 |
 | lr3e6_nokl | 1380775 | base30b_gsm8k_lr3e6_nokl_8 | _7/ckpt gs60 |
 
 ETAs to s80 at ~7.5 min/step (if no more incidents): lr8e6 ~02:30, nokl ~04:30,
@@ -630,6 +630,14 @@ effect at each KL arm's NEXT incident relaunch — do NOT scancel healthy runs f
 First relaunch with it = first-time combo on our branch (ref offload never smoke-tested
 here): watch ref init closely; if it crashes at ref build, revert yaml + relaunch.
 JSC ticket draft for the ghost-memory nodes: ai_memory/notes/jsc_ghost_gpu_memory_ticket.md.
+**03:0x incident #38 — lr8e6-v10 (1380786) ghost-OOM at ckpt load 14:12 in** (8×
+OutOfMemoryError in FSDPPolicyWorkerBase.load_checkpoint, jpbo-014-[17,19,23,26,28-29]
+— rack 014's OTHER nodes; second disjoint hit → **jpbo-014 escalated to rack-level
+[01-48]** (72f1252d), like jpbo-100 precedent) → v11 **1380813** resume@gs50 (dir _12,
+sidecar v11). **v11 is the FIRST job carrying ref.cpu_offload=true** (verified in
+config: policy false + ref true) — watch ref init at start. Death-watcher bxbxg0fja.
+Fleet 03:1x: lr3e6 1:56 (longest current streak), lr1e6-v13 RUNNING 7 min,
+nokl-v7 RUNNING 23 min, lr8e6-v11 PENDING. Tally: 38 / ~27 arm-hours.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
