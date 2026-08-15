@@ -25,7 +25,7 @@ https://wandb.ai/lukeleeai/jupiter-base30b-gsm8k-grpo
 **Fleet as of 23:30 CEST** (job / newest dir under `$F/experiments/` / resume source):
 | arm | job | dir | resumed from |
 |---|---|---|---|
-| lr1e6 | 1380821 | base30b_gsm8k_lr1e6_15 | _13/ckpt gs20 |
+| lr1e6 | 1380859 | base30b_gsm8k_lr1e6_16 | _13/ckpt gs20 |
 | lr3e6 | 1380822 | base30b_gsm8k_lr3e6_15 | _14/ckpt gs40 |
 | lr8e6 | 1380847 | base30b_gsm8k_lr8e6_13 | _10/ckpt gs50 |
 | lr3e6_nokl | 1380775 | base30b_gsm8k_lr3e6_nokl_8 | _7/ckpt gs60 |
@@ -667,6 +667,13 @@ pass, it was the node; if they OOM too, REVERT yaml cpu_offload→false and rela
 all three (flip needs upstream code, not just config). Excluded (0435c0c0) →
 v12 **1380847** resume@gs50 (dir _13, sidecar v12, watcher b1y0p4xcq).
 Tally: 41 / ~28 arm-hours.
+**04:0x incident #42 — lr1e6-v14 (1380821) ghost-OOM at ckpt load 14:49 in**
+(jpbo-005-[34,37-38,43,46-47], 14.25MiB free; died AT LOAD → says nothing about
+offload; dirty-node prior strengthens: 18/666/607/14 MiB tonight) → excluded
+(476cca69) → v15 **1380859** resume@_13/gs20 (dir _16, sidecar v15, watcher live).
+Peer's proxy fix (fff9333d etc.) now interleaved on the branch — env-gated, harmless;
+both sessions share this Mac clone, commits stack. Tally: 42 / ~28 arm-hours.
+A/B still open: lr3e6-v14 (clean load, 0 OOM) first train step is the decider.
 **Probe 1380770 postmortem (FAILED 3:52, exit 127)**: two env gaps for lee27 —
 (a) tracegen sbatch sources conda.sh but never activates → bare `python` 127;
 fix = export `DCFT_ACTIVATE_ENV='source $F/envs/rl-fa/bin/activate'` at submit;
