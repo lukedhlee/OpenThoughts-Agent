@@ -227,3 +227,18 @@ curriculum-easy and measure the difference empirically.
   step metrics with response_len_mean==1.0 + trace_jobs result.json exception_info.
 - **Attempt 3 (base 1386654→…59, instr 1386660→…65):** launched with wrap engaged;
   watchers alert on first train step / traceback / "not executable" skip line.
+- **Attempt 4 (1386991/1386997):** proxy wrap finally engaged after SECOND fix (commit:
+  rl_launch_utils builds RayClusterConfig DIRECTLY, bypassing from_hpc — both sites now
+  honor PROXYCHAINS_BIN_OVERRIDE). Rollouts went REAL (138 exception-free trials, median
+  842 output toks) and step 1 trained — then the post-step weight sync killed 4 engines:
+  `_C::rotary_embedding` on META tensors. Mechanism (vllm_engine.py:2184 abort_generation):
+  drain-to-idle can't converge under continuous agent HTTP traffic (no pause gate on the
+  HTTP endpoint; agents re-fire on abort) → 600 s deadline → layerwise meta reload proceeds
+  with live decodes → eager decode hits meta cos_sin_cache. Same disease class as the
+  rms_norm meta incident (agent_logs/2026-07-07_grid30bc_rmsnorm_meta_sync_weights.md);
+  the rms_norm fake just lets the decode die one op deeper. Design note says cudagraph
+  masks the straggler — we had enforce_eager true (gsm8k inheritance).
+- **Attempt 5 (base 1387075→…80, instr 1387081→…86): enforce_eager false** (cudagraphs =
+  production parity; validated on this model/env by the 4.1k-trial serve probe). Real
+  milestone = step 2 (first weight sync survived). Proper upstream fix to file later:
+  HTTP-endpoint pause gate in MarinSkyRL vllm_server so the drain converges.
