@@ -305,3 +305,12 @@ Job d (1385854) TIMEOUT at 11:59 (normal datagen wall). Pooled base scoring
   Chain scancel'd, configs stashed (configs_old_1390983), relaunch **1392566**→…→1392571
   resumes @gs20. Instr cumulative: 4 hangs, 0 steps lost. Base unaffected (1390499
   running, trial flow live, s2 + first bank imminent).
+- **Base arm CANCELLED by operator (2026-08-17 ~00:0x CEST):** Luke pulled the plug on
+  currease30b_grpo_base (chain 1390499-1390504) at ~7h07 elapsed, mid-step-2 rollouts —
+  no checkpoint ever banked (2.4h/step; s2 bank was ~1h away). Base science preserved:
+  s1 reproducible across v1/v2 (r 0.102/0.117, mixed 0.38/0.19, ent 1.58/1.48) + probe
+  numbers (pass@1 4.1% / pass@8 18.2%). Freed nodeset jpbo-059-[41,43-47] excluded
+  (58a774a5). Pending instr v6 chain (1392566-71) was resubmitted as **v7
+  1392687→…→1392692** so its sbatch carries the fresh exclusion (Slurm re-deals freed
+  ghost nodes; 3/3 resume-OOM history). Instr is now the ONLY running arm — the 1-vs-3
+  comparison is instr-trajectory + base probe/s1 evidence, not two full RL curves.
