@@ -267,3 +267,16 @@ in the arm watchers via log-mtime).
   real GRPO signal — more mixed groups than instruct (31%), higher entropy, at ~9x the
   wall-clock per step (~6 h to step 1 vs 40 min). Reward >> probe pass@1 (4.1%) — temp
   1.0 sampling + batch mix. Step-2 sync-survival watcher armed.
+
+## FINAL BASE NUMBERS — job d complete (2026-08-16, pooled 7+b+c+d, validity-filtered)
+Job d (1385854) TIMEOUT at 11:59 (normal datagen wall). Pooled base scoring
+(1,000/4,947 dead-engine trials excluded): 511 tasks, 3,903 valid trials,
+269 tasks with ≥8 valid attempts.
+- **pass@1 = 4.1% · pass@8 = 18.2% (n=269) · pass@any = 111/511 (21.7%)**
+- Solves-of-8 hist: {0:220, 1:24, 2:16, 3:4, 4:4, 5:1} — ZERO saturated (8/8) tasks;
+  every base-solvable task is partial-band. pass@8/pass@1 ratio 4.4× (instruct: 1.2×)
+  → base is high-variance per attempt, consistent with the RL arm's 38% mixed groups.
+- Per-task CSV regenerated with d (ai_memory/artifacts/currease_pass8_per_task.csv, 514 rows).
+- Job d's auto-upload did NOT run (wall kill preempts trace export — same as runs 7/b/c);
+  manual export to lukeleeai/qwen3-30b-a3b-base-currease-pass8-d running in login tmux
+  `upload_d` (verify row count, then trace_jobs cleanup across probe dirs).
