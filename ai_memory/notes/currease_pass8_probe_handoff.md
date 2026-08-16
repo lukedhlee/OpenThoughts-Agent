@@ -284,3 +284,10 @@ Job d (1385854) TIMEOUT at 11:59 (normal datagen wall). Pooled base scoring
   (same EP/FSDP2 race) on jpbo-122-[01,04,07,09,11,13] — excluded. gs10 banked.
   Relaunch **1389753**→…→1389758 resumes @gs10. Hang cadence so far ≈ 1 per 5 arm-hours
   (2 hangs / ~10 instr arm-hours) — milder than gsm8k's 1-per-2 but same runbook.
+- Resume-OOM root cause CONFIRMED ghost nodes (natural experiment: 3/3 OOMs on nodesets
+  of previously-killed jobs, 2/2 clean resumes on fresh nodes; OOM site = optimizer
+  load_state_dict with 15 MiB free of 95 GiB — a prior job's ~75GB ghost). Dirty pool
+  from ALL tonight's kills now excluded (six nodesets, commit in hpc.py). PROCESS RULE
+  REINFORCED: exclude the nodeset after EVERY kill, immediately, not only after failures.
+  Link **1389755** resumed clean @gs10 → step 11 (jpbo-026-[33-36,46,48]). Instr arm
+  cumulative: 0 steps lost across 2 hangs + 3 OOM'd resume attempts.
