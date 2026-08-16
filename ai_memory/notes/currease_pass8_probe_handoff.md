@@ -297,3 +297,11 @@ Job d (1385854) TIMEOUT at 11:59 (normal datagen wall). Pooled base scoring
   (1387076 nodeset jpbo-003-[33-34,36,43-44,48] excluded post-kill); base relaunched
   fresh as **1390499**→…→1390504. Base steps 1-3 metrics preserved in old log
   (r 0.102/0.102/?, mixed 0.38/0.44/?). Instr unaffected (interval 5 fine at ~20 steps/link).
+- **Hang #4 (2026-08-16 ~22:24 CEST): instr link 1390983** froze entering s21 (trial
+  results + driver log frozen at the same second; only wandb heartbeat alive; no s21
+  after 2h at 8-22 min/step cadence) on jpbo-030-[10-14,16]. gs20 banked → 0 steps lost.
+  Rack-030 now has TWO confirmed disjoint hits ([33,36,39,41,44,46] ghost-OOM +
+  [10-14,16] hang) → RACK ESCALATION: jpbo-030-[01-48] excluded (hpc.py b8e0231d).
+  Chain scancel'd, configs stashed (configs_old_1390983), relaunch **1392566**→…→1392571
+  resumes @gs20. Instr cumulative: 4 hangs, 0 steps lost. Base unaffected (1390499
+  running, trial flow live, s2 + first bank imminent).
