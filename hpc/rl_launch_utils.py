@@ -1753,7 +1753,12 @@ class RLJobRunner:
         )
 
         hpc = self._get_hpc()
-        setattr(self.config, "proxychains_binary", getattr(hpc, "proxychains_binary", None))
+        resolved_proxychains_binary = (
+            os.environ.get("PROXYCHAINS_BIN_OVERRIDE", "")
+            or getattr(hpc, "proxychains_binary", "")
+            or None
+        )
+        setattr(self.config, "proxychains_binary", resolved_proxychains_binary)
         num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", self.config.num_nodes))
 
         # Use config values (from CLI overrides) instead of cluster defaults
@@ -1778,7 +1783,7 @@ class RLJobRunner:
             gpu_bind=getattr(hpc, "gpu_bind", "none"),
             # Vista/TACC: empty gpu_directive_format → no --gres on Ray srun.
             gpu_gres=bool(getattr(hpc, "gpu_directive_format", "")),
-            proxychains_binary=getattr(hpc, "proxychains_binary", None),
+            proxychains_binary=resolved_proxychains_binary,
             # Apptainer RL runtime mode (OPT-IN): wrap ray start / ray.init()
             # wait scripts in `apptainer exec --nv` when a SIF is configured.
             container_sif=getattr(self.config, "container_sif", None),
