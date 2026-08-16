@@ -242,3 +242,14 @@ curriculum-easy and measure the difference empirically.
   production parity; validated on this model/env by the 4.1k-trial serve probe). Real
   milestone = step 2 (first weight sync survived). Proper upstream fix to file later:
   HTTP-endpoint pause gate in MarinSkyRL vllm_server so the drain converges.
+
+## ✅ ATTEMPT 5: RL STACK VALIDATED END-TO-END (2026-08-16 ~05:25 CEST)
+Instruct arm (1387081) SURVIVED the first weight sync and is training:
+step 1 reward 0.484 / len_mean 1410 / groups mixed 31% (all-wrong 38%, all-right 31%) /
+entropy 0.162 / grad 0.67 / KL 0.0026; step 2 reward 0.383. ~25 min/step → ~27 steps
+per 12 h link, 50 steps ≈ 2 links. Reward matches the probe pass@1 (0.342) within batch
+noise — GRPO signal on curriculum-easy is exactly as the probe predicted.
+Base arm (1387075): rollouts flowing (86 trials @1:10), first step pending (slow
+timeout-bound waves, by design). Its sync-survival milestone = step 2, watcher armed.
+Remaining known risk: EP/FSDP2 backward-hang race (gsm8k runbook applies; stall watch
+in the arm watchers via log-mtime).
