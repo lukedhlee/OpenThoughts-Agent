@@ -253,3 +253,9 @@ Base arm (1387075): rollouts flowing (86 trials @1:10), first step pending (slow
 timeout-bound waves, by design). Its sync-survival milestone = step 2, watcher armed.
 Remaining known risk: EP/FSDP2 backward-hang race (gsm8k runbook applies; stall watch
 in the arm watchers via log-mtime).
+- **Incident (2026-08-16 ~08:30 CEST): instr arm 1387081 EP/FSDP2 hang** at s6 forward
+  (convert_to_training_input logged 08:28, then 44+ min silence; the gsm8k race, ~1 per
+  2 arm-hr expected). Runbook applied: chain scancelled, nodeset
+  jpbo-018-[01,03,05,09-10,13] excluded (hpc.py commit), configs stashed to
+  configs_old_1387081/, relaunched **1388099**→…→1388104 resuming from banked
+  global_step_5 on the un-suffixed dir. Steps 1-5 metrics preserved in the old log.
