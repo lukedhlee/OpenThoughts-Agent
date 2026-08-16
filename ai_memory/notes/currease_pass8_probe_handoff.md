@@ -211,3 +211,19 @@ curriculum-easy and measure the difference empirically.
 - Verdict read: compare train-reward slope + entropy/grad_norm over first ~10-20 steps;
   watch for the EP/FSDP2 backward-hang race (gsm8k incident runbook applies verbatim —
   stall = log mtime >600 s while RUNNING).
+
+### RL-arm incident log
+- **Attempt 1 (1386478/1386484, FAILED 8.5 min):** `generator.batched: true` (inherited
+  from gsm8k sync recipe) is rejected by FullyAsyncRayPPOTrainer — main_tbench selects
+  the async trainer whenever `placement.colocate_all=false`. Fix: `batched: false`
+  (commit in yamls).
+- **Attempt 2 (1386506/1386515, killed at ~step 2):** trained but every rollout was a
+  1-token zero-reward dummy (response_len_mean 1.0, reward 0.0 on BOTH arms, entropy 0,
+  tis skipped). Root cause: `DaytonaConnectionError: Cannot connect to app.daytona.io`
+  in RolloutCoordinators — hpc/ray_utils.py `from_hpc` read only `hpc.proxychains_binary`
+  (feuer1's perm-denied build) → wrap silently skipped ("proxychains binary not
+  executable") → ray started with proxy env UNSET. Fix commit: ray_utils honors
+  `PROXYCHAINS_BIN_OVERRIDE` (same hook as datagen). Detection recipe: WANDB_MIRROR
+  step metrics with response_len_mean==1.0 + trace_jobs result.json exception_info.
+- **Attempt 3 (base 1386654→…59, instr 1386660→…65):** launched with wrap engaged;
+  watchers alert on first train step / traceback / "not executable" skip line.
