@@ -280,3 +280,7 @@ Job d (1385854) TIMEOUT at 11:59 (normal datagen wall). Pooled base scoring
 - Job d's auto-upload did NOT run (wall kill preempts trace export — same as runs 7/b/c);
   manual export to lukeleeai/qwen3-30b-a3b-base-currease-pass8-d running in login tmux
   `upload_d` (verify row count, then trace_jobs cleanup across probe dirs).
+- **Hang #2 (2026-08-16 ~13:3x CEST): instr link 1388100** froze entering s11 forward
+  (same EP/FSDP2 race) on jpbo-122-[01,04,07,09,11,13] — excluded. gs10 banked.
+  Relaunch **1389753**→…→1389758 resumes @gs10. Hang cadence so far ≈ 1 per 5 arm-hours
+  (2 hangs / ~10 instr arm-hours) — milder than gsm8k's 1-per-2 but same runbook.
