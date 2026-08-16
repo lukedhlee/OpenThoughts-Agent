@@ -194,7 +194,11 @@ class RayCluster:
         # This allows Ray workers to make proxied external calls (e.g., Daytona API)
         # Prefer wrapped binary approach (proxychains_binary) over LD_PRELOAD (proxychains_preload).
         # Skip a configured binary that isn't executable (Permission denied → exit 126).
-        proxychains_binary = getattr(hpc, "proxychains_binary", "") or ""
+        proxychains_binary = (
+            os.environ.get("PROXYCHAINS_BIN_OVERRIDE", "")
+            or getattr(hpc, "proxychains_binary", "")
+            or ""
+        )
         if proxychains_binary and not os.access(proxychains_binary, os.X_OK):
             print(
                 f"[ray] proxychains binary not executable, skipping wrap: {proxychains_binary}",
