@@ -259,3 +259,11 @@ in the arm watchers via log-mtime).
   jpbo-018-[01,03,05,09-10,13] excluded (hpc.py commit), configs stashed to
   configs_old_1387081/, relaunched **1388099**→…→1388104 resuming from banked
   global_step_5 on the un-suffixed dir. Steps 1-5 metrics preserved in the old log.
+- Resume saga: 1388099 OOM'd at ckpt load (jpbo-019-[17,23-24,26,28-29] excluded, ghost
+  suspect); link **1388100** resumed clean from gs5 and posted step 6 (on jpbo-122 nodes
+  — no OOM there, so ghost theory is per-node, not per-rack).
+- **BASE ARM STEP 1 (job 1387075, ~10:0x CEST):** reward 0.102, **38% groups mixed**
+  (62% all-wrong, 0% all-correct), entropy 1.581, grad 0.377, len_mean 7650. Base has
+  real GRPO signal — more mixed groups than instruct (31%), higher entropy, at ~9x the
+  wall-clock per step (~6 h to step 1 vs 40 min). Reward >> probe pass@1 (4.1%) — temp
+  1.0 sampling + batch mix. Step-2 sync-survival watcher armed.
