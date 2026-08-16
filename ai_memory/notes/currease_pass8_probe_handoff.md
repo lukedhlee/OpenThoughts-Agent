@@ -314,3 +314,19 @@ Job d (1385854) TIMEOUT at 11:59 (normal datagen wall). Pooled base scoring
   1392687→…→1392692** so its sbatch carries the fresh exclusion (Slurm re-deals freed
   ghost nodes; 3/3 resume-OOM history). Instr is now the ONLY running arm — the 1-vs-3
   comparison is instr-trajectory + base probe/s1 evidence, not two full RL curves.
+
+## SFT ARM LAUNCHED (path 2): Qwen3-30B-A3B-Base on OT-Agent-SFT-10K (2026-08-17 ~01:0x CEST)
+Ben's ask, per the OT-Agent paper (arxiv 2606.24855): the paper's SFT stack IS our LF fork
+(+ ALST); "Levanter" was a for-instance (live qwen3_moe exists only in marin monorepo
+lib/levanter — the standalone repo Ben linked is frozen/merged). Paper 10K recipe = lr 4e-5
+cosine wr0.1, gbs 96, 7 ep, ctx 32768, ZeRO-3 (+ repo-truth quirks adam_beta2 0.98,
+max_grad_norm 1e-4 from 32k_base_bs96.yaml).
+- Config: sft/lf_configs/qwen3/extra/32k_base_30b_a3b_base_ota10k.yaml (8bd9b9a6) =
+  bs96 ladder + ds_z3_offload_nomat (30b coder chassis) + save_steps 100.
+- NEW ENV: $F/envs/sft-lf (build_sft_lf_env.sh; rl-fa freeze clone + LF submodule editable
+  + deepspeed 0.19.5 + liger + trl; needs DISABLE_VERSION_CHECK=1). Activated via
+  DCFT_ACTIVATE_ENV (lee27 has no otagent conda; feuer1 scratch unreadable).
+- Dataset cached at $F/hf_hub (117M) + launcher-built _thinking_preprocessed (180M).
+- Chain: 1392818 (head) + 1392819-21. 8 nodes/32 GPU → accum 3. output_dir
+  $F/checkpoints/ota10k_sft_30ba3b__Qwen3-30B-A3B-Base (ZeRO-3 sharded → consolidate flow).
+- After SFT: GRPO from the SFT ckpt = path-2 arm vs paths 1 (instr, running) and 3 (base probe).
