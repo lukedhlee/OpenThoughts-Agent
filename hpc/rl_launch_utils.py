@@ -1756,7 +1756,7 @@ class RLJobRunner:
         resolved_proxychains_binary = (
             os.environ.get("PROXYCHAINS_BIN_OVERRIDE", "")
             or getattr(hpc, "proxychains_binary", "")
-            or None
+            or ""
         )
         setattr(self.config, "proxychains_binary", resolved_proxychains_binary)
         num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", self.config.num_nodes))
