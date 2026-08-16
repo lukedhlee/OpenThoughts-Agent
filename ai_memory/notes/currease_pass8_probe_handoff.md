@@ -291,3 +291,9 @@ Job d (1385854) TIMEOUT at 11:59 (normal datagen wall). Pooled base scoring
   REINFORCED: exclude the nodeset after EVERY kill, immediately, not only after failures.
   Link **1389755** resumed clean @gs10 → step 11 (jpbo-026-[33-36,46,48]). Instr arm
   cumulative: 0 steps lost across 2 hangs + 3 OOM'd resume attempts.
+- Base head 1387075 TIMEOUT at wall (normal) with 3 steps done — but **ckpt_interval 5
+  banked NOTHING** (base ~2.4h/step → a 12h link tops out at ~4 steps: interval-5 =
+  perpetual step-0 restarts). Fixed: base yaml ckpt_interval 5→2; stale links cancelled
+  (1387076 nodeset jpbo-003-[33-34,36,43-44,48] excluded post-kill); base relaunched
+  fresh as **1390499**→…→1390504. Base steps 1-3 metrics preserved in old log
+  (r 0.102/0.102/?, mixed 0.38/0.44/?). Instr unaffected (interval 5 fine at ~20 steps/link).
