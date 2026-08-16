@@ -91,7 +91,7 @@ trainer:
   eval_interval: 999999
   eval_before_train: false
   seed: 42
-  ckpt_interval: 5
+  ckpt_interval: 2
   resume_mode: null
   hf_save_interval: 999999
   hf_hub_repo_id: null
