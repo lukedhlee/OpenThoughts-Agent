@@ -29,6 +29,12 @@ export HF_HOME=$F/cache/hf
 export HF_HUB_OFFLINE=1
 export WANDB_MODE=offline
 export WANDB_DIR=$F/experiments/ota10k_lev_sft
+export WANDB_DATA_DIR=$F/cache/wandb_data
+export WANDB_CACHE_DIR=$F/cache/wandb_cache
+# incident 45: JAX default mem fraction (0.75 = 71.25GiB cap on 96GB GH200) was the
+# real killer of every prod attempt — load/compile transients hit the self-imposed
+# limit and RESOURCE_EXHAUSTED'd (the "ghost node" reads on 077/046/001 were wrong).
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.92
 # compute nodes have no git on PATH; GitPython hard-fails without this
 export GIT_PYTHON_REFRESH=quiet
 export WANDB_DISABLE_GIT=true
