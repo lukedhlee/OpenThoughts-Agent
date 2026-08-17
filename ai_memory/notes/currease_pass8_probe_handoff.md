@@ -490,3 +490,12 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   (log+results frozen 43-63 min, confirmed over 13-min recheck) → scancelled, nodeset
   excluded (d831364e), all 12 pending links patched. Chain rolls to 1396798, resumes
   from gs5 ckpt. Steps 1-5 metrics banked (step-1 reward 0.5).
+- **Incidents 47+48:** (47) lr1e6 1394804 backward hang at gs5 (log+results frozen SAME
+  second 17:39:50, 53 min) — BOTH sweep arms hung right at the gs5 ckpt boundary →
+  jpbo-081 rack-escalated [01-48] (6885ffb4; 3rd bad zone), 12 links patched; chain →
+  1394805, resumes gs5. (48) **Levanter reversal:** v3 1398134 died 7 min at the NEW
+  87.40GiB limit, main thread in train_step → the autotune-OFF inferred CE block sizes
+  are the fast killer (9.6GB blocks), NOT the memory cap; v1's sweep survived this
+  phase 2h23m and its death is explained by the old 71.25 cap. Reverted to autotune ON
+  + kept 0.92 + comp cache (d9e8cb8d). **Prod v4 = 1398566 (+link 1398567).** Expect a
+  2-3h first compile; XLA module cache should make restarts cheap.
