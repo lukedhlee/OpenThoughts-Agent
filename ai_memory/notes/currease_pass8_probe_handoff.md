@@ -363,3 +363,10 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   (1e-6/3e-6/8e-6). 3 concurrent RL arms × 6 nodes; Daytona snapshots = registry hits.
   Step-1 health watchers armed. Baseline 3e-6 (chain 1392688, resumes gs20) still queued.
   Levanter SFT bring-up at smoke6 (vocab-pad fix; cache+load+fwd/bwd already validated).
+- **LR SWEEP REVISED (2026-08-17, Luke): 8e-6 judged too hot → replaced with 5e-6.**
+  lr8e6 chain 1394809-14 scancelled while still fully PENDING (0 steps run, no ckpts;
+  exp dir deleted). New arm: `..._lr5e6.yaml` (2d9f50b1, only lr line differs) →
+  chain **1394836-41** via rl-fa venv python (`$F/envs/rl-fa/bin/python -m hpc.launch`;
+  base miniforge python lacks pydantic — rl-fa is the launcher env for lee27).
+  Final sweep = **1e-6 (1394803) / 3e-6 (1392688, from gs20) / 5e-6 (1394836)**.
+  Step-1 watcher armed on 1394836; lr8e6 watcher killed.
