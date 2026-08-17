@@ -504,3 +504,14 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   Fleet after roll: baseline 1397229 (1:43h, jpbo-017-[38-45]), lr1e6 1394805 (jpbo-024),
   lr5e6 1396799 (jpbo-017-[01-14]), Lev prod v4 1398566 (jpbo-077-[07-14], past the
   7-min autotune-off death window — sweep running). Watchers re-armed.
+- **Ghost-probe sweep (20:05 CEST): ALL 8 former incident nodes probe CLEAN** (jpbo-037,
+  026-41, 076-38/41/42, 077-02 + control jpbo-002-37): 2-127 MiB used, no compute
+  procs, 80GiB cuMemAlloc OK on every GPU. Conclusion: **residue is TRANSIENT** —
+  lifetime tied to the leaking process (freshest case jpbo-037-39 cleared in <2.3h;
+  but 1397228 hit 60GB residue 49 min into its run, so lifetimes range minutes-hours).
+  Reframes the JSC ask: cleanup race/latency (node returned to pool before previous
+  job's GPU memory is released), NOT permanently bad nodes. Implication for us: the
+  1221-node blacklist chases yesterday's ghosts — ghost entries should be AGED OUT
+  (~24h), hang entries kept. New protocol: on the next ghost incident, fire
+  scripts/jupiter/ghost_probe_sweep.sh at the incident nodes within minutes to hand
+  JSC a live specimen (probe + sweep committed, ba67ca7f).
