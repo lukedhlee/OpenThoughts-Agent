@@ -560,3 +560,28 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   released on v8's death and started with the old config (yaml read at job
   start) → cancelled 36s in. NOTE: new shapes → compile cache miss; expect the
   CE sweep (~8 min) + full train_step compile again on the next attempt.
+
+## Incident 53 (2026-08-17 ~21:45) + sweep extension to gs100
+
+- **Luke directive: extend all three arms 50 → 100 steps.** Mechanism: yamls
+  bumped (9d4fa0d3) AND the launcher config JSONs
+  `experiments/<arm>/configs/<arm>_rl_config.json` sed-patched
+  (`trainer.max_steps=50→100`, `.bak_ms50` backups kept) — the rendered sbatch
+  builds the srun command from that JSON at link start, so every pending link
+  inherits 100 automatically. Running heads still stop at 50 (command already
+  built); their successor links continue 51–100. Constant LR → extension is
+  schedule-safe; dataset supports ~159 steps at epochs=5.
+- **Incident 53**: baseline 1397229 backward hang mid-s26 on
+  jpbo-017-[38-40,43-45] — log + newest trial-result frozen at the same second
+  (19:07:56), discovered 2h37m later (watchers had died post-compaction; only
+  the stale one survived). gs25 banked. scancel 21:46:30 → 1397230 auto-started
+  ~3 min later on jpbo-109-[41-42,44-45,47-48]. Exclusion c016d041; all 9
+  pending links scontrol-patched with the full list + new set.
+- **Live-capture FIRST USE**: ghost_probe_sweep fired at the 6 freed nodes
+  ~2 min post-scancel (jobs 1399859-64): **ALL CLEAN** (2–71 MiB, 80GiB
+  cuMemAlloc OK ×4 GPUs each). Evidence: our own scancel of a hung EP/FSDP2
+  job does NOT strand memory — the ghost producers are other workloads or
+  timing-dependent teardown, strengthening the cleanup-race framing for JSC.
+- Fleet after: baseline 1397230 (resume gs25→100), lr1e6 1394805 gs10,
+  lr5e6 1396799 gs10, spares ×2-3 per arm all ms100-inheriting. New
+  exit+hang-aware watchers armed on all three.
