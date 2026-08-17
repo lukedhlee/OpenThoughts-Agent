@@ -519,3 +519,15 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   (ghost transience + mechanism, hang category, exclusion-list state/aging policy,
   probe tools, prepared JSC asks, prolog-guard TODO). Read that note first for any
   future node incident.
+
+## Session split (2026-08-17 ~20:50 CEST)
+
+Luke split the workload into three sessions. THIS ledger's supervisor session
+keeps: GRPO LR-sweep fleet ops + node-health/JSC thread. Spun out:
+- **SFT Levanter babysitter** → `session_brief_sft_levanter.md` (owns chain
+  1399224/1399225; incident 50 = XLA GEMM autotuner 24GiB OOM killed v4
+  1398566 → fix `xla_gpu_autotune_level=1`, commit f41bb3e5; v5 1398567
+  cancelled as doomed; v6 1399224 launched with fix).
+- **Runboard dashboard** → `session_brief_runboard_currease.md` (currease
+  wandb is OFFLINE per-exp-dir, never synced; cloud project doesn't exist yet).
+Once those sessions boot, the supervisor stops touching their workstreams.
