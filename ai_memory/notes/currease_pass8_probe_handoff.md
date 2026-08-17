@@ -395,3 +395,11 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   patched 1392690 (resume@gs20 intact). LR-sweep ID swap: **lr1e6 arm now = 1394804.**
   Watchers re-armed: 1392690 (resume past gs20), 1394804 (step-1). lr5e6 1394836 +
   smoke7 1394988 running clean ~17 min.
+- **Incident 38b:** baseline link 1392690 ALSO ghost-OOM'd — jpbo-076-[33-38], GPU0 on
+  jpbo-076-38 carried ~82GB foreign residue (95GB total, 29MiB free, ours 11.6GB).
+  Second dirty subset of the same rack → **jpbo-076 escalated to full rack [01-48]**
+  (93a12b82), remaining 10 pending links re-patched. Link 1392691 running on
+  jpbo-026-[37-38,40-41,43-44] (clean territory) — baseline has links 91+92 left;
+  if both burn, resubmit fresh chain (gs20 ckpt intact, auto-resume). Post-unclog
+  lesson: nodes freshly vacated by the big invisible jobs are ghost-heavy — expect
+  start-window OOM storms right after a machine-wide unclog.
