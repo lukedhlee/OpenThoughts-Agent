@@ -452,3 +452,15 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   jax_comp_cache` (restart links skip recompile). **Prod v2 = 1397721 (+link 1397722).**
   Note: NO config knob selects the CE implementation (compute_next_token_loss hardcodes
   the fused kernel path); the env flag is the only lever short of patching levanter.
+- **Incidents 42+43:** (42) Lev prod v2 1397721 died 8 min on jpbo-077-[01-06] — ghost
+  residue from OUR OWN lr5e6-v1 scancel; SFT sbatch now carries a TARGETED exclusion
+  list (today's confirmed-dirty sets only, 73837428 — deliberate deviation from Luke's
+  "no SFT exclusions", flagged to him). Prod chain: 1397722 RUNNING on jpbo-046 +
+  link 1397912 (new script). (43) baseline link 1397228 ghost-OOM at gs22 backward on
+  jpbo-074-[01-02,11-14] (~60GB residue) → excluded (d36aa260), 10 pending links
+  patched, insurance links 1398002-03 queued (correct DCFT+proxy recipe). Baseline now
+  on 1397229 (jpbo-017). **Structural fix TODO: prolog ghost-guard in universal_rl.sbatch**
+  — per-node nvidia-smi memory.used probe at start, fail-fast in ~30s (vs 15-50 min)
+  when any GPU carries >2GB foreign residue; optionally auto-append the bad node to the
+  next pending link's ExcNodeList via scontrol from the compute node. Post-unclog storm
+  = 6 ghost incidents today; whack-a-mole exclusion is losing ~40 min/link.
