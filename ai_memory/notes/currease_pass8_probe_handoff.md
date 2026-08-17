@@ -636,3 +636,29 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 - Incident-54 probe verdicts (jobs 1400051-54, ~3 min post-kill): jpbo-017-01/
   03/06/10 ALL CLEAN (3-30 MiB, 80GiB alloc OK x4). Second same-day clean-kill
   datum — our scancels of hung EP/FSDP2 jobs do not strand GPU memory.
+
+## SFT Incident 55 (2026-08-17 ~23:30 CEST) — gmm worked (7.18TiB→349GiB); residual pinning via custom_vjp; fix = optimize_remat
+
+- v12 1399959 FAILED at 22m48s, same surface error (8.96GiB exec OOM), but the
+  fingerprint PROVES the gmm patch worked: post-remat demand fell
+  **7.18TiB → 348.66GiB** and the TB-scale while-loop I/O errors are GONE. No
+  `ragged_dot auto fallback` warning → pallas-triton path active.
+- Remaining 349GiB ≈ 7.8GB/layer × 48 saved across the scan DESPITE
+  `gradient_checkpointing: True` (verified = haliax `simple` policy =
+  full save-nothing `eqx.filter_checkpoint`). Diagnosis: the triton
+  ragged_dot's `jax.custom_vjp` residuals (lhs = expert inputs ~2.5GB/layer,
+  rhs = gathered bf16 expert weights ~2.4GB/layer) are OPAQUE to
+  jax.checkpoint by default — remat cannot drop custom_vjp residuals, so they
+  pin per-layer for the whole scan. (Also explains why marin TPU never saw
+  it: at 4k pretrain seq this is ~1GB/layer — fits.)
+- **Fix**: `defvjp(..., optimize_remat=True)` (present in jax 0.11.0) — makes
+  the residuals rematerializable; ours are exactly the primal inputs, the
+  ideal case. marin branch commit **faa0bfcb9** (haliax ragged_dot.py, one
+  line), deployed to `$F/repos/marin`.
+- **v14 = 1400086 (head), v15 = 1400087 (spare)** submitted ~23:30. TE-absent
+  attention fallback checked: it goes to levanter's jax blockwise
+  flash_attention (O(N) memory), NOT vanilla — not a hog. If v14 still OOMs,
+  read its new `Can't reduce memory use below` number FIRST: the composition
+  delta identifies the next residual pinner (candidates: cudnn SDPA
+  residuals, fused-CE batched_xla saves, optimize_remat+shard_map not
+  composing).

@@ -32,14 +32,14 @@ Cluster: JUPITER booster (JSC), GH200 nodes (4 GPUs, 96GB each), ssh alias
 
 ## Live state (2026-08-17 ~22:50 CEST — VERIFY with squeue before acting)
 
-- **v12 = 1399959 (head), v13 = 1399960 (afterany spare)** — first attempt on
-  the **use_gmm MoE path** (incident 54, the root-cause fix for 50–52):
-  cluster `$F/repos/marin` now on branch `lukedhlee/qwen3moe-gpu-gmm`
-  (github.com/lukedhlee/marin, f0c24253a = upstream ab07b1a + 1 commit
-  threading `use_gmm=True` through Qwen3MoeConfig → MoELinear). XLA was
-  densifying ragged_dot_general's backward to 7–21TiB; the gmm path uses
-  pallas-triton kernels + custom VJP via shard_map. Full detail: ledger
-  incident 54.
+- **v14 = 1400086 (head), v15 = 1400087 (afterany spare)** — gmm path
+  (incident 54) + `optimize_remat=True` on the triton custom_vjp (incident
+  55). Branch `lukedhlee/qwen3moe-gpu-gmm` @ faa0bfcb9 on `$F/repos/marin`.
+  Memory-demand trajectory (the `Can't reduce memory use below` remat line
+  is the fingerprint to read in every failed log): 21.15TiB (v8, mb3) →
+  7.18TiB (v10, mb1) → 348.66GiB (v12, gmm) → v14 target < 87.29GiB.
+  v12/v13 = incident 55 (custom_vjp residuals pinned per-layer; opaque to
+  jax.checkpoint without optimize_remat).
 - Levanter-side knobs already in place and KEPT: autotune level 0 (compile
   ladder closed at incident 51), per_device_parallelism 1 (incident 52),
   mem fraction 0.92, CE sweep ON, compile cache.
@@ -50,7 +50,8 @@ Cluster: JUPITER booster (JSC), GH200 nodes (4 GPUs, 96GB each), ssh alias
 - Dead: v1 1396852, v2 1397721, v2b 1397722(?), v3 1398134, v4 1398566
   (incident 50), v5 1398567 (cancelled), v6 1399224 (incident 51), v7 1399225
   (cancelled), v8 1399676 (incident 52), v9 1399677 (cancelled), v10 1399820
-  (incident 54 diagnosis), v11 1399821 (cancelled).
+  (incident 54 diagnosis), v11 1399821 (cancelled), v12 1399959 (incident
+  55), v13 1399960 (cancelled).
 - **Milestone to report: the FIRST loss line** = pipeline green. HLO changed →
   compile cache miss: expect CE sweep (~8 min) + compile (~10-20 min) first.
 - Upstream marin PR for the use_gmm patch: candidate, needs Luke's explicit
