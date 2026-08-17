@@ -475,3 +475,14 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   **Prod chain now: 1397912 RUNNING on jpbo-001-[20-30] (fresh nodes)** — carries
   autotune-off + comp-cache + 077/114 exclusions (046 patch rode scontrol; new script
   for future links). Watcher armed.
+- **Incident 45 — ROOT CAUSE of ALL Levanter prod deaths found: JAX default
+  XLA_PYTHON_CLIENT_MEM_FRACTION=0.75 = 71.25GiB self-cap per 96GB GH200.** The
+  allocator stats line ("Limit: 71.25GiB") proves the RESOURCE_EXHAUSTED failures were
+  against OUR OWN cap, not ghost residue — the jpbo-077/046/001 "ghost" reads were
+  wrong (RL's OOMs with foreign-process accounting remain real ghosts). Consistent
+  story: smoke7's 2-node "compile OOM" (45.75GB state + 32GiB request > 71.25),
+  v1's task-1 death mid-sweep, and all three 7-min v2/v2b/1397912 deaths. The wandb
+  `Disk quota exceeded` staging error is NON-FATAL (background worker catches+drops;
+  home is empty; likely /e/scratch inode-over-soft grace weirdness) — red herring.
+  Fix (145339af): XLA_PYTHON_CLIENT_MEM_FRACTION=0.92 (87.4GiB) + WANDB_DATA_DIR/
+  CACHE_DIR moved off $HOME. **Prod v3 = 1398134 (+link 1398135).**
