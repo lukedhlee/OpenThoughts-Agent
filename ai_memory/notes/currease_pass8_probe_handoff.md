@@ -676,3 +676,15 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   serialize save vs next-step launch; upstream MarinSkyRL issue material.
 - Exclusion jpbo-024-[09-13,16] added; pending links patched pre-kill
   (1396801 patch raced — retry). Probe sweep armed for the freed nodes.
+
+## Incident 56 (2026-08-17 ~23:02): lr5e6 link 1396800 ghost-OOM at load
+
+- 1396800 FAILED 14m30s on jpbo-005-[26-28,30-32]: torch OOM at model load —
+  GPU0 40.19 MiB free of 95 GiB with our process holding 2.53 GiB → ~92GB
+  FOREIGN residue. Textbook ghost node (NOT in any recent exclusion; the old
+  jpbo-005 gsm8k entry was a different zone).
+- 1396801 auto-started (rack-017-patched, ms100) on jpbo-015-[17-22], running.
+- Live-capture attempted ~40 min post-death: jpbo-005 nodes ALREADY ALLOCATED
+  to another tenant (probe impossible; they inherited the residue — cleanup-
+  race corroboration). Evidence = our OOM accounting lines in the 1396800 log.
+- jpbo-005-[26-28,30-32] excluded (same-day ghost quarantine).
