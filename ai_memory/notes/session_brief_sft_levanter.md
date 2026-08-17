@@ -30,24 +30,31 @@ Cluster: JUPITER booster (JSC), GH200 nodes (4 GPUs, 96GB each), ssh alias
   padded tokenizer sidesteps it. (A one-line upstream marin PR is a candidate
   but needs Luke's explicit ask — do not open it unprompted.)
 
-## Live state (2026-08-17 ~21:35 CEST — VERIFY with squeue before acting)
+## Live state (2026-08-17 ~22:50 CEST — VERIFY with squeue before acting)
 
-- **v10 = 1399820 (head), v11 = 1399821 (afterany spare)** submitted with the
-  incident-52 fix: `trainer.per_device_parallelism: 1` (microbatch 1/device,
-  3-step grad accum; global batch 96 / optimizer math / recipe UNCHANGED).
-- **The autotune compile ladder is CLOSED**: level 0 (`c6f4bc76`) made v8
-  1399676 the first attempt EVER to compile train_step. It then FAILED at
-  step-0 EXECUTION — RESOURCE_EXHAUSTED 8.96GiB inside jit__train_step at
-  microbatch 3/device (incident 52). v9 1399677 dependency-started with the
-  old yaml → cancelled.
-- **Escalation if execution still OOMs at microbatch 1**: bump
-  `XLA_PYTHON_CLIENT_MEM_FRACTION` 0.92 → 0.95 (one lever at a time).
+- **v12 = 1399959 (head), v13 = 1399960 (afterany spare)** — first attempt on
+  the **use_gmm MoE path** (incident 54, the root-cause fix for 50–52):
+  cluster `$F/repos/marin` now on branch `lukedhlee/qwen3moe-gpu-gmm`
+  (github.com/lukedhlee/marin, f0c24253a = upstream ab07b1a + 1 commit
+  threading `use_gmm=True` through Qwen3MoeConfig → MoELinear). XLA was
+  densifying ragged_dot_general's backward to 7–21TiB; the gmm path uses
+  pallas-triton kernels + custom VJP via shard_map. Full detail: ledger
+  incident 54.
+- Levanter-side knobs already in place and KEPT: autotune level 0 (compile
+  ladder closed at incident 51), per_device_parallelism 1 (incident 52),
+  mem fraction 0.92, CE sweep ON, compile cache.
+- **v12 verification duties**: (a) grep the log for `ragged_dot auto
+  fallback` — if present, triton kernel failed and it silently reverted to
+  the XLA path → treat as failure; (b) first loss should be plausible
+  (~1.5–3); nonsense loss = suspect the new kernel path numerics.
 - Dead: v1 1396852, v2 1397721, v2b 1397722(?), v3 1398134, v4 1398566
   (incident 50), v5 1398567 (cancelled), v6 1399224 (incident 51), v7 1399225
-  (cancelled), v8 1399676 (incident 52), v9 1399677 (cancelled).
-- **Milestone to report: the FIRST loss line** = pipeline green. New shapes →
-  compile cache miss: expect CE sweep (~8 min) + full train_step compile
-  (~20-40 min at level 0) before step 0.
+  (cancelled), v8 1399676 (incident 52), v9 1399677 (cancelled), v10 1399820
+  (incident 54 diagnosis), v11 1399821 (cancelled).
+- **Milestone to report: the FIRST loss line** = pipeline green. HLO changed →
+  compile cache miss: expect CE sweep (~8 min) + compile (~10-20 min) first.
+- Upstream marin PR for the use_gmm patch: candidate, needs Luke's explicit
+  ask — do not open unprompted. Local marin clone: `/Users/lukedhlee/marin`.
 
 ## Failure history — one line each (full detail: `currease_pass8_probe_handoff.md` incidents 41–50)
 

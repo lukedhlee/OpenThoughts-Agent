@@ -585,3 +585,37 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 - Fleet after: baseline 1397230 (resume gs25→100), lr1e6 1394805 gs10,
   lr5e6 1396799 gs10, spares ×2-3 per arm all ms100-inheriting. New
   exit+hang-aware watchers armed on all three.
+
+## SFT Incident 54 (2026-08-17 ~22:45 CEST) — ROOT CAUSE FOUND: XLA densifies MoE ragged_dot; fix = levanter use_gmm branch
+
+- v10 1399820 (per_device_parallelism=1) FAILED identically to v8 at 32m56s:
+  runtime RESOURCE_EXHAUSTED 8.96GiB in jit__train_step. The log's remat
+  warnings expose the real problem: post-remat memory demand **7.18TiB** at
+  microbatch 1 (v8: **21.15TiB** at microbatch 3 — exactly 3×, so the knob DID
+  work; ~235MB/token/device is the pathology). gpu_hlo_schedule also reports
+  while-loop (layer-scan) I/O arguments of 1.66–2.75TB.
+- **Root cause (explains incidents 50–52 retroactively)**: levanter's
+  qwen3_moe uses `hnn.MoELinear` with `use_gmm=False` → global-view
+  `jax.lax.ragged_dot_general`; XLA's SPMD partitioner/autodiff densifies its
+  backward into [token, experts, dim] buffers (32k×128×2048×fp32×48 layers ≈
+  1.65TB per tensor class). v6's "3.0/4.5TiB autotuner allocations" were these
+  real HLO operand shapes, not an autotuner bug. DenseMixer ruled out
+  (dense_router_gradient defaults False).
+- **Fix**: haliax already ships the cure behind `MoELinear(use_gmm=True)` —
+  shard_map + ragged_dot kernels (pallas-triton on GPU, custom VJP so XLA
+  never autodiffs/partitions the ragged op; megablox on TPU) + unit tests. No
+  model threaded it. Patch = thread `use_gmm` through Qwen3MoeConfig/Experts,
+  default True (must be a default: use_hf_model_config REPLACES the yaml model
+  config, so yaml-set fields don't survive). Upstream marin main checked: 0
+  relevant commits ahead. Deployed via fork-branch flow:
+  **github.com/lukedhlee/marin branch `lukedhlee/qwen3moe-gpu-gmm`**
+  (f0c24253a on top of upstream ab07b1a); cluster
+  `$F/repos/marin` checked out on that branch (was: plain upstream main).
+  Local clone (new): `/Users/lukedhlee/marin`. Upstream marin PR: candidate,
+  NOT opened (needs Luke's explicit ask per marin-fork rules).
+- pallas-triton import verified in the levanter env. **v12 = 1399959 (head),
+  v13 = 1399960 (spare)** submitted ~22:50. Full recompile expected (HLO
+  changed). Watch for: (a) `ragged_dot auto fallback` RuntimeWarning in the
+  log = triton kernel failed, silently on XLA path again — treat as FAILURE
+  even if it runs; (b) plausible first loss (~1.5-3 for a base model on SFT
+  data) as the numerics sanity check on the new kernel path.
