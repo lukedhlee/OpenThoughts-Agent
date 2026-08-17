@@ -51,6 +51,12 @@ export JAX_PJRT_CLIENT_CREATE_OPTIONS=allocator:cuda_async
 # Persistent XLA module cache: restart links skip recompile entirely.
 export JAX_COMPILATION_CACHE_DIR=$F/cache/jax_comp_cache
 
+# incident 50: v4 (1398566) survived the CE sweep but died 1h48m in — XLA's own
+# GEMM/fusion autotuner (default level 4: operand init + correctness check +
+# redzone) RESOURCE_EXHAUSTED'd allocating 24GiB for 5 of 646 instructions.
+# Level 1 still autotunes but skips the init/check buffer copies.
+export XLA_FLAGS="--xla_gpu_autotune_level=1 ${XLA_FLAGS:-}"
+
 export NCCL_DEBUG=WARN
 export NCCL_NET_GDR_LEVEL=0
 export NCCL_SOCKET_IFNAME=ib0
