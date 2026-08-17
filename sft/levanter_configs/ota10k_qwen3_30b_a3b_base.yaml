@@ -1,0 +1,48 @@
+data:
+  train_weights:
+    ota10k: 1.0
+  tokenizer: /e/fscratch/reformo/lee27/hf_hub/models--Qwen--Qwen3-30B-A3B-Base/snapshots/1b75feb79f60b8dc6c5bc769a898c206a1c6a4f9
+  cache_dir: /e/fscratch/reformo/lee27/data/ota10k_levanter_cache
+  shuffle:
+    io_block_size: 256
+    window_blocks: 512
+    perm_type: feistel
+  components:
+    ota10k:
+      format:
+        type: chat
+        messages_field: conversations
+      source:
+        type: url
+        train_urls:
+          - /e/fscratch/reformo/lee27/data/ota10k_jsonl/train.jsonl
+model:
+  type: qwen3_moe
+train_seq_len: 32768
+trainer:
+  seed: 42
+  tracker:
+    type: wandb
+    project: jupiter-ota10k-sft
+    name: ota10k_sft_qwen3_30b_a3b_base_levanter
+  mp: p=f32,c=bfloat16
+  train_batch_size: 96
+  num_train_steps: 328
+  checkpointer:
+    base_path: /e/fscratch/reformo/lee27/checkpoints/ota10k_sft_30ba3b_levanter/ckpt
+    keep:
+      - every: 100
+optimizer:
+  learning_rate: 4e-5
+  beta1: 0.9
+  beta2: 0.98
+  epsilon: 1e-8
+  max_grad_norm: 1e-4
+  weight_decay: 0.0
+  lr_schedule: cosine
+  warmup: 0.1
+  min_lr_ratio: 0.0
+initialize_from_hf: /e/fscratch/reformo/lee27/hf_hub/models--Qwen--Qwen3-30B-A3B-Base/snapshots/1b75feb79f60b8dc6c5bc769a898c206a1c6a4f9
+use_hf_model_config: true
+hf_save_steps: 328
+hf_save_path: /e/fscratch/reformo/lee27/checkpoints/ota10k_sft_30ba3b_levanter/hf
