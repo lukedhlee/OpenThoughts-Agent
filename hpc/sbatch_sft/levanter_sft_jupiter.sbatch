@@ -21,6 +21,9 @@ export HF_HOME=$F/cache/hf
 export HF_HUB_OFFLINE=1
 export WANDB_MODE=offline
 export WANDB_DIR=$F/experiments/ota10k_lev_sft
+# compute nodes have no git on PATH; GitPython hard-fails without this
+export GIT_PYTHON_REFRESH=quiet
+export WANDB_DISABLE_GIT=true
 export TMPDIR=/tmp
 
 # marin #7115: resume-time BFC fragmentation OOM -> cuda_async defrag allocator.
