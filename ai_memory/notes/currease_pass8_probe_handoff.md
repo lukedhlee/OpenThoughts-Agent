@@ -430,3 +430,14 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   resumed past gs20 (step 21+, jpbo-040); 3 extra links queued behind it with current
   blacklist via `--exclude` override (1396944-46). gs50/hang watchers armed on all
   three arms. Levanter production 1396849 (+1396850) queued.
+- **Incident 40 + link-submission gotcha (2026-08-17 ~15:40 CEST):** baseline 1392692
+  FAILED at 41 min — ghost-OOM in `ppo_train()` backward on jpbo-040-24 (~62GB foreign
+  residue; survived load+rollouts, died at backward peak) → jpbo-040-[17-20,23-24]
+  excluded (a328f472). My 3 spare links (1396944-46) all died in ~10s: **rendered-sbatch
+  resubmits MUST come from a shell with `cd $F/OpenThoughts-Agent && export DCFT=$PWD`
+  AND the full proxy preamble** — the WORKDIR guard exit-1s otherwise. Resubmitted
+  correctly: baseline links **1397228→1397229→1397230** (afterany chain, full blacklist
+  incl. 040 via --exclude). Sweep links 1394805-08 + 1396798-802 patched with 040 set.
+  Baseline still resumes from gs20 ckpt (steps 21-22 lost to ckpt_interval=5 — fine).
+  Levanter prod 1396849 RUNNING on jpbo-114 since 14:15: in XLA compile/fused-CE
+  autotune since 14:08 (first-time 32k-seq MoE HLO, no compile cache — slow is normal).
