@@ -417,3 +417,11 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   blacklist incl. 076/107/026 baked in). Watcher checks the proxy line first, then step-1.
   Healthy arms unaffected: lr1e6 1394804 step-1 GREEN (reward 0.445, entropy 0.169,
   mixed 0.44, len 1584); smoke7 past the pytree layer (lowering train_step at 13:35).
+- **Smoke7 (1394988) verdict: vocab fix CONFIRMED, then 2-node XLA-compile OOM
+  (RESOURCE_EXHAUSTED 32GiB during autotune; f32 state ~46GB/GPU on 8 GPUs leaves no
+  workspace), TIMEOUT at wall. Not a pipeline bug — smoke-shape artifact. Padded-tok
+  cache (ota10k_levanter_cache_pad) built + reusable. **PRODUCTION LAUNCHED: 1396849**
+  (+afterany restart link 1396850): 8 nodes/32 GPUs (~11GB/GPU state), 328 steps,
+  seq 32768, gbs 96, lr 4e-5 cosine — full paper recipe, no smoke shrinkage. Levanter
+  auto-resumes from checkpointer (every:100 + final); hf export at step 328 to
+  checkpoints/ota10k_sft_30ba3b_levanter/hf. Watcher: first loss line or exit.
