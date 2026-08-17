@@ -662,3 +662,17 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   delta identifies the next residual pinner (candidates: cudnn SDPA
   residuals, fused-CE batched_xla saves, optimize_remat+shard_map not
   composing).
+
+## Incident 55 (2026-08-17 23:39): lr1e6 hang at s11 — SAME boundary+1 signature
+
+- lr1e6 1394805 backward hang at s11 on jpbo-024-[09-13,16] — dual freeze at
+  22:42:31, caught at ~56 min. gs10 banked; chain rolls to 1394806 (ms100).
+- **Pattern now 5/6: hangs land on the first step AFTER a ckpt_interval
+  boundary** (incidents 46, 47, 54, 55 at gs5/gs10+1; 53 at s26=gs25+1).
+  Checkpoint save/cleanup interacting with the EP/FSDP2/NCCL step is now the
+  prime suspect — node exclusions are likely NOISE for the hang class (Luke:
+  "don't trust the exclusion list too much"). Candidate controlled experiment
+  (NEEDS Luke sign-off, do not mutate in-flight arms): raise ckpt_interval or
+  serialize save vs next-step launch; upstream MarinSkyRL issue material.
+- Exclusion jpbo-024-[09-13,16] added; pending links patched pre-kill
+  (1396801 patch raced — retry). Probe sweep armed for the freed nodes.
