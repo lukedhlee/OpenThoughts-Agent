@@ -696,3 +696,18 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   confirmed live). scancel 00:49:26 -> 1398002 rolls (ms100 + full patches).
 - jpbo-109 set excluded; pending links patched pre-kill (1396802 patch
   race-skipped — verify/retry).
+
+## Incidents 58a/58b (2026-08-18 ~00:30-00:50): lr5e6 chain EXHAUSTED by double ghost-OOM
+
+- 58a: 1396801 FAILED 59m18s on jpbo-015-[17-22] — ppo_train OOM at s14/15
+  backward: 174.81 MiB free, ours 29.42 GiB → ~65GB foreign residue. NOTE:
+  jpbo-015-1x is a PRUNED gsm8k-era zone RE-OFFENDING → repeat offender,
+  re-added. No gs15 banked; resume point stays gs10 (steps 11-14 lost, ≤5).
+- 58b: 1396802 FAILED 15m57s on jpbo-027-[19-22,25-26] — load_checkpoint OOM:
+  19.81 MiB free, ours 12.62 GiB → ~82GB residue. Never-excluded zone.
+- Chain 1396799-802 fully consumed → RESUBMITTED with full DCFT+proxy
+  preamble: head 1400470 + spares 1400471/1400472, CLI --exclude with the
+  live list (JSON already ms100). Resumes gs10 → 100.
+- Post-midnight ghost churn is back (cf. yesterday's storm hours). jpbo-015
+  re-allocated to another tenant before probeable; jpbo-027 probes 1400462-67
+  in flight (freshest specimen attempt yet, ~20 min).
