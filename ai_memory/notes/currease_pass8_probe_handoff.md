@@ -370,3 +370,18 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   base miniforge python lacks pydantic — rl-fa is the launcher env for lee27).
   Final sweep = **1e-6 (1394803) / 3e-6 (1392688, from gs20) / 5e-6 (1394836)**.
   Step-1 watcher armed on 1394836; lr8e6 watcher killed.
+- **Levanter smoke6 (1394737) FAILED — vocab-pad flag is broken upstream.** Same pytree
+  error as smoke5: grads vocab=151936 vs opt_state.mu vocab=151665. Root cause read from
+  source: `with_tokenizer_padded_to_match_model()` pads only the **converter's** tokenizer
+  (hf_checkpoints.py:633, adds `<|padding_i|>` dummies); train_lm.py:245 computes Vocab
+  from the local `tokenizer` var (= data tokenizer, never re-assigned after padding) →
+  initial_state builds opt_state at 151665, HF load swaps in a 151936 model
+  (train_lm.py:317), first take_step explodes. **Upstream one-line fix** (candidate marin
+  PR, needs Luke's ask): after the pad calls, `tokenizer = converter.tokenizer`.
+  **Our zero-fork fix:** padded tokenizer materialized on disk with levanter's own scheme
+  → `$F/data/qwen3_30b_a3b_base_tok_pad151936` (267 dummies over HF len 151669;
+  levanter's `load_tokenizer` measures it at exactly 151936, original at 151665;
+  real-text encoding verified byte-identical). Config now points data.tokenizer there +
+  fresh cache_dir `ota10k_levanter_cache_pad` (6ccbc365). `pad_tokenizer_to_match_model`
+  kept (now a no-op guard). **Smoke7 = 1394988** (2 nodes, 1:20 wall; adds
+  `--hf_save_steps 3` so the 30B HF-export path is validated in the same shot).
