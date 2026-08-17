@@ -66,8 +66,16 @@ nodeset + chain rolls (resume loses ≤ckpt_interval steps).
 - It mixes: (a) transient ghost sets, (b) hang sets, (c) precautionary full-rack
   escalations (jpbo-030/026/076/081...). Since ghosts are transient, **most ghost
   entries are stale within ~a day** — the list chases yesterday's ghosts and
-  starves scheduling. **Policy going forward: age out ghost entries after ~24h;
-  keep hang entries; rack escalations only after 2+ distinct dirty zones.**
+  starves scheduling. **Luke directive (2026-08-17): "don't trust the exclusion
+  list too much — it can be temporary." Policy: exclusions are same-day
+  QUARANTINE, not a blacklist. Age out ghost entries after ~24h, hang entries
+  after ~48h; re-add on re-offense (a repeat offender then has fresh evidence);
+  rack escalations only after 2+ distinct dirty zones.**
+- **First prune executed 2026-08-17 ~22:00**: dropped every entry added
+  2026-08-16 or earlier (gsm8k-era bulk incl. the big rack sets 011/014/016/
+  018/020/022/029/030/031/060/066/067/079/093/100/111/112); kept only the
+  08-17 storm sets. 1,221 → 186 nodes (~3% of booster). Recover any dropped
+  set from git history of hpc/hpc.py if a node re-offends.
 - SFT (Levanter) runs a separate MINIMAL list inside
   `hpc/sbatch_sft/levanter_sft_jupiter.sbatch` (same-day incidents only) — per
   Luke's "no SFT exclusions" directive, deliberately deviated only for
@@ -89,6 +97,10 @@ nodeset + chain rolls (resume loses ≤ckpt_interval steps).
 - **Live-capture protocol:** ghosts decay, so probe WITHIN MINUTES of an
   incident — the incident nodes have just freed, the probe backfills in seconds.
   A same-node, minutes-later probe output is the evidence package for JSC.
+  First use (2026-08-17, incident 53): probed jpbo-017-[38-40,43-45] ~2 min
+  after scancelling our own hung 6-node job → ALL CLEAN (80GiB allocs OK).
+  So our hang-kills do NOT strand memory — the leakers are other workloads /
+  timing-dependent teardown, which sharpens the cleanup-race framing.
 - Cost: probes bill ~15 node-SECONDS each (JSC accounts per-second × nodes;
   requested walltime is never billed, only elapsed). Short probes are free;
   frozen multi-node hangs are the real money sink.
