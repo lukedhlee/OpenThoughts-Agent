@@ -18,6 +18,8 @@ data:
           - /e/fscratch/reformo/lee27/data/ota10k_jsonl/train.jsonl
 model:
   type: qwen3_moe
+  reference_checkpoint: /e/fscratch/reformo/lee27/hf_hub/models--Qwen--Qwen3-30B-A3B-Base/snapshots/1b75feb79f60b8dc6c5bc769a898c206a1c6a4f9
+  tokenizer: /e/fscratch/reformo/lee27/hf_hub/models--Qwen--Qwen3-30B-A3B-Base/snapshots/1b75feb79f60b8dc6c5bc769a898c206a1c6a4f9
 train_seq_len: 32768
 trainer:
   seed: 42
