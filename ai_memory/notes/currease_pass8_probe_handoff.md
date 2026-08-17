@@ -441,3 +441,14 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   Baseline still resumes from gs20 ckpt (steps 21-22 lost to ckpt_interval=5 — fine).
   Levanter prod 1396849 RUNNING on jpbo-114 since 14:15: in XLA compile/fused-CE
   autotune since 14:08 (first-time 32k-seq MoE HLO, no compile cache — slow is normal).
+- **Incident 41 — Levanter prod 1396849 FAILED at 2:25 (all-rank SIGABRT):** root chain:
+  fused-CE autotune sweep at the prod shape (seq 32768 × vocab 151936) compiled
+  pathological candidates (gpu_hlo_schedule: 3.34TB per-device args vs 81.6GB limit)
+  for 2h23m; task 1 died ~16:26; the other ranks (still compiling) missed the 5-min
+  Shutdown barrier (5/8 reached) → CoordinationServiceAgent CHECK-abort everywhere.
+  Sweep results weren't even cacheable ("kernel jaxpr unavailable" → no sharing).
+  Fix (15c676a6): `LEVANTER_PALLAS_CE_AUTOTUNE_ON_MISS=0` (use inferred block sizes,
+  warn-and-fallback path exists if invalid) + `JAX_COMPILATION_CACHE_DIR=$F/cache/
+  jax_comp_cache` (restart links skip recompile). **Prod v2 = 1397721 (+link 1397722).**
+  Note: NO config knob selects the CE implementation (compute_next_token_loss hardcodes
+  the fused kernel path); the env flag is the only lever short of patching levanter.
