@@ -357,3 +357,9 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   4e-5/0.98/clip1e-4/cosine/wr0.1, seq 32768, batch 96, num_train_epochs=7). GATE: marin
   iris credentials (openathena.ai login) — either Luke gets creds or config goes as marin PR.
   Instr RL v7 1392687 RUNNING since 09:12 CEST on jpbo-095-[21-26] (resume@gs20 verify pending).
+- **LR SWEEP LAUNCHED (2026-08-17 ~10:5x CEST):** two more instr2507 GRPO arms from
+  step 0 — lr1e6 chain 1394803-08, lr8e6 chain 1394809-14 (yamls ..._lr1e6/_lr8e6.yaml,
+  9f3e4bb5; only lr differs from baseline 3e-6). Spacing matches the gsm8k-30B precedent
+  (1e-6/3e-6/8e-6). 3 concurrent RL arms × 6 nodes; Daytona snapshots = registry hits.
+  Step-1 health watchers armed. Baseline 3e-6 (chain 1392688, resumes gs20) still queued.
+  Levanter SFT bring-up at smoke6 (vocab-pad fix; cache+load+fwd/bwd already validated).
