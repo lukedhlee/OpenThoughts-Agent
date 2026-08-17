@@ -464,3 +464,14 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   when any GPU carries >2GB foreign residue; optionally auto-append the bad node to the
   next pending link's ExcNodeList via scontrol from the compute node. Post-unclog storm
   = 6 ghost incidents today; whack-a-mole exclusion is losing ~40 min/link.
+- **Incident 44 — the SFT fast-fails were partly SELF-INFLICTED quota cascade:** each
+  SIGABRT crash dumped 8×15-18GB cores into the repo cwd ($F/repos/OpenThoughts-Agent/
+  core.*) — 16 cores / 258GB total, now DELETED. Quota state (jutil project dataquota):
+  /e/scratch/reformo OVER soft INODE limit (8.07M/8M); /e/project1/reformo over soft
+  data (22.7/21.4TB) — flag to Luke, most of it is project-wide (feuer1 etc), but our
+  cores were pure waste. 1397722 died with `OSError: [Errno 122] Disk quota exceeded`
+  in the wandb staging thread + cuMemAllocAsync failures (ghost-vs-quota entangled).
+  sbatch hardened (64d444f5): `ulimit -c 0` + jpbo-046-[02-12] excluded.
+  **Prod chain now: 1397912 RUNNING on jpbo-001-[20-30] (fresh nodes)** — carries
+  autotune-off + comp-cache + 077/114 exclusions (046 patch rode scontrol; new script
+  for future links). Watcher armed.
