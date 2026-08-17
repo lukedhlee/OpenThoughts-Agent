@@ -330,3 +330,16 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
 - Chain: 1392818 (head) + 1392819-21. 8 nodes/32 GPU → accum 3. output_dir
   $F/checkpoints/ota10k_sft_30ba3b__Qwen3-30B-A3B-Base (ZeRO-3 sharded → consolidate flow).
 - After SFT: GRPO from the SFT ckpt = path-2 arm vs paths 1 (instr, running) and 3 (base probe).
+- **SFT shakedown #1 (1393916, 90-min backfill clone) FAILED at deepspeed init:**
+  CUDAMismatchException — jupiter module CUDA 13.0 vs torch cu128; the ZeRO-3 OFFLOAD
+  json tries to JIT DeepSpeedCPUAdam. FIX (9977af76): drop offload → plain
+  sft/lf_configs/deepspeed/ds_z3_accelerate.json (optimizer fp32 state ~11.4GB/GPU
+  sharded at 32 GPUs — fits GH200 96GB w/o offload, no JIT ops) + DS_SKIP_CUDA_CHECK=1
+  in DCFT_ACTIVATE_ENV. Backfill probe: 1-node 10-min job started in 90s → machine is
+  hoarding for an invisible big job; 12h walls blocked till ~10:00 CEST horizon.
+  Relaunch (exp dir forked to ota10k_sft_30ba3b_2 by dedup; ckpt dir unchanged):
+  shakedown2 1393983 (90min) + chain 1393985-88 (12h, exclude=""). SFT-10K composition:
+  swesmith 2688 / issue 2874 / superuser 2390 / tezos 2048; teacher GLM-4.7-AWQ,
+  64% clean / 35% AgentTimeout traces; median 22 msgs. Curriculum-easy composition:
+  stack-pytest 493/511. Band analysis (per-task CSV): instr partial 111, base partial
+  109, overlap 33 → post-SFT plan: pass@8-probe the SFT ckpt, train RL on its partial band.
