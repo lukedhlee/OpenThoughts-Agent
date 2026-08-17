@@ -43,11 +43,11 @@ export TMPDIR=/tmp
 # marin #7115: resume-time BFC fragmentation OOM -> cuda_async defrag allocator.
 export JAX_PJRT_CLIENT_CREATE_OPTIONS=allocator:cuda_async
 
-# incident 41 (job 1396849): fused-CE autotune sweep at the 32k/151936 prod shape
-# compiled pathological candidates (3.3TB-arg modules) for 2h23m until a rank died
-# and the shutdown barrier killed all 8. Sweep results were unshareable anyway
-# (jaxpr hash unavailable) -> pin to inferred block sizes, no sweep.
-export LEVANTER_PALLAS_CE_AUTOTUNE_ON_MISS=0
+# incident 48 REVERSAL of incident 41: autotune-OFF is the fast killer — the
+# inferred CE block sizes OOM train_step in 7 min (9.6GB blocks) at ANY mem limit
+# (v2/v2b at 71.25GiB, v3 at 87.40GiB). v1 with autotune ON survived this phase for
+# 2h23m and its rank death is explained by the old 71.25 cap during the sweep.
+# So: sweep ON + 0.92 fraction + compile cache. Expect a long (~2-3h) first compile.
 # Persistent XLA module cache: restart links skip recompile entirely.
 export JAX_COMPILATION_CACHE_DIR=$F/cache/jax_comp_cache
 
