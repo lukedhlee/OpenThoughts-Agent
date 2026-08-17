@@ -499,3 +499,8 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   phase 2h23m and its death is explained by the old 71.25 cap. Reverted to autotune ON
   + kept 0.92 + comp cache (d9e8cb8d). **Prod v4 = 1398566 (+link 1398567).** Expect a
   2-3h first compile; XLA module cache should make restarts cheap.
+- **Incident 49:** lr5e6 link 1396798 ghost-OOM at init_model on jpbo-037-[36,39,42-44,48]
+  (~84GB residue, real foreign-process accounting) → excluded (2656a695), links patched.
+  Fleet after roll: baseline 1397229 (1:43h, jpbo-017-[38-45]), lr1e6 1394805 (jpbo-024),
+  lr5e6 1396799 (jpbo-017-[01-14]), Lev prod v4 1398566 (jpbo-077-[07-14], past the
+  7-min autotune-off death window — sweep running). Watchers re-armed.
