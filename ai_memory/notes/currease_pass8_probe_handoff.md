@@ -711,3 +711,8 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 - Post-midnight ghost churn is back (cf. yesterday's storm hours). jpbo-015
   re-allocated to another tenant before probeable; jpbo-027 probes 1400462-67
   in flight (freshest specimen attempt yet, ~20 min).
+- Incident-58b probe verdicts (1400462-67, ~15-25 min post-death): jpbo-027
+  ALL CLEAN, 80GiB allocs OK. The ~82GB residue that OOM'd 1396802 at 00:49
+  had already evaporated → ghost lifetime here **<~40 min**. Tightens the
+  transience bound; implication: only a START-TIME check (prolog ghost-guard)
+  can reliably defend — even prompt exclusions chase evaporating ghosts.
