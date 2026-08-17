@@ -82,5 +82,6 @@ optimizer:
   min_lr_ratio: 0.0
 initialize_from_hf: /e/fscratch/reformo/lee27/hf_hub/models--Qwen--Qwen3-30B-A3B-Base/snapshots/1b75feb79f60b8dc6c5bc769a898c206a1c6a4f9
 use_hf_model_config: true
+pad_tokenizer_to_match_model: true
 hf_save_steps: 328
 hf_save_path: /e/fscratch/reformo/lee27/checkpoints/ota10k_sft_30ba3b_levanter/hf
