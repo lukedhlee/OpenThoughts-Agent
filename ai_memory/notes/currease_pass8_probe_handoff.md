@@ -486,3 +486,7 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   home is empty; likely /e/scratch inode-over-soft grace weirdness) — red herring.
   Fix (145339af): XLA_PYTHON_CLIENT_MEM_FRACTION=0.92 (87.4GiB) + WANDB_DATA_DIR/
   CACHE_DIR moved off $HOME. **Prod v3 = 1398134 (+link 1398135).**
+- **Incident 46:** lr5e6 1396797 EP/FSDP2 backward hang at gs5 on jpbo-051-[33-35,38,43-44]
+  (log+results frozen 43-63 min, confirmed over 13-min recheck) → scancelled, nodeset
+  excluded (d831364e), all 12 pending links patched. Chain rolls to 1396798, resumes
+  from gs5 ckpt. Steps 1-5 metrics banked (step-1 reward 0.5).
