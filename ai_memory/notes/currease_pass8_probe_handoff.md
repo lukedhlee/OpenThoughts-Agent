@@ -425,3 +425,8 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   seq 32768, gbs 96, lr 4e-5 cosine — full paper recipe, no smoke shrinkage. Levanter
   auto-resumes from checkpointer (every:100 + final); hf export at step 328 to
   checkpoints/ota10k_sft_30ba3b_levanter/hf. Watcher: first loss line or exit.
+- **Sweep fully green (2026-08-17 ~14:30 CEST):** lr5e6 v2 (1396797) step-1 GREEN with
+  proxy fixed (reward 0.5, entropy 0.168, mixed 0.31, len 1506). Baseline 1392692
+  resumed past gs20 (step 21+, jpbo-040); 3 extra links queued behind it with current
+  blacklist via `--exclude` override (1396944-46). gs50/hang watchers armed on all
+  three arms. Levanter production 1396849 (+1396850) queued.
