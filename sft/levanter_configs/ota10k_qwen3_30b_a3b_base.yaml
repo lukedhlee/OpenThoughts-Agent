@@ -1,8 +1,8 @@
 data:
   train_weights:
     ota10k: 1.0
-  tokenizer: /e/fscratch/reformo/lee27/hf_hub/models--Qwen--Qwen3-30B-A3B-Base/snapshots/1b75feb79f60b8dc6c5bc769a898c206a1c6a4f9
-  cache_dir: /e/fscratch/reformo/lee27/data/ota10k_levanter_cache
+  tokenizer: /e/fscratch/reformo/lee27/data/qwen3_30b_a3b_base_tok_pad151936
+  cache_dir: /e/fscratch/reformo/lee27/data/ota10k_levanter_cache_pad
   shuffle:
     io_block_size: 256
     window_blocks: 512
