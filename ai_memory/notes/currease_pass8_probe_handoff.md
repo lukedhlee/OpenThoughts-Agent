@@ -531,3 +531,19 @@ keeps: GRPO LR-sweep fleet ops + node-health/JSC thread. Spun out:
 - **Runboard dashboard** → `session_brief_runboard_currease.md` (currease
   wandb is OFFLINE per-exp-dir, never synced; cloud project doesn't exist yet).
 Once those sessions boot, the supervisor stops touching their workstreams.
+
+## SFT babysitter session (post-split incidents)
+
+- **Incident 51:** Lev v6 1399224 FAILED 22m50s in (compile cache warm — CE sweep
+  + train_step lowering done in ~15 min). XLA GEMM autotuner at level 1 still
+  RESOURCE_EXHAUSTED during train_step compile: 2 of 646 instructions, both
+  `__triton_gemm` fusions of `Qwen3MoeSparseMoeBlock/.../MoELinear/ragged_dot_general`
+  (MoE expert GEMMs), autotuner tried to materialize 3.00TiB / 4.50TiB operand
+  buffers — the ragged-dot operand shapes themselves are the problem, not the
+  level-4 init/check copies (incident 50). Ladder step 2: `xla_gpu_autotune_level=0`
+  (no autotune runs; heuristic configs). v7 1399225 cancelled (snapshot-inherited
+  the level-1 script at submit). New head+spare submitted from the level-0 sbatch.
+  Non-fatal noise confirmed again: 9.6GB cuMemAllocAsync failures at 20:35 were
+  CE-sweep probing; job ran 16 more min after them. If level 0 dies on the same
+  triton ragged-dot fusions, next candidate rung: `--xla_gpu_enable_triton_gemm=false`
+  (falls back to cuBLAS emitters) — NOT yet validated.
