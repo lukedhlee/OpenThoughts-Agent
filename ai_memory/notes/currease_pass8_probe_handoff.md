@@ -515,3 +515,7 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   (~24h), hang entries kept. New protocol: on the next ghost incident, fire
   scripts/jupiter/ghost_probe_sweep.sh at the incident nodes within minutes to hand
   JSC a live specimen (probe + sweep committed, ba67ca7f).
+- **Node-situation knowledge consolidated → `ai_memory/notes/jupiter_node_health.md`**
+  (ghost transience + mechanism, hang category, exclusion-list state/aging policy,
+  probe tools, prepared JSC asks, prolog-guard TODO). Read that note first for any
+  future node incident.
