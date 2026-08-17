@@ -7,6 +7,11 @@
 #SBATCH --gres=gpu:4
 #SBATCH --time=11:59:00
 #SBATCH --output=/e/fscratch/reformo/lee27/experiments/ota10k_lev_sft/logs/%x_%j.out
+# Targeted ghost-node exclusions (2026-08-17 storm): NOT the full RL blacklist —
+# only sets with confirmed stranded-memory incidents this session. Prod v2 (1397721)
+# died in 8 min on jpbo-077 residue from our own scancel; exclusion-free SFT keeps
+# landing on poisoned idle nodes.
+#SBATCH --exclude=jpbo-076-[01-48],jpbo-026-[01-48],jpbo-107-[01-06],jpbo-040-[17-20,23-24],jpbo-077-[01-06],jpbo-095-[21-26],jpbo-106-20,jpbo-114-[01-03,05-06,08,11,13]
 
 # Raw levanter.main.train_lm SFT on Jupiter GH200 (no iris/ArtifactStep).
 # LEV_CONFIG must be exported at submit time (path to a TrainLmConfig yaml).
