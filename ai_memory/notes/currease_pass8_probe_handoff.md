@@ -688,3 +688,11 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   to another tenant (probe impossible; they inherited the residue — cleanup-
   race corroboration). Evidence = our OOM accounting lines in the 1396800 log.
 - jpbo-005-[26-28,30-32] excluded (same-day ghost quarantine).
+
+## Incident 57 (2026-08-18 00:49): baseline hang at s31 — boundary+1 now 6/7
+
+- Baseline 1397230 hang at s31 on jpbo-109-[41-42,44-45,47-48]; dual freeze
+  23:50:32-33, caught ~59 min. gs30 banked (25->30 trained this link, ms100
+  confirmed live). scancel 00:49:26 -> 1398002 rolls (ms100 + full patches).
+- jpbo-109 set excluded; pending links patched pre-kill (1396802 patch
+  race-skipped — verify/retry).
