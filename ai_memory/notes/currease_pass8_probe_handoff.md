@@ -619,3 +619,17 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   log = triton kernel failed, silently on XLA path again — treat as FAILURE
   even if it runs; (b) plausible first loss (~1.5-3 for a base model on SFT
   data) as the numerics sanity check on the new kernel path.
+
+## Incident 54 (2026-08-17 22:39): lr5e6 hang at s11 → rack-017 escalation
+
+- lr5e6 1396799 backward hang at s11 on jpbo-017-[01,03,06,10,13-14] — log +
+  newest trial-result frozen same-second at 21:41:21, caught by watcher at
+  ~57 min. gs10 banked (saved 21:13-21:41 window), resume loses ≤1 step.
+  NOTE: hang again right AFTER a ckpt_interval boundary (gs10) — that's now
+  4 of the last 5 hangs at a boundary+1 step (46, 47, 53?, 54).
+- Second distinct dirty zone in rack jpbo-017 today (0x/1x now, 3x/4x incident
+  53) → escalated to jpbo-017-[01-48] in hpc.py; all 8 pending links patched
+  BEFORE the scancel (closes the fresh-node reschedule race). Chain rolls to
+  1396800 (ms100 + pruned list + rack-017).
+- Live-capture probe attempted at +30s: nodes still COMPLETING (skipped);
+  retry loop armed for the idle flip.
