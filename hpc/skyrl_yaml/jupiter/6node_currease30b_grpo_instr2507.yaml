@@ -76,7 +76,7 @@ trainer:
     tis_imp_ratio_cap: 2.0
 
   epochs: 5
-  max_steps: 50
+  max_steps: 100
   update_epochs_per_batch: 1
 
   train_batch_size: 16
