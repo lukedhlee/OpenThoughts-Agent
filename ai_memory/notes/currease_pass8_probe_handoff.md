@@ -403,3 +403,17 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   if both burn, resubmit fresh chain (gs20 ckpt intact, auto-resume). Post-unclog
   lesson: nodes freshly vacated by the big invisible jobs are ghost-heavy — expect
   start-window OOM storms right after a machine-wide unclog.
+- **Incident 38c:** baseline link 1392691 third ghost-OOM (jpbo-026-41, ~84GB residue)
+  → jpbo-026 rack-escalated [01-48] (0a98aea7), last link 1392692 patched while pending.
+- **Incident 39 — lr5e6 arm launched WITHOUT proxy env (my launch-shell miss):**
+  step-1 all-zero vitals (reward 0, entropy 0, response_len 1.0) = every Daytona call
+  DaytonaConnectionError→ZERO because the sbatch fell back to feuer1's proxychains path.
+  RL launches MUST export the full preset-SOCKS preamble (sbatch --export=ALL bakes it):
+  `PROXYCHAINS_BIN_OVERRIDE=$F/tools/proxychains-ng-install/bin/proxychains4`,
+  `PROXYCHAINS_SOCKS5_PRESET_HOST=10.128.1.2`, `_PORT=7011`,
+  `_AUTH="$SOCKS_USER $SOCKS_PASS"` (from socks5_currease.env), `unset DAYTONA_TARGET`.
+  Old chain 1394836-41 scancelled + exp dir wiped (70 min of zero-reward no-op steps —
+  policy unharmed, data garbage). **lr5e6 v2 chain = 1396797-1396802** (fresh hpc.py
+  blacklist incl. 076/107/026 baked in). Watcher checks the proxy line first, then step-1.
+  Healthy arms unaffected: lr1e6 1394804 step-1 GREEN (reward 0.445, entropy 0.169,
+  mixed 0.44, len 1584); smoke7 past the pytree layer (lowering train_step at 13:35).
