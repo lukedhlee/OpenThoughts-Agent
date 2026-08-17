@@ -65,6 +65,11 @@ trainer:
     name: ota10k_sft_qwen3_30b_a3b_base_levanter
   mp: p=f32,c=bfloat16
   train_batch_size: 96
+  # incident 52: v8 (1399676) compiled at autotune level 0 but OOM'd at step-0
+  # EXECUTION — 8.96GiB short at microbatch 3/device (96/32). Microbatch 1 +
+  # 3-step grad accumulation: same global batch/optimizer math, ~3x less
+  # activation memory. Recipe (batch 96, lr, steps) unchanged.
+  per_device_parallelism: 1
   num_train_steps: 328
   checkpointer:
     base_path: /e/fscratch/reformo/lee27/checkpoints/ota10k_sft_30ba3b_levanter/ckpt

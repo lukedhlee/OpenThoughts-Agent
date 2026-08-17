@@ -30,24 +30,24 @@ Cluster: JUPITER booster (JSC), GH200 nodes (4 GPUs, 96GB each), ssh alias
   padded tokenizer sidesteps it. (A one-line upstream marin PR is a candidate
   but needs Luke's explicit ask — do not open it unprompted.)
 
-## Live state (2026-08-17 ~21:25 CEST — VERIFY with squeue before acting)
+## Live state (2026-08-17 ~21:35 CEST — VERIFY with squeue before acting)
 
-- **v8 = job 1399676** (head), **v9 = 1399677 afterany spare**. Submitted with
-  the incident-51 fix `xla_gpu_autotune_level=0` at commit `c6f4bc76`.
-- **v6 = 1399224 FAILED (incident 51)** at 22m50s: level-1 XLA GEMM autotuner
-  still RESOURCE_EXHAUSTED in train_step compile — 2/646 instructions, both
-  `__triton_gemm` fusions of `MoELinear/ragged_dot_general`, tried to
-  materialize 3.00/4.50TiB operands. v7 1399225 cancelled (inherited the
-  level-1 script snapshot). Good news from v6: compile cache is WARM — CE
-  sweep + train_step lowering completed in ~15 min, so the compile phase is
-  now fast; the remaining unknown is only the XLA train_step compile itself.
-- Older attempts all dead: v1 1396852, v2 1397721, v2b 1397722(?), v3, v4
-  1398566 (incident 50), v5 1398567 (cancelled, inherited v4's fatal config).
-- **Milestone to report: the FIRST loss line** in the v8 log = pipeline green
-  (nothing has ever gotten past train_step compile).
-- **Escalation ladder if v8 dies at the same spot**: next candidate is
-  `--xla_gpu_enable_triton_gemm=false` (cuBLAS emitter fallback) — NOT yet
-  validated; check it parses in the levanter env first.
+- **v10/v11 chain** (head + afterany spare — IDs in squeue) submitted with the
+  incident-52 fix: `trainer.per_device_parallelism: 1` (microbatch 1/device,
+  3-step grad accum; global batch 96 / optimizer math / recipe UNCHANGED).
+- **The autotune compile ladder is CLOSED**: level 0 (`c6f4bc76`) made v8
+  1399676 the first attempt EVER to compile train_step. It then FAILED at
+  step-0 EXECUTION — RESOURCE_EXHAUSTED 8.96GiB inside jit__train_step at
+  microbatch 3/device (incident 52). v9 1399677 dependency-started with the
+  old yaml → cancelled.
+- **Escalation if execution still OOMs at microbatch 1**: bump
+  `XLA_PYTHON_CLIENT_MEM_FRACTION` 0.92 → 0.95 (one lever at a time).
+- Dead: v1 1396852, v2 1397721, v2b 1397722(?), v3 1398134, v4 1398566
+  (incident 50), v5 1398567 (cancelled), v6 1399224 (incident 51), v7 1399225
+  (cancelled), v8 1399676 (incident 52), v9 1399677 (cancelled).
+- **Milestone to report: the FIRST loss line** = pipeline green. New shapes →
+  compile cache miss: expect CE sweep (~8 min) + full train_step compile
+  (~20-40 min at level 0) before step 0.
 
 ## Failure history — one line each (full detail: `currease_pass8_probe_handoff.md` incidents 41–50)
 

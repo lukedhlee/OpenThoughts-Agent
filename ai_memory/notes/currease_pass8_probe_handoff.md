@@ -547,3 +547,16 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   CE-sweep probing; job ran 16 more min after them. If level 0 dies on the same
   triton ragged-dot fusions, next candidate rung: `--xla_gpu_enable_triton_gemm=false`
   (falls back to cuBLAS emitters) — NOT yet validated.
+- **Incident 52 — MILESTONE + new failure class:** v8 1399676 at level 0
+  **COMPILED train_step for the first time ever** (autotune ladder closed: 4→1→0
+  fixed the compile-time OOM). Then FAILED at 23m54s at step-0 EXECUTION:
+  `JaxRuntimeError RESOURCE_EXHAUSTED 8.96GiB [executable_name='jit__train_step']`
+  — exactly 9,622,075,392 bytes, the same size the CE sweep candidates probed
+  (benignly) at 21:02. Genuine capacity shortfall at microbatch 3/device
+  (96/32, seq 32768) under the 0.92-fraction pool (~88.3GiB of 96). Fix:
+  `trainer.per_device_parallelism: 1` (3-step grad accum; global batch 96 and
+  optimizer math unchanged — recipe intact). Mem fraction kept at 0.92 — bump
+  to 0.95 is the NEXT lever if execution still OOMs. v9 1399677 dependency-
+  released on v8's death and started with the old config (yaml read at job
+  start) → cancelled 36s in. NOTE: new shapes → compile cache miss; expect the
+  CE sweep (~8 min) + full train_step compile again on the next attempt.
