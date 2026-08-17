@@ -633,3 +633,6 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   1396800 (ms100 + pruned list + rack-017).
 - Live-capture probe attempted at +30s: nodes still COMPLETING (skipped);
   retry loop armed for the idle flip.
+- Incident-54 probe verdicts (jobs 1400051-54, ~3 min post-kill): jpbo-017-01/
+  03/06/10 ALL CLEAN (3-30 MiB, 80GiB alloc OK x4). Second same-day clean-kill
+  datum — our scancels of hung EP/FSDP2 jobs do not strand GPU memory.
