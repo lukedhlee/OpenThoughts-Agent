@@ -343,3 +343,17 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   64% clean / 35% AgentTimeout traces; median 22 msgs. Curriculum-easy composition:
   stack-pytest 493/511. Band analysis (per-task CSV): instr partial 111, base partial
   109, overlap 33 → post-SFT plan: pass@8-probe the SFT ckpt, train RL on its partial band.
+- **PI DIRECTIVE: SFT moves to LEVANTER.** LF 12h chain cancelled. Shakedown2 (1393983,
+  no-offload z3) validated the LF path end-to-end — passed deepspeed init, built chat data,
+  loaded 30B MoE ZeRO-3 (~26GB/GPU), reached step loop (672 steps = 10k×7ep/96) — then
+  step-0 OOM on ONE rank: jpbo-106-20 GPU0 carried ~67GB of another user's ghost memory
+  (node never in our exclusion list; ghosts are cluster-wide, not just ours). LF = working
+  fallback, one clean node away. Levanter route: marin monorepo has the general chat-SFT
+  launcher (experiments/sft/launcher.py, delphi_1e22 = LF-parity-validated example;
+  LiteCoder-Terminal-30b-a3b-sft = existing 30B-A3B terminal SFT precedent; qwen3_moe model
+  complete in lib/levanter). DRAFTED config: marin-mono/experiments/sft/configs/
+  ota10k_qwen3_30b_a3b.py (HFModel qwen3_moe + Qwen eos 151645/151643, OPENCODE_TOOLS
+  ChatML template w/ generation-mask, DatasetSpec conversations@d0f898f, AdamConfig
+  4e-5/0.98/clip1e-4/cosine/wr0.1, seq 32768, batch 96, num_train_epochs=7). GATE: marin
+  iris credentials (openathena.ai login) — either Luke gets creds or config goes as marin PR.
+  Instr RL v7 1392687 RUNNING since 09:12 CEST on jpbo-095-[21-26] (resume@gs20 verify pending).
