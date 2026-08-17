@@ -385,3 +385,13 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
   fresh cache_dir `ota10k_levanter_cache_pad` (6ccbc365). `pad_tokenizer_to_match_model`
   kept (now a no-op guard). **Smoke7 = 1394988** (2 nodes, 1:20 wall; adds
   `--hf_save_steps 3` so the 30B HF-export path is validated in the same shot).
+- **Machine unclogged ~12:00 CEST 2026-08-17** (hoard spent: 4371 alloc / 32 idle; all
+  4 jobs started at once). **Incidents 37+38, both ghost-OOM at start/load:**
+  (37) lr1e6 head 1394803 CUDA OOM at NCCL init on jpbo-076-[41-46] (ranks on -41/-42)
+  → excluded (315a6502); link 1394804 self-recovered on jpbo-081, running.
+  (38) baseline head 1392688 OOM at resume-load on jpbo-107-[01-06]; Slurm respawned
+  link 1392689 onto the SAME nodeset → excluded (639ae5da), all 12 pending links
+  ExcNodeList-patched (both new sets), doomed 1392689 scancelled → chain rolls to
+  patched 1392690 (resume@gs20 intact). LR-sweep ID swap: **lr1e6 arm now = 1394804.**
+  Watchers re-armed: 1392690 (resume past gs20), 1394804 (step-1). lr5e6 1394836 +
+  smoke7 1394988 running clean ~17 min.
