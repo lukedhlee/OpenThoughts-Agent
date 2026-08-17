@@ -1,0 +1,94 @@
+{
+  "id": "currease30b_grpo_arms",
+  "title": "Curriculum-Easy LR Sweep",
+  "eyebrow": "Jupiter · booster partition · Qwen3-30B-A3B-Instruct-2507 · GRPO",
+  "subtitle": "Three learning-rate arms RL-training the same 30B MoE instruct model on real terminal-agent tasks in Daytona sandboxes, racing to step 50. How each arm is trending, what every metric means, and what actually happened to all those Slurm jobs.",
+  "status_line": "3 arms alive — babysat around the clock",
+  "wandb_project": "lukeleeai/jupiter-currease30b-grpo",
+  "timezone": "Europe/Berlin",
+  "tz_label": "CEST",
+  "step_target": 50,
+  "metrics": "rl_default",
+  "charts": "rl_default",
+  "glossary": "rl_default",
+  "series": [
+    { "key": "lr1e6", "name": "lr1e6", "label": "LR 1e-6 · KL on", "color_slot": 1, "group": "currease30b_grpo_instr_lr1e6" },
+    { "key": "lr3e6", "name": "lr3e6", "label": "LR 3e-6 · baseline", "color_slot": 2, "group": "currease30b_grpo_instr2507" },
+    { "key": "lr5e6", "name": "lr5e6", "label": "LR 5e-6 · KL on", "color_slot": 3, "group": "currease30b_grpo_instr_lr5e6" }
+  ],
+  "tiles": [
+    { "hero": true, "label": "Task-completion reward · baseline arm · 25 of 50 steps", "value": "0.37",
+      "delta": "▬ flat — 0.37 mean over the first 5 steps, 0.40 over the last 5", "delta_tone": "flat",
+      "detail": "binary pass/fail on 128 rollouts per step · ~±0.04 noise floor · no arm has separated from another yet" },
+    { "label": "Groups that produce gradient", "value": "26%",
+      "detail": "baseline mean; the other 74% are all-8-wrong (54%) or all-8-right (20%) and give GRPO exactly zero signal" },
+    { "label": "Arms alive", "value": "3 / 3", "detail": "1e-6 · 3e-6 · 5e-6 — all RUNNING, none killed for pathology" },
+    { "label": "Job relaunches survived", "value": "__DEATHS__", "detail": "ghost-GPU OOMs, EP backward hangs and bad resubmits — see the timeline below" }
+  ],
+  "explainer": {
+    "title": "What is this experiment?",
+    "paragraphs": [
+      "Unlike the GSM8K campaign that validated the stack, this one is a **research** run: the model is graded on whether it actually completes a terminal task — it drives a shell inside a Daytona sandbox under the Terminus-2 harness, and the reward is binary (task done / not done) on the `tasktrove_curriculum_easy_rl511` task set.",
+      "All three arms are **identical except one lever**: the learning rate (1e-6 / 3e-6 / 5e-6). Same seed, same data, same 6 GH200 nodes, same 8 rollouts per task — so any daylight between the curves is caused by that one lever. The 3e-6 baseline arm started a day earlier and is correspondingly further along; compare arms **at equal step**, never at the right-hand edge.",
+      "Read the reward curve with care. Each point is 128 binary rollouts, so its noise floor is around **±0.04** even when nothing is changing — and step-to-step swings of 0.2 are routine. Twenty-five steps in, no arm shows a trend that clears that noise. The honest current answer is *no separation yet*, not *it works* or *it fails*."
+    ],
+    "chips": [
+      "model Qwen3-30B-A3B-Instruct-2507", "algo GRPO · 8 rollouts/task", "6 nodes/arm · GH200",
+      "FSDP2 + expert parallel", "128 samples/step", "target 50 steps", "KL coef 0.001 · TIS cap 2.0", "seed 42 everywhere"
+    ]
+  },
+  "fleet": [
+    { "key": "lr1e6", "job": "1394805", "state": "run", "note": "RUNNING on jpbo-024 — resumed from gs5 after a backward hang; 3 spare links queued behind it" },
+    { "key": "lr3e6", "job": "1397229", "state": "run", "note": "RUNNING on jpbo-017-[38-45] — furthest arm; resumed from gs20 after four ghost-OOMs in a row" },
+    { "key": "lr5e6", "job": "1396799", "state": "run", "note": "RUNNING on jpbo-017-[01-14] — resumed from gs5; its first chain was scrapped for a bad proxy env" }
+  ],
+  "timeline": {
+    "title": "The job war — every Slurm attempt, Aug 16 04:00 → now",
+    "how": "Each bar is one Slurm job; the dot at its end is how it died. Two enemies dominate. **Ghost-GPU OOM:** a node is returned to the pool before the previous job's GPU memory is actually released, so ours lands on a card already holding 60–85 GB of someone else's residue and dies at model load, checkpoint load, or the first backward peak. **EP/FSDP2 backward hang:** a known collective deadlock in expert-parallel backward with no upstream fix — the log simply stops and the job has to be scancelled. The defense is the same either way: checkpoint every 5 steps, resume, exclude the crime scene, relaunch. Nothing but the steps since the last checkpoint was ever lost.",
+    "t0": "04:00", "t1": "45:00", "tick_min": 180, "auto_now": true, "t0_date": "2026-08-16",
+    "days": [
+      { "at": "04:00", "label": "Sun Aug 16" },
+      { "at": "24:00", "label": "Mon Aug 17" }
+    ]
+  },
+  "attempts": {
+    "lr3e6": [
+      { "v": "v1", "job": "1387081", "start": "04:15", "end": "09:13", "steps": "1-5", "fate": "hang", "note": "first attempt to survive a weight sync — the stack-validation milestone. EP/FSDP2 hang at s6 forward; jpbo-018 nodeset excluded" },
+      { "v": "v2", "job": "1388099", "start": "09:14", "end": "09:31", "steps": "-", "fate": "oom", "note": "ghost-OOM at checkpoint load (jpbo-019) while resuming from gs5" },
+      { "v": "v3", "job": "1388100", "start": "09:31", "end": "13:37", "steps": "6-10", "fate": "hang", "note": "resumed clean from gs5 on jpbo-122 — proving the ghost is per-node, not per-rack; hung after gs10" },
+      { "v": "v4", "job": "1389753", "start": "13:38", "end": "14:04", "steps": "-", "fate": "oom", "note": "ghost-OOM during bring-up" },
+      { "v": "v5", "job": "1389754", "start": "14:06", "end": "14:22", "steps": "-", "fate": "oom", "note": "ghost-OOM during bring-up" },
+      { "v": "v6", "job": "1389755", "start": "14:23", "end": "18:42", "steps": "11-15", "fate": "hang", "note": "banked gs15, then the backward hang again" },
+      { "v": "v7", "job": "1390982", "start": "18:43", "end": "19:09", "steps": "-", "fate": "oom", "note": "ghost-OOM during bring-up" },
+      { "v": "v8", "job": "1390983", "start": "19:53", "end": "23:21", "steps": "16-20", "fate": "hang", "note": "banked gs20 — the checkpoint the arm would spend the next day fighting back to" },
+      { "v": "v9", "job": "1392687", "start": "33:10", "end": "33:26", "steps": "-", "fate": "oom", "note": "ghost-OOM at resume load; machine-wide unclog left the pool ghost-heavy" },
+      { "v": "v10", "job": "1392688", "start": "36:41", "end": "36:55", "steps": "-", "fate": "oom", "note": "incident 38 — ghost-OOM at resume load on jpbo-107-[01-06]" },
+      { "v": "v11", "job": "1392689", "start": "36:56", "end": "36:57", "steps": "-", "fate": "fail", "note": "Slurm respawned the link onto the SAME dirty nodeset; scancelled as doomed before it could burn" },
+      { "v": "v12", "job": "1392690", "start": "36:58", "end": "37:12", "steps": "-", "fate": "oom", "note": "incident 38b — jpbo-076-38 GPU0 held ~82 GB of foreign residue, 29 MiB free; rack escalated to [01-48]" },
+      { "v": "v13", "job": "1392691", "start": "37:13", "end": "37:28", "steps": "-", "fate": "oom", "note": "incident 38c — third straight ghost-OOM, jpbo-026-41 (~84 GB residue); that rack escalated too" },
+      { "v": "v14", "job": "1392692", "start": "37:53", "end": "38:34", "steps": "21-22", "fate": "oom", "note": "incident 40 — cleared gs20 at last, then ghost-OOM in the backward peak on jpbo-040-24 (~62 GB residue)" },
+      { "v": "v15", "job": "1396944", "start": "38:36", "end": "38:37", "steps": "-", "fate": "fail", "note": "died in 9 s — rendered-sbatch resubmit from a shell without DCFT/proxy preamble; the WORKDIR guard exits 1" },
+      { "v": "v16", "job": "1396945", "start": "38:38", "end": "38:39", "steps": "-", "fate": "fail", "note": "same WORKDIR-guard exit, 8 s" },
+      { "v": "v17", "job": "1396946", "start": "38:40", "end": "38:41", "steps": "-", "fate": "fail", "note": "same WORKDIR-guard exit, 13 s — all three spares burned before the recipe was fixed" },
+      { "v": "v18", "job": "1397228", "start": "39:29", "end": "40:18", "steps": "21-22", "fate": "oom", "note": "incident 43 — ran clean 49 min, then ghost-OOM at gs22 backward on jpbo-074 (~60 GB residue appeared mid-run)" },
+      { "v": "v19", "job": "1397229", "start": "41:03", "end": null, "steps": "23-25", "fate": "run", "note": "RUNNING on jpbo-017-[38-45] — past gs20 and banking again" }
+    ],
+    "lr1e6": [
+      { "v": "v1", "job": "1394803", "start": "36:41", "end": "36:52", "steps": "-", "fate": "oom", "note": "incident 37 — ghost-OOM at NCCL init on jpbo-076-[41-46], before a single step" },
+      { "v": "v2", "job": "1394804", "start": "36:53", "end": "42:33", "steps": "1-5", "fate": "hang", "note": "incident 47 — banked gs5, then backward hang exactly at the gs5 boundary (log and results froze in the same second); jpbo-081 rack-escalated" },
+      { "v": "v3", "job": "1394805", "start": "42:35", "end": null, "steps": "6-10", "fate": "run", "note": "RUNNING on jpbo-024 — resumed from gs5" }
+    ],
+    "lr5e6": [
+      { "v": "v0", "job": "1394836", "start": "36:41", "end": "37:54", "steps": "-", "fate": "fail", "note": "incident 39 — launched without the proxy preamble, so every Daytona call failed and every rollout scored a hard zero. 70 min of no-op steps; chain scancelled and the experiment dir wiped. Policy unharmed, data discarded — this arm's real history starts at v1" },
+      { "v": "v1", "job": "1396797", "start": "37:55", "end": "42:16", "steps": "1-5", "fate": "hang", "note": "incident 46 — relaunched with the proxy fixed, step 1 green (reward 0.50); EP/FSDP2 backward hang at gs5 on jpbo-051, confirmed frozen over a 13-min recheck" },
+      { "v": "v2", "job": "1396798", "start": "42:23", "end": "42:39", "steps": "-", "fate": "oom", "note": "incident 49 — ghost-OOM at init_model on jpbo-037 (~84 GB residue)" },
+      { "v": "v3", "job": "1396799", "start": "42:39", "end": null, "steps": "6-10", "fate": "run", "note": "RUNNING on jpbo-017-[01-14] — resumed from gs5" }
+    ]
+  },
+  "notes": [
+    { "lead": "Provenance.", "text": "Metrics come from the trainer's own WandB runs, which log **offline** on Jupiter — one run per Slurm attempt, under each experiment dir. They are rsynced off the cluster and `wandb sync`ed into lukeleeai/jupiter-currease30b-grpo, then stitched per arm latest-attempt-wins per step. Nothing here updates on its own: every refresh is a manual sync. Job IDs, nodes and windows are read from each attempt's wandb-metadata.json and from sacct; fates are cross-checked against the operator incident ledger and the driver logs." },
+    { "lead": "Reading the curves.", "text": "Reward is binary task completion averaged over 128 rollouts, so it is far noisier step-to-step than a math-accuracy curve — a single step's wobble means nothing. The metric to watch is **frac_groups_mixed**: only groups where some of the 8 rollouts succeeded and some failed produce any gradient under GRPO. All-wrong and all-correct groups contribute exactly zero, and right now they are about three quarters of every batch." },
+    { "lead": "One real signal so far.", "text": "The **5e-6 arm's KL is climbing about four times faster than the baseline's** — 0.0025 to 0.0117 across its first 10 steps, versus 0.0026 to 0.0045 across the baseline's 25. That is the learning rate doing what a learning rate does, and it is the first place a too-hot arm would show itself. Its entropy is also drifting down (0.168 to 0.155) while the baseline's holds flat. Worth watching; not yet worth acting on." },
+    { "lead": "What is not wrong.", "text": "Truncation is **zero** on every arm — no rollout is hitting the 32k context wall — and the TIS importance ratio sits at 1.000, so the off-policy correction is not straining. The step-to-step gaps in grad-norm are async-trainer steps where a partial batch was discarded, not failures." }
+  ]
+}

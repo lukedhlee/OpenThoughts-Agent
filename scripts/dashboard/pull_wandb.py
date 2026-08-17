@@ -93,9 +93,16 @@ def main():
     now = datetime.datetime.now(tz)
     exp["snapshot"] = now.strftime("%Y-%m-%d %H:%M ") + spec.get("tz_label", "CEST")
 
-    # timeline "now" marker for still-running attempt bars
+    # timeline "now" marker for still-running attempt bars. Multi-day campaigns set
+    # t0_date and express times as hours-since-that-midnight (so 09:10 on day 2 = 33:10).
     if "timeline" in exp and exp["timeline"].get("auto_now", True):
-        exp["timeline"]["now"] = now.strftime("%H:%M")
+        t0_date = exp["timeline"].get("t0_date")
+        if t0_date:
+            base = datetime.datetime.strptime(t0_date, "%Y-%m-%d").replace(tzinfo=tz)
+            elapsed = int((now - base).total_seconds() // 60)
+            exp["timeline"]["now"] = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
+        else:
+            exp["timeline"]["now"] = now.strftime("%H:%M")
 
     # fleet: presentation fields from the spec, live step/metric from the pull
     primary = "reward"
