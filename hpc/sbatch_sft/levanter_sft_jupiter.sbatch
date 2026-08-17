@@ -29,6 +29,14 @@ export TMPDIR=/tmp
 # marin #7115: resume-time BFC fragmentation OOM -> cuda_async defrag allocator.
 export JAX_PJRT_CLIENT_CREATE_OPTIONS=allocator:cuda_async
 
+# incident 41 (job 1396849): fused-CE autotune sweep at the 32k/151936 prod shape
+# compiled pathological candidates (3.3TB-arg modules) for 2h23m until a rank died
+# and the shutdown barrier killed all 8. Sweep results were unshareable anyway
+# (jaxpr hash unavailable) -> pin to inferred block sizes, no sweep.
+export LEVANTER_PALLAS_CE_AUTOTUNE_ON_MISS=0
+# Persistent XLA module cache: restart links skip recompile entirely.
+export JAX_COMPILATION_CACHE_DIR=$F/cache/jax_comp_cache
+
 export NCCL_DEBUG=WARN
 export NCCL_NET_GDR_LEVEL=0
 export NCCL_SOCKET_IFNAME=ib0
