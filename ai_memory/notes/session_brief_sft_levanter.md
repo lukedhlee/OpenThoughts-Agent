@@ -32,7 +32,7 @@ Cluster: JUPITER booster (JSC), GH200 nodes (4 GPUs, 96GB each), ssh alias
 
 ## Live state (2026-08-17 ~21:35 CEST — VERIFY with squeue before acting)
 
-- **v10/v11 chain** (head + afterany spare — IDs in squeue) submitted with the
+- **v10 = 1399820 (head), v11 = 1399821 (afterany spare)** submitted with the
   incident-52 fix: `trainer.per_device_parallelism: 1` (microbatch 1/device,
   3-step grad accum; global batch 96 / optimizer math / recipe UNCHANGED).
 - **The autotune compile ladder is CLOSED**: level 0 (`c6f4bc76`) made v8
