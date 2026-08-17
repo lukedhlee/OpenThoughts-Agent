@@ -11,13 +11,16 @@
 # only sets with confirmed stranded-memory incidents this session. Prod v2 (1397721)
 # died in 8 min on jpbo-077 residue from our own scancel; exclusion-free SFT keeps
 # landing on poisoned idle nodes.
-#SBATCH --exclude=jpbo-076-[01-48],jpbo-026-[01-48],jpbo-107-[01-06],jpbo-040-[17-20,23-24],jpbo-077-[01-06],jpbo-095-[21-26],jpbo-106-20,jpbo-114-[01-03,05-06,08,11,13]
+#SBATCH --exclude=jpbo-076-[01-48],jpbo-026-[01-48],jpbo-107-[01-06],jpbo-040-[17-20,23-24],jpbo-077-[01-06],jpbo-095-[21-26],jpbo-106-20,jpbo-114-[01-03,05-06,08,11,13],jpbo-046-[02-05,07,09,11-12]
 
 # Raw levanter.main.train_lm SFT on Jupiter GH200 (no iris/ArtifactStep).
 # LEV_CONFIG must be exported at submit time (path to a TrainLmConfig yaml).
 # Extra CLI overrides pass through via LEV_EXTRA_ARGS (e.g. smoke-test shrinkage).
 set -uo pipefail
 F=/e/fscratch/reformo/lee27
+# incident 44: 8-rank SIGABRT crashes dumped 258GB of cores into the repo cwd,
+# blowing project quota and cascading into the next runs' failures.
+ulimit -c 0
 mkdir -p $F/experiments/ota10k_lev_sft/logs
 
 source $F/envs/levanter/bin/activate
