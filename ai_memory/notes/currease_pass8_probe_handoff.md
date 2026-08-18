@@ -831,3 +831,9 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 - scancel 06:34:35 → 1398003 rolls (gs35→100). Baseline chain extended:
   bspare1 1401197, bspare2 1401198. 1394808/1401184 patched (1401183
   scontrol race — verify).
+- **Incident 64** (06:1x): lr5e6 1401108 ghost-OOM at 18 min on
+  jpbo-038-[03,05,08,12,15-16]; spare 1401183 respawned on the SAME nodeset
+  and is running (same-nodeset transience test #2, cf. incident 60/jpbo-001).
+  jpbo-038 deliberately NOT excluded while the test runs. lr5e6 chain
+  extended: spare7 1401206, spare8 1401207 (7 ghost-OOM deaths on this arm
+  tonight — worst-hit arm, still resumes from gs15).
