@@ -983,3 +983,7 @@ Baseline arm (lr3e-6) checkpoint gs40 = 1.25 epochs, vs step-0 instruct:
 - **Dashboard refreshed** (runboard pipeline + spec): step_target 100, probe
   ◆ markers (41.8@0 / 46.0@40), verdict tile strip (probe / paired test /
   frontier 292→274), fleet + 12 new attempts, explainer verdict rewritten.
+- **Incident 77** (18:22): baseline 1404418 hang at s46 (post-gs45,
+  boundary+1 #11) on jpbo-087-[01-04,06-07] — dual freeze 17:20:21. gs45
+  banked (arm 41→45 this link). 1404419 rolls (spares 1405278/79 behind).
+  Set excluded. lr5e6 head 1406880 RUNNING (resumed gs30).
