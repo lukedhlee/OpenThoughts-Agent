@@ -878,3 +878,19 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   starting training from scratch" → the job TRAINED the base model until a
   Ray node died + wall. Fix: copy/write the pointer ("40"). Retry = 1403929
   (1.5h cap). Copy dir verified clean (no stray ckpts from attempt 1).
+
+## gs40 probe pipeline COMPLETE through launch (2026-08-18 ~13:00)
+
+- Export attempt 3 (1403951) SUCCEEDED in 17:30: resume_mode=from_path +
+  resume_path=<copy>/global_step_40 + ckpt_path=<empty checkpoints_out>
+  (dodges BOTH the runner completion guard and the pointer-file dependency).
+  Recipe for future ckpt exports — supersedes the pointer-file approach.
+- Export is ALREADY per-expert HF layout (experts.N.gate_proj; this
+  MarinSkyRL save_hf_model remaps) — convert_fused_moe_to_hf NOT needed.
+  57GB at exports/global_step_40/policy; symlinked to
+  $F/models/currease30b_gs40_hf.
+- **Probe job 1404056 launched** (currease_gs40_pass8): 514 tasks x 8,
+  concurrency 96, serve yaml currease30b_gs40_vllm_serve_32k_4xGH200_seqs64
+  (c21c6c50, byte-identical settings to the step-0 instruct probe),
+  snapshots registry-hit. ETA 4-5h. Compare vs step-0: pass@1 34.2%,
+  pass@8 41.8%, 292 never-solved.
