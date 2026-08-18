@@ -987,3 +987,6 @@ Baseline arm (lr3e-6) checkpoint gs40 = 1.25 epochs, vs step-0 instruct:
   boundary+1 #11) on jpbo-087-[01-04,06-07] — dual freeze 17:20:21. gs45
   banked (arm 41→45 this link). 1404419 rolls (spares 1405278/79 behind).
   Set excluded. lr5e6 head 1406880 RUNNING (resumed gs30).
+- **Incident 78** (18:30): lr1e6 1404405 hang at s31 (post-gs30, boundary+1
+  #12) on jpbo-051-[36-37,39-42] — dual freeze 17:35:30. gs30 banked (arm
+  26→30 this link, r0.62@s30). 1404406 rolls. Set excluded.
