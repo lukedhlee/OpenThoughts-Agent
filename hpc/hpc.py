@@ -1079,7 +1079,7 @@ jupiter = HPC(
     # lr3e6-v17 1381636 at s76 (gs75 banked) on 066-[19,23,25-26,28,30]; lr1e6-v27 1381857 at s28
     # (gs25 banked) on 111-[01-06]; both racks' other halves already excluded (incs 37, 50).
     # (lr1e6 1379097, 58MiB free).
-    node_exclusion_list="jpbo-095-[21-26],jpbo-076-[01-48],jpbo-107-[01-06],jpbo-026-[01-48],jpbo-040-[17-20,23-24],jpbo-074-[01-02,11-14],jpbo-051-[33-35,38,43-44],jpbo-081-[01-48],jpbo-037-[36,39,42-44,48],jpbo-017-[01-48],jpbo-024-[09-13,16],jpbo-005-[26-28,30-32],jpbo-109-[41-42,44-45,47-48],jpbo-015-[17-22],jpbo-027-[19-22,25-26],jpbo-022-[17-19,24-26],jpbo-001-[08-11,15-16],jpbo-044-[17-18,21-23,31],jpbo-042-[37-38,40,43,47-48]",
+    node_exclusion_list="jpbo-095-[21-26],jpbo-076-[01-48],jpbo-107-[01-06],jpbo-026-[01-48],jpbo-040-[17-20,23-24],jpbo-074-[01-02,11-14],jpbo-051-[33-35,38,43-44],jpbo-081-[01-48],jpbo-037-[36,39,42-44,48],jpbo-017-[01-48],jpbo-024-[09-13,16],jpbo-005-[26-28,30-32],jpbo-109-[41-42,44-45,47-48],jpbo-015-[17-22],jpbo-027-[19-22,25-26],jpbo-022-[17-19,24-26],jpbo-001-[08-11,15-16],jpbo-044-[17-18,21-23,31],jpbo-042-[37-38,40,43,47-48],jpbo-044-[20,25-29]",
     # Stage 4: eval-listener cluster config (single source of truth — was eval/clusters/jupiter.yaml).
     # User-scoped paths mirror that yaml (zhuang1's); parameterizing via dotenv is a follow-up.
     eval_cluster_view={

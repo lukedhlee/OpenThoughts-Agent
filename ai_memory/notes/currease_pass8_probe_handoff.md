@@ -821,3 +821,13 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 - **Checkpoint inventory**: baseline gs5..35 (1.4TB); lr1e6 gs5..15 (590G);
   lr5e6 gs5..15 (590G). ~200GB/ckpt → ~12TB by gs100 ×3 arms. PROPOSED
   pruning (needs Luke): keep every 25th + latest 2 per arm.
+
+## Incident 63 (2026-08-18 06:34): baseline 1398002 hang mid-s37
+
+- Dual freeze 05:37:10 on jpbo-044-[20,25-29] (~57 min; step 36 completed,
+  gs35 banked → resume loses 2 steps). NOT boundary+1 this time (s37 =
+  boundary+2): pattern 8/10. Set excluded; note 044 now has ghost zone
+  (62a) + hang zone (63) — watch for rack escalation on a third hit.
+- scancel 06:34:35 → 1398003 rolls (gs35→100). Baseline chain extended:
+  bspare1 1401197, bspare2 1401198. 1394808/1401184 patched (1401183
+  scontrol race — verify).
