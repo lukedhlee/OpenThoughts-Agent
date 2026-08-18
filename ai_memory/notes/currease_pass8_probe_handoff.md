@@ -752,3 +752,22 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   optimize_remat=True (faa0bfcb9).
 - Expected per-device after fix: global 34GB monsters → ~1GB locals; demand
   should drop from 349GiB to O(10-30GiB). v17 scancelled post-dump.
+
+## SFT Incident 57 (2026-08-18 ~02:50 CEST) — second replication layer: params FSDP-sharded only intra-node
+
+- Incident-56 token mapping WORKED: v18 1400728 remat demand 348.66 → 212.60GiB;
+  v20 dump census shows ALL global token tensors gone. v19/v22-style spares
+  cancelled per doomed-inheritance rule.
+- Remaining dominator in the v20 census: f32[48,128,512,768] expert master
+  weights/Adam state (9GiB each, hundreds of refs) + bf16 twins. **512 =
+  2048/4**: levanter's MeshConfig treats each GH200 node as a slice → ICI
+  data axis = 4 (intra-node), nodes on DCN replica_dcn(8). Default
+  param_mapping {embed: data} → params/opt-state sharded 4-way, REPLICATED
+  across nodes. fp32 master+m+v at /4 ≈ 87GB/device alone.
+- **Fix (yaml)**: `trainer.mesh.param_mapping: {embed: [replica_dcn, data]}`
+  → 32-way FSDP, same physical axes batch spans. Cross-node all-gathers ride
+  IB — standard GPU FSDP practice.
+- **v21 = 1401031 (head), v22 = 1401032 (spare)**. Expected: remat warning
+  gone (demand ~20-30GiB/device). Diagnostic method now proven: cache-off
+  dump run + python shape census of the after-remat HLO (>2GB tensors),
+  compare against previous dump.
