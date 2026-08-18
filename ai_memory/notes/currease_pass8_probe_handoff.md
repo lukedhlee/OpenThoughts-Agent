@@ -894,3 +894,13 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   (c21c6c50, byte-identical settings to the step-0 instruct probe),
   snapshots registry-hit. ETA 4-5h. Compare vs step-0: pass@1 34.2%,
   pass@8 41.8%, 292 never-solved.
+- **Incident 70** (13:21): lr1e6 1401795 hang at s26 (post-gs25 boundary) on
+  jpbo-074-[03-04,06-09] — the nodeset that self-healed inc-67's ghost, now
+  hanging. Dual freeze 12:26:02. gs25 banked (arm advanced 20→25 this link).
+  1401796 rolls; chain extended lspare3 1404405, lspare4 1404406. Set
+  excluded.
+- Probe attempt 1 (1404056) killed at ~20 min: vLLM crash-loop, ImportError
+  libcudart.so.13 — datagen submit env lacked the RL sbatch's LD_LIBRARY_PATH
+  (rl-fa torch/vllm now cu13). Relaunched 1404364 with the nvidia lib paths
+  exported at submit (verified libcudart resolves). GOTCHA for all future
+  datagen/serve launches from rl-fa.
