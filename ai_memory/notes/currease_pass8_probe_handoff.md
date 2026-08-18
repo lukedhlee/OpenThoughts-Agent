@@ -911,3 +911,13 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   vary minutes-to-hours). Chain exhausted silently (watcher was on 197 but
   event notification lagged behind the double burn). NEW baseline chain:
   head 1404417 + 1404418/19, resume gs40. jpbo-054 set excluded.
+- **Probe attempt 3 (1404713) GREEN** (~14:10): vLLM up (0 ImportErrors), 248
+  trials at +15 min, verifier scoring (sample reward 1.0). Fix that worked:
+  `DCFT_POST_ENV_EXPORTS` hook (datagen sbatch evals it AFTER baked env) with
+  the rl-fa nvidia cu13 lib paths. NOTE the baked LD_LIBRARY_PATH in the
+  rendered sbatch points at the retired /e/scratch envs/rl tree even though
+  hpc/dotenv/jupiter.env derives from DCFT_RL_ENV=rl-fa — render-path bake
+  source unidentified, TODO; the hook is the reliable per-submit fix.
+- Datagen result format: reward lives at `verifier_result.rewards.reward`
+  in each trial result.json (top-level `reward` is null — do not misread).
+- ETA ~4-5h → score vs step-0 (pass@1 34.2 / pass@8 41.8 / 292 never-solved).
