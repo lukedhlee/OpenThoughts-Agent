@@ -59,6 +59,14 @@ model:
 train_seq_len: 32768
 trainer:
   seed: 42
+  # incident 58: MUST be pinned. Checkpoints are saved to (and searched for
+  # under) checkpointer.base_path/<run_id>, and with id unset levanter takes a
+  # RANDOM run id per process launch — offline wandb minted a fresh one each
+  # link, so link 2 searched an empty ckpt/<new-id>/ and silently restarted
+  # from the HF weights, discarding link 1's step-80. This value is link 1's
+  # run id, i.e. exactly where the existing step-80 checkpoint lives, so the
+  # chain resumes rather than restarts. Do NOT change it for this run.
+  id: y3m02qj0
   # incident 56 ROOT CAUSE (of the 50-55 OOM chain): qwen3_moe's SparseMoeBlock
   # flattens to ad-hoc "token"/"token_repeat" axes. Raw train_lm leaves them
   # unmapped -> auto_sharded + the block's shard_map pspecs resolve to
