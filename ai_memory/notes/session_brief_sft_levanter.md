@@ -46,10 +46,19 @@ Cluster: JUPITER booster (JSC), GH200 nodes (4 GPUs, 96GB each), ssh alias
 - **Walltime TIMEOUT is safe**: levanter CheckpointerConfig.save_interval
   defaults to 15-min time-based checkpoints (checkpoint.py:1149) — a link
   timeout loses ≤15 min; spare resumes. Step-100 keeps are permanent.
-- **Open**: steady-state s/it unknown (1057s/it tqdm average includes ~45min
-  compile; naive ETA 95h ≈ 8 links). Watchers armed: next-progress-line rate
-  check + job-exit long-haul. If steady rate stays >600s/it consider perf
-  work (autotune level 1 retry, CE blocks) AFTER stability is proven.
+- **Link 1 (v21 1401031) completed normally**: TIMEOUT at 11:59 after
+  reaching **step 80/328**, loss 0.50 → ~0.42. Checkpoint step-80 saved 2.5
+  min before the kill (time-based 15-min policy works as designed; ≤3 min of
+  work lost). Steady state measured: **~500 s/step** (≈80 steps per 12h link).
+- **Chain to completion queued**: 1401032 → 1406567 → 1406568 → 1406569
+  (afterany), covering step 80 → ~410, i.e. past the 328 target with margin.
+  At 328 levanter writes the HF export to
+  `$F/checkpoints/ota10k_sft_30ba3b_levanter/hf`.
+- **Open (perf, not blocking)**: ~500 s/step = ~6.3k tok/s across 32 GH200s
+  for a 3B-active MoE is low. Candidate levers AFTER the run banks steps (do
+  NOT disturb a green run without Luke's ask): retry autotune level 1 now
+  that the HLO is sane, and check pallas-triton ragged_dot block sizes for
+  GH200 (`_triton_default_block_sizes` in haliax ragged_dot.py).
 - Levanter-side knobs already in place and KEPT: autotune level 0 (compile
   ladder closed at incident 51), per_device_parallelism 1 (incident 52),
   mem fraction 0.92, CE sweep ON, compile cache.
