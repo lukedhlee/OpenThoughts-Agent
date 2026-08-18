@@ -71,6 +71,15 @@ trainer:
     compute_mapping:
       token: [replica_dcn, replica, data]
       token_repeat: [replica_dcn, replica, data]
+    # incident 57: levanter's mesh treats each GH200 node as a slice — ICI
+    # data axis = 4 (intra-node), nodes ride the DCN replica_dcn axis. The
+    # default param_mapping {embed: data} therefore FSDP-shards parameters and
+    # Adam state only 4-way and REPLICATES them across the 8 nodes
+    # (f32[48,128,512,768] expert masters in the v20 HLO dump; 512 = 2048/4 —
+    # fp32 master+m+v at /4 is ~87GB/device by itself). Shard embed across
+    # both axes (8x4 = all 32 GPUs), same axes batch already spans.
+    param_mapping:
+      embed: [replica_dcn, data]
   tracker:
     type: wandb
     project: jupiter-ota10k-sft
