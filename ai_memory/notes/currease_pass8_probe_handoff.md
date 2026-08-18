@@ -969,3 +969,17 @@ Baseline arm (lr3e-6) checkpoint gs40 = 1.25 epochs, vs step-0 instruct:
 - Scoring: /tmp/score_gs40_probe.py on login node; reward key =
   verifier_result.rewards.reward. VERDICT: GRPO on curriculum-easy IS
   learning at lr3e-6 — consistent with the +2.6/epoch paired train-set test.
+
+## Incidents 74-76 + dashboard refresh (2026-08-18 ~18:10)
+
+- **74**: lr1e6 1401796 mid-run ghost-OOM at 99 min / s29 on jpbo-056-[08-13]
+  (no gs30 → 4 steps lost); 1404405 re-did 26-30, banked gs30, r0.62 at s30.
+- **75**: lr5e6 1402897 ghost-OOM 11 min on jpbo-016-[17-22]; 1402898 same-
+  nodeset self-heal, ran 3h to gs30.
+- **76**: 1402898 then hung at s31 (boundary+1 #10); chain exhausted → fresh
+  chain 1406880 (+1406881/82), resume gs30. jpbo-056 + jpbo-016 sets excluded.
+- Watchers bb8sswl9k/bdkgl5lr6 silently failed to notify (2nd occurrence) —
+  poll loops die quietly; rely on periodic sacct sweeps as backstop.
+- **Dashboard refreshed** (runboard pipeline + spec): step_target 100, probe
+  ◆ markers (41.8@0 / 46.0@40), verdict tile strip (probe / paired test /
+  frontier 292→274), fleet + 12 new attempts, explainer verdict rewritten.

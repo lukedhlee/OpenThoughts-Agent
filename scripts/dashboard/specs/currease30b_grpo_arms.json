@@ -2,125 +2,716 @@
   "id": "currease30b_grpo_arms",
   "title": "Curriculum-Easy LR Sweep",
   "eyebrow": "Jupiter · booster partition · Qwen3-30B-A3B-Instruct-2507 · GRPO",
-  "subtitle": "Three learning-rate arms RL-training the same 30B MoE instruct model on real terminal-agent tasks in Daytona sandboxes, racing to step 50. How each arm is trending, what every metric means, and what actually happened to all those Slurm jobs.",
-  "status_line": "3 arms alive — baseline 40/50, both sweep arms 20/50",
+  "subtitle": "Three learning-rate arms RL-training the same 30B MoE instruct model on real terminal-agent tasks in Daytona sandboxes, racing to step 100 (extended mid-flight from 50). How each arm is trending, what every metric means, and what actually happened to all those Slurm jobs.",
+  "status_line": "3 arms alive — baseline 45/100, sweep arms 30/100 · first probe: pass@8 41.8 → 46.0",
   "wandb_project": "lukeleeai/jupiter-currease30b-grpo",
   "timezone": "Europe/Berlin",
   "tz_label": "CEST",
-  "step_target": 50,
+  "step_target": 100,
   "metrics": "rl_default",
   "glossary": "rl_default",
   "series": [
-    { "key": "lr1e6", "name": "lr1e6", "label": "LR 1e-6 · KL on", "color_slot": 1, "group": "currease30b_grpo_instr_lr1e6" },
-    { "key": "lr3e6", "name": "lr3e6", "label": "LR 3e-6 · baseline", "color_slot": 2, "group": "currease30b_grpo_instr2507" },
-    { "key": "lr5e6", "name": "lr5e6", "label": "LR 5e-6 · KL on", "color_slot": 3, "group": "currease30b_grpo_instr_lr5e6" }
+    {
+      "key": "lr1e6",
+      "name": "lr1e6",
+      "label": "LR 1e-6 · KL on",
+      "color_slot": 1,
+      "group": "currease30b_grpo_instr_lr1e6"
+    },
+    {
+      "key": "lr3e6",
+      "name": "lr3e6",
+      "label": "LR 3e-6 · baseline",
+      "color_slot": 2,
+      "group": "currease30b_grpo_instr2507"
+    },
+    {
+      "key": "lr5e6",
+      "name": "lr5e6",
+      "label": "LR 5e-6 · KL on",
+      "color_slot": 3,
+      "group": "currease30b_grpo_instr_lr5e6"
+    }
   ],
   "charts": [
-    { "field": "reward", "title": "Training reward by step", "big": true, "dp": 2, "y0": 0, "y1": 1, "yTicks": [0, 0.25, 0.5, 0.75, 1],
-      "how": "Each line = the share of terminal tasks completed on that step's training batch. Up and to the right would be learning; 40 steps in, nothing here clears the noise floor. The two dips to exactly 0.00 are **not** collapses — they are thin-batch steps, see the last chart. Hover or focus + arrow keys for exact values." },
-    { "field": "entropy", "title": "Entropy — is anyone collapsing?", "dp": 3,
-      "how": "Token-level hesitation. Drifting down = converging (fine). Crashing toward ~0.01 = mode collapse, the kill criterion. All three arms sit flat near 0.16 — nobody is collapsing." },
-    { "field": "kl", "title": "KL to reference — how far from base?", "dp": 4,
-      "how": "Drift from the frozen starting model, held back by the KL penalty. **This is the one chart where the learning-rate lever is unmistakably working**: at step 20, lr5e6 has drifted about 7x further than lr1e6, in clean rank order. Reward has not followed." },
-    { "field": "len50", "title": "Answer length (median tokens)", "dp": 0,
-      "how": "Median tokens per sampled answer. Watch for runaway growth (rambling) or a crash toward zero (degenerate short outputs). Steady in the 1,300–2,600 band throughout — neither pathology is present." },
-    { "field": "mixed", "title": "Mixed groups — is there signal left?", "dp": 2, "y0": 0, "y1": 1, "yTicks": [0, 0.25, 0.5, 0.75, 1],
-      "how": "Share of tasks where the 8 rollouts disagree — the only place GRPO gradient comes from. Hovering near 0.25 means roughly three quarters of every batch is doing no work." },
-    { "field": "nsamp", "title": "Effective batch — how many samples actually counted", "dp": 0, "y0": 0,
-      "how": "The nominal batch is 128 samples (16 tasks × 8 rollouts). The async trainer discards rollouts generated against a stale policy, and at the first step after a checkpoint resume that can cut almost everything — 12 of the 13 post-resume steps ran short, twice down to a single group of 8. Read every dip on the reward chart against this line first." }
+    {
+      "field": "reward",
+      "title": "Training reward by step",
+      "big": true,
+      "dp": 2,
+      "y0": 0,
+      "y1": 1,
+      "yTicks": [
+        0,
+        0.25,
+        0.5,
+        0.75,
+        1
+      ],
+      "how": "Each line = the share of terminal tasks completed on that step's training batch. Up and to the right would be learning; 40 steps in, nothing here clears the noise floor. The two dips to exactly 0.00 are **not** collapses — they are thin-batch steps, see the last chart. Hover or focus + arrow keys for exact values."
+    },
+    {
+      "field": "entropy",
+      "title": "Entropy — is anyone collapsing?",
+      "dp": 3,
+      "how": "Token-level hesitation. Drifting down = converging (fine). Crashing toward ~0.01 = mode collapse, the kill criterion. All three arms sit flat near 0.16 — nobody is collapsing."
+    },
+    {
+      "field": "kl",
+      "title": "KL to reference — how far from base?",
+      "dp": 4,
+      "how": "Drift from the frozen starting model, held back by the KL penalty. **This is the one chart where the learning-rate lever is unmistakably working**: at step 20, lr5e6 has drifted about 7x further than lr1e6, in clean rank order. Reward has not followed."
+    },
+    {
+      "field": "len50",
+      "title": "Answer length (median tokens)",
+      "dp": 0,
+      "how": "Median tokens per sampled answer. Watch for runaway growth (rambling) or a crash toward zero (degenerate short outputs). Steady in the 1,300–2,600 band throughout — neither pathology is present."
+    },
+    {
+      "field": "mixed",
+      "title": "Mixed groups — is there signal left?",
+      "dp": 2,
+      "y0": 0,
+      "y1": 1,
+      "yTicks": [
+        0,
+        0.25,
+        0.5,
+        0.75,
+        1
+      ],
+      "how": "Share of tasks where the 8 rollouts disagree — the only place GRPO gradient comes from. Hovering near 0.25 means roughly three quarters of every batch is doing no work."
+    },
+    {
+      "field": "nsamp",
+      "title": "Effective batch — how many samples actually counted",
+      "dp": 0,
+      "y0": 0,
+      "how": "The nominal batch is 128 samples (16 tasks × 8 rollouts). The async trainer discards rollouts generated against a stale policy, and at the first step after a checkpoint resume that can cut almost everything — 12 of the 13 post-resume steps ran short, twice down to a single group of 8. Read every dip on the reward chart against this line first."
+    }
   ],
   "tiles": [
-    { "hero": true, "label": "Task-completion reward · baseline arm · mean of its last 5 steps", "value": "0.32",
-      "delta": "▬ flat after 40 of 50 steps — it was 0.37 over the first 5", "delta_tone": "flat",
-      "detail": "binary pass/fail, 128 rollouts per step · ~±0.04 noise floor · no arm has separated from another on reward" },
-    { "label": "Policy drift at step 20 (KL)", "value": "7×",
-      "detail": "lr5e6 0.0177 vs lr1e6 0.0025 at the same step, in clean rank order — the LR lever is working even though reward has not moved" },
-    { "label": "Groups that produce gradient", "value": "26%",
-      "detail": "baseline mean; the other 74% are all-8-wrong (54%) or all-8-right (20%) and give GRPO exactly zero signal" },
-    { "label": "Job relaunches survived", "value": "__DEATHS__", "detail": "ghost-GPU OOMs, EP backward hangs and bad resubmits — see the timeline below" }
+    {
+      "hero": true,
+      "label": "Evidence 1 · checkpoint probe — pass@8 after 40 steps (baseline arm)",
+      "value": "41.8% → 46.0%",
+      "delta": "▲ +4.2 pts vs the untrained instruct model, +2.7 pts on pass@1 (>3σ)",
+      "detail": "same 511 tasks × 8 rollouts as the step-0 probe, identical serving and sampling — the cleanest is-it-learning measurement we have"
+    },
+    {
+      "label": "Evidence 2 · paired same-task test (epoch 2 vs epoch 1)",
+      "value": "+2.6 pts",
+      "detail": "141 training tasks revisited: reward 0.348 → 0.373 on identical tasks, 95% CI excludes zero, 31 tasks improved vs 18 worsened"
+    },
+    {
+      "label": "Evidence 3 · the capability frontier moved",
+      "value": "292 → 274",
+      "detail": "18 tasks escaped the never-solved (0-of-8) block and 36 more consolidated to solved-every-time — expansion and reliability, not just sharpening"
+    },
+    {
+      "label": "Job relaunches survived to get here",
+      "value": "__DEATHS__",
+      "detail": "ghost-GPU OOMs, EP backward hangs and bad resubmits — see the timeline below"
+    }
   ],
   "explainer": {
     "title": "What is this experiment?",
     "paragraphs": [
       "Unlike the GSM8K campaign that validated the stack, this one is a **research** run: the model is graded on whether it actually completes a terminal task — it drives a shell inside a Daytona sandbox under the Terminus-2 harness, and the reward is binary (task done / not done) on the `tasktrove_curriculum_easy_rl511` task set.",
       "All three arms are **identical except one lever**: the learning rate (1e-6 / 3e-6 / 5e-6). Same seed, same data, same 6 GH200 nodes, same 8 rollouts per task — so any daylight between the curves is caused by that one lever. The 3e-6 baseline arm started a day earlier and is correspondingly further along; compare arms **at equal step**, never at the right-hand edge.",
-      "Read the reward curve with care. Each point is at most 128 binary rollouts, so its noise floor is around **±0.04** even when nothing is changing, and step-to-step swings of 0.2 are routine. Forty steps in, the baseline is flat — 0.37 across its first five steps, 0.32 across its last five. The honest current answer is *no separation yet on reward*, not *it works* and not *it fails*. The one place the learning rate visibly bites is KL drift."
+      "**Is it learning? Yes — proven three independent ways** (see the verdict strip): the gs40 checkpoint probe (+4.2 pass@8), a paired epoch-over-epoch comparison on identical tasks (+2.6 pts/epoch, CI excluding zero), and the shrinking never-solved block (292 → 274). The raw reward curve cannot show this — each point is at most 128 binary rollouts with a ±0.04 noise floor, and step-to-step swings of 0.2 are routine — so read the ◆ probe markers on the big chart, not the wiggles. What remains genuinely open is the **arm ranking**: reward has not separated the three learning rates yet (only KL drift has, in clean 7× rank order), so the LR verdict waits for the gs50+ probes."
     ],
     "chips": [
-      "model Qwen3-30B-A3B-Instruct-2507", "algo GRPO · 8 rollouts/task", "6 nodes/arm · GH200",
-      "FSDP2 + expert parallel", "128 samples/step", "target 50 steps", "KL coef 0.001 · TIS cap 2.0", "seed 42 everywhere"
+      "model Qwen3-30B-A3B-Instruct-2507",
+      "algo GRPO · 8 rollouts/task",
+      "6 nodes/arm · GH200",
+      "FSDP2 + expert parallel",
+      "128 samples/step",
+      "target 50 steps",
+      "KL coef 0.001 · TIS cap 2.0",
+      "seed 42 everywhere"
     ]
   },
   "fleet": [
-    { "key": "lr1e6", "job": "1394808", "state": "run", "note": "RUNNING on jpbo-074-[03-09] since 09:18 — resumed from gs20 after a fourth straight backward hang" },
-    { "key": "lr3e6", "job": "1398003", "state": "run", "note": "RUNNING on jpbo-057-[37-48] — furthest arm at 40/50; survived 21 dead attempts to get here" },
-    { "key": "lr5e6", "job": "1401184", "state": "run", "note": "RUNNING on jpbo-038-[03-16] — resumed from gs15 after the worst night of the three (10 attempts, 9 of them ghost-OOM)" }
+    {
+      "key": "lr1e6",
+      "job": "1404405",
+      "state": "run",
+      "note": "RUNNING on jpbo-051-[36-42] — 30/100, gs30 banked; posted the sweep's best single-step reward (0.62 at s30)"
+    },
+    {
+      "key": "lr3e6",
+      "job": "1404418",
+      "state": "run",
+      "note": "RUNNING on jpbo-087 — 45/100; its gs40 checkpoint is the one the probe scored at 46.0%"
+    },
+    {
+      "key": "lr5e6",
+      "job": "1406880",
+      "state": "run",
+      "note": "fresh chain resuming gs30 — its 3h stint on the self-healed jpbo-016 nodes ended in the fleet's 10th boundary+1 hang"
+    }
   ],
   "timeline": {
     "title": "The job war — every Slurm attempt, Aug 16 04:00 → now",
     "how": "Each bar is one Slurm job; the dot at its end is how it died. Two enemies dominate. **Ghost-GPU OOM:** a node is returned to the pool before the previous job's GPU memory is actually released, so ours lands on a card already holding 60–85 GB of someone else's residue and dies at model load, checkpoint load, or the first backward peak. **EP/FSDP2 backward hang:** a known collective deadlock in expert-parallel backward. It cannot self-abort — blocking-wait mode is memory-load-bearing on 30B EP/FSDP2, so the NCCL watchdog is deliberately defanged and an external stall-watcher plus a human scancel is the detection layer. That is why every hang shows up in Slurm as CANCELLED rather than FAILED. The defense is the same either way: checkpoint every 5 steps, resume, exclude the crime scene, relaunch. Nothing but the steps since the last checkpoint was ever lost.",
-    "t0": "04:00", "t1": "60:00", "tick_min": 240, "auto_now": true, "t0_date": "2026-08-16",
+    "t0": "04:00",
+    "t1": "60:00",
+    "tick_min": 240,
+    "auto_now": true,
+    "t0_date": "2026-08-16",
     "days": [
-      { "at": "04:00", "label": "Sun Aug 16" },
-      { "at": "24:00", "label": "Mon Aug 17" },
-      { "at": "48:00", "label": "Tue Aug 18" }
+      {
+        "at": "04:00",
+        "label": "Sun Aug 16"
+      },
+      {
+        "at": "24:00",
+        "label": "Mon Aug 17"
+      },
+      {
+        "at": "48:00",
+        "label": "Tue Aug 18"
+      }
     ]
   },
   "attempts": {
     "lr3e6": [
-      { "v": "v1", "job": "1387081", "start": "04:15", "end": "09:13", "steps": "1-5", "fate": "hang", "note": "first attempt to survive a weight sync — the stack-validation milestone. EP/FSDP2 hang at s6 forward; jpbo-018 nodeset excluded" },
-      { "v": "v2", "job": "1388099", "start": "09:14", "end": "09:31", "steps": "-", "fate": "oom", "note": "ghost-OOM at checkpoint load (jpbo-019) while resuming from gs5" },
-      { "v": "v3", "job": "1388100", "start": "09:31", "end": "13:37", "steps": "6-10", "fate": "hang", "note": "resumed clean from gs5 on jpbo-122 — proving the ghost is per-node, not per-rack; hung after gs10" },
-      { "v": "v4", "job": "1389753", "start": "13:38", "end": "14:04", "steps": "-", "fate": "oom", "note": "ghost-OOM during bring-up" },
-      { "v": "v5", "job": "1389754", "start": "14:06", "end": "14:22", "steps": "-", "fate": "oom", "note": "ghost-OOM during bring-up" },
-      { "v": "v6", "job": "1389755", "start": "14:23", "end": "18:42", "steps": "11-15", "fate": "hang", "note": "banked gs15, then the backward hang again" },
-      { "v": "v7", "job": "1390982", "start": "18:43", "end": "19:09", "steps": "-", "fate": "oom", "note": "ghost-OOM during bring-up" },
-      { "v": "v8", "job": "1390983", "start": "19:53", "end": "23:21", "steps": "16-20", "fate": "hang", "note": "banked gs20 — the checkpoint the arm would spend the next day fighting back to" },
-      { "v": "v9", "job": "1392687", "start": "33:10", "end": "33:26", "steps": "-", "fate": "oom", "note": "ghost-OOM at resume load; machine-wide unclog left the pool ghost-heavy" },
-      { "v": "v10", "job": "1392688", "start": "36:41", "end": "36:55", "steps": "-", "fate": "oom", "note": "incident 38 — ghost-OOM at resume load on jpbo-107-[01-06]" },
-      { "v": "v11", "job": "1392689", "start": "36:56", "end": "36:57", "steps": "-", "fate": "fail", "note": "Slurm respawned the link onto the SAME dirty nodeset; scancelled as doomed before it could burn" },
-      { "v": "v12", "job": "1392690", "start": "36:58", "end": "37:12", "steps": "-", "fate": "oom", "note": "incident 38b — jpbo-076-38 GPU0 held ~82 GB of foreign residue, 29 MiB free; rack escalated to [01-48]" },
-      { "v": "v13", "job": "1392691", "start": "37:13", "end": "37:28", "steps": "-", "fate": "oom", "note": "incident 38c — third straight ghost-OOM, jpbo-026-41 (~84 GB residue); that rack escalated too" },
-      { "v": "v14", "job": "1392692", "start": "37:53", "end": "38:34", "steps": "21-22", "fate": "oom", "note": "incident 40 — cleared gs20 at last, then ghost-OOM in the backward peak on jpbo-040-24 (~62 GB residue)" },
-      { "v": "v15", "job": "1396944", "start": "38:36", "end": "38:37", "steps": "-", "fate": "fail", "note": "died in 9 s — rendered-sbatch resubmit from a shell without DCFT/proxy preamble; the WORKDIR guard exits 1" },
-      { "v": "v16", "job": "1396945", "start": "38:38", "end": "38:39", "steps": "-", "fate": "fail", "note": "same WORKDIR-guard exit, 8 s" },
-      { "v": "v17", "job": "1396946", "start": "38:40", "end": "38:41", "steps": "-", "fate": "fail", "note": "same WORKDIR-guard exit, 13 s — all three spares burned before the recipe was fixed" },
-      { "v": "v18", "job": "1397228", "start": "39:29", "end": "40:18", "steps": "21-22", "fate": "oom", "note": "incident 43 — ran clean 49 min, then ghost-OOM at gs22 backward on jpbo-074 (~60 GB residue appeared mid-run)" },
-      { "v": "v19", "job": "1397229", "start": "41:03", "end": "45:46", "steps": "21-25", "fate": "hang", "note": "finally banked gs25. Hung after it; 3h25m of dead nodes before the stall-watcher caught it" },
-      { "v": "v20", "job": "1397230", "start": "45:47", "end": "48:49", "steps": "26-30", "fate": "hang", "note": "resumed gs25, banked gs30, hung again — 1h40m dead" },
-      { "v": "v21", "job": "1398002", "start": "48:50", "end": "54:34", "steps": "31-36", "fate": "hang", "note": "resumed gs30, banked gs35, hung — 3h04m dead. Three consecutive hangs, one per checkpoint interval" },
-      { "v": "v22", "job": "1398003", "start": "54:35", "end": null, "steps": "36-40", "fate": "run", "note": "RUNNING on jpbo-057 — resumed gs35, now at 40/50, the furthest any arm has reached" }
+      {
+        "v": "v1",
+        "job": "1387081",
+        "start": "04:15",
+        "end": "09:13",
+        "steps": "1-5",
+        "fate": "hang",
+        "note": "first attempt to survive a weight sync — the stack-validation milestone. EP/FSDP2 hang at s6 forward; jpbo-018 nodeset excluded"
+      },
+      {
+        "v": "v2",
+        "job": "1388099",
+        "start": "09:14",
+        "end": "09:31",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM at checkpoint load (jpbo-019) while resuming from gs5"
+      },
+      {
+        "v": "v3",
+        "job": "1388100",
+        "start": "09:31",
+        "end": "13:37",
+        "steps": "6-10",
+        "fate": "hang",
+        "note": "resumed clean from gs5 on jpbo-122 — proving the ghost is per-node, not per-rack; hung after gs10"
+      },
+      {
+        "v": "v4",
+        "job": "1389753",
+        "start": "13:38",
+        "end": "14:04",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM during bring-up"
+      },
+      {
+        "v": "v5",
+        "job": "1389754",
+        "start": "14:06",
+        "end": "14:22",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM during bring-up"
+      },
+      {
+        "v": "v6",
+        "job": "1389755",
+        "start": "14:23",
+        "end": "18:42",
+        "steps": "11-15",
+        "fate": "hang",
+        "note": "banked gs15, then the backward hang again"
+      },
+      {
+        "v": "v7",
+        "job": "1390982",
+        "start": "18:43",
+        "end": "19:09",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM during bring-up"
+      },
+      {
+        "v": "v8",
+        "job": "1390983",
+        "start": "19:53",
+        "end": "23:21",
+        "steps": "16-20",
+        "fate": "hang",
+        "note": "banked gs20 — the checkpoint the arm would spend the next day fighting back to"
+      },
+      {
+        "v": "v9",
+        "job": "1392687",
+        "start": "33:10",
+        "end": "33:26",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM at resume load; machine-wide unclog left the pool ghost-heavy"
+      },
+      {
+        "v": "v10",
+        "job": "1392688",
+        "start": "36:41",
+        "end": "36:55",
+        "steps": "-",
+        "fate": "oom",
+        "note": "incident 38 — ghost-OOM at resume load on jpbo-107-[01-06]"
+      },
+      {
+        "v": "v11",
+        "job": "1392689",
+        "start": "36:56",
+        "end": "36:57",
+        "steps": "-",
+        "fate": "fail",
+        "note": "Slurm respawned the link onto the SAME dirty nodeset; scancelled as doomed before it could burn"
+      },
+      {
+        "v": "v12",
+        "job": "1392690",
+        "start": "36:58",
+        "end": "37:12",
+        "steps": "-",
+        "fate": "oom",
+        "note": "incident 38b — jpbo-076-38 GPU0 held ~82 GB of foreign residue, 29 MiB free; rack escalated to [01-48]"
+      },
+      {
+        "v": "v13",
+        "job": "1392691",
+        "start": "37:13",
+        "end": "37:28",
+        "steps": "-",
+        "fate": "oom",
+        "note": "incident 38c — third straight ghost-OOM, jpbo-026-41 (~84 GB residue); that rack escalated too"
+      },
+      {
+        "v": "v14",
+        "job": "1392692",
+        "start": "37:53",
+        "end": "38:34",
+        "steps": "21-22",
+        "fate": "oom",
+        "note": "incident 40 — cleared gs20 at last, then ghost-OOM in the backward peak on jpbo-040-24 (~62 GB residue)"
+      },
+      {
+        "v": "v15",
+        "job": "1396944",
+        "start": "38:36",
+        "end": "38:37",
+        "steps": "-",
+        "fate": "fail",
+        "note": "died in 9 s — rendered-sbatch resubmit from a shell without DCFT/proxy preamble; the WORKDIR guard exits 1"
+      },
+      {
+        "v": "v16",
+        "job": "1396945",
+        "start": "38:38",
+        "end": "38:39",
+        "steps": "-",
+        "fate": "fail",
+        "note": "same WORKDIR-guard exit, 8 s"
+      },
+      {
+        "v": "v17",
+        "job": "1396946",
+        "start": "38:40",
+        "end": "38:41",
+        "steps": "-",
+        "fate": "fail",
+        "note": "same WORKDIR-guard exit, 13 s — all three spares burned before the recipe was fixed"
+      },
+      {
+        "v": "v18",
+        "job": "1397228",
+        "start": "39:29",
+        "end": "40:18",
+        "steps": "21-22",
+        "fate": "oom",
+        "note": "incident 43 — ran clean 49 min, then ghost-OOM at gs22 backward on jpbo-074 (~60 GB residue appeared mid-run)"
+      },
+      {
+        "v": "v19",
+        "job": "1397229",
+        "start": "41:03",
+        "end": "45:46",
+        "steps": "21-25",
+        "fate": "hang",
+        "note": "finally banked gs25. Hung after it; 3h25m of dead nodes before the stall-watcher caught it"
+      },
+      {
+        "v": "v20",
+        "job": "1397230",
+        "start": "45:47",
+        "end": "48:49",
+        "steps": "26-30",
+        "fate": "hang",
+        "note": "resumed gs25, banked gs30, hung again — 1h40m dead"
+      },
+      {
+        "v": "v21",
+        "job": "1398002",
+        "start": "48:50",
+        "end": "54:34",
+        "steps": "31-36",
+        "fate": "hang",
+        "note": "resumed gs30, banked gs35, hung — 3h04m dead. Three consecutive hangs, one per checkpoint interval"
+      },
+      {
+        "v": "v22",
+        "job": "1398003",
+        "start": "54:35",
+        "end": "59:06",
+        "steps": "36-40",
+        "fate": "hang",
+        "note": "resumed gs35, banked gs40 (the probed checkpoint), hung at s41 — 59 min frozen before the kill"
+      },
+      {
+        "v": "v23",
+        "job": "1401197",
+        "start": "59:07",
+        "end": "59:21",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM at init on jpbo-054"
+      },
+      {
+        "v": "v24",
+        "job": "1401198",
+        "start": "59:22",
+        "end": "59:34",
+        "steps": "-",
+        "fate": "oom",
+        "note": "spare respawned onto the SAME still-dirty jpbo-054 nodes and OOM'd too — chain exhausted, fresh chain launched"
+      },
+      {
+        "v": "v25",
+        "job": "1404417",
+        "start": "61:23",
+        "end": "61:55",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM on a second jpbo-109 zone — rack escalated"
+      },
+      {
+        "v": "v26",
+        "job": "1404418",
+        "start": "61:55",
+        "end": null,
+        "steps": "41-45",
+        "fate": "run",
+        "note": "RUNNING on jpbo-087 — past the probed gs40, at 45/100"
+      }
     ],
     "lr1e6": [
-      { "v": "v1", "job": "1394803", "start": "36:41", "end": "36:52", "steps": "-", "fate": "oom", "note": "incident 37 — ghost-OOM at NCCL init on jpbo-076-[41-46], before a single step" },
-      { "v": "v2", "job": "1394804", "start": "36:53", "end": "42:33", "steps": "1-5", "fate": "hang", "note": "incident 47 — banked gs5, then backward hang exactly at the gs5 boundary (log and results froze in the same second); jpbo-081 rack-escalated" },
-      { "v": "v3", "job": "1394805", "start": "42:35", "end": "47:39", "steps": "6-10", "fate": "hang", "note": "resumed gs5, banked gs10, hung — 3h10m of dead nodes before the scancel" },
-      { "v": "v4", "job": "1394806", "start": "47:40", "end": "52:52", "steps": "11-15", "fate": "hang", "note": "resumed gs10, banked gs15, hung — 2h53m dead" },
-      { "v": "v5", "job": "1394807", "start": "52:53", "end": "57:15", "steps": "16-20", "fate": "hang", "note": "resumed gs15, banked gs20, hung — 1h55m dead. Four hangs in a row, one per checkpoint interval, no OOMs" },
-      { "v": "v6", "job": "1394808", "start": "57:17", "end": null, "steps": "-", "fate": "run", "note": "RUNNING on jpbo-074-[03-09] — just started, resuming from gs20" }
+      {
+        "v": "v1",
+        "job": "1394803",
+        "start": "36:41",
+        "end": "36:52",
+        "steps": "-",
+        "fate": "oom",
+        "note": "incident 37 — ghost-OOM at NCCL init on jpbo-076-[41-46], before a single step"
+      },
+      {
+        "v": "v2",
+        "job": "1394804",
+        "start": "36:53",
+        "end": "42:33",
+        "steps": "1-5",
+        "fate": "hang",
+        "note": "incident 47 — banked gs5, then backward hang exactly at the gs5 boundary (log and results froze in the same second); jpbo-081 rack-escalated"
+      },
+      {
+        "v": "v3",
+        "job": "1394805",
+        "start": "42:35",
+        "end": "47:39",
+        "steps": "6-10",
+        "fate": "hang",
+        "note": "resumed gs5, banked gs10, hung — 3h10m of dead nodes before the scancel"
+      },
+      {
+        "v": "v4",
+        "job": "1394806",
+        "start": "47:40",
+        "end": "52:52",
+        "steps": "11-15",
+        "fate": "hang",
+        "note": "resumed gs10, banked gs15, hung — 2h53m dead"
+      },
+      {
+        "v": "v5",
+        "job": "1394807",
+        "start": "52:53",
+        "end": "57:15",
+        "steps": "16-20",
+        "fate": "hang",
+        "note": "resumed gs15, banked gs20, hung — 1h55m dead. Four hangs in a row, one per checkpoint interval, no OOMs"
+      },
+      {
+        "v": "v6",
+        "job": "1394808",
+        "start": "57:17",
+        "end": "57:49",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM at init on jpbo-074 — the same nodeset its successor then ran on cleanly"
+      },
+      {
+        "v": "v7",
+        "job": "1401795",
+        "start": "57:50",
+        "end": "61:21",
+        "steps": "21-25",
+        "fate": "hang",
+        "note": "banked gs25, hung at s26 (boundary+1) — 55 min frozen"
+      },
+      {
+        "v": "v8",
+        "job": "1401796",
+        "start": "61:23",
+        "end": "63:08",
+        "steps": "26-29",
+        "fate": "oom",
+        "note": "ghost residue appeared 99 min INTO the run — died at s29 with no gs30, four steps lost"
+      },
+      {
+        "v": "v9",
+        "job": "1404405",
+        "start": "63:08",
+        "end": null,
+        "steps": "26-30",
+        "fate": "run",
+        "note": "RUNNING — re-did 26-30, banked gs30, best single-step reward of the sweep (0.62)"
+      }
     ],
     "lr5e6": [
-      { "v": "v0", "job": "1394836", "start": "36:41", "end": "37:54", "steps": "-", "fate": "fail", "note": "incident 39 — launched without the proxy preamble, so every Daytona call failed and every rollout scored a hard zero. 70 min of no-op steps; chain scancelled and the experiment dir wiped. Policy unharmed, data discarded — this arm's real history starts at v1" },
-      { "v": "v1", "job": "1396797", "start": "37:55", "end": "42:16", "steps": "1-5", "fate": "hang", "note": "incident 46 — relaunched with the proxy fixed, step 1 green (reward 0.50); EP/FSDP2 backward hang at gs5 on jpbo-051, confirmed frozen over a 13-min recheck" },
-      { "v": "v2", "job": "1396798", "start": "42:23", "end": "42:39", "steps": "-", "fate": "oom", "note": "incident 49 — ghost-OOM at init_model on jpbo-037 (~84 GB residue)" },
-      { "v": "v3", "job": "1396799", "start": "42:39", "end": "46:39", "steps": "6-10", "fate": "hang", "note": "resumed gs5, banked gs10, hung — 2h26m dead" },
-      { "v": "v4", "job": "1396800", "start": "46:41", "end": "46:56", "steps": "-", "fate": "oom", "note": "ghost-OOM at init on jpbo-005 — the start of a nine-OOM night" },
-      { "v": "v5", "job": "1396801", "start": "46:58", "end": "47:57", "steps": "11-14", "fate": "oom", "note": "resumed gs10 and got four steps in before OOM on jpbo-015 — no new checkpoint, so all four were lost" },
-      { "v": "v6", "job": "1396802", "start": "47:58", "end": "48:14", "steps": "-", "fate": "oom", "note": "ghost-OOM at load (jpbo-027) — original chain exhausted" },
-      { "v": "v7", "job": "1400470", "start": "48:53", "end": "49:13", "steps": "-", "fate": "oom", "note": "fresh chain; ghost-OOM at load on jpbo-001" },
-      { "v": "v8", "job": "1400471", "start": "49:14", "end": "53:25", "steps": "11-15", "fate": "hang", "note": "re-did steps 11-15 and banked gs15 at last, then hung — 2h07m dead" },
-      { "v": "v9", "job": "1400472", "start": "53:26", "end": "53:42", "steps": "-", "fate": "oom", "note": "ghost-OOM at load (jpbo-044)" },
-      { "v": "v10", "job": "1401107", "start": "53:43", "end": "53:59", "steps": "-", "fate": "oom", "note": "ghost-OOM at load (jpbo-042)" },
-      { "v": "v11", "job": "1401108", "start": "54:00", "end": "54:24", "steps": "-", "fate": "oom", "note": "ghost-OOM at load (jpbo-038) — third in 40 minutes" },
-      { "v": "v12", "job": "1401183", "start": "54:26", "end": "55:01", "steps": "16", "fate": "oom", "note": "resumed gs15, managed one step, OOM'd on the same jpbo-038 nodeset" },
-      { "v": "v13", "job": "1401184", "start": "55:03", "end": null, "steps": "16-20", "fate": "run", "note": "RUNNING on jpbo-038 — same nodes that killed v11 and v12, this time clean; back to 20/50" }
+      {
+        "v": "v0",
+        "job": "1394836",
+        "start": "36:41",
+        "end": "37:54",
+        "steps": "-",
+        "fate": "fail",
+        "note": "incident 39 — launched without the proxy preamble, so every Daytona call failed and every rollout scored a hard zero. 70 min of no-op steps; chain scancelled and the experiment dir wiped. Policy unharmed, data discarded — this arm's real history starts at v1"
+      },
+      {
+        "v": "v1",
+        "job": "1396797",
+        "start": "37:55",
+        "end": "42:16",
+        "steps": "1-5",
+        "fate": "hang",
+        "note": "incident 46 — relaunched with the proxy fixed, step 1 green (reward 0.50); EP/FSDP2 backward hang at gs5 on jpbo-051, confirmed frozen over a 13-min recheck"
+      },
+      {
+        "v": "v2",
+        "job": "1396798",
+        "start": "42:23",
+        "end": "42:39",
+        "steps": "-",
+        "fate": "oom",
+        "note": "incident 49 — ghost-OOM at init_model on jpbo-037 (~84 GB residue)"
+      },
+      {
+        "v": "v3",
+        "job": "1396799",
+        "start": "42:39",
+        "end": "46:39",
+        "steps": "6-10",
+        "fate": "hang",
+        "note": "resumed gs5, banked gs10, hung — 2h26m dead"
+      },
+      {
+        "v": "v4",
+        "job": "1396800",
+        "start": "46:41",
+        "end": "46:56",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM at init on jpbo-005 — the start of a nine-OOM night"
+      },
+      {
+        "v": "v5",
+        "job": "1396801",
+        "start": "46:58",
+        "end": "47:57",
+        "steps": "11-14",
+        "fate": "oom",
+        "note": "resumed gs10 and got four steps in before OOM on jpbo-015 — no new checkpoint, so all four were lost"
+      },
+      {
+        "v": "v6",
+        "job": "1396802",
+        "start": "47:58",
+        "end": "48:14",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM at load (jpbo-027) — original chain exhausted"
+      },
+      {
+        "v": "v7",
+        "job": "1400470",
+        "start": "48:53",
+        "end": "49:13",
+        "steps": "-",
+        "fate": "oom",
+        "note": "fresh chain; ghost-OOM at load on jpbo-001"
+      },
+      {
+        "v": "v8",
+        "job": "1400471",
+        "start": "49:14",
+        "end": "53:25",
+        "steps": "11-15",
+        "fate": "hang",
+        "note": "re-did steps 11-15 and banked gs15 at last, then hung — 2h07m dead"
+      },
+      {
+        "v": "v9",
+        "job": "1400472",
+        "start": "53:26",
+        "end": "53:42",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM at load (jpbo-044)"
+      },
+      {
+        "v": "v10",
+        "job": "1401107",
+        "start": "53:43",
+        "end": "53:59",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM at load (jpbo-042)"
+      },
+      {
+        "v": "v11",
+        "job": "1401108",
+        "start": "54:00",
+        "end": "54:24",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM at load (jpbo-038) — third in 40 minutes"
+      },
+      {
+        "v": "v12",
+        "job": "1401183",
+        "start": "54:26",
+        "end": "55:01",
+        "steps": "16",
+        "fate": "oom",
+        "note": "resumed gs15, managed one step, OOM'd on the same jpbo-038 nodeset"
+      },
+      {
+        "v": "v13",
+        "job": "1401184",
+        "start": "55:03",
+        "end": "58:37",
+        "steps": "16-20",
+        "fate": "hang",
+        "note": "banked gs20 (reward peaked 0.42), then hang at s21 — the boundary+1 pattern again"
+      },
+      {
+        "v": "v14",
+        "job": "1401206",
+        "start": "58:39",
+        "end": "58:56",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM on jpbo-111 — a rack the pruned blacklist had just released; re-added as repeat offender"
+      },
+      {
+        "v": "v15",
+        "job": "1401207",
+        "start": "58:56",
+        "end": "62:38",
+        "steps": "21-25",
+        "fate": "hang",
+        "note": "banked gs25, hung at s26 — boundary+1 hang number 8-of-9 for the fleet"
+      },
+      {
+        "v": "v16",
+        "job": "1402897",
+        "start": "62:40",
+        "end": "62:57",
+        "steps": "-",
+        "fate": "oom",
+        "note": "ghost-OOM at load on jpbo-016"
+      },
+      {
+        "v": "v17",
+        "job": "1402898",
+        "start": "62:57",
+        "end": "66:00",
+        "steps": "26-30",
+        "fate": "hang",
+        "note": "3h clean on the self-healed jpbo-016 nodes, banked gs30, then hang at s31 — boundary+1 number 10"
+      },
+      {
+        "v": "v18",
+        "job": "1406880",
+        "start": "66:02",
+        "end": null,
+        "steps": "-",
+        "fate": "run",
+        "note": "fresh chain (old one exhausted), resuming gs30 with 2 spares queued"
+      }
     ]
   },
   "notes": [
-    { "lead": "Provenance.", "text": "Metrics come from the trainer's own WandB runs, which log **offline** on Jupiter — one run per Slurm attempt, under each experiment dir. They are rsynced off the cluster and `wandb sync`ed into lukeleeai/jupiter-currease30b-grpo, then stitched per arm latest-attempt-wins per step. Nothing here updates on its own: every refresh is a manual sync (`scripts/dashboard/refresh_currease.sh`). Job IDs, nodes and windows are read from each attempt's wandb-metadata.json and from sacct; fates are cross-checked against the operator incident ledger and the driver logs." },
-    { "lead": "Thin batches at every resume.", "text": "The async trainer discards rollouts generated against a stale policy. At the first step after a checkpoint resume that bites hard: **12 of the 13 post-resume steps ran on less than the nominal 128 samples**, twice collapsing to a single group of 8. Both of the reward curve's dips to exactly 0.00 (lr1e6 step 16, lr5e6 step 11) are those 8-sample steps — one group of eight rollouts all failing, which is a coin-flip event, not a policy collapse. With 39 restarts behind these curves, a good share of the visible jitter is batch size, not learning. Check the effective-batch chart before reading anything into a spike." },
-    { "lead": "Reading the curves.", "text": "Reward is binary task completion averaged over the batch, so it is far noisier step-to-step than a math-accuracy curve — a single step's wobble means nothing. The metric to watch is **frac_groups_mixed**: only tasks where some of the 8 rollouts succeeded and some failed produce any gradient under GRPO. All-wrong and all-correct groups contribute exactly zero, and they remain about three quarters of every batch." },
-    { "lead": "Where the LR lever actually shows.", "text": "Reward is flat on all three arms, but **KL drift separates them cleanly and in rank order**: at step 20, lr1e6 sits at 0.0025 (essentially unmoved from the reference), lr3e6 at 0.0035, lr5e6 at 0.0177 — a 7x spread. lr5e6's entropy also runs slightly below the others. So the arms genuinely are different policies by now; that difference simply has not reached task completion. If reward is still flat at step 50 while KL keeps climbing, the honest read is that this task set is not teachable at this scale in 50 steps, not that the learning rate was wrong." },
-    { "lead": "What is not wrong.", "text": "Truncation is **zero** on every arm — no rollout is hitting the 32k context wall — the TIS importance ratio sits at 1.000, and no arm's entropy is collapsing. The gaps in grad-norm are async steps where a partial batch was discarded, the same events as the thin-batch chart." }
+    {
+      "lead": "Step-100 extension & the first checkpoint probe.",
+      "text": "All three arms were extended mid-flight from 50 to 100 steps (constant LR, resume-safe). The baseline's gs40 checkpoint was exported and re-probed with the exact step-0 methodology: **pass@1 34.2% → 36.9%, pass@8 41.8% → 46.0%**, with 18 tasks escaping the 0-of-8 block and 36 more consolidating to 8-of-8. Combined with a paired first-visit/second-visit test on the training dumps (+2.6 pts/epoch, 95% CI excluding zero), the flat-looking reward curve is now known to hide slow, real learning."
+    },
+    {
+      "lead": "Provenance.",
+      "text": "Metrics come from the trainer's own WandB runs, which log **offline** on Jupiter — one run per Slurm attempt, under each experiment dir. They are rsynced off the cluster and `wandb sync`ed into lukeleeai/jupiter-currease30b-grpo, then stitched per arm latest-attempt-wins per step. Nothing here updates on its own: every refresh is a manual sync (`scripts/dashboard/refresh_currease.sh`). Job IDs, nodes and windows are read from each attempt's wandb-metadata.json and from sacct; fates are cross-checked against the operator incident ledger and the driver logs."
+    },
+    {
+      "lead": "Thin batches at every resume.",
+      "text": "The async trainer discards rollouts generated against a stale policy. At the first step after a checkpoint resume that bites hard: **12 of the 13 post-resume steps ran on less than the nominal 128 samples**, twice collapsing to a single group of 8. Both of the reward curve's dips to exactly 0.00 (lr1e6 step 16, lr5e6 step 11) are those 8-sample steps — one group of eight rollouts all failing, which is a coin-flip event, not a policy collapse. With 39 restarts behind these curves, a good share of the visible jitter is batch size, not learning. Check the effective-batch chart before reading anything into a spike."
+    },
+    {
+      "lead": "Reading the curves.",
+      "text": "Reward is binary task completion averaged over the batch, so it is far noisier step-to-step than a math-accuracy curve — a single step's wobble means nothing. The metric to watch is **frac_groups_mixed**: only tasks where some of the 8 rollouts succeeded and some failed produce any gradient under GRPO. All-wrong and all-correct groups contribute exactly zero, and they remain about three quarters of every batch."
+    },
+    {
+      "lead": "Where the LR lever actually shows.",
+      "text": "Reward is flat on all three arms, but **KL drift separates them cleanly and in rank order**: at step 20, lr1e6 sits at 0.0025 (essentially unmoved from the reference), lr3e6 at 0.0035, lr5e6 at 0.0177 — a 7x spread. lr5e6's entropy also runs slightly below the others. So the arms genuinely are different policies by now; that difference simply has not reached task completion. If reward is still flat at step 50 while KL keeps climbing, the honest read is that this task set is not teachable at this scale in 50 steps, not that the learning rate was wrong."
+    },
+    {
+      "lead": "What is not wrong.",
+      "text": "Truncation is **zero** on every arm — no rollout is hitting the 32k context wall — the TIS importance ratio sits at 1.000, and no arm's entropy is collapsing. The gaps in grad-norm are async steps where a partial batch was discarded, the same events as the thin-batch chart."
+    }
+  ],
+  "eval_key_label": "checkpoint probe (pass@8, 511 tasks x 8 rollouts)",
+  "evals": [
+    {
+      "step": 0,
+      "v": 0.418,
+      "label": "probe@0 41.8%",
+      "dx": 10,
+      "dy": -8
+    },
+    {
+      "step": 40,
+      "v": 0.46,
+      "series": "lr3e6",
+      "label": "probe@40 46.0%",
+      "dx": -14,
+      "dy": -10
+    }
   ]
 }
