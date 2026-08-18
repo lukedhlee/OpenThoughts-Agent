@@ -316,6 +316,9 @@ Job d (1385854) TIMEOUT at 11:59 (normal datagen wall). Pooled base scoring
   comparison is instr-trajectory + base probe/s1 evidence, not two full RL curves.
 
 ## SFT ARM LAUNCHED (path 2): Qwen3-30B-A3B-Base on OT-Agent-SFT-10K (2026-08-17 ~01:0x CEST)
+
+> SFT run detail now lives in `ai_memory/notes/ota10k_levanter_sft.md`; this section is kept for the
+> LLaMA-Factory-path history and the PI directive that moved SFT to Levanter.
 Ben's ask, per the OT-Agent paper (arxiv 2606.24855): the paper's SFT stack IS our LF fork
 (+ ALST); "Levanter" was a for-instance (live qwen3_moe exists only in marin monorepo
 lib/levanter — the standalone repo Ben linked is frozen/merged). Paper 10K recipe = lr 4e-5
@@ -524,42 +527,20 @@ max_grad_norm 1e-4 from 32k_base_bs96.yaml).
 
 Luke split the workload into three sessions. THIS ledger's supervisor session
 keeps: GRPO LR-sweep fleet ops + node-health/JSC thread. Spun out:
-- **SFT Levanter babysitter** → `session_brief_sft_levanter.md` (owns chain
-  1399224/1399225; incident 50 = XLA GEMM autotuner 24GiB OOM killed v4
-  1398566 → fix `xla_gpu_autotune_level=1`, commit f41bb3e5; v5 1398567
-  cancelled as doomed; v6 1399224 launched with fix).
+- **SFT Levanter babysitter** → run note `ota10k_levanter_sft.md` (source of
+  truth for that run) + `session_brief_sft_levanter.md` (role + live state).
+  SFT incidents are logged THERE, not in this ledger — the two numbering
+  sequences already collided (an "Incident 56" exists in both, different
+  events). Stubs below mark where the SFT entries used to sit.
 - **Runboard dashboard** → `session_brief_runboard_currease.md` (currease
   wandb is OFFLINE per-exp-dir, never synced; cloud project doesn't exist yet).
 Once those sessions boot, the supervisor stops touching their workstreams.
 
 ## SFT babysitter session (post-split incidents)
 
-- **Incident 51:** Lev v6 1399224 FAILED 22m50s in (compile cache warm — CE sweep
-  + train_step lowering done in ~15 min). XLA GEMM autotuner at level 1 still
-  RESOURCE_EXHAUSTED during train_step compile: 2 of 646 instructions, both
-  `__triton_gemm` fusions of `Qwen3MoeSparseMoeBlock/.../MoELinear/ragged_dot_general`
-  (MoE expert GEMMs), autotuner tried to materialize 3.00TiB / 4.50TiB operand
-  buffers — the ragged-dot operand shapes themselves are the problem, not the
-  level-4 init/check copies (incident 50). Ladder step 2: `xla_gpu_autotune_level=0`
-  (no autotune runs; heuristic configs). v7 1399225 cancelled (snapshot-inherited
-  the level-1 script at submit). New head+spare submitted from the level-0 sbatch.
-  Non-fatal noise confirmed again: 9.6GB cuMemAllocAsync failures at 20:35 were
-  CE-sweep probing; job ran 16 more min after them. If level 0 dies on the same
-  triton ragged-dot fusions, next candidate rung: `--xla_gpu_enable_triton_gemm=false`
-  (falls back to cuBLAS emitters) — NOT yet validated.
-- **Incident 52 — MILESTONE + new failure class:** v8 1399676 at level 0
-  **COMPILED train_step for the first time ever** (autotune ladder closed: 4→1→0
-  fixed the compile-time OOM). Then FAILED at 23m54s at step-0 EXECUTION:
-  `JaxRuntimeError RESOURCE_EXHAUSTED 8.96GiB [executable_name='jit__train_step']`
-  — exactly 9,622,075,392 bytes, the same size the CE sweep candidates probed
-  (benignly) at 21:02. Genuine capacity shortfall at microbatch 3/device
-  (96/32, seq 32768) under the 0.92-fraction pool (~88.3GiB of 96). Fix:
-  `trainer.per_device_parallelism: 1` (3-step grad accum; global batch 96 and
-  optimizer math unchanged — recipe intact). Mem fraction kept at 0.92 — bump
-  to 0.95 is the NEXT lever if execution still OOMs. v9 1399677 dependency-
-  released on v8's death and started with the old config (yaml read at job
-  start) → cancelled 36s in. NOTE: new shapes → compile cache miss; expect the
-  CE sweep (~8 min) + full train_step compile again on the next attempt.
+Incidents 51-52 MOVED → `ai_memory/notes/ota10k_levanter_sft.md` (dedicated SFT run note).
+51 = XLA GEMM autotuner still OOM at level 1 → level 0. 52 = first-ever
+train_step compile, then step-0 exec OOM → per_device_parallelism 1.
 
 ## Incident 53 (2026-08-17 ~21:45) + sweep extension to gs100
 
@@ -588,37 +569,9 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 
 ## SFT Incident 54 (2026-08-17 ~22:45 CEST) — ROOT CAUSE FOUND: XLA densifies MoE ragged_dot; fix = levanter use_gmm branch
 
-- v10 1399820 (per_device_parallelism=1) FAILED identically to v8 at 32m56s:
-  runtime RESOURCE_EXHAUSTED 8.96GiB in jit__train_step. The log's remat
-  warnings expose the real problem: post-remat memory demand **7.18TiB** at
-  microbatch 1 (v8: **21.15TiB** at microbatch 3 — exactly 3×, so the knob DID
-  work; ~235MB/token/device is the pathology). gpu_hlo_schedule also reports
-  while-loop (layer-scan) I/O arguments of 1.66–2.75TB.
-- **Root cause (explains incidents 50–52 retroactively)**: levanter's
-  qwen3_moe uses `hnn.MoELinear` with `use_gmm=False` → global-view
-  `jax.lax.ragged_dot_general`; XLA's SPMD partitioner/autodiff densifies its
-  backward into [token, experts, dim] buffers (32k×128×2048×fp32×48 layers ≈
-  1.65TB per tensor class). v6's "3.0/4.5TiB autotuner allocations" were these
-  real HLO operand shapes, not an autotuner bug. DenseMixer ruled out
-  (dense_router_gradient defaults False).
-- **Fix**: haliax already ships the cure behind `MoELinear(use_gmm=True)` —
-  shard_map + ragged_dot kernels (pallas-triton on GPU, custom VJP so XLA
-  never autodiffs/partitions the ragged op; megablox on TPU) + unit tests. No
-  model threaded it. Patch = thread `use_gmm` through Qwen3MoeConfig/Experts,
-  default True (must be a default: use_hf_model_config REPLACES the yaml model
-  config, so yaml-set fields don't survive). Upstream marin main checked: 0
-  relevant commits ahead. Deployed via fork-branch flow:
-  **github.com/lukedhlee/marin branch `lukedhlee/qwen3moe-gpu-gmm`**
-  (f0c24253a on top of upstream ab07b1a); cluster
-  `$F/repos/marin` checked out on that branch (was: plain upstream main).
-  Local clone (new): `/Users/lukedhlee/marin`. Upstream marin PR: candidate,
-  NOT opened (needs Luke's explicit ask per marin-fork rules).
-- pallas-triton import verified in the levanter env. **v12 = 1399959 (head),
-  v13 = 1399960 (spare)** submitted ~22:50. Full recompile expected (HLO
-  changed). Watch for: (a) `ragged_dot auto fallback` RuntimeWarning in the
-  log = triton kernel failed, silently on XLA path again — treat as FAILURE
-  even if it runs; (b) plausible first loss (~1.5-3 for a base model on SFT
-  data) as the numerics sanity check on the new kernel path.
+MOVED → `ai_memory/notes/ota10k_levanter_sft.md`.
+XLA SPMD densifies the MoE ragged_dot backward (7-21TiB). Fix: use_gmm
+triton kernels via the marin fork branch `lukedhlee/qwen3moe-gpu-gmm`.
 
 ## Incident 54 (2026-08-17 22:39): lr5e6 hang at s11 → rack-017 escalation
 
@@ -639,29 +592,9 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 
 ## SFT Incident 55 (2026-08-17 ~23:30 CEST) — gmm worked (7.18TiB→349GiB); residual pinning via custom_vjp; fix = optimize_remat
 
-- v12 1399959 FAILED at 22m48s, same surface error (8.96GiB exec OOM), but the
-  fingerprint PROVES the gmm patch worked: post-remat demand fell
-  **7.18TiB → 348.66GiB** and the TB-scale while-loop I/O errors are GONE. No
-  `ragged_dot auto fallback` warning → pallas-triton path active.
-- Remaining 349GiB ≈ 7.8GB/layer × 48 saved across the scan DESPITE
-  `gradient_checkpointing: True` (verified = haliax `simple` policy =
-  full save-nothing `eqx.filter_checkpoint`). Diagnosis: the triton
-  ragged_dot's `jax.custom_vjp` residuals (lhs = expert inputs ~2.5GB/layer,
-  rhs = gathered bf16 expert weights ~2.4GB/layer) are OPAQUE to
-  jax.checkpoint by default — remat cannot drop custom_vjp residuals, so they
-  pin per-layer for the whole scan. (Also explains why marin TPU never saw
-  it: at 4k pretrain seq this is ~1GB/layer — fits.)
-- **Fix**: `defvjp(..., optimize_remat=True)` (present in jax 0.11.0) — makes
-  the residuals rematerializable; ours are exactly the primal inputs, the
-  ideal case. marin branch commit **faa0bfcb9** (haliax ragged_dot.py, one
-  line), deployed to `$F/repos/marin`.
-- **v14 = 1400086 (head), v15 = 1400087 (spare)** submitted ~23:30. TE-absent
-  attention fallback checked: it goes to levanter's jax blockwise
-  flash_attention (O(N) memory), NOT vanilla — not a hog. If v14 still OOMs,
-  read its new `Can't reduce memory use below` number FIRST: the composition
-  delta identifies the next residual pinner (candidates: cudnn SDPA
-  residuals, fused-CE batched_xla saves, optimize_remat+shard_map not
-  composing).
+MOVED → `ai_memory/notes/ota10k_levanter_sft.md`.
+gmm cut demand 7.18TiB → 349GiB. optimize_remat=True added (later shown
+to be a no-op on prod, kept as correct).
 
 ## Incident 55 (2026-08-17 23:39): lr1e6 hang at s11 — SAME boundary+1 signature
 
@@ -719,58 +652,15 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 
 ## SFT Incident 56 (2026-08-18 ~02:15 CEST) — TRUE ROOT CAUSE: unmapped token axes → MoE block fully REPLICATED per device
 
-- v14 failed byte-identical to v12 (348.66GiB) → optimize_remat was a no-op.
-  v16 diag produced no dump (compile cache hit; jax scrubs dump flags from the
-  cache key). v17 = 1400274 rerun with JAX_ENABLE_COMPILATION_CACHE=false got
-  the dump.
-- 1-GPU probes (fscratch tmp_remat_probe*.py): (a) XLA ragged_dot backward is
-  DENSE even locally (48GiB [262144,128,768] buffers → triton gmm kernels are
-  mandatory, RAGGED_DOT_IMPL=xla is dead); (b) checkpointed scan +
-  shard_map + triton custom_vjp remats CORRECTLY at small scale (881MiB vs
-  738MiB dense control) → neither shard_map nor custom_vjp opacity is the
-  prod mechanism.
-- **v17 HLO dump (after-remat, 94MB text): the module is full of
-  GLOBAL-shaped tensors** — bf16[8388608,2048] (global TokenRepeat×hidden,
-  34GB) ×61, f32[1048576,128] (all 1M microbatch tokens × experts) ×136, etc.
-  Mechanism: Qwen3MoeSparseMoeBlock flattens to axes named "token"/
-  "token_repeat"; raw levanter.main.train_lm has NO mapping for them →
-  hax.auto_sharded + the block's shard_map pspecs resolve to REPLICATED →
-  every device stores + computes the ENTIRE global microbatch's MoE. Explains
-  the whole 50-55 chain (v6's "3TiB autotuner operands" were these global
-  dense tensors).
-- **Upstream receipt**: marin's own harness maps them —
-  `lib/marin/src/marin/experiment/train.py:84`
-  `compute_mapping={"token": _TOKEN_AXES, "token_repeat": _TOKEN_AXES}`,
-  `_TOKEN_AXES=(replica_dcn, replica, data)` == levanter DEFAULT_DP_AXES
-  (what batch maps to). Raw train_lm bypasses marin's harness → unmapped.
-- **Fix (pure yaml, trainer section — survives use_hf_model_config)**:
-  `trainer.mesh.compute_mapping: {token: [replica_dcn, replica, data],
-  token_repeat: [replica_dcn, replica, data]}` in
-  sft/levanter_configs/ota10k_qwen3_30b_a3b_base.yaml.
-- Marin-branch changes KEPT (both still required/harmless): use_gmm=True
-  (f0c24253a — XLA ragged bwd dense even at sharded-local shapes),
-  optimize_remat=True (faa0bfcb9).
-- Expected per-device after fix: global 34GB monsters → ~1GB locals; demand
-  should drop from 349GiB to O(10-30GiB). v17 scancelled post-dump.
+MOVED → `ai_memory/notes/ota10k_levanter_sft.md`.
+TRUE ROOT CAUSE: `token`/`token_repeat` axes unmapped in raw train_lm →
+the whole MoE block ran REPLICATED per device. Fix: trainer.mesh.compute_mapping.
 
 ## SFT Incident 57 (2026-08-18 ~02:50 CEST) — second replication layer: params FSDP-sharded only intra-node
 
-- Incident-56 token mapping WORKED: v18 1400728 remat demand 348.66 → 212.60GiB;
-  v20 dump census shows ALL global token tensors gone. v19/v22-style spares
-  cancelled per doomed-inheritance rule.
-- Remaining dominator in the v20 census: f32[48,128,512,768] expert master
-  weights/Adam state (9GiB each, hundreds of refs) + bf16 twins. **512 =
-  2048/4**: levanter's MeshConfig treats each GH200 node as a slice → ICI
-  data axis = 4 (intra-node), nodes on DCN replica_dcn(8). Default
-  param_mapping {embed: data} → params/opt-state sharded 4-way, REPLICATED
-  across nodes. fp32 master+m+v at /4 ≈ 87GB/device alone.
-- **Fix (yaml)**: `trainer.mesh.param_mapping: {embed: [replica_dcn, data]}`
-  → 32-way FSDP, same physical axes batch spans. Cross-node all-gathers ride
-  IB — standard GPU FSDP practice.
-- **v21 = 1401031 (head), v22 = 1401032 (spare)**. Expected: remat warning
-  gone (demand ~20-30GiB/device). Diagnostic method now proven: cache-off
-  dump run + python shape census of the after-remat HLO (>2GB tensors),
-  compare against previous dump.
+MOVED → `ai_memory/notes/ota10k_levanter_sft.md`.
+Second replication layer: node-as-slice mesh left params/Adam 4-way
+sharded + replicated across nodes. Fix: param_mapping embed [replica_dcn, data].
 
 ## Incidents 59 + 60 (2026-08-18 overnight)
 
@@ -931,28 +821,9 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 
 ## SFT Incident 58 (2026-08-18 ~17:15 CEST) — chain restarts silently: run-id-scoped checkpoint path
 
-- Link 1 (v21 1401031) TIMEOUT'd normally at 11:59 with **step-80 banked**
-  (loss 0.50→0.42, ~500 s/step steady state). Its successor 1401032 started
-  and logged **`No training checkpoint found. Initializing model from HF
-  checkpoint`** — i.e. it silently RESTARTED from step 0, discarding 12h.
-- Mechanism: levanter saves to / searches `checkpointer.base_path/<run_id>`
-  (`TrainerConfig.checkpoint_search_paths`, trainer.py:910, and
-  `checkpointer.create(run_id)`). `trainer.id` defaults to None → a RANDOM id
-  per launch. Link 1 = `y3m02qj0`; link 2 minted `xfeqt2h5` (visible as the
-  wandb "Starting a new run with run id ..." line), searched an empty dir,
-  found nothing, fell back to `initialize_from_hf`. EVERY link would restart:
-  the run could never pass ~80 steps.
-- **Detection note for future links**: a resumed link is NOT proven by a tqdm
-  progress line — the first one prints `-/328 elapsed:00:00` at startup. Grep
-  for `No training checkpoint found` (fatal) vs `Loading/Restored checkpoint`.
-- **Fix**: pin `trainer.id: y3m02qj0` in the yaml (= where step-80 lives, so
-  the chain resumes rather than restarts). Deliberately reused link 1's opaque
-  id instead of renaming the ckpt dir — no data movement, zero risk to the
-  only 12h artifact. Do not change it for this run.
-- 1401032 scancelled the moment the restart was confirmed; pending links
-  1406567-69 scancelled BEFORE they could inherit the bug (afterany had
-  already released them). New chain: **1406651 → 1406652 → 1406653 →
-  1406654** (4 links ≈ 320 steps of headroom for the remaining 248).
+MOVED → `ai_memory/notes/ota10k_levanter_sft.md`.
+Chain links silently restarted from HF weights: checkpoints are scoped by
+run id and trainer.id defaulted to random. Fix: pin `trainer.id`.
 
 ## GS40 PROBE RESULTS (job 1404713, COMPLETED 4:13:14, scored 2026-08-18 ~18:20)
 
