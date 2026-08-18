@@ -990,3 +990,6 @@ Baseline arm (lr3e-6) checkpoint gs40 = 1.25 epochs, vs step-0 instruct:
 - **Incident 78** (18:30): lr1e6 1404405 hang at s31 (post-gs30, boundary+1
   #12) on jpbo-051-[36-37,39-42] — dual freeze 17:35:30. gs30 banked (arm
   26→30 this link, r0.62@s30). 1404406 rolls. Set excluded.
+- **Incident 79** (~18:26): lr5e6 fresh head 1406880 ghost-OOM at 19 min on
+  jpbo-117-[01-04,06,09]; spare 1406881 respawned SAME nodeset, running
+  (self-heal attempt #5). Not excluded pending its fate.
