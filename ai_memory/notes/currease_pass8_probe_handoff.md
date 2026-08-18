@@ -864,3 +864,19 @@ Baseline arm (lr3e-6) checkpoint gs40 = 1.25 epochs, vs step-0 instruct:
 - **Incident 79** (~18:26): lr5e6 fresh head 1406880 ghost-OOM at 19 min on
   jpbo-117-[01-04,06,09]; spare 1406881 respawned SAME nodeset, running
   (self-heal attempt #5). Not excluded pending its fate.
+
+## Incidents 80-83: evening ghost storm KILLED ALL CHAINS (caught 01:43 Aug 19)
+
+- Between 18:41 and 20:42 every remaining link on all three arms ghost-OOM'd:
+  1404419 (jpbo-040-[41-46]), 1405278 (jpbo-105-[33,37,41-43,47]), 1405279 +
+  1406882 + 1404406 (jpbo-087-3x zone — THREE hits), 1406881 (jpbo-117,
+  self-heal failed). Fleet dead ~5h before the 01:43 sacct sweep caught it —
+  local watchers died silently AGAIN (Mac idle-sleep kills the poll loops;
+  3rd occurrence).
+- **Watcher fix**: watchers now run under `caffeinate -i` (prevents idle
+  sleep for their lifetime). Backstop remains periodic sacct sweeps.
+- jpbo-087 rack-escalated (hang 0x + triple-ghost 3x); jpbo-040/105/117 sets
+  added (b88e459f). Baseline lost 4 unbanked steps (46-49); resume points
+  gs45/gs30/gs30.
+- **Relaunched all three arms** (~01:50): baseline 1408870-72, lr1e6
+  1408873-75, lr5e6 1408876-78 (head + 2 spares each, live exclude list).
