@@ -872,3 +872,9 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   jpbo-111-[01-06] — a gsm8k-era PRUNED rack re-offending → zone re-added
   (repeat-offender rule). 1401207 took over (jpbo-083). lr5e6 chain extended:
   spare9 1402897, spare10 1402898 (9 links consumed by this arm since 00:30).
+- **Export attempt 1 (1402385) FAILED — GOTCHA for future ckpt exports**:
+  resume discovery needs `latest_ckpt_global_step.txt` in the checkpoints
+  ROOT (not just the global_step_N dir). Without it: "No checkpoint found,
+  starting training from scratch" → the job TRAINED the base model until a
+  Ray node died + wall. Fix: copy/write the pointer ("40"). Retry = 1403929
+  (1.5h cap). Copy dir verified clean (no stray ckpts from attempt 1).
