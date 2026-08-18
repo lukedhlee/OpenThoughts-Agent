@@ -786,3 +786,15 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   defend against ghosts; prolog start-time guard is the fix.
 - Fleet 04:55: baseline 1398002 s36 r0.28 fresh; lr5e6 1400471 s15 r0.15
   (slow overnight steps ~40min fleet-wide); lr1e6 1394807 starting (gs15).
+
+## Incident 61 (2026-08-18 05:25): lr5e6 1400471 hang at s16 — boundary+1 now 8/9
+
+- Dual freeze 04:25:21 (right after gs15 save), on jpbo-001-[08-11,15-16] —
+  the SAME nodeset that ghost-OOM'd 1400470 (inc 60) then ran 471 healthy for
+  4h. Nodeset now excluded (2 incidents, though both weakly node-attributed).
+- scancel 05:25:06 → 1400472 rolls from gs15. Chain EXTENDED proactively:
+  spare3 1401107, spare4 1401108 (afterany chain, full preamble, live
+  --exclude). lr1e6 1394807 RUNNING (patch skipped = started).
+- The boundary+1 hang cadence (~every 4-5h per arm overnight) is the dominant
+  walltime tax; ghost-OOMs self-heal via spares. Upstream ckpt-save/EP race
+  writeup remains the highest-leverage fix (needs Luke).
