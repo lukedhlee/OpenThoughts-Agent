@@ -32,19 +32,24 @@ Cluster: JUPITER booster (JSC), GH200 nodes (4 GPUs, 96GB each), ssh alias
 
 ## Live state (2026-08-17 ~22:50 CEST — VERIFY with squeue before acting)
 
-- **v18 = 1400728 (head), v19 = 1400729 (afterany spare)** — carries the
-  TRUE root-cause fix (incident 56): `trainer.mesh.compute_mapping` maps
-  `token`/`token_repeat` onto the DP axes. Raw train_lm left them unmapped →
-  the ENTIRE MoE block ran globally REPLICATED on every device (v17 HLO dump:
-  bf16[8388608,2048] etc.). Mirrors marin's own harness
-  (marin/experiment/train.py `_TOKEN_AXES`).
-  Memory-demand trajectory (the `Can't reduce memory use below` remat line is
-  the fingerprint to read in every failed log): 21.15TiB (v8, mb3) → 7.18TiB
-  (v10, mb1) → 348.66GiB (v12, gmm) → v18 expected O(10-30GiB), warning
-  should disappear. Marin branch @ faa0bfcb9 (use_gmm + optimize_remat) KEPT —
-  still required (XLA ragged bwd is dense even locally; 48GiB probe).
-  Incident 55's optimize_remat was a no-op on prod (v14 byte-identical);
-  probes cleared shard_map/custom_vjp opacity — see incidents 55-56.
+- **🟢 GREEN: v21 = 1401031 TRAINING** (v22 = 1401032 afterany spare).
+  First loss line EVER at 2026-08-18 06:06 CEST: step 4/328, loss≈0.50,
+  zero remat warnings, zero ragged_dot fallbacks. Three stacked root causes,
+  all fixed: (1) incident 54 — use_gmm triton MoE kernels (marin branch
+  `lukedhlee/qwen3moe-gpu-gmm` @ faa0bfcb9, REQUIRED: XLA ragged bwd is dense
+  even locally, 48GiB probe); (2) incident 56 — token/token_repeat axes
+  unmapped in raw train_lm → MoE block globally replicated per device
+  (yaml trainer.mesh.compute_mapping fix); (3) incident 57 — node-as-slice
+  mesh left params/Adam fp32 only 4-way sharded, replicated across nodes
+  (yaml trainer.mesh.param_mapping: embed: [replica_dcn, data]).
+  Demand trajectory: 21.15TiB → 7.18TiB → 348.66GiB → 212.60GiB → fits.
+- **Walltime TIMEOUT is safe**: levanter CheckpointerConfig.save_interval
+  defaults to 15-min time-based checkpoints (checkpoint.py:1149) — a link
+  timeout loses ≤15 min; spare resumes. Step-100 keeps are permanent.
+- **Open**: steady-state s/it unknown (1057s/it tqdm average includes ~45min
+  compile; naive ETA 95h ≈ 8 links). Watchers armed: next-progress-line rate
+  check + job-exit long-haul. If steady rate stays >600s/it consider perf
+  work (autotune level 1 retry, CE blocks) AFTER stability is proven.
 - Levanter-side knobs already in place and KEPT: autotune level 0 (compile
   ladder closed at incident 51), per_device_parallelism 1 (incident 52),
   mem fraction 0.92, CE sweep ON, compile cache.
