@@ -904,3 +904,10 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   (rl-fa torch/vllm now cu13). Relaunched 1404364 with the nvidia lib paths
   exported at submit (verified libcudart resolves). GOTCHA for all future
   datagen/serve launches from rl-fa.
+- **Incident 71** (~12:00-12:30, caught 13:25): baseline links 1401197 AND
+  1401198 both ghost-OOM'd at init_model on the SAME nodeset
+  jpbo-054-[17,20-24] (~14 and ~11 min) — residue persisted across the
+  respawn this time (counter-example to the self-heal cases; ghost lifetimes
+  vary minutes-to-hours). Chain exhausted silently (watcher was on 197 but
+  event notification lagged behind the double burn). NEW baseline chain:
+  head 1404417 + 1404418/19, resume gs40. jpbo-054 set excluded.
