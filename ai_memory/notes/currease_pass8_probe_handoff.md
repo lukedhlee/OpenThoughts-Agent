@@ -924,3 +924,7 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 - **Incident 72** (14:38): lr5e6 1401207 hang at s26 (post-gs25) on
   jpbo-083-[05,07-10,14] — dual freeze 13:42:38. gs25 banked (arm 20→25 this
   link). 1402897 rolls. Set excluded.
+- **Incident 73** (~13:5x, caught 14:45): baseline head 1404417 ghost-OOM at
+  26 min on jpbo-109-[34-39] — second dirty zone in rack 109 (4x from inc 57)
+  → rack-escalated jpbo-109-[01-48]. Spare 1404418 healthy at s41+ (baseline
+  past gs40). Chain extended bspare3 1405278, bspare4 1405279.
