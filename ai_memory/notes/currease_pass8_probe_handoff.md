@@ -771,3 +771,18 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   gone (demand ~20-30GiB/device). Diagnostic method now proven: cache-off
   dump run + python shape census of the after-remat HLO (>2GB tensors),
   compare against previous dump.
+
+## Incidents 59 + 60 (2026-08-18 overnight)
+
+- **59**: lr1e6 1394806 hang at s16 on jpbo-022-[17-19,24-26] — dual freeze
+  03:52:41, gs15 banked. Boundary+1 hang count now **7/8**. scancel 04:52 →
+  1394807 rolls. jpbo-022 set excluded (pruned-era zone re-offending, though
+  hang-class attribution stays weak).
+- **60**: lr5e6 resubmitted head 1400470 ghost-OOM'd in ppo_train at 20m13s on
+  jpbo-001-[08-11,15-16] (~01:15). Spare 1400471 respawned onto the SAME
+  NODESET minutes later and trained fine for 3h38m+ (s15 by 04:25) —
+  **cleanest transience demo yet: same nodes, ~20 min apart, fatal → healthy.
+  Deliberately NOT excluded.** Strongest argument that exclusion lists cannot
+  defend against ghosts; prolog start-time guard is the fix.
+- Fleet 04:55: baseline 1398002 s36 r0.28 fresh; lr5e6 1400471 s15 r0.15
+  (slow overnight steps ~40min fleet-wide); lr1e6 1394807 starting (gs15).
