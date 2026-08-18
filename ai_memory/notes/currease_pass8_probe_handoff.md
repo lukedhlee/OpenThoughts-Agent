@@ -716,3 +716,39 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   had already evaporated → ghost lifetime here **<~40 min**. Tightens the
   transience bound; implication: only a START-TIME check (prolog ghost-guard)
   can reliably defend — even prompt exclusions chase evaporating ghosts.
+
+## SFT Incident 56 (2026-08-18 ~02:15 CEST) — TRUE ROOT CAUSE: unmapped token axes → MoE block fully REPLICATED per device
+
+- v14 failed byte-identical to v12 (348.66GiB) → optimize_remat was a no-op.
+  v16 diag produced no dump (compile cache hit; jax scrubs dump flags from the
+  cache key). v17 = 1400274 rerun with JAX_ENABLE_COMPILATION_CACHE=false got
+  the dump.
+- 1-GPU probes (fscratch tmp_remat_probe*.py): (a) XLA ragged_dot backward is
+  DENSE even locally (48GiB [262144,128,768] buffers → triton gmm kernels are
+  mandatory, RAGGED_DOT_IMPL=xla is dead); (b) checkpointed scan +
+  shard_map + triton custom_vjp remats CORRECTLY at small scale (881MiB vs
+  738MiB dense control) → neither shard_map nor custom_vjp opacity is the
+  prod mechanism.
+- **v17 HLO dump (after-remat, 94MB text): the module is full of
+  GLOBAL-shaped tensors** — bf16[8388608,2048] (global TokenRepeat×hidden,
+  34GB) ×61, f32[1048576,128] (all 1M microbatch tokens × experts) ×136, etc.
+  Mechanism: Qwen3MoeSparseMoeBlock flattens to axes named "token"/
+  "token_repeat"; raw levanter.main.train_lm has NO mapping for them →
+  hax.auto_sharded + the block's shard_map pspecs resolve to REPLICATED →
+  every device stores + computes the ENTIRE global microbatch's MoE. Explains
+  the whole 50-55 chain (v6's "3TiB autotuner operands" were these global
+  dense tensors).
+- **Upstream receipt**: marin's own harness maps them —
+  `lib/marin/src/marin/experiment/train.py:84`
+  `compute_mapping={"token": _TOKEN_AXES, "token_repeat": _TOKEN_AXES}`,
+  `_TOKEN_AXES=(replica_dcn, replica, data)` == levanter DEFAULT_DP_AXES
+  (what batch maps to). Raw train_lm bypasses marin's harness → unmapped.
+- **Fix (pure yaml, trainer section — survives use_hf_model_config)**:
+  `trainer.mesh.compute_mapping: {token: [replica_dcn, replica, data],
+  token_repeat: [replica_dcn, replica, data]}` in
+  sft/levanter_configs/ota10k_qwen3_30b_a3b_base.yaml.
+- Marin-branch changes KEPT (both still required/harmless): use_gmm=True
+  (f0c24253a — XLA ragged bwd dense even at sharded-local shapes),
+  optimize_remat=True (faa0bfcb9).
+- Expected per-device after fix: global 34GB monsters → ~1GB locals; demand
+  should drop from 349GiB to O(10-30GiB). v17 scancelled post-dump.

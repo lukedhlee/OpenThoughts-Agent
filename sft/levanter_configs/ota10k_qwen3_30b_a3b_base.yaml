@@ -59,6 +59,18 @@ model:
 train_seq_len: 32768
 trainer:
   seed: 42
+  # incident 56 ROOT CAUSE (of the 50-55 OOM chain): qwen3_moe's SparseMoeBlock
+  # flattens to ad-hoc "token"/"token_repeat" axes. Raw train_lm leaves them
+  # unmapped -> auto_sharded + the block's shard_map pspecs resolve to
+  # REPLICATED, so every device holds/computes the GLOBAL microbatch MoE
+  # (bf16[8388608,2048] etc. in the v17 HLO dump). marin's own harness maps
+  # them onto the DP axes (marin/experiment/train.py _TOKEN_AXES); we mirror
+  # that here. This is a trainer-section field, so it survives
+  # use_hf_model_config's wholesale model-config replacement.
+  mesh:
+    compute_mapping:
+      token: [replica_dcn, replica, data]
+      token_repeat: [replica_dcn, replica, data]
   tracker:
     type: wandb
     project: jupiter-ota10k-sft
