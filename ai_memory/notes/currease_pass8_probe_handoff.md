@@ -880,3 +880,22 @@ Baseline arm (lr3e-6) checkpoint gs40 = 1.25 epochs, vs step-0 instruct:
   gs45/gs30/gs30.
 - **Relaunched all three arms** (~01:50): baseline 1408870-72, lr1e6
   1408873-75, lr5e6 1408876-78 (head + 2 spares each, live exclude list).
+
+## FLEET PAUSED BY LUKE (2026-08-19 01:49)
+
+All 9 relaunched chain links (1408870-78) scancelled ~1 min after submission
+on Luke's instruction ("stop them for now, resume later"). Nothing was lost —
+none had started training. All watchers stopped.
+
+**Resume state**: baseline gs45/100 (r~0.28 trend, probed 46.0 pass@8 at
+gs40), lr1e6 gs30/100 (r 0.62 at s30), lr5e6 gs30/100 (r 0.45 at s30).
+Checkpoints + pointer files intact in each exp dir.
+
+**Resume recipe** (per arm, from $F/repos/OpenThoughts-Agent with the full
+DCFT+secrets+proxychains preamble; see incidents 39/40):
+  X=$(grep -o 'node_exclusion_list="[^"]*"' hpc/hpc.py | head -1 | cut -d'"' -f2)
+  SB=$F/experiments/<arm>/sbatch/<arm>_rl.sbatch
+  h=$(sbatch --parsable --exclude="$X" $SB); chain 2 spares afterany.
+Auto-resumes from latest ckpt; configs already carry max_steps=100. Re-arm
+caffeinate-wrapped watchers + a periodic sacct sweep. Consider aging the
+exclusion list before relaunch (many entries will be >24h stale).
