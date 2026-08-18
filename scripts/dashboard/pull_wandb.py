@@ -30,6 +30,11 @@ RL_DEFAULT_METRICS = {
     "len90": "diag/response_len_p90",
     "trunc": "diag/truncated_frac",
     "tis": "policy/tis/imp_ratio_mean",
+    # async trainer: how much of the nominal batch actually survived staleness
+    # filtering. The first step after every checkpoint resume runs on a fraction
+    # of the batch, which is why those points are the noisiest on the reward curve.
+    "nsamp": "async/effective_batch_samples",
+    "discard": "async/discard_rate",
 }
 
 PASSTHROUGH = [
