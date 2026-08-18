@@ -798,3 +798,26 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 - The boundary+1 hang cadence (~every 4-5h per arm overnight) is the dominant
   walltime tax; ghost-OOMs self-heal via spares. Upstream ckpt-save/EP race
   writeup remains the highest-leverage fix (needs Luke).
+
+## Incidents 62a/b + morning state (2026-08-18 06:30 CEST)
+
+- **62a/b**: lr5e6 links 1400472 (jpbo-044-[17-18,21-23,31]) and 1401107
+  (jpbo-042-[37-38,40,43,47-48]) both ghost-OOM'd at load, ~16 min each.
+  Baseline runs healthy on ADJACENT jpbo-044-[20,25-29] for 5h+ — residue is
+  node-local, not zone-wide. Both sets excluded (same-day quarantine).
+  1401108 took over (bring-up 06:1x, resumes gs15); chain extended: spare5
+  1401183, spare6 1401184.
+- **Fleet 06:30**: baseline 1398002 s36 r0.28 (5h18m); lr1e6 1394807 s17
+  r0.23; lr5e6 1401108 starting @gs15. Overnight cadence ~40 min/step
+  fleet-wide (slower than daytime 8-22 min).
+- **Overnight tally (17 evening → 18 morning)**: hangs 53/54/55/57/59/61
+  (boundary+1 count 8/9), ghost-OOMs 56/58a/58b/60/62a/62b. Zero training
+  lost beyond ≤5-step ckpt gaps. lr8e6-era chains all retired.
+- **Eval status (Luke asked)**: NO in-training validation configured
+  (eval_interval=999999, val_data=[]). Improvement signal = train reward +
+  train pass@8 only. PROPOSED: offline pass@8 probes of exported ckpts at
+  aligned steps (0/15/25/50...) — awaiting Luke's eval-set choice:
+  held-out TaskTrove band (recommended) vs rl511 train set.
+- **Checkpoint inventory**: baseline gs5..35 (1.4TB); lr1e6 gs5..15 (590G);
+  lr5e6 gs5..15 (590G). ~200GB/ckpt → ~12TB by gs100 ×3 arms. PROPOSED
+  pruning (needs Luke): keep every 25th + latest 2 per arm.
