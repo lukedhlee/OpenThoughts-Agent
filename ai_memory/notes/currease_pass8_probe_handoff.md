@@ -928,3 +928,28 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   26 min on jpbo-109-[34-39] — second dirty zone in rack 109 (4x from inc 57)
   → rack-escalated jpbo-109-[01-48]. Spare 1404418 healthy at s41+ (baseline
   past gs40). Chain extended bspare3 1405278, bspare4 1405279.
+
+## SFT Incident 58 (2026-08-18 ~17:15 CEST) — chain restarts silently: run-id-scoped checkpoint path
+
+- Link 1 (v21 1401031) TIMEOUT'd normally at 11:59 with **step-80 banked**
+  (loss 0.50→0.42, ~500 s/step steady state). Its successor 1401032 started
+  and logged **`No training checkpoint found. Initializing model from HF
+  checkpoint`** — i.e. it silently RESTARTED from step 0, discarding 12h.
+- Mechanism: levanter saves to / searches `checkpointer.base_path/<run_id>`
+  (`TrainerConfig.checkpoint_search_paths`, trainer.py:910, and
+  `checkpointer.create(run_id)`). `trainer.id` defaults to None → a RANDOM id
+  per launch. Link 1 = `y3m02qj0`; link 2 minted `xfeqt2h5` (visible as the
+  wandb "Starting a new run with run id ..." line), searched an empty dir,
+  found nothing, fell back to `initialize_from_hf`. EVERY link would restart:
+  the run could never pass ~80 steps.
+- **Detection note for future links**: a resumed link is NOT proven by a tqdm
+  progress line — the first one prints `-/328 elapsed:00:00` at startup. Grep
+  for `No training checkpoint found` (fatal) vs `Loading/Restored checkpoint`.
+- **Fix**: pin `trainer.id: y3m02qj0` in the yaml (= where step-80 lives, so
+  the chain resumes rather than restarts). Deliberately reused link 1's opaque
+  id instead of renaming the ckpt dir — no data movement, zero risk to the
+  only 12h artifact. Do not change it for this run.
+- 1401032 scancelled the moment the restart was confirmed; pending links
+  1406567-69 scancelled BEFORE they could inherit the bug (afterany had
+  already released them). New chain: **1406651 → 1406652 → 1406653 →
+  1406654** (4 links ≈ 320 steps of headroom for the remaining 248).
