@@ -204,3 +204,49 @@ autotuner ladder 4→1→0), **52** (first successful train_step compile; microb
 true root cause), **57** (param sharding), **58** (pinned run id / silent restart).
 Future SFT incidents: number them **in this note** as SFT-59, SFT-60, … and stop
 appending to the GRPO ledger.
+
+## SFT-59 (2026-08-19 ~00:20 CEST) — 🔴 RESUME CORRUPTS THE MODEL. Run is NOT valid.
+
+**Do not trust any checkpoint in the current lineage.** Discovered while the run
+looked healthy: the resumed link's loss is **24**, not 0.42.
+
+- Link 1 (v21 1401031, from HF weights): loss 0.50 → 0.42 over steps 0–80,
+  monotonic. Saved temp `step-80` at 16:48:00; SIGTERM (wall limit) 16:50:43.
+- Link 2 (1406651) restored `step-80` and its first loss was **24**, then
+  recovered monotonically 24 → 13.4 → 9.3 → 7.9 → 6.0 → 4.28 by step 126.
+- **24 is WORSE than random** (ln 151936 ≈ 11.9) → the restored weights are
+  corrupted, not merely re-initialized. Recovery-from-garbage, not divergence.
+- Not a config/code drift: marin pinned at `faa0bfc` (clean tree), the only
+  yaml delta since step-80 is `trainer.id`. Load path logs no shape mismatch or
+  partial restore (the `Unknown leaf type NoneType` spam is benign — optional
+  bias leaves).
+- **`step-80` is GONE**: it was a *temporary* (15-min time-based) checkpoint and
+  link 2's checkpointer deleted it after writing step-100. Everything on disk
+  (step-100, step-124) descends from the corrupted restore → **no clean
+  checkpoint exists; a restart from step 0 is required regardless of cause.**
+- Leading hypothesis: the step-80 temp checkpoint was **torn** — written 2m43s
+  before the kill, tensorstore's async flush possibly incomplete on some shards
+  despite the "Saved checkpoint"/commit-callback log lines. Alternative:
+  restore is systematically lossy (e.g. optimizer state), which would corrupt
+  the model at *every* 12h boundary and makes levanter checkpointing unusable
+  here as configured.
+- **Decisive test RUNNING**: 1406651 cancelled (its model is useless anyway) so
+  1406652 restores `step-124` — a checkpoint written mid-run, far from any
+  signal. First loss ≈4.3 ⇒ restore is sound and step-80 was torn. First loss
+  ≫4.3 ⇒ restore is systematically broken.
+
+### Consequences for the restart (do NOT relaunch before deciding these)
+
+1. Guard the wall-clock boundary: `#SBATCH --signal=B:USR1@<sec>` + a graceful
+   stop, or stop scheduling saves near the wall, so no checkpoint is written
+   into a kill window.
+2. Keep a **permanent** cadence dense enough to survive (`keep: [{every: 25}]`),
+   so a temp-checkpoint deletion can never orphan the last good state.
+3. Validate a restore ONCE, cheaply, before committing 46h: resume and confirm
+   the first loss matches the pre-save loss. **A resumed link that merely runs
+   is not evidence it resumed correctly** — this failure was invisible for 7h
+   because the job was healthy, memory was fine, and the loss was *falling*.
+4. Also re-examine `max_grad_norm: 1e-4` (paper/repo-truth value): with lr 4e-5
+   this clips updates to near-nothing, and link 1's loss barely moved
+   (0.50→0.42 in 80 steps). Worth confirming it is intended before spending
+   another 46h.
