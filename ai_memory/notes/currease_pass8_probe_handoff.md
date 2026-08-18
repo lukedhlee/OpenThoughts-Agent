@@ -953,3 +953,19 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   1406567-69 scancelled BEFORE they could inherit the bug (afterany had
   already released them). New chain: **1406651 → 1406652 → 1406653 →
   1406654** (4 links ≈ 320 steps of headroom for the remaining 248).
+
+## GS40 PROBE RESULTS (job 1404713, COMPLETED 4:13:14, scored 2026-08-18 ~18:20)
+
+Baseline arm (lr3e-6) checkpoint gs40 = 1.25 epochs, vs step-0 instruct:
+- pass@1 34.2% -> 36.9% (+2.7, >3sigma on 4056 samples)
+- pass@8 41.8% -> 46.0% (+4.2)
+- never-solved 292 (58%) -> 274 (54%): 18 tasks ESCAPED the 0/8 block
+  (capability expansion, not just sharpening)
+- always-solved 103 (21%) -> 139 (27%): +36 tasks consolidated to 8/8
+- partial band 107 -> 94 (GRPO gradient pool shrinking — supports the
+  partial-band curriculum as the next-phase move)
+- histogram {0:274,1:23,2:9,3:9,4:11,5:6,6:8,7:28,8:139}; n=507 scored
+  (defects 0297/0506/0508 excluded), 14 unreadable results
+- Scoring: /tmp/score_gs40_probe.py on login node; reward key =
+  verifier_result.rewards.reward. VERDICT: GRPO on curriculum-easy IS
+  learning at lr3e-6 — consistent with the +2.6/epoch paired train-set test.
