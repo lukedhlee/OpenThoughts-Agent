@@ -868,3 +868,7 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   gs40) on jpbo-057-[37,40-42,44,48] — dual freeze 10:06:45, confirmed 59
   min. Zero step loss (gs40 banked + already in export pipeline). 1401197
   rolls. jpbo-057 set excluded.
+- **Incident 69** (~10:45): lr5e6 1401206 ghost-OOM at 11 min on
+  jpbo-111-[01-06] — a gsm8k-era PRUNED rack re-offending → zone re-added
+  (repeat-offender rule). 1401207 took over (jpbo-083). lr5e6 chain extended:
+  spare9 1402897, spare10 1402898 (9 links consumed by this arm since 00:30).
