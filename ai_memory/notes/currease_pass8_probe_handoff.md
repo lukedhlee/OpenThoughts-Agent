@@ -850,3 +850,17 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 - **Fleet 09:16 — best state in 12h**: baseline 1398003 s40 (jpbo-057);
   lr5e6 1401184 s20 r0.42 (breakthrough past the gs15 wall, reward jump
   0.29→0.42); lr1e6 1394808 starting @gs20. All ms100.
+
+## Incidents 66 + 67 (2026-08-18 morning)
+
+- **66**: lr5e6 1401184 hang at s21 (boundary+1) on jpbo-038-[03,05,08,12,
+  15-16] — dual freeze 09:40:17. That nodeset's 4th incident today (2 ghost-
+  OOMs, 1 healthy 3.5h run, now a hang) → excluded. gs20 banked; 1401206
+  rolls. Arm peaked r0.42@s20 before the hang.
+- **67**: lr1e6 1394808 ghost-OOM at 24 min on jpbo-074-[03-04,06-09]; spare
+  1401795 respawned SAME nodeset → healthy, s21+ (self-heal #3). Nodeset not
+  excluded.
+- Baseline 1398003 possible hang forming (log frozen since 10:06:45 after
+  gen-complete, s40) — watcher confirms at ~50 min. gs40 banked + already
+  copied to the export workspace, so zero exposure.
+- Export job 1402385 RUNNING (gs40 → HF finalize) on jpbo-015-[23-28].
