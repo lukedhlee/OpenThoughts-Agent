@@ -921,3 +921,6 @@ Once those sessions boot, the supervisor stops touching their workstreams.
 - Datagen result format: reward lives at `verifier_result.rewards.reward`
   in each trial result.json (top-level `reward` is null — do not misread).
 - ETA ~4-5h → score vs step-0 (pass@1 34.2 / pass@8 41.8 / 292 never-solved).
+- **Incident 72** (14:38): lr5e6 1401207 hang at s26 (post-gs25) on
+  jpbo-083-[05,07-10,14] — dual freeze 13:42:38. gs25 banked (arm 20→25 this
+  link). 1402897 rolls. Set excluded.
