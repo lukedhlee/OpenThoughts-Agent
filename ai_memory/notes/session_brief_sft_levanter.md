@@ -50,10 +50,16 @@ Cluster: JUPITER booster (JSC), GH200 nodes (4 GPUs, 96GB each), ssh alias
   reaching **step 80/328**, loss 0.50 → ~0.42. Checkpoint step-80 saved 2.5
   min before the kill (time-based 15-min policy works as designed; ≤3 min of
   work lost). Steady state measured: **~500 s/step** (≈80 steps per 12h link).
-- **Chain to completion queued**: 1401032 → 1406567 → 1406568 → 1406569
-  (afterany), covering step 80 → ~410, i.e. past the 328 target with margin.
-  At 328 levanter writes the HF export to
-  `$F/checkpoints/ota10k_sft_30ba3b_levanter/hf`.
+- **Incident 58 (chain-breaking, FIXED)**: links restarted from HF weights
+  instead of resuming — checkpoints are scoped by run id and `trainer.id`
+  defaulted to a RANDOM value per link. Now pinned `trainer.id: y3m02qj0`
+  (where step-80 lives). Old chain (1401032, 1406567-69) scancelled.
+  **Verify every resume** by grepping the log for
+  `No training checkpoint found` (fatal restart) vs `Loading/Restored
+  checkpoint` — a tqdm progress line proves nothing (first one is `-/328`).
+- **Live chain: 1406651 → 1406652 → 1406653 → 1406654** (4 links ≈ 320 steps
+  of headroom for the 248 remaining). At step 328 levanter writes the HF
+  export to `$F/checkpoints/ota10k_sft_30ba3b_levanter/hf`.
 - **Open (perf, not blocking)**: ~500 s/step = ~6.3k tok/s across 32 GH200s
   for a 3B-active MoE is low. Candidate levers AFTER the run banks steps (do
   NOT disturb a green run without Luke's ask): retry autotune level 1 now
