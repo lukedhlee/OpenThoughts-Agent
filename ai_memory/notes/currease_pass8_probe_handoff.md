@@ -864,3 +864,7 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   gen-complete, s40) — watcher confirms at ~50 min. gs40 banked + already
   copied to the export workspace, so zero exposure.
 - Export job 1402385 RUNNING (gs40 → HF finalize) on jpbo-015-[23-28].
+- **Incident 68** (11:06): baseline 1398003 hang at s41 (boundary+1 after
+  gs40) on jpbo-057-[37,40-42,44,48] — dual freeze 10:06:45, confirmed 59
+  min. Zero step loss (gs40 banked + already in export pipeline). 1401197
+  rolls. jpbo-057 set excluded.
