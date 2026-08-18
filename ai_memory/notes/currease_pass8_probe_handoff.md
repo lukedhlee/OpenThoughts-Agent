@@ -837,3 +837,16 @@ Once those sessions boot, the supervisor stops touching their workstreams.
   jpbo-038 deliberately NOT excluded while the test runs. lr5e6 chain
   extended: spare7 1401206, spare8 1401207 (7 ghost-OOM deaths on this arm
   tonight — worst-hit arm, still resumes from gs15).
+
+## Incident 65 + morning recovery (2026-08-18 09:15)
+
+- **65**: lr1e6 1394807 hang at s21 (boundary+1, 9/11) on jpbo-022-[20-23,
+  30-31] — dual freeze 08:22:07. SECOND dirty zone in rack 022 today →
+  **rack-022 escalated [01-48]**. scancel 09:15 → 1394808 rolls (gs20 banked
+  — arm advanced 15→20 this link). Chain extended: 1401795/96.
+- **jpbo-038 saga closed**: 1401183 ALSO ghost-OOM'd there (32 min, partial
+  residue) but third tenant 1401184 is HEALTHY 2h12m+ — nodeset self-healed
+  after two fatal tenancies. Stays unexcluded (transience vindicated again).
+- **Fleet 09:16 — best state in 12h**: baseline 1398003 s40 (jpbo-057);
+  lr5e6 1401184 s20 r0.42 (breakthrough past the gs15 wall, reward jump
+  0.29→0.42); lr1e6 1394808 starting @gs20. All ms100.
