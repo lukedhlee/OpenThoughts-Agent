@@ -11,6 +11,10 @@
 #SBATCH --output={output_path}
 #SBATCH --mail-type=END,TIME_LIMIT,FAIL
 
+# JSC inode policy: never write core dumps (incident 44 / 2026-08-17:
+# an 8-rank SIGABRT dumped 21GB of cores into $HOME and wedged the block quota).
+ulimit -c 0
+
 set -euo pipefail
 
 # --- Environment setup (auto-generated from HPC config) ---

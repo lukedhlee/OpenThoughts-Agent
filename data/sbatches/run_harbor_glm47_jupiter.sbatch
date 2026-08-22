@@ -10,6 +10,10 @@
 #SBATCH --output=/e/scratch/jureap59/etash/OpenThoughts-Agent/data/sbatches/logs/harbor_glm47_jupiter_%j.out
 #SBATCH --job-name=harbor_glm47_jupiter
 
+# JSC inode policy: never write core dumps (incident 44 / 2026-08-17:
+# an 8-rank SIGABRT dumped 21GB of cores into $HOME and wedged the block quota).
+ulimit -c 0
+
 set -eo pipefail
 
 if [ -z "$1" ]; then
