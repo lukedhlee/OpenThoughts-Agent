@@ -4,6 +4,13 @@ Purpose: which project/path to use for what, on JUPITER/JUWELS/JURECA. Re-verify
 `jutil project dataquota -p <proj>` (it's an HOURLY-OR-WORSE stale cache) and probe-write seconds
 before relying on any path. Percentages below are vs SOFT limits.
 
+> **UPDATE 2026-08-22 — read [[jsc_inode_quota_2026-08]] first.** JSC sent an over-soft inode alert for
+> `reformo` on `/p/scratch`, `/e/project1` and `/e/scratch`. Two corrections to this note: (a) use
+> `jutil user dataquota` (no `-p`) to get YOUR footprint on every fileset in one call — that is how the
+> real numbers below were found; (b) **bytes and inodes are decoupled** — `/e/scratch/reformo` was over
+> its inode soft limit while at 2.6% of its DATA limit, and 62 GB of checkpoints costs 34 inodes vs
+> 37,749 for 1.7 GB of traces/ray_logs. Never "free inodes" by deleting big files.
+
 ## Non-negotiable platform rules
 - **JUPITER compute nodes see ONLY `/e/*` paths.** Every `/p/*` path is login-node-only there.
   JUWELS/JURECA compute CAN read `/p/*` (incl. /p/data1).
