@@ -892,6 +892,18 @@ pre-flight for the agentic RL campaign: Qwen3-30B-A3B-Base × TaskTrove
 - ~~FA long-term: torch-2.9/cu130 coherent env rebuild~~ MOOT — `$F/envs/rl-fa` (torch
   2.11+cu128 + exact-tag FA wheel) resolved it 2026-08-14; no torch downgrade needed.
 - /e/scratch/reformo + lee27 $HOME quota cleanups (meeting asks; nothing for this run).
+- **HARVEST 2026-08-28 (partial — results only).** Campaign results are now durable at
+  `/e/data1/mmlaion/lee27/base30b_gsm8k/base30b_gsm8k_{lr1e6,lr3e6,lr8e6,lr3e6_nokl}_results.tar.zst`
+  (177/115/123/86 MB; all 85 attempt dirs; evals + diag_rollouts + wandb + logs + configs + sbatch;
+  168,706 members; `zstd -t` clean). Script: `$F/harvest_base30b.sh`, log `$F/harvest_base30b.log`.
+  Collapses ~176k fscratch inodes into 4 files. Not in the tars, **still only on 30-day-purge
+  fscratch (purges ~2026-09-14)**: (a) `checkpoints/` gs80+gs81 per arm ≈393 GB/arm (1.57 TB) —
+  FSDP resume state, no value now the campaign is closed; (b) `exports/global_step_81/policy`
+  ≈57 GB/arm (228 GB) — **complete loadable HF models**, incl. the lr8e6 winner (89.39%).
+  DECISIONS PENDING (operator): delete the 1.57 TB of FSDP ckpts? keep/move which exports?
+  HF upload of the winner is still barred by the campaign checklist ("NO HF uploads").
+  PI-path caveat: `/e/data1/datasets/playground/mmlaion/` is not writable by lee27 (no `datasets`
+  group) — see [[jsc_storage_map]]; used `/e/data1/mmlaion/` instead.
 - Post-prune leftovers (2026-08-15): 3 smoke-run ckpts survive (base30b_gsm8k_smoke_5
   gs1, smoke2_2 gs3-4) — pre-campaign G3 artifacts, outside the arms keep-last-2 scope;
   delete whenever disk is wanted. $F/experiments now 3.8T total (was ~58 ckpts heavier).

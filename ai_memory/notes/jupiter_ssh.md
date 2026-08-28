@@ -30,9 +30,9 @@ Read when a Jupiter login breaks — most often after a cafe/home IP change.
 ## IP / paste line
 ```bash
 ai_memory/scripts/jureca_from_clause.sh
-# Current (2026-08-10): 135.180.125.128
+# Current (2026-08-27): 136.152.214.58  ← ssh broke this day: publickey denied, IP not in from=
 # Prefer keeping prior cafe/home IPs comma-separated, e.g.:
-# from="135.180.125.128,211.54.32.170,118.235.5.36,61.72.135.209" <pubkey>
+# from="136.152.214.58,136.152.209.31,135.180.125.128,211.54.32.170,118.235.5.36,61.72.135.209" <pubkey>
 ```
 
 ## After first login — quick sanity
