@@ -516,3 +516,8 @@ scratchpad/
 # wedged the Nightly Submodule Update workflow (`git submodule update --init --recursive` aborts on the
 # undeclared gitlink). De-submoduled + ignored; regenerate locally via make_repos.py.
 scripts/analysis/tokviz/repos/
+
+# Local agent memory / tooling state (per-machine, never shared)
+ai_memory/
+.gstack/
+hpc/dotenv/*.local.env
