@@ -22,6 +22,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 if [[ -z "${SCRATCH:-}" && -f "$DCFT/hpc/dotenv/jupiter.env" ]]; then
   # shellcheck disable=SC1091
   source "$DCFT/hpc/dotenv/jupiter.env"
+  if [[ -f "$DCFT/hpc/dotenv/jupiter.local.env" ]]; then
+    # shellcheck disable=SC1091
+    source "$DCFT/hpc/dotenv/jupiter.local.env"
+  fi
 fi
 : "${SCRATCH:?SCRATCH unset — source hpc/dotenv/jupiter.env first}"
 : "${EXPERIMENTS_DIR:=$DCFT/experiments}"
