@@ -904,8 +904,9 @@ pre-flight for the agentic RL campaign: Qwen3-30B-A3B-Base × TaskTrove
   `<DEST>/base30b_gsm8k_{arm}_model_gs81.tar` (57 GB each, 228 GB / 4 inodes, rc=0, no errors,
   9 members each incl. 2 safetensors shards + index). Script `$F/archive_exports.sh`, log
   `$F/archive_exports.log`. Restore: `tar -xf <tar> -C <dir>` → loadable HF model dir `policy/`.
-  ONE DECISION LEFT (operator): the 1.57 TB of FSDP `checkpoints/` — resume state for a closed
-  campaign, nothing else needs them; default is to let the ~09-14 purge take them.
+  ~~ONE DECISION LEFT (operator): the 1.57 TB of FSDP `checkpoints/`~~ **CLOSED 2026-08-31: all 85
+  campaign dirs (FSDP ckpts + exports + results trees) deleted from fscratch under the JSC per-user cap;
+  the mmlaion tars are the only copy** ([[jsc_fscratch_cleanup_2026-08-31]]).
   HF upload of the winner is still barred by the campaign checklist ("NO HF uploads").
   PI-path caveat: `/e/data1/datasets/playground/mmlaion/` is not writable by lee27 (no `datasets`
   group) — see [[jsc_storage_map]]; used `/e/data1/mmlaion/` instead.

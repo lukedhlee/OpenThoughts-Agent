@@ -1,0 +1,1123 @@
+<title>Snowball Atlas</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600;6..72,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#F4F7FA; --surface:#FFFFFF; --tint:#E9F1F7; --line:#DCE5EC; --line-soft:#E8EEF3;
+  --ink:#182430; --ink-2:#4E6273; --ink-3:#7C8FA0;
+  --accent:#1E6FA5; --accent-ink:#17567F; --accent-soft:rgba(30,111,165,.10);
+  --s1:#2A6FA3; --s2:#B85C38; --s3:#8668B0;
+  --good:#2E7D4F; --warn:#9A6B15; --risk:#B3452E;
+  --good-bg:rgba(46,125,79,.10); --warn-bg:rgba(154,107,21,.10); --risk-bg:rgba(179,69,46,.10);
+  --shadow:0 1px 2px rgba(24,36,48,.05),0 4px 16px rgba(24,36,48,.05);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0D151D; --surface:#16232E; --tint:#1B2C3A; --line:#263646; --line-soft:#20303E;
+    --ink:#E9F0F5; --ink-2:#A3B4C2; --ink-3:#748699;
+    --accent:#4C9FD8; --accent-ink:#7FBCE5; --accent-soft:rgba(76,159,216,.14);
+    --s1:#3987E5; --s2:#D95926; --s3:#9B6DE0;
+    --good:#59B37F; --warn:#C99A45; --risk:#D97759;
+    --good-bg:rgba(89,179,127,.12); --warn-bg:rgba(201,154,69,.12); --risk-bg:rgba(217,119,89,.13);
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0D151D; --surface:#16232E; --tint:#1B2C3A; --line:#263646; --line-soft:#20303E;
+  --ink:#E9F0F5; --ink-2:#A3B4C2; --ink-3:#748699;
+  --accent:#4C9FD8; --accent-ink:#7FBCE5; --accent-soft:rgba(76,159,216,.14);
+  --s1:#3987E5; --s2:#D95926; --s3:#9B6DE0;
+  --good:#59B37F; --warn:#C99A45; --risk:#D97759;
+  --good-bg:rgba(89,179,127,.12); --warn-bg:rgba(201,154,69,.12); --risk-bg:rgba(217,119,89,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font:16px/1.6 "IBM Plex Sans",system-ui,sans-serif;margin:0;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-ink);text-decoration:none;border-bottom:1px solid transparent}
+a:hover{border-bottom-color:var(--accent-ink)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.wrap{max-width:1100px;margin:0 auto;padding:0 24px}
+.prose{max-width:70ch}
+
+nav{position:sticky;top:0;z-index:50;background:var(--ground);border-bottom:1px solid var(--line);backdrop-filter:blur(6px)}
+nav .wrap{display:flex;align-items:baseline;gap:20px;padding-top:10px;padding-bottom:10px;overflow-x:auto;white-space:nowrap}
+nav .brand{font:600 15px/1 "Newsreader",Georgia,serif;letter-spacing:.01em}
+nav a{font:500 11.5px/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+nav a:hover{color:var(--accent-ink);border-bottom:none}
+
+header.hero{padding:64px 0 40px;border-bottom:1px solid var(--line)}
+.eyebrow{font:500 12px/1.4 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.09em;text-transform:uppercase;color:var(--accent-ink);margin:0 0 14px}
+h1{font:600 clamp(40px,6vw,58px)/1.05 "Newsreader",Georgia,serif;margin:0 0 18px;text-wrap:balance;letter-spacing:-.01em}
+.hero p.lede{font-size:18.5px;color:var(--ink-2);max-width:62ch;margin:0}
+.hero .meta{margin-top:22px;display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-block;font:500 11.5px/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.03em;color:var(--ink-2);background:var(--tint);border:1px solid var(--line);border-radius:99px;padding:6px 11px}
+
+section{padding:52px 0 8px}
+.sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+.sec-num{font:500 12px/1 "IBM Plex Mono",ui-monospace,monospace;color:var(--ink-3);letter-spacing:.08em}
+h2{font:600 clamp(26px,3.5vw,34px)/1.15 "Newsreader",Georgia,serif;margin:0;text-wrap:balance}
+.sec-sub{color:var(--ink-2);margin:10px 0 26px;max-width:70ch}
+h3{font:600 20px/1.3 "Newsreader",Georgia,serif;margin:34px 0 10px}
+
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px 20px 16px;box-shadow:var(--shadow)}
+.card h4{font:600 17px/1.35 "Newsreader",Georgia,serif;margin:0 0 8px;text-wrap:balance}
+.card p{margin:0 0 10px;font-size:14.5px;color:var(--ink-2)}
+.card .src{font:400 12px/1.6 "IBM Plex Mono",ui-monospace,monospace;color:var(--ink-3)}
+.card .src a{color:var(--ink-3);border-bottom:1px dotted var(--ink-3)} .card .src a:hover{color:var(--accent-ink)}
+
+.fig{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px;box-shadow:var(--shadow);margin:18px 0}
+.fig-title{font:600 16px/1.3 "IBM Plex Sans",system-ui,sans-serif;margin:0 0 2px}
+.fig-sub{font-size:13px;color:var(--ink-3);margin:0 0 14px}
+.legend{display:flex;flex-wrap:wrap;gap:16px;margin:0 0 8px;font-size:12.5px;color:var(--ink-2)}
+.legend .sw{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:1px}
+.legend .sw.band{width:14px;height:9px;border-radius:2px;background:var(--accent-soft);border:1.5px dashed var(--accent)}
+.legend .sw.hollow{background:transparent!important;border:2px dashed var(--s2)}
+.chart-scroll{overflow-x:auto}
+svg text{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.fig-note{font-size:12.5px;color:var(--ink-3);margin:12px 0 0;line-height:1.55}
+#tooltip{position:fixed;pointer-events:none;z-index:99;background:var(--ink);color:var(--ground);border-radius:7px;padding:8px 11px;font:12.5px/1.5 "IBM Plex Sans",system-ui,sans-serif;max-width:340px;opacity:0;transition:opacity .1s;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+@media (prefers-reduced-motion: reduce){#tooltip{transition:none}}
+#tooltip .tt-name{font-weight:600}
+#tooltip .tt-mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11.5px;opacity:.85}
+#tooltip .tt-eg{display:block;margin-top:8px;padding-top:8px;border-top:1px solid color-mix(in srgb, currentColor 28%, transparent)}
+#tooltip .tt-lbl{display:block;font:500 9.5px/1.4 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase;opacity:.6;margin-bottom:2px}
+
+.tbl-wrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin:18px 0}
+table{border-collapse:collapse;width:100%;min-width:860px;font-size:13.5px}
+caption{text-align:left;font:600 15px/1.4 "IBM Plex Sans",system-ui,sans-serif;padding:16px 18px 4px}
+th{font:500 11px/1.4 "IBM Plex Mono",ui-monospace,monospace;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-3);text-align:left;padding:12px 14px 8px;border-bottom:1px solid var(--line)}
+td{padding:11px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top;color:var(--ink-2)}
+tr:last-child td{border-bottom:none}
+td:first-child{color:var(--ink);font-weight:500}
+td .sub{display:block;font:400 11.5px/1.5 "IBM Plex Mono",ui-monospace,monospace;color:var(--ink-3);margin-top:2px}
+.num{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;font-size:12.5px}
+.ratio{display:inline-block;font:500 11.5px/1 "IBM Plex Mono",ui-monospace,monospace;background:var(--accent-soft);color:var(--accent-ink);border-radius:5px;padding:4px 7px;white-space:nowrap}
+.flag{display:inline-block;font:500 10.5px/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.04em;background:var(--warn-bg);color:var(--warn);border-radius:4px;padding:3px 6px;vertical-align:1px}
+.win{color:var(--ink)}
+td a{border-bottom:1px dotted var(--ink-3);color:var(--ink-2);font-size:12px;font-family:"IBM Plex Mono",ui-monospace,monospace}
+td a:hover{color:var(--accent-ink)}
+
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+.stage{font:500 11.5px/1 "IBM Plex Mono",ui-monospace,monospace;background:var(--tint);border:1px solid var(--line);border-radius:5px;padding:5px 8px;color:var(--ink-2);white-space:nowrap}
+.stage.rl{background:var(--accent-soft);border-color:transparent;color:var(--accent-ink)}
+.stage.rep{background:var(--good-bg);border-color:transparent;color:var(--good)}
+.flow .arr{color:var(--ink-3);font-size:11px}
+.group-label{font:500 11.5px/1.4 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink);margin:30px 0 10px}
+
+.tech-group{margin-bottom:8px}
+.verdict{display:inline-block;font:600 11px/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.05em;border-radius:5px;padding:5px 9px}
+.verdict.good{background:var(--good-bg);color:var(--good)}
+.verdict.warn{background:var(--warn-bg);color:var(--warn)}
+.verdict.risk{background:var(--risk-bg);color:var(--risk)}
+.target{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;box-shadow:var(--shadow);margin-bottom:14px}
+.target .t-head{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:8px}
+.target h4{font:600 18px/1.3 "Newsreader",Georgia,serif;margin:0}
+.target p{margin:6px 0;font-size:14.5px;color:var(--ink-2)}
+.callout{background:var(--tint);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:16px 18px;margin:18px 0;font-size:14.5px;color:var(--ink-2)}
+.callout b{color:var(--ink)}
+.headline-card{background:linear-gradient(135deg,var(--accent-soft),transparent 60%),var(--surface);border:1px solid var(--line);border-radius:12px;padding:26px;box-shadow:var(--shadow);margin:22px 0}
+.headline-card h3{margin:0 0 10px;font-size:24px}
+.headline-card p{color:var(--ink-2);margin:0;max-width:75ch}
+
+footer{border-top:1px solid var(--line);margin-top:60px;padding:34px 0 60px;font-size:13px;color:var(--ink-3)}
+footer p{max-width:80ch;margin:0 0 10px}
+ul.tight{margin:8px 0;padding-left:20px;color:var(--ink-2);font-size:14.5px}
+ul.tight li{margin-bottom:7px}
+ul.tight li::marker{color:var(--ink-3)}
+
+/* --- §06 scoreboard --- */
+table.sb{min-width:1000px}
+table.sb thead tr.grp-row th{padding-bottom:5px;border-bottom:none;color:var(--accent-ink);text-align:center}
+table.sb thead tr.grp-row th.spacer{border:none}
+table.sb th.g-start,table.sb td.g-start{border-left:1px solid var(--line)}
+table.sb th.v{text-align:right}
+table.sb td.v{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;font-size:13px;text-align:right;white-space:nowrap;color:var(--ink)}
+table.sb td.v.nr{color:var(--ink-3);font-size:11.5px}
+table.sb td .vtag{font-size:9.5px;color:var(--ink-3);margin-left:3px;vertical-align:2px}
+table.sb tr.r-target td{background:var(--accent-soft)}
+table.sb tr.r-target td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+table.sb tr.r-us td{background:var(--tint)}
+table.sb tr.r-us td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+table.sb tr.r-anchor td:first-child{color:var(--ink-3)}
+table.sb tr.r-anchor td.v{color:var(--ink-2)}
+table.sb tr.grp-sep td{background:var(--ground);padding:7px 14px;font:500 10.5px/1.4 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.tag{display:inline-block;font:600 9.5px/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.06em;border-radius:4px;padding:4px 6px;vertical-align:2px;margin-left:6px}
+.tag.t-goal{background:var(--accent-soft);color:var(--accent-ink)}
+.tag.t-us{background:var(--good-bg);color:var(--good)}
+.sb-key{display:flex;flex-wrap:wrap;gap:14px;font-size:12.5px;color:var(--ink-2);margin:0 0 4px}
+.sb-key .kb{display:inline-block;width:13px;height:9px;border-radius:2px;margin-right:6px;vertical-align:1px}
+
+/* --- §07 datasets --- */
+.ds{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:24px;box-shadow:var(--shadow);margin:18px 0}
+.ds-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 12px;margin-bottom:4px}
+.ds-head h3{margin:0;font:600 21px/1.25 "Newsreader",Georgia,serif}
+.ds-head .who{font:500 11px/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.ds-head a{font:400 11.5px/1 "IBM Plex Mono",ui-monospace,monospace;color:var(--ink-3);border-bottom:1px dotted var(--ink-3)}
+.ds-head a:hover{color:var(--accent-ink)}
+.ds p.what{margin:8px 0 0;font-size:14.5px;color:var(--ink-2);max-width:74ch}
+.ds-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(126px,1fr));gap:8px;margin:16px 0 6px}
+.stat{background:var(--tint);border:1px solid var(--line-soft);border-radius:8px;padding:10px 12px}
+.stat b{display:block;font:600 17px/1.25 "IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;color:var(--ink)}
+.stat span{display:block;font:400 10px/1.4 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);margin-top:3px}
+.ds-key{display:flex;flex-wrap:wrap;gap:14px;font-size:12.5px;color:var(--ink-2);margin:14px 0 2px}
+.ds-key .kb{display:inline-block;width:13px;height:9px;border-radius:2px;margin-right:6px;vertical-align:1px}
+.derived{display:inline-block;font:600 9.5px/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.05em;background:var(--warn-bg);color:var(--warn);border-radius:4px;padding:4px 6px;vertical-align:2px}
+
+/* --- §07 example viewer --- */
+.ex{margin-top:20px;border-top:1px solid var(--line);padding-top:16px}
+.ex-h{font:500 11px/1.4 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);margin:0 0 10px}
+.ex-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.ex-tab{font:500 12px/1 "IBM Plex Sans",system-ui,sans-serif;background:var(--tint);border:1px solid var(--line);color:var(--ink-2);border-radius:99px;padding:8px 13px;cursor:pointer;transition:border-color .12s,background .12s}
+.ex-tab:hover{border-color:var(--accent);color:var(--accent-ink)}
+.ex-tab[aria-selected="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+@media (prefers-reduced-motion: reduce){.ex-tab{transition:none}}
+</style>
+
+<nav><div class="wrap">
+  <span class="brand">Snowball Atlas</span>
+  <a href="#key">Key</a><a href="#trend">Trend</a><a href="#map">Map</a><a href="#matchups">Matchups</a>
+  <a href="#recipes">Recipes</a><a href="#techniques">Techniques</a><a href="#scoreboard">Scoreboard</a><a href="#data">Data</a><a href="#targets">Targets</a>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <p class="eyebrow">OT-Agent RL · post-training landscape brief</p>
+  <h1>What small models beat, how they were trained, and where Snowball can aim</h1>
+  <p class="lede">The Feb–Aug 2026 post-training landscape, compiled from seven targeted research sweeps — the global trend, the size-vs-score map, verified small-beats-big matchups, recipe anatomy, and calibrated targets for Snowball&nbsp;67B-A2B.</p>
+  <div class="meta">
+    <span class="chip">compiled 2026-08-22</span>
+    <span class="chip">scores vendor-reported unless noted</span>
+    <span class="chip">TB 2.0 / 2.1 &amp; AIME 25 / 26 flagged per row</span>
+  </div>
+</div></header>
+
+<section id="key"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§00</span><h2>Reader's key</h2></div>
+  <p class="sec-sub">Seven terms the rest of the page uses constantly, in plain words. Skip if you live in this literature.</p>
+  <div class="cards">
+    <div class="card"><h4>RLVR</h4><p>RL with <em>verifiable</em> rewards: the model is graded by a checker — the tests pass, the answer matches — instead of by human preference. It's the only RL flavor on this page.</p></div>
+    <div class="card"><h4>GRPO group</h4><p>The same task is attempted ~8–32 times, and each attempt is scored against the group's average. A group where everything fails (or everything succeeds) has no contrast, so it teaches nothing — half the tricks in §05 exist to avoid that.</p></div>
+    <div class="card"><h4>pass@1 vs pass@k</h4><p>Score on the first try vs best-of-k tries. RL reliably raises pass@1 (the model becomes dependable at what it could already occasionally do); raising pass@k — genuinely new capability — is rarer and needs special machinery.</p></div>
+    <div class="card"><h4>Total vs active params</h4><p>A mixture-of-experts model stores all its experts (total) but runs only a few per token (active). Roughly: total is how much it knows, active is how much thinking each token gets. Snowball is 67B total, 2B active.</p></div>
+    <div class="card"><h4>Scaffold / harness</h4><p>The agent wrapper around the model — its tools, prompts, and retry logic. Swapping it can move a benchmark score 2–4×, so scores only compare fairly within one harness.</p></div>
+    <div class="card"><h4>TIS</h4><p>Truncated importance sampling: a correction used when the text was generated by a slightly different version of the model than the one being updated — routine in modern RL stacks, and the thing our bug report #438 is about.</p></div>
+    <div class="card"><h4>On-policy distillation</h4><p>The student writes its own attempts and a stronger teacher grades every token of them. Denser feedback than RL's single end-of-episode reward, and typically 5–12× cheaper for the same gain.</p></div>
+  </div>
+</div></section>
+
+<section id="trend"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§01</span><h2>The global trend</h2></div>
+  <p class="sec-sub">Four findings that hold across every sweep. Everything downstream — the map, the matchups, the targets — is an instance of one of these.</p>
+  <div class="cards">
+    <div class="card">
+      <h4>The recipe converged, and it's boring on purpose</h4>
+      <p>Three independent env-scaling papers and three frontier reports landed on the same skeleton: synthesize verified training environments at scale, keep task difficulty at the model's frontier, run simple outcome-only RL on top, and spend the cleverness on making the rollout engine and the trainer numerically agree. Nobody is winning with algorithm novelty; the winners state the boring algorithm as a finding.</p>
+      <p class="src"><a href="https://arxiv.org/abs/2606.23321">Tmax</a> · <a href="https://arxiv.org/html/2607.10891">SETA</a> · <a href="https://arxiv.org/abs/2601.16443">Endless Terminals</a> · <a href="https://arxiv.org/abs/2602.15763">GLM-5</a></p>
+    </div>
+    <div class="card">
+      <h4>SFT lifts, RL crosses</h4>
+      <p>The big raw score lift from a weak base is SFT/distillation (Nemotron-Terminal 32B: 3.4→27.4 TB2.0, <em>pure SFT</em>). RL is the segment that pushes a model <em>past</em> bigger frontier models rather than toward them (TMax-27B: 40.5→44.9 crosses Kimi-K2.5 and MiniMax-M2.7). And they compose: RL on a strong distilled base still adds +16.4 AIME25.</p>
+      <p class="src"><a href="https://arxiv.org/abs/2602.21193">Nemotron-Terminal</a> · <a href="https://arxiv.org/abs/2606.23321">Tmax</a> · <a href="https://arxiv.org/abs/2506.13284">AceReason 1.1</a></p>
+    </div>
+    <div class="card">
+      <h4>Two different games: total vs active params</h4>
+      <p>Agentic wins are <em>total-param</em> upsets; competition-math wins are <em>active-param</em> upsets — 0.7B active reaches 89 AIME26, and 3B-active models beat 22B-active on AIME while losing GPQA to the same models. GPQA tracks pretraining and never appears in the RL win column.</p>
+      <p class="src"><a href="https://arxiv.org/html/2605.05365v1">ZAYA1</a> · <a href="https://huggingface.co/Qwen/Qwen3-30B-A3B-Thinking-2507">Qwen3-30B-A3B</a> · <a href="https://arxiv.org/abs/2603.19220">Cascade-2</a></p>
+    </div>
+    <div class="card">
+      <h4>Everyone stages now</h4>
+      <p>Every serious 2026 pipeline is a cascade with distillation repair at stage boundaries (GLM-5, Cascade-2, ZAYA1) or parallel specialists consolidated by on-policy distillation (DeepSeek-V4, Qwen3-Coder-Next). Single-stage RL survives only where the environment pipeline is the contribution. OT-Agent v1's RL was a single-stage RLOO pass — the staged version is unclaimed territory for us.</p>
+      <p class="src"><a href="https://arxiv.org/abs/2602.15763">GLM-5</a> · <a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4</a> · <a href="https://arxiv.org/abs/2603.19220">Cascade-2</a> · <a href="https://arxiv.org/html/2606.24855v1">OTA v1</a></p>
+    </div>
+  </div>
+</div></section>
+
+<section id="map"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§02</span><h2>The map</h2></div>
+  <p class="sec-sub">Terminal-Bench 2.x against total parameters, with Snowball's two evidence-based target bands at 67B. Hover any point for the recipe and caveats; the full sourced rows are in §03.</p>
+
+  <div class="fig">
+    <p class="fig-title">Terminal-Bench 2.x vs total parameters</p>
+    <p class="fig-sub">Best published pass@1 per model; scaffold noted in tooltip where it moves the number</p>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--s2)"></span>Open recipe — RL</span>
+      <span><span class="sw" style="background:var(--s1)"></span>Open recipe — SFT-only</span>
+      <span><span class="sw" style="background:var(--s3)"></span>Frontier / stock</span>
+      <span><span class="sw hollow"></span>self-reported</span>
+      <span><span class="sw band"></span>Snowball 67B-A2B target bands</span>
+    </div>
+    <div class="chart-scroll"><svg id="mapChart" viewBox="0 0 1000 540" width="100%" role="img" aria-label="Scatter plot of Terminal-Bench 2 score against total parameters for open and frontier models, with Snowball target bands at 67 billion parameters"></svg></div>
+    <p class="fig-note">Off-map (size undisclosed): GPT-5.5 84.7 · Claude Opus 4.7 80.2 · Claude Sonnet 4.6 53.4 · Claude Haiku 4.5 35.5 · GPT-5-mini 31.9. Scaffold sensitivity is large — DeepSeek-V4-Flash spans 40 (minimal scaffold) to 82.7 (vendor harness); hold the harness fixed in any comparison we publish.</p>
+  </div>
+
+  <div class="fig">
+    <p class="fig-title">AIME vs <em>active</em> parameters</p>
+    <p class="fig-sub">Competition math is nearly active-param-insensitive — recipe quality dominates. Snowball's 2B active sits between two anchors 15 points apart.</p>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--s1)"></span>Sparse MoE</span>
+      <span><span class="sw" style="background:var(--s2)"></span>Dense</span>
+      <span><span class="sw band"></span>Snowball's activation budget (position only — not yet trained, no score)</span>
+    </div>
+    <div class="chart-scroll"><svg id="aimeChart" viewBox="0 0 1000 430" width="100%" role="img" aria-label="Scatter plot of AIME score against active parameters for sparse mixture-of-experts and dense models"></svg></div>
+    <p class="fig-note">AIME25 unless the tooltip says AIME26. The bracket that matters: Ring-mini-2.0 (A1.4B, nearest active-count analog) at 74 vs Nemotron-Cascade-2 (A3B) at 92 — same order of active params, 18-point spread. The recipe, not the activation budget, is the ballgame.</p>
+  </div>
+</div></section>
+
+<section id="matchups"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§03</span><h2>Verified matchups: small × good recipe → beats larger</h2></div>
+  <p class="sec-sub">Only matchups with a checkable score on both sides. ⚠ marks self-reported results awaiting independent replication.</p>
+
+  <div class="tbl-wrap"><table>
+    <caption>Agentic — Terminal-Bench 2.x / SWE-bench</caption>
+    <thead><tr><th>Model (total / active)</th><th>RL recipe, one line</th><th>Score</th><th>Matched / beaten</th><th>Ratio</th><th>Src</th></tr></thead>
+    <tbody>
+      <tr><td>TMax-9B <span class="sub">9B dense · Ai2/UW</span></td><td>RL-only "DPPO", 14.6k difficulty-controlled envs, 2 H100 nodes × 2–3 d</td><td class="num win">TB2.1 28.8 <span class="sub">base 16.1</span></td><td>≈ LiberCoder-235B-A22B (31.0) · &gt; Nemotron-Terminal-32B SFT (27.4)</td><td><span class="ratio">26× total · 2.4× active</span></td><td><a href="https://arxiv.org/abs/2606.23321">2606.23321</a></td></tr>
+      <tr><td>TMax-27B <span class="sub">27B dense</span></td><td>same recipe</td><td class="num win">TB2.1 44.9 <span class="sub">base 40.5</span></td><td>&gt; Kimi-K2.5 1T-A32B (43.2) · ≈ MiniMax-M2.7 230B-A10B (45.1)</td><td><span class="ratio">37× total · 1.2× active</span></td><td><a href="https://arxiv.org/abs/2606.23321">2606.23321</a></td></tr>
+      <tr><td>Qwen3-Coder-Next <span class="sub">80B / A3B MoE</span></td><td>mid-train → SFT → expert distill → single-turn then multi-turn agentic RL, ~800k envs</td><td class="num win">SWE-V 70.6</td><td>≈ DeepSeek-V3.2 671B-A37B (70.2)</td><td><span class="ratio">8.4× total · 12.3× active</span></td><td><a href="https://arxiv.org/html/2603.00729v1">2603.00729</a></td></tr>
+      <tr><td>Ornith-1.5-35B <span class="flag">⚠ self-reported</span><span class="sub">35B / A3B · Aug 19</span></td><td>closed-loop self-scaffolding GRPO — tasks, scaffolds, and rollouts all RL-optimized</td><td class="num win">TB2.1 68.5</td><td>&gt; GLM-5 745B-A44B (52.4) · &gt; Kimi-K2.5 (43.2)</td><td><span class="ratio">21× total · 14.7× active</span></td><td><a href="https://ornith.ai/ornith_1_0.html">ornith.ai</a></td></tr>
+      <tr><td>North Mini Code <span class="sub">30B / A3B · Cohere</span></td><td>2-stage SFT (ctx 64K→128K) → single multi-env RLVR, 70k tasks</td><td class="num win">AA Coding Idx 33.4</td><td>&gt; Nemotron-3-Super 120B-A12B · &gt; Devstral-2 123B dense</td><td><span class="ratio">4× total · 4× active</span></td><td><a href="https://cohere.com/blog/north-mini-code">blog</a></td></tr>
+      <tr><td>RST / Qwen3.5-27B <span class="sub">27B dense</span></td><td>recursive task synthesis ($0.05/task) → rejection SFT → agentic PPO</td><td class="num win">TB2 49.4</td><td>within ~2 pts of DeepSeek-V4-Pro 1.6T-A49B (51.7)</td><td><span class="ratio">59× total (near-match)</span></td><td><a href="https://arxiv.org/abs/2608.05466">2608.05466</a></td></tr>
+      <tr><td>Terminus-4B <span class="sub">4B dense · Microsoft</span></td><td>SFT 3.2k telemetry tasks → GRPO 2.7k, one 8-GPU node</td><td class="num win">SWE-Pro 31.5 <span class="sub">as execution subagent</span></td><td>≈ Opus / Sonnet-4.6 subagents at ~30% lower cost (niche)</td><td><span class="ratio">niche win</span></td><td><a href="https://arxiv.org/abs/2605.03195">2605.03195</a></td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="tbl-wrap"><table>
+    <caption>Non-agentic — AIME / GPQA / LiveCodeBench / olympiads</caption>
+    <thead><tr><th>Model (total / active)</th><th>RL recipe, one line</th><th>Score</th><th>Matched / beaten</th><th>Ratio</th><th>Src</th></tr></thead>
+    <tbody>
+      <tr><td>Nemotron-Cascade-2 <span class="sub">30B / A3B · NVIDIA</span></td><td>mega-SFT (22M+ samples) → 7-stage cascade RL with distill-back repair</td><td class="num win">AIME25 92.4 · LCBv6 87.2 · IMO+IOI+ICPC gold</td><td>≈ DeepSeek-V3.2-Speciale 671B-A37B triple gold · &gt; Nemotron-3-Super 120B-A12B</td><td><span class="ratio">20× total · 12× active</span></td><td><a href="https://arxiv.org/abs/2603.19220">2603.19220</a></td></tr>
+      <tr><td>ZAYA1-8B <span class="sub">8.4B / A0.7B · Zyphra</span></td><td>SFT → 4-stage RL cascade over RLVE-Gym (400 env generators)</td><td class="num win">AIME26 89.1</td><td>≈ Qwen3-Next-80B-A3B (90.2) · claims ≈ DeepSeek-R1-0528 on math/code</td><td><span class="ratio">10× total · 4.3× active</span></td><td><a href="https://arxiv.org/html/2605.05365v1">2605.05365</a></td></tr>
+      <tr><td>Qwen3-30B-A3B-Thinking-2507 <span class="sub">30B / A3B</span></td><td>SFT + RL refresh (recipe undisclosed)</td><td class="num win">AIME25 85.0 · LCBv6 66.0</td><td>&gt; original Qwen3-235B-A22B-Thinking (81.5 / 55.7)</td><td><span class="ratio">8× total · 7× active</span></td><td><a href="https://huggingface.co/Qwen/Qwen3-30B-A3B-Thinking-2507">HF</a></td></tr>
+      <tr><td>Ring-mini-2.0 <span class="sub">16.8B / A1.4B · Ant</span></td><td>long-CoT SFT → RLVR → RLHF, "icepop" discrepancy masking</td><td class="num win">AIME25 74.1 · GPQA-D 68.2</td><td>&gt; dense Qwen3-8B-Thinking (71.3 / 62.0)</td><td><span class="ratio">5.7× active</span></td><td><a href="https://arxiv.org/html/2510.19338v2">2510.19338</a></td></tr>
+      <tr><td>Ring-flash-2.0 <span class="sub">104B / A6-7B</span></td><td>same pipeline</td><td class="num win">AIME25 87.0</td><td>≈ Qwen3-Next-80B-A3B (87.8) · &gt; Qwen3-32B dense</td><td><span class="ratio">5× active vs 32B dense</span></td><td><a href="https://arxiv.org/html/2510.19338v2">2510.19338</a></td></tr>
+      <tr><td>AceReason-Nemotron-1.1 <span class="sub">7B dense · NVIDIA</span></td><td>distilled SFT → math-RL → code-RL, length curriculum 8K→32K</td><td class="num win">AIME25 64.8 <span class="sub">+16.4 from RL</span></td><td>&gt; Magistral Small 24B (62.8)</td><td><span class="ratio">3.4× total</span></td><td><a href="https://arxiv.org/abs/2506.13284">2506.13284</a></td></tr>
+    </tbody>
+  </table></div>
+</div></section>
+
+<section id="recipes"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§04</span><h2>Recipe anatomy</h2></div>
+  <p class="sec-sub">Pipelines of the reference reports and papers, grouped by pattern. Green stages are the repair mechanism — distillation at stage boundaries recovering what each RL stage regresses.</p>
+
+  <p class="group-label">Pattern A — cascade with distillation repair</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th style="min-width:170px">Work</th><th style="min-width:330px">Pipeline</th><th>What's special</th><th>Src</th></tr></thead>
+    <tbody>
+      <tr><td>GLM-5 <span class="sub">744B / A44B</span></td><td><span class="flow"><span class="stage">SFT</span><span class="arr">→</span><span class="stage rl">reasoning RL</span><span class="arr">→</span><span class="stage rl">agentic RL</span><span class="arr">→</span><span class="stage rl">general RL</span><span class="arr">+</span><span class="stage rep">cross-stage distill</span></span></td><td>RepoLaunch 10k SWE envs; async slime infra (1k+ rollouts, FP8); token-in-token-out; double-sided token-masked IS; deterministic top-k + frozen router during RL</td><td><a href="https://arxiv.org/abs/2602.15763">2602.15763</a></td></tr>
+      <tr><td>Nemotron-Cascade-2 <span class="sub">30B / A3B</span></td><td><span class="flow"><span class="stage">mega-SFT</span><span class="arr">→</span><span class="stage rl">IF RL</span><span class="arr">→</span><span class="stage rl">multi-domain RL</span><span class="arr">→</span><span class="stage rep">multi-domain distill</span><span class="arr">→</span><span class="stage rl">RLHF</span><span class="arr">→</span><span class="stage rl">long-ctx RL</span><span class="arr">→</span><span class="stage rl">code RL</span><span class="arr">→</span><span class="stage rl">SWE RL</span></span></td><td>Distill-back between stages repairs cross-domain regressions — the paper's thesis, and the published treatment of the collateral problem</td><td><a href="https://arxiv.org/abs/2603.19220">2603.19220</a></td></tr>
+      <tr><td>ZAYA1 <span class="sub">8.4B / A0.7B</span></td><td><span class="flow"><span class="stage">SFT 660B tok</span><span class="arr">→</span><span class="stage rl">reason warmup</span><span class="arr">→</span><span class="stage rl">RLVE-Gym curriculum</span><span class="arr">→</span><span class="stage rl">math+code+TTC RL</span><span class="arr">→</span><span class="stage rl">behavioral RL</span></span></td><td>400 procedural env generators; async PipelineRL; the full cascade at 0.7B active</td><td><a href="https://arxiv.org/html/2605.05365v1">2605.05365</a></td></tr>
+      <tr><td>AceReason 1.0/1.1 <span class="sub">7B/14B dense</span></td><td><span class="flow"><span class="stage">distilled SFT</span><span class="arr">→</span><span class="stage rl">math-only RL</span><span class="arr">→</span><span class="stage rl">code-only RL</span></span></td><td>Response-length curriculum 8K→32K; hard verifiable prompt curation; rollout temp 0.85 = the entropy-rise sweet spot</td><td><a href="https://arxiv.org/abs/2506.13284">2506.13284</a></td></tr>
+      <tr><td>Qwen3 <span class="sub">flagship line</span></td><td><span class="flow"><span class="stage">long-CoT cold start</span><span class="arr">→</span><span class="stage rl">reasoning RL</span><span class="arr">→</span><span class="stage">thinking fusion</span><span class="arr">→</span><span class="stage rl">general RL</span></span></td><td>Fusion stage merges think / no-think into one model</td><td><a href="https://arxiv.org/abs/2505.09388">2505.09388</a></td></tr>
+      <tr><td>Ring-mini-2.0 <span class="sub">16.8B / A1.4B</span></td><td><span class="flow"><span class="stage">long-CoT SFT</span><span class="arr">→</span><span class="stage rl">RLVR</span><span class="arr">→</span><span class="stage rl">RLHF</span></span></td><td>"icepop" train–infer discrepancy masking — MoE RL stability at the smallest published active scale</td><td><a href="https://arxiv.org/html/2510.19338v2">2510.19338</a></td></tr>
+      <tr><td>OLMo 3-Think <span class="sub">32B dense · open recipe</span></td><td><span class="flow"><span class="stage">SFT</span><span class="arr">→</span><span class="stage">DPO</span><span class="arr">→</span><span class="stage rl">RLVR</span></span></td><td>Fully open data + recipe; finding: the DPO checkpoint (higher pass@k) is the better RL start</td><td><a href="https://allenai.org/blog/olmo3">Ai2</a></td></tr>
+    </tbody>
+  </table></div>
+
+  <p class="group-label">Pattern B — specialists, then distill ("staging in space")</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th style="min-width:170px">Work</th><th style="min-width:330px">Pipeline</th><th>What's special</th><th>Src</th></tr></thead>
+    <tbody>
+      <tr><td>DeepSeek-V4</td><td><span class="flow"><span class="stage rl">math GRPO</span><span class="stage rl">code GRPO</span><span class="stage rl">agent GRPO</span><span class="stage rl">IF GRPO</span><span class="arr">→</span><span class="stage rep">on-policy distill consolidation</span></span></td><td>RL creates capability in parallel domain specialists; distillation transfers it into one student. 32T pretrain with deliberate agentic-trace emphasis</td><td><a href="https://arxiv.org/abs/2606.19348">2606.19348</a></td></tr>
+      <tr><td>Qwen3-Coder-Next <span class="sub">80B / A3B</span></td><td><span class="flow"><span class="stage">600B repo mid-train</span><span class="arr">→</span><span class="stage">SFT</span><span class="arr">→</span><span class="stage rl">domain experts</span><span class="arr">→</span><span class="stage rep">expert distill</span><span class="arr">→</span><span class="stage rl">single-turn RL</span><span class="arr">→</span><span class="stage rl">multi-turn agentic RL</span></span></td><td>~800k verifiable SWE envs; turn-overrun + malformed-tool penalties; anti-reward-hack rules; finding: cross-scaffold transfer is weak</td><td><a href="https://arxiv.org/html/2603.00729v1">2603.00729</a></td></tr>
+      <tr><td>Kimi K3 <span class="sub">2.8T · blog-level</span></td><td><span class="flow"><span class="stage">long-CoT SFT</span><span class="arr">→</span><span class="stage rl">multi-domain RL × effort levels</span></span></td><td>Per-domain reasoning-effort levels; QAT from SFT onward; verifiable search + SWE + kernel-opt envs</td><td><a href="https://www.kimi.ai/blog/kimi-k3">blog</a></td></tr>
+    </tbody>
+  </table></div>
+
+  <p class="group-label">Pattern C — env-scaling, deliberately single-stage</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th style="min-width:170px">Work</th><th style="min-width:330px">Pipeline</th><th>What's special</th><th>Src</th></tr></thead>
+    <tbody>
+      <tr><td>TMax <span class="sub">2–27B dense</span></td><td><span class="flow"><span class="stage">small SFT</span><span class="arr">→</span><span class="stage rl">outcome-only DPPO</span></span></td><td>14.6k envs from a taxonomy (difficulty × domain × skill × persona × fixtures); verifier diversification; FP32 LM head; cost-honest (2 H100 nodes, 2–3 days)</td><td><a href="https://arxiv.org/abs/2606.23321">2606.23321</a></td></tr>
+      <tr><td>SETA <span class="sub">Qwen3-8B</span></td><td><span class="flow"><span class="stage rl">GRPO + DAPO dynamic sampling</span></span></td><td>SETA-Synth converts human-grounded sources into envs; SETA-Evol evolves difficulty against the live model; partial-progress rewards (fraction of unit tests)</td><td><a href="https://arxiv.org/html/2607.10891">2607.10891</a></td></tr>
+      <tr><td>Endless Terminals <span class="sub">3–8B</span></td><td><span class="flow"><span class="stage rl">vanilla PPO, binary reward</span></span></td><td>Fully autonomous env-gen with solvability filtering (3,255 envs); thesis: environment scale beats algorithm</td><td><a href="https://arxiv.org/abs/2601.16443">2601.16443</a></td></tr>
+      <tr><td>RST <span class="sub">27B · 122B-A10B</span></td><td><span class="flow"><span class="stage">recursive synthesis</span><span class="arr">→</span><span class="stage">rejection SFT</span><span class="arr">→</span><span class="stage rl">agentic PPO</span></span></td><td>Extend-realign-validate loop at ~$0.05/task; measured difficulty ramp (pass@4: 90%→2.5% over 15 rounds) doubles as curriculum</td><td><a href="https://arxiv.org/abs/2608.05466">2608.05466</a></td></tr>
+      <tr><td>North Mini Code <span class="sub">30B / A3B</span></td><td><span class="flow"><span class="stage">SFT ×2 (ctx ext.)</span><span class="arr">→</span><span class="stage rl">multi-env RLVR</span></span></td><td>70k verifiable tasks over ~5k repos; 512 rollouts/batch; RLVR adds +7.9 pass@1 on top of SFT</td><td><a href="https://cohere.com/blog/north-mini-code">blog</a></td></tr>
+      <tr><td>Ornith-1.5 <span class="flag">⚠ self-reported</span></td><td><span class="flow"><span class="stage rl">task proposer</span><span class="stage rl">scaffold builder</span><span class="stage rl">policy</span><span class="arr">=</span><span class="stage">closed GRPO loop</span></span></td><td>Model generates its own tasks and harnesses; anti-hack: env boundaries, deterministic monitors, frozen judge veto</td><td><a href="https://ornith.ai/ornith_1_0.html">ornith.ai</a></td></tr>
+    </tbody>
+  </table></div>
+</div></section>
+
+<section id="techniques"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§05</span><h2>Technique index</h2></div>
+  <p class="sec-sub">The load-bearing tricks of the last six months, grouped by what they fix. Each card is one candidate ingredient for the Snowball recipe.</p>
+
+  <div class="tech-group"><p class="group-label">MoE-RL stability — prerequisites, not options</p>
+  <div class="cards">
+    <div class="card"><h4>Rollout routing replay</h4><p>MoE RL often collapses because the generation engine and the trainer pick <em>different experts</em> for the same token — the two sides are literally running different networks. The fix: record which experts fired during generation and replay exactly those in the training pass. Beats TIS-style corrections outright.</p><p class="src"><a href="https://arxiv.org/abs/2510.11370">R3</a> · <a href="https://arxiv.org/abs/2606.00395">PR2</a></p></div>
+    <div class="card"><h4>Consistency engineering</h4><p>Tiny bookkeeping differences between the rollout engine and the trainer — re-tokenizing text, GPU kernels that don't sort ties the same way twice — are enough to sink a run. GLM-5's checklist: pass tokens (never re-tokenized text) between engines, use deterministic kernels, freeze the router during RL, drop stale rollouts. One non-deterministic operation alone collapsed their runs within steps.</p><p class="src"><a href="https://arxiv.org/abs/2602.15763">GLM-5</a> · <a href="https://arxiv.org/abs/2512.01374">Qwen practices</a></p></div>
+    <div class="card"><h4>TIS is not enough for MoE</h4><p>The standard off-policy patch turns out too weak here: with sequence-level TIS, being just two update-steps stale is enough to collapse a long multi-turn run. Router-aware corrections or full routing replay are needed instead. House finding: our own TIS ratios are additionally corrupted by a temperature/log-prob mismatch — <a href="https://github.com/marin-community/MarinSkyRL/issues/438">MarinSkyRL #438</a>.</p><p class="src"><a href="https://arxiv.org/abs/2602.17616">VCPO</a> · <a href="https://arxiv.org/abs/2510.23027">RSPO</a></p></div>
+    <div class="card"><h4>Entropy as a live dial</h4><p>Watch the policy's entropy during training and it tells you which side of the exploration sweet spot you're on: falling fast means exploration is failing and being punished into collapse (sampling too hot), pinned low means the model never explores (too cold), and a gentle rise means new solutions are being found and kept. Picking the right constant was worth ~3 AIME points in AceReason (0.85 beat both 0.6 and 1.0).</p><p class="src"><a href="https://arxiv.org/abs/2505.22617">Cui et al.</a> · <a href="https://arxiv.org/abs/2506.13284">AceReason</a></p></div>
+  </div></div>
+
+  <div class="tech-group"><p class="group-label">Data &amp; curriculum — where the wins actually come from</p>
+  <div class="cards">
+    <div class="card"><h4>Difficulty evolution against the live model</h4><p>A task the model always solves teaches nothing, and so does one it always fails — the learning signal lives in between. SETA-Evol makes the task generator track the model: as it improves, operators make tasks harder (or easier) to keep every group informative. The single clearest environment-side lever.</p><p class="src"><a href="https://arxiv.org/html/2607.10891">SETA</a></p></div>
+    <div class="card"><h4>Pass-rate control at ~50%</h4><p>Same goal, sampler-side: the learning signal peaks when the model succeeds about half the time. Prefix sampling gets a skewed task there without a teacher — seed a known-good beginning into a task the model always fails (now it sometimes succeeds), or a bad beginning into one it always solves. Worth 1.5–2× in wall-clock.</p><p class="src"><a href="https://arxiv.org/abs/2605.05112">2605.05112</a></p></div>
+    <div class="card"><h4>Teacher hints at the 0/k boundary</h4><p>For problems the student fails on every single attempt, no amount of RL helps — there is no success to reinforce. The fix: give teacher hints on exactly those problems until some attempts succeed, then let RL consolidate without the hint. The one recipe with receipts for expanding capability (pass@256 +10.3 over vanilla RL), and it's literally distillation and RL composing per-example.</p><p class="src"><a href="https://arxiv.org/abs/2606.22317">2606.22317</a></p></div>
+    <div class="card"><h4>Verifier diversification</h4><p>If every task is graded the same way, the model learns the grader's quirks instead of the skill. Tmax's cheap defense: vary how completion is checked across tasks, and use graded (not just pass/fail) rewards where the task allows it.</p><p class="src"><a href="https://arxiv.org/abs/2606.23321">Tmax</a></p></div>
+    <div class="card"><h4>Curated-small over crawled-large</h4><p>More RL data isn't better data: selecting the best ~20% of a dataset (by difficulty fit, diversity, and influence) and spending the savings on more attempts per problem matches full-data training at about half the compute.</p><p class="src"><a href="https://arxiv.org/abs/2509.01321">DEPO</a> · <a href="https://arxiv.org/abs/2601.14695">CoScale-RL</a></p></div>
+    <div class="card"><h4>Saturation gating</h4><p>Why RL narrows a model: once a problem is solved, continuing to train on it only concentrates probability on the one solution the sampler favors — killing the diversity that pass@k measures. The fix is data-side and cheap: retire solved problems from the mix and push updates toward unsolved ones, and the pass@k spread stays open.</p><p class="src"><a href="https://arxiv.org/abs/2606.15455">BBG</a></p></div>
+  </div></div>
+
+  <div class="tech-group"><p class="group-label">Objectives &amp; transfer</p>
+  <div class="cards">
+    <div class="card"><h4>Format-gated composite rewards</h4><p>How do you make a model adopt one habit — say, checking its work before submitting — without changing anything else? Multiply the reward from three checkable parts: did the required structure appear (yes/no gate), was the answer right, and was it efficient. Each part can be turned off to prove it matters. Result: +14.5 LiveCodeBench while using <em>fewer</em> tokens. The template for our behavior recipe cards.</p><p class="src"><a href="https://arxiv.org/html/2603.05863v1">ReflexiCoder</a></p></div>
+    <div class="card"><h4>On-policy distillation, gated</h4><p>Let the student attempt tasks and have the teacher grade every token — much denser feedback than RL's one reward per episode, at 5–12× less compute. The 2026 catch: in multi-turn agent settings, applying teacher pressure uniformly backfires; it has to be gated to the steps where the student actually went wrong, or used only to steer exploration while a verifiable reward stays the objective.</p><p class="src"><a href="https://arxiv.org/abs/2605.13230">TGPO</a> · <a href="https://arxiv.org/abs/2605.07725">SOD</a> · <a href="https://arxiv.org/abs/2604.13016">Rethinking OPD</a></p></div>
+    <div class="card"><h4>RL deltas as teachers</h4><p>What RL changed in a model is itself reusable: take a checkpoint from before and after an RL run, and the <em>difference</em> between their token probabilities acts as a dense reward for training a new student — transferring the improvement without re-running the RL. Every RL run we've already paid for becomes an asset.</p><p class="src"><a href="https://arxiv.org/abs/2607.05394">Direct-OPD</a></p></div>
+    <div class="card"><h4>Prompt-opt as baseline and curriculum</h4><p>GEPA showed a few hundred rollouts of automated prompt search can capture much of what RL buys, so any RL claim now needs an optimized-prompt baseline to be credible (it's an ICLR'26 oral). P²O turns that into a training ingredient: when a task group is unlearnable (all attempts fail), evolve a prompt that makes it solvable, distill that behavior into the weights, and continue RL. Nobody has run this on terminal agents with an MoE student.</p><p class="src"><a href="https://arxiv.org/abs/2507.19457">GEPA</a> · <a href="https://arxiv.org/abs/2603.21877">P²O</a> · <a href="https://arxiv.org/abs/2605.30070">OPSD law</a></p></div>
+    <div class="card"><h4>Collateral report card</h4><p>RL runs change more than the target skill, and almost nobody measures what else moved. The ingredients now exist: how far the model drifted from its pre-RL self predicts forgetting (RL's Razor); the pass@k spread shows whether diversity collapsed; automated diffing of generations surfaces unexpected behavior changes. Nobody has bundled them into a standard per-run audit — we can be first, with tooling we already have.</p><p class="src"><a href="https://arxiv.org/abs/2509.04259">RL's Razor</a> · <a href="https://arxiv.org/abs/2605.05090">side-effect audits</a></p></div>
+    <div class="card"><h4>Cross-stage distillation repair</h4><p>In a staged pipeline, each RL stage quietly damages the domains it isn't training — the code stage erodes math, and so on. The repair that makes cascades viable: between stages, briefly distill from whichever earlier checkpoint was strongest in each damaged domain. Both GLM-5 and Cascade-2 treat this as load-bearing, not optional.</p><p class="src"><a href="https://arxiv.org/abs/2603.19220">Cascade-2</a> · <a href="https://arxiv.org/abs/2602.15763">GLM-5</a></p></div>
+  </div></div>
+</div></section>
+
+<section id="scoreboard"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§06</span><h2>The non-agentic scoreboard</h2></div>
+  <p class="sec-sub">The proposed goal in one view: post-SFT Snowball&nbsp;67B-A2B matching <b>Qwen3-Next-80B-A3B-Thinking</b> on math, science, coding, and language. Every model here runs under 10B active params, apart from the two anchors that mark the ceiling and the dense floor. Each row is taken from that model's own card or paper — never stitched across sources — which is why the coverage is ragged.</p>
+
+  <div class="fig">
+    <p class="fig-title">Seven benchmarks, one panel each</p>
+    <p class="fig-sub">Each panel keeps its own scale; the dashed line is the target. Models run best to worst, and the number beside each name is what orders them: its mean points above or below the target. CFEval is table-only — outside Qwen almost nobody reports it.</p>
+    <div class="sb-key">
+      <span><span class="kb" style="background:var(--s1)"></span>MoE, &lt;10B active</span>
+      <span><span class="kb" style="background:var(--s2)"></span>Dense, &lt;10B active</span>
+      <span><span class="kb" style="background:var(--s3)"></span>Anchor, &ge;10B active</span>
+      <span><span class="kb" style="background:transparent;border:1.5px dashed var(--accent)"></span>the target</span>
+    </div>
+    <div class="chart-scroll"><svg id="sbChart" viewBox="0 0 1000 520" width="100%" role="img" aria-label="Small-multiple dot plots comparing sub-10B-active models on AIME, HMMT25, GPQA, LiveCodeBench v6, CFEval, MMLU-Pro and IFEval, with Qwen3-Next-80B-A3B-Thinking marked as the target on each panel"></svg></div>
+    <p class="fig-note">Hover any dot for the exact score, size, and source. Snowball is absent on purpose — it has no scores yet. <b>n/r</b> means that card does not report the benchmark, and the pattern of n/r is itself informative: the full seven-benchmark suite is essentially a Qwen convention. Hollow dots mark a variant that is adjacent to the column but not the same benchmark — Qwen3.6-35B-A3B reports AIME26 and HMMT&nbsp;Nov&nbsp;25; Gemma-4 reports AIME26. <b>On the ordering:</b> it averages only the benchmarks a model actually reports, and excludes hollow values, so it is not a like-for-like ranking — Qwen3.6-35B-A3B and Gemma-4 are averaged over three columns while the Qwen3-Next pair and both anchors are averaged over six. Read it as a reading order, not a league table; the panels themselves are the evidence.</p>
+  </div>
+
+  <div class="tbl-wrap"><table class="sb">
+    <caption>Scores and size, vendor-reported. Cell tint shows the gap to the target — green above, amber below.</caption>
+    <thead>
+      <tr class="grp-row">
+        <th class="spacer"></th><th class="spacer"></th><th class="spacer"></th>
+        <th class="grp g-start" colspan="2">Math</th>
+        <th class="grp g-start">Science</th>
+        <th class="grp g-start" colspan="2">Coding</th>
+        <th class="grp g-start" colspan="2">Language</th>
+      </tr>
+      <tr id="sbHead2"></tr>
+    </thead>
+    <tbody id="sbBody"></tbody>
+  </table></div>
+  <p class="fig-note"><b>Eff. cap.</b> is &radic;(total &times; active), the same rough capacity proxy §08 uses — it puts Snowball at 11.6B-equivalent against the target's 15.5B.</p>
+
+  <h3>What post-training alone is worth</h3>
+  <p class="sec-sub">Qwen shipped two models from the <em>same</em> pretrained base: <b>Qwen3-Next-80B-A3B-Instruct</b>, given a plain instruction post-train, and <b>Qwen3-Next-80B-A3B-Thinking</b>, given a reasoning post-train. Pretraining is held identical, so the distance between them is attributable to post-training alone — the same lever an RL recipe pulls. It is the cleanest published measurement of what that lever can move, and what it can't.</p>
+  <div class="fig">
+    <p class="fig-title">Instruct &rarr; Thinking, one identical base</p>
+    <p class="fig-sub">Each line runs from the Instruct model's score to the Thinking model's score on the same benchmark. The line's length is what the reasoning post-train bought.</p>
+    <div class="sb-key">
+      <span><span class="kb" style="background:transparent;border:2px solid var(--ink-3);border-radius:50%;width:10px;height:10px"></span>Instruct — instruction post-train</span>
+      <span><span class="kb" style="background:var(--ink-2);border-radius:50%;width:10px;height:10px"></span>Thinking — reasoning post-train</span>
+      <span><span class="kb" style="background:var(--s2)"></span>Math &amp; coding</span>
+      <span><span class="kb" style="background:var(--s1)"></span>Science &amp; language</span>
+    </div>
+    <div class="chart-scroll"><svg id="deltaChart" viewBox="0 0 1000 268" width="100%" role="img" aria-label="Dumbbell chart: for each benchmark a line runs from the Qwen3-Next-80B-A3B-Instruct score to the Qwen3-Next-80B-A3B-Thinking score. The lines are longest on HMMT25 and AIME25 and shortest on IFEval and MMLU-Pro"></svg></div>
+    <p class="fig-note">CFEval is omitted — the Instruct card does not report it. Note the <em>levels</em>, not just the gains: GPQA-D and MMLU-Pro start high on the Instruct model and barely move, because they track what the base already knows. HMMT and AIME start low and move furthest.</p>
+  </div>
+
+  <div class="callout">
+    <b>Read these numbers with one caveat.</b> Every row is that model's own card, which is the only way to avoid silently mixing harnesses — but it does not make the columns strictly comparable. Verified example: Qwen3-30B-A3B-Thinking-2507's own card reports HMMT25&nbsp;71.4; Qwen re-ran that same model for the Qwen3.5 cards and got HMMT&nbsp;Feb&nbsp;25&nbsp;<b>63.1</b> — an 8.3-point swing, both Qwen-official. The target moved only 73.9&nbsp;&rarr;&nbsp;73.7 in the same re-run. Treat sub-3-point gaps as noise, and treat HMMT specifically as harness-sensitive.
+  </div>
+
+  <div class="callout">
+    <b>Three readings that bear on the goal.</b>
+    <ul class="tight" style="margin-top:10px">
+      <li><b>The goal is recipe-bound, not capacity-bound.</b> Qwen3-30B-A3B-Thinking-2507 has <em>less</em> effective capacity than Snowball (10.0 vs 11.6) and still lands within 2.8 AIME / 3.8 GPQA-D / 2.7 LCBv6 / 1.8 MMLU-Pro of the target, dead level on IFEval. Qwen3.5-35B-A3B (10.2) and Nemotron&nbsp;3&nbsp;Nano&nbsp;30B-A3B (10.1) clear the target outright on most of what they report, and Qwen3.5-9B does it with no sparsity at all. Nothing about 67B-A2B's shape rules this target out.</li>
+      <li><b>Budget ambition per benchmark, not across the board.</b> On one identical base, the reasoning post-train is worth ~18–20 points on AIME and HMMT and ~12 on LiveCodeBench, but only ~4 on GPQA-D and ~1–2 on MMLU-Pro and IFEval. Promise movement where the recipe demonstrably moves things; measure the rest.</li>
+      <li><b>Two of the seven can't be checked against the field.</b> CFEval is a Qwen house metric — Google publishes a real Codeforces Elo (1718 for Gemma-4-26B-A4B) which is a different number on a different scale, and inclusionAI's &ldquo;CodeForces(Elo)&rdquo; is a 0–100 score. HMMT now has three live variants (Feb&nbsp;25, Nov&nbsp;25, Feb&nbsp;26) and vendors pick between them. IFEval barely discriminates either — 85.0–91.9 across everything here, including a 4B dense model. Weight the goal toward GPQA-D, LiveCodeBench&nbsp;v6 and MMLU-Pro, where the field actually reports comparable numbers.</li>
+    </ul>
+  </div>
+</div></section>
+
+<section id="data"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§07</span><h2>The data on hand</h2></div>
+  <p class="sec-sub">Three corpora we would actually build the recipe from — one public trace corpus we can distill from, our own task pool, and our own trace line. Counts are live, taken from parquet row counts rather than from the cards, because in two of the three cases the card is wrong or stale.</p>
+
+  <div class="callout">
+    <b>The tension worth naming up front.</b> The goal in §06 is non-agentic — math, science, coding, language. All three corpora here are agentic: terminal tasks graded by a test suite. But most of their <em>content</em> isn't. TaskTrove's two largest directories are <span class="num">nemotron-gym-knowledge-mcqa</span> (616,888 tasks) and <span class="num">nemotron-gym-math-stack-overflow-v2</span> (436,307) — 46.5% of the pool between them, and neither is agentic in substance. Nemotron Terminal is 61.8% math/code/SWE prompt sets mechanically re-skinned as terminal tasks. Both are reasoning content wearing a terminal costume, with a pass/fail verifier attached. That is an asset for a non-agentic goal, but the reward shape is a test-suite pass, not an answer match — the conversion is not free.
+  </div>
+
+  <div class="ds" id="ntBlock">
+    <div class="ds-head">
+      <h3>Nemotron Terminal Corpus</h3><span class="who">NVIDIA · Feb 2026 · CC-BY-4.0</span>
+      <a href="https://huggingface.co/datasets/nvidia/Nemotron-Terminal-Corpus">HF</a>
+      <a href="https://arxiv.org/abs/2602.21193">arXiv 2602.21193</a>
+    </div>
+    <p class="what">The SFT corpus behind Nemotron-Terminal-8B/14B/32B — the models that went 3.4&nbsp;&rarr;&nbsp;27.4 on Terminal-Bench 2.0 on <em>pure SFT</em>, no RL. Every row was generated by one teacher through one scaffold, which makes it a clean distillation source and a narrow one.</p>
+    <div class="ds-stats">
+      <div class="stat"><b>366,154</b><span>trajectories released</span></div>
+      <div class="stat"><b>490,520</b><span>trained on (paper)</span></div>
+      <div class="stat"><b>8.2 GB</b><span>parquet</span></div>
+      <div class="stat"><b>~8.1</b><span>assistant turns / trace</span></div>
+      <div class="stat"><b>14,312</b><span>mean tokens / trace</span></div>
+      <div class="stat"><b>0.62%</b><span>over 32k tokens</span></div>
+    </div>
+    <div class="ds-key">
+      <span><span class="kb" style="background:var(--s2)"></span>Dataset adapters — reasoning prompts re-skinned as terminal tasks (61.8%)</span>
+      <span><span class="kb" style="background:var(--s1)"></span>Skill-based synthetic — generated terminal tasks (38.2%)</span>
+    </div>
+    <div class="chart-scroll"><svg id="ntChart" viewBox="0 0 1000 400" width="100%" role="img" aria-label="Ranked bar chart of Nemotron Terminal Corpus composition: math adapters dominate at 162,692 trajectories, followed by code and SWE adapters, then eleven skill-based synthetic domains"></svg></div>
+    <p class="fig-note"><span class="derived">DERIVED</span> Per-domain counts are not published — they were read from the parquet footers of the released files and sum exactly to the four config totals. Turn and token stats are measured over 59,529 skill-based traces only (HF rate-limited the math-heavy adapter shards, whose traces are likely longer). The released set is 366,154; the 490,520 the models trained on includes a seed-based synthetic split of 124,366 that was never released. Every trace also opens with the same 2,836-character Terminus-2 preamble &mdash; the JSON command schema the scaffold requires &mdash; so that much of each row is fixed overhead.</p>
+  </div>
+
+  <div class="ds" id="ttBlock">
+    <div class="ds-head">
+      <h3>TaskTrove</h3><span class="who">Ours · v3.42, live · Apache-2.0</span>
+      <a href="https://huggingface.co/datasets/open-thoughts/TaskTrove">HF</a>
+    </div>
+    <p class="what">Our task pool — every row a Harbor task binary: an instruction, a Dockerfile, and a test suite that writes a 0/1 reward. It is the source for agentic RL rollouts and for datagen, and it is roughly six times the size of the Nemotron corpus in tasks.</p>
+    <div class="ds-stats">
+      <div class="stat"><b>2,263,427</b><span>active tasks</span></div>
+      <div class="stat"><b>103</b><span>active directories</span></div>
+      <div class="stat"><b>9.6 GB</b><span>on disk</span></div>
+      <div class="stat"><b>142,100</b><span>deprecated tasks</span></div>
+      <div class="stat"><b>46.5%</b><span>in the top 2 dirs</span></div>
+      <div class="stat"><b>1,696,847</b><span>traces generated so far</span></div>
+    </div>
+    <div class="ds-key">
+      <span><span class="kb" style="background:var(--s2)"></span>Reasoning content converted to verifiable tasks (78.9%)</span>
+      <span><span class="kb" style="background:var(--s1)"></span>Natively agentic — repos, terminals, SWE (21.1%)</span>
+    </div>
+    <div class="chart-scroll"><svg id="ttChart" viewBox="0 0 1000 240" width="100%" role="img" aria-label="Ranked bar chart of TaskTrove composition by family: nemotron-gym RLVR conversions dominate at 1.79 million tasks, followed by standalone suites, exp_rpt repo-patch synthesis, SWE-repair, StackExchange sandboxes, curriculum mixtures and instruction ablations"></svg></div>
+    <p class="fig-note"><span class="derived">DERIVED</span> Families are grouped by directory-name prefix — the counts are exact but the grouping is a construction, not a recorded field. The distribution is brutally long-tailed: the top two directories are 46.5% of the pool and the bottom fifty are under 4% combined. <b>Two things to know before citing this dataset:</b> the HF card's headline &ldquo;17,191 rows&rdquo; is the viewer's auto-conversion of a single subdirectory, off by ~130&times;; and <span class="num">CLAUDE.md</span> points at <span class="num">.claude/ops/data/tasktrove.md</span> for the inventory, which does not exist in this checkout — the in-repo docs describe v2 (96 datasets) and are ~40 releases behind. There is no per-task pass rate, token cost, or status field; difficulty labels exist only for the v2 subset, of which 42 of 96 names survive. Counts are the <span class="num">default</span> config as HuggingFace actually serves it &mdash; every <span class="num">*/tasks.parquet</span> outside <span class="num">deprecated/</span>. One directory, <span class="num">laion__nemotron-gym-agent-workplace-v2</span> (~297 tasks), is excluded from both figures: it appears at the repo root <em>and</em> under <span class="num">deprecated/</span>, and in neither place does it ship a <span class="num">tasks.parquet</span> &mdash; only a raw <span class="num">data/</span> folder &mdash; so no config serves it.</p>
+  </div>
+
+  <div class="ds" id="otBlock">
+    <div class="ds-head">
+      <h3>OpenThoughts &amp; AgentTrove</h3><span class="who">Ours · Apache-2.0</span>
+      <a href="https://huggingface.co/datasets/open-thoughts/OpenThoughts3-1.2M">OpenThoughts3</a>
+      <a href="https://huggingface.co/datasets/open-thoughts/AgentTrove">AgentTrove</a>
+      <a href="https://arxiv.org/abs/2506.04178">arXiv 2506.04178</a>
+    </div>
+    <p class="what">Two lines under one roof. <b>AgentTrove</b> is the trajectory complement to TaskTrove — the agentic side, 1.7M traces. <b>OpenThoughts</b> is the reasoning-SFT side, and it is the one that maps directly onto the §06 goal: OpenThoughts-114k (113,957 rows, DeepSeek-R1 teacher) &rarr; OpenThoughts2-1M (1,143,205) &rarr; OpenThoughts3-1.2M, where every question was annotated 16&times; by QwQ-32B.</p>
+    <div class="ds-stats">
+      <div class="stat"><b>1,200,000</b><span>OpenThoughts3 rows</span></div>
+      <div class="stat"><b>16&times;</b><span>completions / question</span></div>
+      <div class="stat"><b>QwQ-32B</b><span>OT3 teacher</span></div>
+      <div class="stat"><b>1,696,847</b><span>AgentTrove traces</span></div>
+      <div class="stat"><b>19.6 GB</b><span>AgentTrove parquet</span></div>
+      <div class="stat"><b>219</b><span>gen runs (claimed)</span></div>
+    </div>
+    <div class="ds-key">
+      <span><span class="kb" style="background:var(--s1)"></span>OpenThoughts3-1.2M by domain</span>
+      <span><span class="kb" style="background:var(--ink-3)"></span>A goal family with no data behind it</span>
+    </div>
+    <div class="chart-scroll"><svg id="otChart" viewBox="0 0 1000 130" width="100%" role="img" aria-label="Bar chart of OpenThoughts3-1.2M composition: 850,000 math rows, 250,000 code rows, 100,000 science rows, and no language or instruction-following rows at all"></svg></div>
+    <p class="fig-note"><b>The gap that matters for the goal.</b> OpenThoughts3 covers three of §06's four families and has nothing for the fourth. Math, coding and science are 70.8% / 20.8% / 8.3% of it; there is no language or instruction-following split at all, which is exactly what MMLU-Pro and IFEval test. Those are also the two columns where the reasoning post-train bought the least (+2.1 and +1.3), so the gap is survivable — but it should be stated in the proposal rather than discovered later. AgentTrove figures measured from 38 parquet footers, last modified 2026-05-07; the 219-run figure is a v2 README claim, though the ~1.7M count it accompanies checks out. Per-source and per-teacher breakdowns are derivable from AgentTrove's <span class="num">original_source</span> / <span class="num">original_teacher</span> columns but were not computed. Two more viewer traps of the same shape as TaskTrove's: OpenThoughts-114k shows &ldquo;227,914 rows&rdquo; because it ships two configs of 113,957 each, and OpenThoughts2-1M's size endpoint reports 300,850 against the 1,143,205 its own card YAML declares. Three datasets, three wrong viewer counts &mdash; every row count on this page was taken from a card YAML or a parquet footer instead.</p>
+    <div class="ex">
+      <p class="ex-h">AgentTrove composition — full census, all 38 shards</p>
+      <div class="ex-tabs" role="tablist" id="atTabs" aria-label="AgentTrove composition view">
+        <button class="ex-tab" type="button" role="tab" aria-selected="true" tabindex="0">By task source</button>
+        <button class="ex-tab" type="button" role="tab" aria-selected="false" tabindex="-1">By teacher model</button>
+        <button class="ex-tab" type="button" role="tab" aria-selected="false" tabindex="-1">By recorded outcome</button>
+      </div>
+      <div class="ds-key" id="atKeySrc">
+        <span><span class="kb" style="background:var(--s1)"></span>Task source</span>
+        <span><span class="kb" style="background:var(--ink-3)"></span>Unlabelled, or rolled into the tail</span>
+      </div>
+      <div class="ds-key" id="atKeyTeach" hidden>
+        <span><span class="kb" style="background:var(--s1)"></span>Teacher model</span>
+        <span><span class="kb" style="background:var(--s2)"></span>Nano-tier teacher</span>
+      </div>
+      <div class="chart-scroll" id="atSrcWrap"><svg id="atSrcChart" viewBox="0 0 1000 360" width="100%" role="img" aria-label="Ranked bar chart of AgentTrove trajectories by task source, led by exp_tas at 375,168"></svg></div>
+      <div class="ds-key" id="atKeyRes" hidden>
+        <span><span class="kb" style="background:var(--s1)"></span>An actual pass/fail outcome</span>
+        <span><span class="kb" style="background:var(--s2)"></span>Harness error, not an outcome</span>
+        <span><span class="kb" style="background:var(--ink-3)"></span>No value recorded</span>
+      </div>
+      <div class="chart-scroll" id="atResWrap" hidden><svg id="atResChart" viewBox="0 0 1000 340" width="100%" role="img" aria-label="Ranked bar chart of the AgentTrove result field: 87 percent null, 10 percent AgentTimeoutError, and only about one percent carrying a real pass or fail outcome"></svg></div>
+      <div class="chart-scroll" id="atTeachWrap" hidden><svg id="atTeachChart" viewBox="0 0 1000 390" width="100%" role="img" aria-label="Ranked bar chart of AgentTrove trajectories by teacher model, led by GLM-4.7 at 673,504 and GPT 5.1 Nano at 602,715"></svg></div>
+      <p class="fig-note"><b>Both views are a complete census</b> — every one of the 38 shards was read, and the 30 sources and 14 teachers each sum exactly to 1,696,847. Two things stand out. <b>88.7% of the corpus comes from three teachers</b> (GLM-4.7, GPT&nbsp;5.1&nbsp;Nano, GLM-4.6), so its failure modes are largely three models' failure modes. And <b>36.5% of it was generated by a nano-tier teacher</b> — a distilled student inherits its teacher's ceiling, so a third of this corpus carries a low one. If AgentTrove feeds Snowball, the teacher mix is worth deciding deliberately rather than inheriting. 5.4% of rows carry no source label at all. The concentration is the real headline: <b>two sources are 39% of the rows and two teachers are 75% of them</b>, which is a very different corpus from what &ldquo;219 runs across 30 sources&rdquo; suggests. Neither breakdown is published anywhere &mdash; the card lists its source repos but gives no counts.</p>
+      <div class="callout" style="margin:14px 0 0"><b>There is effectively no success signal in AgentTrove.</b> The <span class="num">result</span> field is <b>87.1% null</b>, and most of what remains is harness failure rather than task outcome: <b>199,219 rows (11.7%) are errors</b>, of which <span class="num">AgentTimeoutError</span> alone is 177,268. Only <b>19,487 rows &mdash; 1.15% of the corpus &mdash; carry any pass/fail value at all</b> (18,159 success, 1,328 failure), and the encodings are inconsistent across source datasets: success appears as both <span class="num">1.0</span> and <span class="num">success</span>, timeouts as both <span class="num">AgentTimeoutError</span> and <span class="num">timeout</span>. <b>The card also documents a <span class="num">reward</span> float column that does not exist</b> &mdash; verified against the live 21-column schema, where <span class="num">result</span> is a string. So the §07 question of whether to rejection-sample on reward is partly moot here: for 99% of AgentTrove there is nothing to sample on. That is fixable at generation time, and worth fixing before the next campaign.</div>
+    </div>
+
+    <div class="callout" style="margin-bottom:0"><b>A quality problem in our own SFT data, found while pulling these examples.</b> Roughly half of OpenThoughts3 rows never finish: the QwQ-32B response opens <span class="num">&lt;think&gt;</span>, runs to a generation length cap, and stops mid-sentence with no closing tag and no final answer. In a 180-row sample across nine offsets: <b>70% of math rows, 62% of code rows, 8% of science rows</b> are truncated this way — 46.7% overall. Truncated rows are the long ones (median 53,954 characters against 33,524 for complete rows), and some degenerate into mixed Chinese/English before they stop. The three examples below were chosen from the complete half. This is a sample, not a census — but if OpenThoughts3 is going to feed Snowball's SFT, the real usable row count needs measuring before it is quoted as 1.2M.</div>
+  </div>
+
+  <div class="callout">
+    <b>The finding in here that should change how we run datagen.</b> NVIDIA ablated trajectory filtering three ways and <em>no filtering won by more than 2&times;</em>: 12.4 TB2.0 unfiltered, 6.74 keeping only completed trajectories, 5.06 keeping only trajectories that passed their tests. Their reading is that strict filtering &ldquo;discards over half the available training data,&rdquo; and that failed trajectories carry real supervision — realistic error states and recovery patterns. Success-only filtering would have cut their synthetic pool from 264,207 to 83,448. If our datagen pipeline rejection-samples on reward, this is a cheap, well-evidenced ablation to run against it before the next campaign.
+  </div>
+</div></section>
+
+<section id="targets"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§08</span><h2>What Snowball can aim for</h2></div>
+  <p class="sec-sub">Ben's two stated targets assessed against the evidence above, then the bands, the headline, and the risks.</p>
+
+  <div class="target">
+    <div class="t-head"><h4>Target 1 — "benchmark comparably to Qwen3-Next-80B-A3B-Thinking"</h4></div>
+    <div class="t-head"><span class="verdict good">AIME / LCB · FEASIBLE</span><span class="verdict warn">GPQA-D · CONDITIONAL ON PRETRAIN</span></div>
+    <p>The A3B frontier moved <em>past</em> this target in the last year: Cascade-2 (30B-A3B) is at 92.4 AIME25 and Qwen3.5/3.6-35B-A3B at 92–93 AIME26 — so "comparable to 80B-A3B" now means matching a mid-pack A3B model. By effective capacity (√(total×active)) Snowball ≈ 11.6B-equivalent, <em>more</em> than the two models already exceeding the target (Cascade-2 ≈ 9.5, Qwen3.5-35B ≈ 10.2). ZAYA1 proves active params don't bind competition math (0.7B active → 89 AIME26).</p>
+    <p>GPQA-Diamond is the exception: it tracks pretraining, not post-training — Cascade-2 reached only 76.1 with the best published RL pipeline, while 84–86 at A3B required Qwen's 2026 corpus. That component depends on Marin's pretrain, so the proposal should <b>promise AIME/LCB movement and measure GPQA</b>, never gate on it.</p>
+  </div>
+
+  <div class="target">
+    <div class="t-head"><h4>Target 2 — "match the reward of a stronger teacher (Qwen3.5-122B-A10B, GLM-5.2)"</h4></div>
+    <div class="t-head"><span class="verdict good">FEASIBLE AS FRACTION-OF-GAP</span><span class="verdict warn">TOKENIZER CONSTRAINT</span></div>
+    <p>The A3B class has done the analogous thing: Qwen3-Coder-Next (A3B) matches DeepSeek-V3.2 (A37B — 12× active) on SWE-bench Verified. Frame the goal as closing a stated fraction of the measured teacher-reward gap on a fixed task distribution, with the ID/OOD transfer matrix as the scientific payload — nobody has published that controlled comparison (on-policy distill vs GRPO vs hybrid).</p>
+    <p>Constraint: logit-level distillation arms need a shared tokenizer — <b>Qwen3.5-122B-A10B works today; GLM-5.2 supports only reward-level matching or trace SFT</b>. And hold the agent harness fixed across arms: cross-scaffold transfer is weak and will swamp the effect.</p>
+  </div>
+
+  <h3>Evidence-based target bands</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Benchmark</th><th>Band</th><th>What it takes</th><th>Calibration</th></tr></thead>
+    <tbody>
+      <tr><td>Terminal-Bench 2.0</td><td class="num win">15–25</td><td>TMax/SETA-class RL recipe: ~15k difficulty-calibrated envs, few nodes, weeks</td><td>TMax-9B 28.8 (dense); SETA-8B 12; band discounts for A2B compute</td></tr>
+      <tr><td>Terminal-Bench 2.0</td><td class="num win">25–35</td><td>Full staged recipe: mid-train + verified SFT + distill + RL</td><td>Qwen3-Coder-Next (A3B) 25.8–36.2 — Haiku-4.5 / GPT-5-mini territory</td></tr>
+      <tr><td>AIME25</td><td class="num win">mid-80s+</td><td>Cascade-grade recipe on a competent distilled base</td><td>A3B class: 85–92; A1.4B: 74; A0.7B: 89 — recipe-dominated</td></tr>
+      <tr><td>GPQA-Diamond</td><td class="num win">measure only</td><td>Bound by Marin's pretraining corpus, not by RL</td><td>Best RL pipeline got 76.1 from a 30B base; 84+ needed a 2026 corpus</td></tr>
+      <tr><td>SWE-bench Verified</td><td class="num win">50–70</td><td>Heavy staged investment (Coder-Next-scale env count)</td><td>A3B precedents: North Mini 61, Coder-Next 70.6, Cascade-2 50.2</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="headline-card">
+    <h3>The headline nobody can pre-empt: first competitive A2B</h3>
+    <p>No published model has a frontier-relative win below 3B active — the entire 2026 efficiency race (Coder-Next, North Mini Code, Nemotron-Lightning, Qwen3.6-35B, Ornith-35B) converged on exactly A3B. Snowball at 2B active and 34× sparsity probes below the empirical floor (max published at ≤4B active is Qwen3-Next's 27×; 33× exists only at 1.6T scale), with 67B of total capacity as the compensating asset. Even <em>reaching the A3B band at A2B</em> is a first — and the routing-stability study underneath it (our P0 workstream) is a standalone contribution, since no open agentic MoE-RL stability recipe exists at any sparsity.</p>
+  </div>
+
+  <h3>Risks the proposal should name</h3>
+  <ul class="tight">
+    <li><b>The Ring-mini bracket.</b> The nearest active-count analog (A1.4B) sits at 74 AIME25 while A3B models hit 92 — the anchors bracket every target widely. Recipe quality is the whole ballgame, which is the point of the proposal but also the risk.</li>
+    <li><b>34× sparsity is untested at small scale.</b> Routing/expert-utilization stability under RL at 2B active is the genuine technical unknown — hence stability work (routing replay, consistency checklist, telemetry) precedes every recipe experiment.</li>
+    <li><b>Base quality is outside RL's control.</b> RL elicits, it rarely injects; every band above assumes a competent distilled starting point. Gates should be conditional on the post-SFT checkpoint's arrival and quality.</li>
+    <li><b>Eval protocol dwarfs recipe deltas.</b> Scaffold choice swings TB2.0 by 2–4× and vendor reasoning numbers assume 32–80k token budgets — one fixed harness, one fixed generation budget, pass@1 <em>and</em> pass@k, every claim.</li>
+  </ul>
+
+  <div class="callout"><b>House finding while compiling this brief:</b> our own TIS importance ratios are corrupted whenever rollout temperature ≠ 1.0 (trainer tempers its log-probs, vLLM reports untempered ones), and the agentic path drops the configured temperature entirely — filed as <a href="https://github.com/marin-community/MarinSkyRL/issues/438">MarinSkyRL #438</a> with a two-line fix path. Land it before the fleet resumes.</div>
+</div></section>
+
+<footer><div class="wrap">
+  <p><b>Method.</b> Compiled 2026-08-22 from seven targeted research sweeps (agentic RL recipes; RLVR data recipes and RL-vs-distillation; MoE stability, weak-to-strong, and collateral; reception taxonomy; prompt-opt × RL; agentic matchups; reasoning matchups). Every score was web-verified against arXiv, Hugging Face model cards, the tbench.ai leaderboard, or lab blogs on 2026-08-21/22; unverifiable claims were dropped.</p>
+  <p><b>Caveats.</b> Scores are vendor-reported unless noted; TB2.0 vs TB2.1 and AIME25 vs AIME26 are flagged per row; terminal-bench numbers are scaffold-sensitive (spans of 2–4× exist for the same model); Ornith-1.5 results are self-reported and two days old at compilation.</p>
+  <p>Prepared for OT-Agent RL goal-setting (Snowball 67B-A2B). Working draft, not a publication.</p>
+</div></footer>
+
+<div id="tooltip" role="status"></div>
+
+<script>
+(function(){
+  const NS="http://www.w3.org/2000/svg";
+  const el=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+  const tt=document.getElementById("tooltip");
+  function bindTip(node,html){
+    node.addEventListener("mousemove",ev=>{tt.innerHTML=html;tt.style.opacity=1;
+      const w=tt.offsetWidth,h=tt.offsetHeight;
+      let x=ev.clientX+14,y=ev.clientY-h-10;
+      if(x+w>window.innerWidth-8)x=ev.clientX-w-14;
+      if(y<8)y=ev.clientY+16;
+      tt.style.left=x+"px";tt.style.top=y+"px";});
+    node.addEventListener("mouseleave",()=>{tt.style.opacity=0;});
+  }
+  const tip=(name,score,detail)=>`<div class="tt-name">${name}</div><div class="tt-mono">${score}</div><div>${detail}</div>`;
+
+  /* ---------- Chart 1: TB2.x vs total params ---------- */
+  (function(){
+    const svg=document.getElementById("mapChart");
+    const W=1000,H=540,M={l:56,r:24,t:16,b:44};
+    const x0=Math.log10(1.6),x1=Math.log10(2400);
+    const X=v=>M.l+(Math.log10(v)-x0)/(x1-x0)*(W-M.l-M.r);
+    const Y=v=>H-M.b-(v/75)*(H-M.t-M.b);
+    // grid + axes
+    for(const gy of [0,15,30,45,60,75]){
+      svg.appendChild(el("line",{x1:M.l,x2:W-M.r,y1:Y(gy),y2:Y(gy),stroke:"var(--line-soft)","stroke-width":1}));
+      const t=el("text",{x:M.l-10,y:Y(gy)+4,"text-anchor":"end","font-size":11,fill:"var(--ink-3)"});t.textContent=gy;svg.appendChild(t);
+    }
+    for(const gx of [2,4,8,16,32,67,128,256,512,1000,2000]){
+      const t=el("text",{x:X(gx),y:H-M.b+20,"text-anchor":"middle","font-size":11,fill:"var(--ink-3)"});
+      t.textContent=gx>=1000?(gx/1000)+"T":gx+"B";svg.appendChild(t);
+      svg.appendChild(el("line",{x1:X(gx),x2:X(gx),y1:H-M.b,y2:H-M.b+5,stroke:"var(--line)","stroke-width":1}));
+    }
+    const yl=el("text",{x:M.l-40,y:M.t+8,"font-size":11,fill:"var(--ink-3)"});yl.textContent="TB2.x %";svg.appendChild(yl);
+    const xl=el("text",{x:W-M.r,y:H-8,"text-anchor":"end","font-size":11,fill:"var(--ink-3)"});xl.textContent="total params (log)";svg.appendChild(xl);
+
+    // Snowball bands at 67B
+    const bx=X(50),bw=X(92)-X(50);
+    const band=(lo,hi,label)=>{
+      const r=el("rect",{x:bx,y:Y(hi),width:bw,height:Y(lo)-Y(hi),fill:"var(--accent-soft)",stroke:"var(--accent)","stroke-dasharray":"5 4","stroke-width":1.4,rx:4});
+      svg.appendChild(r);
+      bindTip(r,tip("Snowball 67B-A2B — "+label.name,label.range,label.det));
+    };
+    band(25,35,{name:"staged band",range:"TB2.0 25–35",det:"Full staged recipe: mid-train + verified SFT + distill + RL. Qwen3-Coder-Next (A3B) territory; ≈ Haiku-4.5 / GPT-5-mini."});
+    band(15,25,{name:"RL-recipe band",range:"TB2.0 15–25",det:"TMax/SETA-class RL on a competent distilled base: ~15k difficulty-calibrated envs, few nodes."});
+    const bl=el("text",{x:X(67),y:Y(36.5),"text-anchor":"middle","font-size":11.5,"font-weight":600,fill:"var(--accent-ink)"});bl.textContent="Snowball 67B·A2B";svg.appendChild(bl);
+
+    const pts=[
+      // series: 1=SFT-open(s1) 2=RL-open(s2) 3=frontier/stock(s3)
+      {n:"TMax-2B",x:2,y:4.2,s:2,d:"Qwen3.5-2B, RL-only DPPO on 14.6k envs (base 1.9). Ai2/UW.",lbl:1},
+      {n:"TMax-4B",x:4,y:19.9,s:2,d:"Qwen3.5-4B, same recipe (base 14.2).",lbl:1},
+      {n:"TMax-9B",x:9,y:28.8,s:2,d:"Qwen3.5-9B (base 16.1). ≈ LiberCoder-235B-A22B, > Nemotron-32B SFT.",lbl:1},
+      {n:"TMax-27B",x:27,y:44.9,s:2,d:"Qwen3.6-27B (base 40.5). > Kimi-K2.5 (1T), ≈ MiniMax-M2.7.",lbl:1},
+      {n:"Endless-8B",x:8,y:6.7,s:2,d:"Qwen3-8B-openthinker-SFT + vanilla PPO, 3,255 procedural envs."},
+      {n:"OT-Agent v1-RL",x:8,y:4.9,s:2,d:"Ours (single-stage RLOO). As benchmarked by SETA; v1 RL carries internal caveats.",lbl:1},
+      {n:"SETA-8B",x:8,y:12,s:2,d:"Qwen3-8B GRPO+DAPO on SETA envs; best published 8B RL result (10.7–12)."},
+      {n:"RST-27B",x:27,y:49.4,s:2,d:"Qwen3.5-27B: recursive synthesis → rejection SFT → agentic PPO. ~2 pts behind DeepSeek-V4-Pro (1.6T)."},
+      {n:"Qwen3-Coder-Next 80B-A3B",x:80,y:36.2,s:2,d:"Staged: mid-train → SFT → expert distill → agentic RL. TB2.0 25.8–36.2 across scaffolds; SWE-V 70.6 ≈ DeepSeek-V3.2.",lbl:1},
+      {n:"Ornith-1.5-35B-A3B",x:35,y:68.5,s:2,hollow:1,d:"⚠ self-reported (Aug 19). Closed-loop self-scaffolding GRPO. Claims > GLM-5 at 14.7× fewer active params.",lbl:1},
+      {n:"Nemotron-Terminal-8B",x:8,y:13,s:1,d:"Qwen3-8B, SFT-only on ~490k trajectories (2.5 → 13.0)."},
+      {n:"Nemotron-Terminal-14B",x:14,y:20.2,s:1,d:"SFT-only (4.0 → 20.2). > GPT-OSS-120B by total params."},
+      {n:"Nemotron-Terminal-32B",x:32,y:27.4,s:1,d:"SFT-only (3.4 → 27.4). > Qwen3-Coder-480B (23.9).",lbl:1},
+      {n:"TerminalTraj-32B",x:32,y:22,s:1,d:"SFT on 50.7k verified trajectories from 32K Docker images (M-A-P)."},
+      {n:"TermiGen-32B",x:32,y:19.3,s:1,d:"Qwen2.5-Coder-32B, SFT with error-recovery trajectories + fault injection."},
+      {n:"LiberCoder-32B",x:32,y:19.5,s:1,d:"Qwen3-32B, SFT: 48K SWE traj + 291 environment-repair trajectories (CLI-Gym)."},
+      {n:"LiberCoder-235B-A22B",x:235,y:31,s:1,d:"Qwen3-235B-A22B-Instruct, same CLI-Gym SFT.",lbl:1},
+      {n:"RST-122B-A10B",x:122,y:49.4,s:1,d:"Qwen3.5-122B-A10B + recursive-synthesis SFT (43.8 → 49.4)."},
+      {n:"Qwen3.6-35B-A3B",x:35,y:24.6,s:3,d:"Stock model (little-coder scaffold) — the A3B efficiency-class baseline."},
+      {n:"GPT-OSS-120B",x:120,y:18.7,s:3,d:"A5.1B active. Paper-reported range 14.2–18.7."},
+      {n:"MiniMax-M2.7",x:230,y:45.1,s:3,d:"230B-A10B.",lbl:1},
+      {n:"DeepSeek-V4-Flash",x:284,y:40,s:3,d:"284B-A13B. 40 in SETA's minimal scaffold — but 82.7 on vendor harness: the starkest scaffold-sensitivity datapoint."},
+      {n:"DeepSeek-V3.2",x:671,y:39.6,s:3,d:"671B-A37B."},
+      {n:"GLM-5",x:745,y:52.4,s:3,d:"745B-A44B.",lbl:1},
+      {n:"Kimi-K2.5",x:1000,y:43.2,s:3,d:"1T-A32B.",lbl:1},
+      {n:"DeepSeek-V4-Pro",x:1600,y:51.7,s:3,d:"1.6T-A49B (RST's scaffold)."}
+    ];
+    const col={1:"var(--s1)",2:"var(--s2)",3:"var(--s3)"};
+    for(const p of pts){
+      const g=el("g",{});
+      const c=el("circle",{cx:X(p.x),cy:Y(p.y),r:p.hollow?6.5:5.5,fill:p.hollow?"none":col[p.s],stroke:p.hollow?col[p.s]:"var(--surface)","stroke-width":p.hollow?2:1.5,"stroke-dasharray":p.hollow?"3 2":"none"});
+      g.appendChild(c);
+      const hit=el("circle",{cx:X(p.x),cy:Y(p.y),r:13,fill:"transparent"});g.appendChild(hit);
+      if(p.lbl){
+        const t=el("text",{x:X(p.x),y:Y(p.y)-11,"text-anchor":"middle","font-size":10.5,fill:"var(--ink-2)"});
+        t.textContent=p.n;g.appendChild(t);
+      }
+      bindTip(g,tip(p.n,"TB2.x "+p.y+" · "+(p.x>=1000?(p.x/1000)+"T":p.x+"B")+" total",p.d));
+      svg.appendChild(g);
+    }
+  })();
+
+  /* ---------- Chart 2: AIME vs active params ---------- */
+  (function(){
+    const svg=document.getElementById("aimeChart");
+    const W=1000,H=430,M={l:56,r:24,t:16,b:44};
+    const x0=Math.log10(0.55),x1=Math.log10(45);
+    const X=v=>M.l+(Math.log10(v)-x0)/(x1-x0)*(W-M.l-M.r);
+    const Y=v=>H-M.b-((v-55)/45)*(H-M.t-M.b);
+    for(const gy of [55,65,75,85,95]){
+      svg.appendChild(el("line",{x1:M.l,x2:W-M.r,y1:Y(gy),y2:Y(gy),stroke:"var(--line-soft)","stroke-width":1}));
+      const t=el("text",{x:M.l-10,y:Y(gy)+4,"text-anchor":"end","font-size":11,fill:"var(--ink-3)"});t.textContent=gy;svg.appendChild(t);
+    }
+    for(const gx of [0.7,1.4,2,3,7,14,24,32]){
+      const t=el("text",{x:X(gx),y:H-M.b+20,"text-anchor":"middle","font-size":11,fill:"var(--ink-3)"});t.textContent=gx+"B";svg.appendChild(t);
+      svg.appendChild(el("line",{x1:X(gx),x2:X(gx),y1:H-M.b,y2:H-M.b+5,stroke:"var(--line)","stroke-width":1}));
+    }
+    const yl=el("text",{x:M.l-40,y:M.t+8,"font-size":11,fill:"var(--ink-3)"});yl.textContent="AIME %";svg.appendChild(yl);
+    const xl=el("text",{x:W-M.r,y:H-8,"text-anchor":"end","font-size":11,fill:"var(--ink-3)"});xl.textContent="active params (log)";svg.appendChild(xl);
+
+    // Snowball guideline
+    svg.appendChild(el("line",{x1:X(2),x2:X(2),y1:Y(97),y2:Y(55),stroke:"var(--accent)","stroke-width":1.4,"stroke-dasharray":"5 4"}));
+    const sl=el("text",{x:X(2),y:Y(98.5),"text-anchor":"middle","font-size":11.5,"font-weight":600,fill:"var(--accent-ink)"});sl.textContent="Snowball's 2B active — no score yet";svg.appendChild(sl);
+
+    const pts=[
+      {n:"ZAYA1-8B",x:0.7,y:89.1,s:1,d:"8.4B/A0.7B · AIME26. SFT → 4-stage RL cascade. ≈ Qwen3-Next-80B-A3B.",lbl:1},
+      {n:"Ring-mini-2.0",x:1.4,y:74.1,s:1,d:"16.8B/A1.4B · AIME25. Nearest active-count analog to Snowball.",lbl:1},
+      {n:"Nemotron-Cascade-2",x:3,y:92.4,s:1,d:"30B/A3B · AIME25. Cascade RL; IMO+IOI+ICPC gold.",lbl:1},
+      {n:"Qwen3.6-35B-A3B",x:3.05,y:92.7,s:1,d:"35B/A3B · AIME26 (GPQA-D 86.0)."},
+      {n:"Qwen3.5-35B-A3B",x:2.95,y:91.9,s:1,d:"35B/A3B · AIME25 (NVIDIA's eval; GPQA-D 84.2)."},
+      {n:"Qwen3-Next-80B-A3B",x:3,y:87.8,s:1,d:"80B/A3B · AIME25. Ben's stated comparison target — now mid-pack for A3B.",lbl:1},
+      {n:"Qwen3-30B-A3B-2507",x:3.3,y:85,s:1,d:"30B/A3B · AIME25. Beat the original 235B-A22B-Thinking."},
+      {n:"Ring-flash-2.0",x:6.5,y:87,s:1,d:"104B/A6-7B · AIME25. Same Ant pipeline as Ring-mini."},
+      {n:"Qwen3-235B-A22B-2507",x:22,y:92.3,s:1,d:"235B/A22B · AIME25 (refresh). Original release: 81.5."},
+      {n:"AceReason-1.1-7B",x:7,y:64.8,s:2,d:"7B dense · AIME25. RL added +16.4 over its own SFT.",lbl:1},
+      {n:"Magistral-Small-24B",x:24,y:62.8,s:2,d:"24B dense · AIME25."},
+      {n:"OLMo 3-Think-32B",x:32,y:72.5,s:2,d:"32B dense · AIME25. Fully open recipe (SFT → DPO → RLVR).",lbl:1},
+      {n:"Qwen3-32B-Thinking",x:32,y:72.9,s:2,d:"32B dense · AIME25. Vendor tables vary 72.9–75.5."}
+    ];
+    const col={1:"var(--s1)",2:"var(--s2)"};
+    for(const p of pts){
+      const g=el("g",{});
+      g.appendChild(el("circle",{cx:X(p.x),cy:Y(p.y),r:5.5,fill:col[p.s],stroke:"var(--surface)","stroke-width":1.5}));
+      g.appendChild(el("circle",{cx:X(p.x),cy:Y(p.y),r:13,fill:"transparent"}));
+      if(p.lbl){
+        const t=el("text",{x:X(p.x),y:Y(p.y)-11,"text-anchor":"middle","font-size":10.5,fill:"var(--ink-2)"});
+        t.textContent=p.n;g.appendChild(t);
+      }
+      bindTip(g,tip(p.n,"AIME "+p.y+" · "+p.x+"B active",p.d));
+      svg.appendChild(g);
+    }
+  })();
+
+
+  /* ---------- §06: non-agentic scoreboard ---------- */
+  (function(){
+    const B=[
+      {k:"aime",n:"AIME",  full:"AIME25", gs:1},
+      {k:"hmmt",n:"HMMT25",full:"HMMT25"},
+      {k:"gpqa",n:"GPQA-D",full:"GPQA-Diamond", gs:1},
+      {k:"lcb", n:"LCB v6",full:"LiveCodeBench v6", gs:1},
+      {k:"cf",  n:"CFEval",full:"CFEval (Qwen's Codeforces Elo)"},
+      {k:"mmlu",n:"MMLU-Pro",full:"MMLU-Pro", gs:1},
+      {k:"ife", n:"IFEval",full:"IFEval"}
+    ];
+    const PANELS=["aime","hmmt","gpqa","lcb","mmlu","ife"];
+    const M=[
+      {n:"Qwen3-Next-80B-A3B-Thinking",s:"Qwen3-Next-80B-A3B",tot:80,act:3,cls:1,role:"target",grp:0,
+       v:{aime:87.8,hmmt:73.9,gpqa:77.2,lcb:68.7,cf:2071,mmlu:82.7,ife:88.9},
+       d:"Sept 2025, hybrid-attention MoE. The stated comparison target.",
+       u:"https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Thinking"},
+      {n:"Snowball 67B-A2B",s:"Snowball 67B-A2B",tot:67,act:2,cls:0,role:"us",grp:0,v:{},
+       d:"Ours — post-SFT checkpoint pending. No scores yet.",u:""},
+
+      {n:"Qwen3.6-35B-A3B",s:"Qwen3.6-35B-A3B",tot:35,act:3,cls:1,grp:1,
+       v:{aime:92.7,hmmt:89.1,gpqa:86.0,lcb:80.4,mmlu:85.2},
+       tag:{aime:"26",hmmt:"N25"},hollow:{aime:1,hmmt:1},
+       d:"Apr 2026. Reports AIME26 and HMMT Nov 25 — adjacent to, not the same as, the AIME25/HMMT-Feb-25 columns.",
+       u:"https://huggingface.co/Qwen/Qwen3.6-35B-A3B"},
+      {n:"Qwen3.5-35B-A3B",s:"Qwen3.5-35B-A3B",tot:35,act:3,cls:1,grp:1,
+       v:{hmmt:89.0,gpqa:84.2,lcb:74.6,mmlu:85.3,ife:91.9},
+       d:"Feb 2026. Clears the target on all five it reports. Qwen3.5 dropped AIME25 and CFEval from its cards entirely.",
+       u:"https://huggingface.co/Qwen/Qwen3.5-35B-A3B"},
+      {n:"Qwen3-30B-A3B-Thinking-2507",s:"Qwen3-30B-A3B-2507",tot:30.5,act:3.3,cls:1,grp:1,
+       v:{aime:85.0,hmmt:71.4,gpqa:73.4,lcb:66.0,cf:2044,mmlu:80.9,ife:88.9},
+       d:"Less effective capacity than Snowball (10.0 vs 11.6), yet within ~3 points of the target on five of seven. Its HMMT number is the harness-unstable one — see the caveat below.",
+       u:"https://huggingface.co/Qwen/Qwen3-30B-A3B-Thinking-2507"},
+      {n:"Qwen3.5-9B",s:"Qwen3.5-9B (dense)",tot:9,act:9,cls:2,grp:1,
+       v:{hmmt:83.2,gpqa:81.7,lcb:65.6,mmlu:82.5,ife:91.5},
+       d:"9B dense, Feb 2026. Beats the target on HMMT, GPQA-D and MMLU-Pro with no sparsity at all.",
+       u:"https://huggingface.co/Qwen/Qwen3.5-9B"},
+      {n:"Qwen3-Next-80B-A3B-Instruct",s:"Qwen3-Next-80B Instruct",tot:80,act:3,cls:1,grp:1,
+       v:{aime:69.5,hmmt:54.1,gpqa:72.9,lcb:56.6,mmlu:80.6,ife:87.6},
+       d:"Same base weights as the target, non-reasoning post-train. The pair brackets what a reasoning recipe is worth.",
+       u:"https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct"},
+      {n:"Qwen3-4B-Thinking-2507",s:"Qwen3-4B-2507 (dense)",tot:4,act:4,cls:2,grp:1,
+       v:{aime:81.3,hmmt:55.5,gpqa:65.8,lcb:55.2,cf:1852,mmlu:74.0,ife:87.4},
+       d:"4B dense. Within 1.5 of the target on IFEval and 6.5 on AIME25 — and 18.4 behind on HMMT25.",
+       u:"https://huggingface.co/Qwen/Qwen3-4B-Thinking-2507"},
+
+      {n:"Gemma-4-26B-A4B-it",s:"Gemma-4-26B-A4B",tot:25.2,act:3.8,cls:1,grp:2,
+       v:{aime:88.3,gpqa:82.3,lcb:77.1,mmlu:82.6},tag:{aime:"26"},hollow:{aime:1},
+       d:"Google, Jul 2026. AIME26 no-tools. Its Codeforces number is a real Codeforces Elo (1718), not Qwen's CFEval — different metric, left out.",
+       u:"https://huggingface.co/google/gemma-4-26B-A4B-it"},
+      {n:"GPT-OSS-120B",s:"GPT-OSS-120B",tot:117,act:5.1,cls:1,grp:2,
+       v:{hmmt:90.0,gpqa:80.1,lcb:82.7,mmlu:80.8,ife:88.9},
+       d:"OpenAI weights, run on Qwen's harness for the Qwen3.5 cards (reasoning effort unstated). At 5.1B active it clears the target by 16.1 HMMT and 14.0 LCBv6.",
+       ul:"via Qwen3.5-4B card",u:"https://huggingface.co/Qwen/Qwen3.5-4B"},
+      {n:"Nemotron 3 Nano 30B-A3B",s:"Nemotron-3-Nano-30B",tot:31.6,act:3.2,cls:1,grp:2,
+       v:{aime:89.1,gpqa:73.0,lcb:68.3,mmlu:78.3},
+       d:"NVIDIA, Dec 2025. No-tools column. Matches the target on LiveCodeBench and beats it on AIME25 at 3.2B active.",
+       ul:"arXiv 2512.20848",u:"https://arxiv.org/abs/2512.20848"},
+      {n:"Ring-mini-2.0",s:"Ring-mini-2.0",tot:16.8,act:1.4,cls:1,grp:2,
+       v:{aime:74.1,gpqa:68.2},
+       d:"inclusionAI, Sept 2025. The nearest published analog to Snowball's activation budget at 1.4B active — and the low end of the bracket. Its LiveCodeBench version is unstated and its “CodeForces(Elo)” is a 0–100 score, so both are left out.",
+       ul:"arXiv 2510.19338",u:"https://arxiv.org/abs/2510.19338"},
+
+      {n:"Qwen3-235B-A22B-Thinking-2507",s:"Qwen3-235B-A22B-2507",tot:235,act:22,cls:3,role:"anchor",grp:3,
+       v:{aime:92.3,hmmt:83.9,gpqa:81.1,lcb:74.1,cf:2134,mmlu:84.4,ife:87.8},
+       d:"Ceiling anchor — 22B active, above the filter.",
+       u:"https://huggingface.co/Qwen/Qwen3-235B-A22B-Thinking-2507"},
+      {n:"Qwen3-32B Thinking",s:"Qwen3-32B (dense)",tot:32,act:32,cls:3,role:"anchor",grp:3,
+       v:{aime:72.9,hmmt:51.5,gpqa:68.4,lcb:60.6,cf:1986,mmlu:79.1,ife:85.0},
+       d:"Dense floor anchor — 32B active. What 10× the activation budget bought before the A3B refreshes.",
+       ul:"via Qwen3-Next card",u:"https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Thinking"}
+    ];
+    const GRPLBL={1:"Qwen line — under 10B active",2:"Other providers — under 10B active",3:"Context anchors — above the 10B-active filter"};
+    const COL={1:"var(--s1)",2:"var(--s2)",3:"var(--s3)"};
+    const TGT=M.find(m=>m.role==="target");
+    const eff=m=>Math.sqrt(m.tot*m.act);
+    const fmt=(k,v)=>k==="cf"?String(v):v.toFixed(1);
+
+    /* ---- table ---- */
+    (function(){
+      const h2=document.getElementById("sbHead2"),tb=document.getElementById("sbBody");
+      for(const lbl of ["Model","Total / active","Eff. cap."]){
+        const th=document.createElement("th");th.textContent=lbl;h2.appendChild(th);
+      }
+      for(const b of B){
+        const th=document.createElement("th");th.className="v"+(b.gs?" g-start":"");
+        th.textContent=b.n;h2.appendChild(th);
+      }
+      let pctMax=0,eloMax=0;
+      for(const b of B)for(const m of M){
+        const v=m.v[b.k];if(v==null||m.role==="target"||(m.tag&&m.tag[b.k]))continue;
+        const d=Math.abs(v-TGT.v[b.k]);
+        if(b.k==="cf")eloMax=Math.max(eloMax,d);else pctMax=Math.max(pctMax,d);
+      }
+      const span={};for(const b of B)span[b.k]=(b.k==="cf"?eloMax:pctMax)||1;
+      const row=m=>{
+        const tr=document.createElement("tr");
+        if(m.role)tr.className="r-"+m.role;
+        const c1=document.createElement("td");
+        c1.innerHTML=m.n+(m.role==="target"?'<span class="tag t-goal">TARGET</span>':m.role==="us"?'<span class="tag t-us">OURS</span>':"")+
+          (m.u?'<span class="sub"><a href="'+m.u+'">'+(m.ul||"card")+'</a></span>':'<span class="sub">post-SFT checkpoint pending</span>');
+        tr.appendChild(c1);
+        const c2=document.createElement("td");c2.className="num";
+        c2.textContent=(m.tot===m.act?m.tot+"B dense":m.tot+"B / A"+m.act+"B");tr.appendChild(c2);
+        const c3=document.createElement("td");c3.className="num";c3.textContent=eff(m).toFixed(1)+"B";tr.appendChild(c3);
+        for(const b of B){
+          const td=document.createElement("td");
+          td.className="v"+(b.gs?" g-start":"");
+          const v=m.v[b.k];
+          if(v==null){td.className+=" nr";td.textContent=m.role==="us"?"—":"n/r";}
+          else{
+            td.innerHTML=fmt(b.k,v)+(m.tag&&m.tag[b.k]?'<span class="vtag">'+m.tag[b.k]+'</span>':"");
+            if(m.role!=="target"&&!(m.tag&&m.tag[b.k])){
+              const d=v-TGT.v[b.k];
+              if(TGT.v[b.k]!=null&&d!==0){
+                const a=(8+40*Math.min(1,Math.abs(d)/span[b.k])).toFixed(0);
+                td.style.background="color-mix(in srgb, var("+(d>0?"--good":"--warn")+") "+a+"%, transparent)";
+              }
+            }
+          }
+          tr.appendChild(td);
+        }
+        return tr;
+      };
+      let cur=-1;
+      for(const m of M){
+        if(m.grp!==cur){
+          cur=m.grp;
+          if(GRPLBL[cur]){
+            const sep=document.createElement("tr");sep.className="grp-sep";
+            const sd=document.createElement("td");sd.colSpan=3+B.length;
+            sd.textContent=GRPLBL[cur];sep.appendChild(sd);tb.appendChild(sep);
+          }
+        }
+        tb.appendChild(row(m));
+      }
+    })();
+
+    /* ---- small-multiple dot panels ---- */
+    (function(){
+      const svg=document.getElementById("sbChart");
+      // shared order across all panels: mean points above/below the target, over the
+      // benchmarks each model actually reports (variant-tagged values excluded).
+      const rank=m=>{
+        const ds=PANELS.filter(k=>m.v[k]!=null&&TGT.v[k]!=null&&!(m.tag&&m.tag[k]))
+                       .map(k=>m.v[k]-TGT.v[k]);
+        return ds.length?ds.reduce((a,b)=>a+b,0)/ds.length:-1e3;
+      };
+      const plotted=M.filter(m=>m.role!=="us").sort((a,b)=>rank(b)-rank(a));
+      const W=1000,Lg=232,GAP=12,RH=19,TITLE=20,AX=18,TOP=12,ROWGAP=34,NC=3;
+      const Pw=(W-Lg-8-(NC-1)*GAP)/NC, LAB=46, plotW=Pw-LAB-8;
+      const blockH=TITLE+plotted.length*RH+AX;
+      const H=TOP+blockH*2+ROWGAP;
+      svg.setAttribute("viewBox","0 0 "+W+" "+H);
+      const rows=[PANELS.slice(0,3),PANELS.slice(3)];
+      rows.forEach((rowKeys,ri)=>{
+        const y0=TOP+ri*(blockH+ROWGAP);
+        plotted.forEach((m,mi)=>{
+          const ty=y0+TITLE+mi*RH+RH/2+3.5;
+          const t=el("text",{x:Lg-52,y:ty,"text-anchor":"end","font-size":10.5,
+            fill:m.role==="target"?"var(--accent-ink)":(m.role==="anchor"?"var(--ink-3)":"var(--ink-2)"),
+            "font-weight":m.role==="target"?600:400});
+          t.textContent=m.s;svg.appendChild(t);
+          const r=rank(m);
+          const rv=el("text",{x:Lg-12,y:ty,"text-anchor":"end","font-size":10,
+            fill:m.role==="target"?"var(--accent-ink)":(r>0?"var(--good)":"var(--warn)"),
+            "font-weight":m.role==="target"?600:500});
+          rv.textContent=m.role==="target"?"0.0":(r>0?"+":"\u2212")+Math.abs(r).toFixed(1);
+          svg.appendChild(rv);
+        });
+        rowKeys.forEach((bk,ci)=>{
+          const b=B.find(x=>x.k===bk);
+          const px=Lg+ci*(Pw+GAP);
+          const vals=plotted.map(m=>m.v[b.k]).filter(v=>v!=null);
+          const lo=Math.min(...vals),hi=Math.max(...vals),pad=(hi-lo)*0.14||1;
+          const X=v=>px+((v-(lo-pad))/((hi+pad)-(lo-pad)))*plotW;
+          const pt=el("text",{x:px,y:y0+11,"font-size":11,"font-weight":600,fill:"var(--ink)"});
+          pt.textContent=b.n;svg.appendChild(pt);
+          plotted.forEach((m,mi)=>{
+            const gy=y0+TITLE+mi*RH+RH/2;
+            svg.appendChild(el("line",{x1:px,x2:px+plotW+LAB-6,y1:gy,y2:gy,stroke:"var(--line-soft)","stroke-width":1}));
+          });
+          const tv=TGT.v[b.k];
+          if(tv!=null){
+            svg.appendChild(el("line",{x1:X(tv),x2:X(tv),y1:y0+TITLE+2,y2:y0+TITLE+plotted.length*RH-2,
+              stroke:"var(--accent)","stroke-width":1.3,"stroke-dasharray":"4 4"}));
+          }
+          const a1=el("text",{x:px,y:y0+TITLE+plotted.length*RH+13,"font-size":9.5,fill:"var(--ink-3)"});
+          a1.textContent=fmt(b.k,lo);svg.appendChild(a1);
+          const a2=el("text",{x:px+plotW,y:y0+TITLE+plotted.length*RH+13,"text-anchor":"middle","font-size":9.5,fill:"var(--ink-3)"});
+          a2.textContent=fmt(b.k,hi);svg.appendChild(a2);
+          plotted.forEach((m,mi)=>{
+            const v=m.v[b.k],cy=y0+TITLE+mi*RH+RH/2;
+            if(v==null){
+              const nr=el("text",{x:px+2,y:cy+3.5,"font-size":9,fill:"var(--ink-3)"});
+              nr.textContent="n/r";svg.appendChild(nr);return;
+            }
+            const g=el("g",{}),hollow=m.hollow&&m.hollow[b.k],col=COL[m.cls];
+            g.appendChild(el("circle",{cx:X(v),cy:cy,r:m.role==="target"?6:4.8,
+              fill:hollow?"none":col,stroke:hollow?col:"var(--surface)","stroke-width":2,
+              "stroke-dasharray":hollow?"3 2":"none","fill-opacity":m.role==="anchor"?.5:1}));
+            g.appendChild(el("circle",{cx:X(v),cy:cy,r:10,fill:"transparent"}));
+            const near=X(v)>px+plotW-6||(tv!=null&&X(v)<X(tv)&&X(v)+35>X(tv));
+            const lt=el("text",{x:near?X(v)-10:X(v)+10,y:cy+3.5,"text-anchor":near?"end":"start",
+              "font-size":9.5,fill:m.role==="target"?"var(--accent-ink)":(m.role==="anchor"?"var(--ink-3)":"var(--ink-2)"),
+              "font-weight":m.role==="target"?600:400,
+              stroke:"var(--surface)","stroke-width":3,"paint-order":"stroke"});
+            lt.textContent=fmt(b.k,v)+(m.tag&&m.tag[b.k]?"′":"");g.appendChild(lt);
+            const dl=tv==null?"":(v===tv?"on target":(v>tv?"+":"")+fmt(b.k,v-tv)+" vs target");
+            bindTip(g,tip(m.n,b.full+" "+fmt(b.k,v)+(m.tag&&m.tag[b.k]?" ("+(b.k==="aime"?"AIME26":"HMMT Nov 25")+")":"")+
+              " · "+(m.tot===m.act?m.tot+"B dense":m.tot+"B / A"+m.act+"B")+(dl&&!(m.tag&&m.tag[b.k])?" · "+dl:""),m.d));
+            svg.appendChild(g);
+          });
+        });
+      });
+    })();
+
+    /* ---- Instruct -> Thinking dumbbell ---- */
+    (function(){
+      const svg=document.getElementById("deltaChart");
+      const th=M.find(m=>m.role==="target"),ins=M.find(m=>m.s.indexOf("Instruct")>-1);
+      const FAM={aime:"reason",hmmt:"reason",lcb:"reason",gpqa:"know",mmlu:"know",ife:"know"};
+      const items=B.filter(b=>th.v[b.k]!=null&&ins.v[b.k]!=null)
+        .map(b=>({n:b.n,full:b.full,f:FAM[b.k],lo:ins.v[b.k],hi:th.v[b.k],d:th.v[b.k]-ins.v[b.k]}))
+        .sort((p,q)=>q.d-p.d);
+      const W=1000,H=268,M0={l:96,r:104,t:26,b:30};
+      const x0=50,x1=93;
+      const X=v=>M0.l+((v-x0)/(x1-x0))*(W-M0.l-M0.r);
+      const BW=(H-M0.t-M0.b)/items.length;
+      for(const gx of [55,60,65,70,75,80,85,90]){
+        svg.appendChild(el("line",{x1:X(gx),x2:X(gx),y1:M0.t-6,y2:H-M0.b,stroke:"var(--line-soft)","stroke-width":1}));
+        const t=el("text",{x:X(gx),y:H-M0.b+15,"text-anchor":"middle","font-size":10,fill:"var(--ink-3)"});
+        t.textContent=gx;svg.appendChild(t);
+      }
+      const ax=el("text",{x:M0.l,y:M0.t-13,"font-size":10,fill:"var(--ink-3)"});
+      ax.textContent="benchmark score";svg.appendChild(ax);
+      items.forEach((it,i)=>{
+        const cy=M0.t+i*BW+BW/2,g=el("g",{});
+        const col=it.f==="reason"?"var(--s2)":"var(--s1)";
+        g.appendChild(el("line",{x1:X(it.lo),x2:X(it.hi),y1:cy,y2:cy,stroke:col,"stroke-width":3.5,"stroke-linecap":"round"}));
+        g.appendChild(el("circle",{cx:X(it.lo),cy:cy,r:5,fill:"var(--surface)",stroke:col,"stroke-width":2.5}));
+        g.appendChild(el("circle",{cx:X(it.hi),cy:cy,r:5.5,fill:col,stroke:"var(--surface)","stroke-width":1.5}));
+        const nm=el("text",{x:M0.l-14,y:cy+3.5,"text-anchor":"end","font-size":11,fill:"var(--ink-2)"});
+        nm.textContent=it.n;g.appendChild(nm);
+        const lv=el("text",{x:X(it.lo)-10,y:cy+3.5,"text-anchor":"end","font-size":10,fill:"var(--ink-3)",
+          stroke:"var(--surface)","stroke-width":3,"paint-order":"stroke"});
+        lv.textContent=it.lo.toFixed(1);g.appendChild(lv);
+        const hv=el("text",{x:X(it.hi)+10,y:cy+3.5,"font-size":10,"font-weight":600,fill:"var(--ink)",
+          stroke:"var(--surface)","stroke-width":3,"paint-order":"stroke"});
+        hv.textContent=it.hi.toFixed(1);g.appendChild(hv);
+        const dv=el("text",{x:W-14,y:cy+3.5,"text-anchor":"end","font-size":11,"font-weight":600,fill:col});
+        dv.textContent="+"+it.d.toFixed(1);g.appendChild(dv);
+        g.appendChild(el("rect",{x:M0.l-90,y:cy-BW/2,width:W-M0.l+90,height:BW,fill:"transparent"}));
+        bindTip(g,tip(it.full,"Instruct "+it.lo.toFixed(1)+"  \u2192  Thinking "+it.hi.toFixed(1)+"   (+"+it.d.toFixed(1)+")",
+          "Qwen3-Next-80B-A3B, one identical pretrained base, two post-training recipes. The gap is what post-training alone is worth on this benchmark."));
+        svg.appendChild(g);
+      });
+      const cap=el("text",{x:W-14,y:M0.t-13,"text-anchor":"end","font-size":10,fill:"var(--ink-3)"});
+      cap.textContent="gain";svg.appendChild(cap);
+    })();
+  })();
+
+  /* ---------- §07: dataset composition ---------- */
+  function dsBars(id,items,opt){
+    opt=opt||{};
+    const svg=document.getElementById(id);if(!svg)return;
+    const W=1000,GUT=opt.gutter||272,RH=opt.rh||27,TOP=6,BOT=6,VAL=118;
+    const H=TOP+items.length*RH+BOT;
+    svg.setAttribute("viewBox","0 0 "+W+" "+H);
+    const plotW=W-GUT-VAL;
+    const mx=Math.max(...items.map(i=>i.v));
+    const nf=new Intl.NumberFormat("en-US");
+    const tot=opt.total||items.reduce((a,b)=>a+b.v,0);
+    items.forEach((it,i)=>{
+      const y=TOP+i*RH,h=RH-9,g=el("g",{});
+      const bw=Math.max(2,(it.v/mx)*plotW);
+      g.appendChild(el("rect",{x:GUT,y:y,width:bw,height:h,fill:it.col||"var(--s1)",rx:3}));
+      const lb=el("text",{x:GUT-12,y:y+h/2+3.5,"text-anchor":"end","font-size":11,fill:"var(--ink-2)"});
+      lb.textContent=it.l;g.appendChild(lb);
+      const vs=nf.format(it.v);
+      const vl=el("text",{x:GUT+bw+9,y:y+h/2+3.5,"font-size":10.5,"font-weight":600,fill:"var(--ink)"});
+      vl.textContent=vs;g.appendChild(vl);
+      const pc=el("text",{x:GUT+bw+9+vs.length*6.7+9,y:y+h/2+3.5,"font-size":10,fill:"var(--ink-3)"});
+      pc.textContent=(it.v/tot*100).toFixed(1)+"%";g.appendChild(pc);
+      g.appendChild(el("rect",{x:GUT,y:y-2,width:W-GUT,height:h+4,fill:"transparent"}));
+      bindTip(g,tip(it.l,vs+" · "+(it.v/tot*100).toFixed(2)+"% of "+nf.format(tot),it.d||""));
+      svg.appendChild(g);
+    });
+  }
+  const AD="var(--s2)",SK="var(--s1)";
+  dsBars("ntChart",[
+    {l:"Math adapters",v:162692,col:AD,d:"163K OpenMathReasoning prompts re-skinned as terminal tasks. No test cases.<span class='tt-eg'><span class='tt-lbl'>A real task</span>“Given m &isin; &#8474;, find all n &isin; &#8484;&#8314; such that (m&minus;x)&#8319; + x&#8319; + (m+x)&#8319; = 0 has a rational root.”  Then: place the answer in /app/solution.txt.<span class='tt-lbl' style='margin-top:6px'>Graded by</span>the contents of that one file. The only terminal work is writing it.</span>"},
+    {l:"Code adapters",v:31960,col:AD,d:"79K OpenCodeReasoning prompts, deduped to 35K.<span class='tt-eg'><span class='tt-lbl'>A real task</span>A Codeforces problem &mdash; count the lanterns Vova can see past a standing train. Then: write /app/solution.py.<span class='tt-lbl' style='margin-top:6px'>Graded by</span>running the file against the problem's test cases.</span>"},
+    {l:"SWE adapters",v:31661,col:AD,d:"127K instances from SWE-Bench-Train, SWE-reBench, SWE-Smith and SWE-Fixer-Train, deduped to 32K.<span class='tt-eg'><span class='tt-lbl'>A real task</span>A real Ansible issue: the examples for nomad_job_info use the nomad_job module instead. Fix the docs.<span class='tt-lbl' style='margin-top:6px'>Graded by</span>applying the model's SEARCH/REPLACE patch blocks. The genuinely agentic third.</span>"},
+    {l:"scientific_computing",v:19482,col:SK},
+    {l:"data_science",v:17565,col:SK},
+    {l:"debugging",v:17382,col:SK},
+    {l:"security",v:17010,col:SK},
+    {l:"file_operations",v:16096,col:SK},
+    {l:"software_engineering",v:15559,col:SK},
+    {l:"dependency_management",v:9935,col:SK},
+    {l:"data_querying",v:9535,col:SK},
+    {l:"data_processing",v:9287,col:SK},
+    {l:"system_administration",v:7776,col:SK,d:"Present in the release but absent from the paper's 9-domain taxonomy. Medium tier only."},
+    {l:"model_training",v:214,col:SK,d:"Present in the release but absent from the paper's 9-domain taxonomy. Medium tier only."}
+  ],{total:366154});
+  dsBars("ttChart",[
+    {l:"nemotron-gym — RLVR conversions",v:1785301,col:AD,d:"33 directories converted from nvidia/Nemotron-Post-Training-v3 &mdash; knowledge, math, science, instruction-following. Reasoning content, not agentic content.<span class='tt-eg'><span class='tt-lbl'>A real task</span>A medical multiple-choice question about ductular proliferation in cirrhotic liver. Then: write “Answer: C” to /app/answer.txt.<span class='tt-lbl' style='margin-top:6px'>Graded by</span>a regex pulling one letter out of that file.</span>"},
+    {l:"Standalone suites",v:244949,col:SK,d:"17 directories &mdash; CodeForces, TACO, Qasper, StaQC, Magicoder, Glaive, WizardLM-Orca, ARC-AGI and others.<span class='tt-eg'><span class='tt-lbl'>A real task</span>A Codeforces problem: insert + signs between digits to reach a single digit in exactly three steps.<span class='tt-lbl' style='margin-top:6px'>Graded by</span>compiling the submission and running it against test cases.</span>"},
+    {l:"exp_rpt — repo-patch synthesis",v:103902,col:SK,d:"34 directories of repo-patch and test-synthesis tasks across Python, C++, Go, Ruby, PHP, Java, C# and TypeScript.<span class='tt-eg'><span class='tt-lbl'>A real task</span>“Implement a small compatibility module for ddtrace at /app/ddtrace with to_unicode, PY2, reraise and get_connection_response.”<span class='tt-lbl' style='margin-top:6px'>Graded by</span>pytest against a synthesized test file.</span>"},
+    {l:"SWE-repair suites",v:50995,col:SK,d:"5 directories — SWE-reBench, SWE-Smith, SWE-Gym, OpenSWE, R2E-Gym."},
+    {l:"StackExchange sandboxes",v:50000,col:SK,d:"5 directories at exactly 10,000 each — codereview, overflow, superuser, tezos, unix."},
+    {l:"mix_* curriculum mixtures",v:24187,col:SK,d:"8 directories of internal curriculum mixtures over the other suites."},
+    {l:"exp_rle — instruction ablations",v:4093,col:SK,d:"1 directory of instruction-style ablations."}
+  ],{total:2263427});
+  dsBars("otChart",[
+    {l:"Math",v:850000,d:"70.8% of OpenThoughts3. Maps to the AIME / HMMT columns in §06.<span class='tt-eg'><span class='tt-lbl'>A real task</span>“How many ordered pairs of integers (a,b) satisfy a&sup2;+b&sup2; &lt; 16, a&sup2;+b&sup2; &lt; 8a, and a&sup2;+b&sup2; &lt; 8b?”<span class='tt-lbl' style='margin-top:6px'>Graded by</span>nothing &mdash; it is SFT. QwQ-32B wrote ~26,000 characters of reasoning, then the answer.</span>"},
+    {l:"Code",v:250000,d:"20.8%. Maps to LiveCodeBench v6 and CFEval.<span class='tt-eg'><span class='tt-lbl'>A real task</span>A Codeforces game on a directed acyclic graph: decide the winner for every starting pair.<span class='tt-lbl' style='margin-top:6px'>Graded by</span>nothing &mdash; SFT. ~49,000 characters of reasoning on this one row.</span>"},
+    {l:"Science",v:100000,d:"8.3%. Maps to GPQA-Diamond &mdash; the column §06 shows is bound by pretraining, not post-training.<span class='tt-eg'><span class='tt-lbl'>A real task</span>“Henry's law constant for CO&#8322; in water is 1.6&times;10&#8312; Pa at 298 K. How much CO&#8322; is in 500 g of soda water at 3.2 bar?”<span class='tt-lbl' style='margin-top:6px'>Graded by</span>nothing &mdash; SFT. ~40,000 characters of reasoning.</span>"},
+    {l:"Language / instruction-following",v:0,col:"var(--ink-3)",d:"No split exists. This is what MMLU-Pro and IFEval test, and there is nothing in OpenThoughts3 behind it."}
+  ],{total:1200000});
+
+    /* AgentTrove: source / teacher toggle */
+  (function(){
+    const SRC=[
+      {l:"exp_tas",v:375168,col:"var(--s1)"},
+      {l:"freelancer",v:281269,col:"var(--s1)"},
+      {l:"stack_exchange",v:127554,col:"var(--s1)"},
+      {l:"taskmaster",v:121610,col:"var(--s1)"},
+      {l:"nl2bash",v:101012,col:"var(--s1)"},
+      {l:"unknown  (unlabelled)",v:91436,col:"var(--ink-3)"},
+      {l:"swesmith",v:78246,col:"var(--s1)"},
+      {l:"exp_rle",v:60000,col:"var(--s1)"},
+      {l:"exp_rpt",v:58845,col:"var(--s1)"},
+      {l:"neulab",v:55200,col:"var(--s1)"},
+      {l:"puzzles",v:47285,col:"var(--s1)"},
+      {l:"code_contests",v:45923,col:"var(--s1)"},
+      {l:"18 smaller sources",v:253299,col:"var(--ink-3)"}
+    ];
+    const TCH=[
+      {l:"GLM-4.7",v:673504,col:"var(--s1)",d:""},
+      {l:"GPT 5.1 Nano",v:602715,col:"var(--s2)",d:"Nano-tier teacher. A distilled student inherits its teacher's ceiling."},
+      {l:"GLM-4.6",v:228129,col:"var(--s1)",d:""},
+      {l:"GPT-5-mini",v:49980,col:"var(--s1)",d:""},
+      {l:"GPT-OSS-120B",v:26898,col:"var(--s1)",d:""},
+      {l:"Qwen3",v:23070,col:"var(--s1)",d:""},
+      {l:"GPT-5-nano",v:15802,col:"var(--s2)",d:"Nano-tier teacher. A distilled student inherits its teacher's ceiling."},
+      {l:"GPT-4o",v:14946,col:"var(--s1)",d:""},
+      {l:"GPT-5",v:13844,col:"var(--s1)",d:""},
+      {l:"MiniMax M2.0",v:13485,col:"var(--s1)",d:""},
+      {l:"Kimi-2.5",v:12935,col:"var(--s1)",d:""},
+      {l:"Kimi K2.0 Thinking",v:10994,col:"var(--s1)",d:""},
+      {l:"GLM-5.0",v:8011,col:"var(--s1)",d:""},
+      {l:"Gemini-2.5-Flash",v:2534,col:"var(--s1)",d:""}
+    ];
+    dsBars("atSrcChart",SRC,{total:1696847,gutter:236});
+    dsBars("atTeachChart",TCH,{total:1696847,gutter:236});
+    dsBars("atResChart",[
+      {l:"null  (no value recorded)",v:1478141,col:"var(--ink-3)"},
+      {l:"AgentTimeoutError",v:177268,col:"var(--s2)"},
+      {l:"1.0  (success)",v:11229,col:"var(--s1)"},
+      {l:"DaytonaNotFoundError",v:9909,col:"var(--s2)"},
+      {l:"DaytonaError",v:7277,col:"var(--s2)"},
+      {l:"success  (success)",v:6930,col:"var(--s1)"},
+      {l:"AgentEnvironmentTimeoutError",v:3102,col:"var(--s2)"},
+      {l:"0.0  (failure)",v:1328,col:"var(--s1)"},
+      {l:"timeout",v:1073,col:"var(--s2)"},
+      {l:"CancelledError",v:260,col:"var(--s2)"},
+      {l:"InternalServerError",v:151,col:"var(--s2)"},
+      {l:"13 rarer harness errors",v:179,col:"var(--s2)"}
+    ],{total:1696847,gutter:236});
+    const tabs=[...document.querySelectorAll("#atTabs .ex-tab")];
+    const views=[["atSrcWrap","atKeySrc"],["atTeachWrap","atKeyTeach"],["atResWrap","atKeyRes"]];
+    tabs.forEach((b,i)=>b.addEventListener("click",()=>{
+      tabs.forEach((x,j)=>{
+        x.setAttribute("aria-selected",i===j?"true":"false");x.tabIndex=i===j?0:-1;
+        views[j].forEach(id=>{const e=document.getElementById(id);if(e)e.hidden=(i!==j);});
+      });
+    }));
+  })();
+})();
+</script>
+

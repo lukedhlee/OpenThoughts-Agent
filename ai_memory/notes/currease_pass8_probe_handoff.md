@@ -891,6 +891,13 @@ none had started training. All watchers stopped.
 gs40), lr1e6 gs30/100 (r 0.62 at s30), lr5e6 gs30/100 (r 0.45 at s30).
 Checkpoints + pointer files intact in each exp dir.
 
+> **2026-08-31 — moved off fscratch (JSC per-user cap).** The three latest ckpts, the gs40 HF model and
+> every arm dir (traces, offline wandb, logs, configs, sbatch) are single tars in
+> `/e/data1/mmlaion/lee27/currease30b_grpo/`; the fscratch trees are DELETED. To resume an arm:
+> `tar -I zstd -xf <arm>_run.tar.zst -C $F/experiments/` (recreates the exp dir), then
+> `tar -xf <arm>_ckpt_gs<N>.tar -C $F/experiments/<arm>/<arm>/checkpoints/`, then the recipe below.
+> Older ckpts (gs5…gs40) were deleted, not archived. Index: [[jsc_fscratch_cleanup_2026-08-31]].
+
 **Resume recipe** (per arm, from $F/repos/OpenThoughts-Agent with the full
 DCFT+secrets+proxychains preamble; see incidents 39/40):
   X=$(grep -o 'node_exclusion_list="[^"]*"' hpc/hpc.py | head -1 | cut -d'"' -f2)

@@ -1,5 +1,13 @@
 ---
 
+> ## ⛔ 2026-08-30 — THE CURRENT TASK IS THE REPO REFACTOR. Read `notes/repo_refactor_plan.md` first.
+> Everything below this banner is the r2egym / learnable-band / currease era and is **frozen context**, not
+> the next action. Scope cuts already decided: no Levanter SFT, no Megatron, no OpenCode, nothing merged
+> from Marianna's forks. Inventory: the OTA Code Atlas
+> (https://claude.ai/code/artifact/e633ab79-c602-4ca1-a5d7-5b52ce4e3aa2). Clock: fscratch purge of the
+> base30b/currease checkpoints + `rl-fa` venv starts ~09-10 — decide keep/drop before starting.
+
+
 ## ★★★★★ GSM8K-VALIDATION 2026-08-14 (evening PT) — SEPARATE WORKSTREAM LIVE: Base-30B GSM8K GRPO stack validation. READ `notes/base30b_gsm8k_validation.md` FIRST if picking up THIS workstream.
 
 **Two parallel workstreams.** This section = Luke's RL-stack validation (its own session);
@@ -55,7 +63,7 @@ cd /e/fscratch/reformo/lee27/marianna_repro && for S in 0 1 2 3; do
     --export=ALL,RESUME_JOB_DIR=/e/fscratch/reformo/lee27/marianna_repro/slurm_logs/jobs/mrepro_genpass_sweep_s${S}r7,RUN_TAG=mrepro_genpass_sweep_s${S}r7,N_CONCURRENT=48,DATASET_PATH=/e/fscratch/reformo/lee27/marianna_repro/datasets/r2egym_sweep_shard${S} \
     marianna_repro_genpass.sbatch; done
 ```
-Preconditions: (a) rebuild a JUWELS fleet first (batch partition, account laionize, cpus-per-task=48,
+Preconditions: **(0) 2026-08-31: `slurm_logs/` was tarred off fscratch — first `tar -I zstd -xf /e/data1/mmlaion/lee27/parked/marianna_repro_slurm_logs__parked_r2egym_sweep_resume_state.tar.zst -C $F/marianna_repro/`** (see [[jsc_fscratch_cleanup_2026-08-31]]); (a) rebuild a JUWELS fleet first (batch partition, account laionize, cpus-per-task=48,
 STAGING_BASE=/p/scratch/reformo/lee27/apt_staging_sweep — still a symlink → laionize; JUWELS queue wait
 was ~9h last time); (b) probe-gate the staging path (mkdir+300 files) SECONDS before submit; (c) the
 banked r7 results live in `slurm_logs/jobs/mrepro_genpass_sweep_s{0-3}r7/` — resume skips them.

@@ -1,5 +1,13 @@
 # Fresh-session kickoff prompt — paste the block below
 
+> ## ⛔ 2026-08-30 — THE CURRENT TASK IS THE REPO REFACTOR. Read `notes/repo_refactor_plan.md` first.
+> Everything below this banner is the r2egym / learnable-band / currease era and is **frozen context**, not
+> the next action. Scope cuts already decided: no Levanter SFT, no Megatron, no OpenCode, nothing merged
+> from Marianna's forks. Inventory: the OTA Code Atlas
+> (https://claude.ai/code/artifact/e633ab79-c602-4ca1-a5d7-5b52ce4e3aa2). Clock: fscratch purge of the
+> base30b/currease checkpoints + `rl-fa` venv starts ~09-10 — decide keep/drop before starting.
+
+
 Volatile numbers go stale fast. Re-probe before trusting them; the durable state is in `NEXT_SESSION.md`.
 Last refreshed **2026-08-06 04:00 KST**.
 

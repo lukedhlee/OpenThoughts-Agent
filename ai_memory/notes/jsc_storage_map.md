@@ -4,6 +4,10 @@ Purpose: which project/path to use for what, on JUPITER/JUWELS/JURECA. Re-verify
 `jutil project dataquota -p <proj>` (it's an HOURLY-OR-WORSE stale cache) and probe-write seconds
 before relying on any path. Percentages below are vs SOFT limits.
 
+> **UPDATE 2026-08-31 — read [[jsc_fscratch_cleanup_2026-08-31]] first**: JSC now enforces a **per-user cap of 5% of
+> each project fileset's soft quota** (`/e/fscratch/reformo`: 2 TB and 400k files per user). lee27 went
+> 7.4 TB / 1.77M → ~260 GB / ~312k in one pass; archive index + restore recipes are in that note.
+>
 > **UPDATE 2026-08-22 — read [[jsc_inode_quota_2026-08]] first.** JSC sent an over-soft inode alert for
 > `reformo` on `/p/scratch`, `/e/project1` and `/e/scratch`. Two corrections to this note: (a) use
 > `jutil user dataquota` (no `-p`) to get YOUR footprint on every fileset in one call — that is how the
@@ -84,7 +88,7 @@ PI: "default storage is under /e/, /p/ will be obsolete; for storing use /e/ pat
   `hpc/hpc.py` are hostname-gated to JURECA (`jrc*`) / JUWELS (`jwb*`) proxychains libs; Jupiter
   (`jpb*`/`jpc*`) uses the aarch64 `/e/` build. `hpc/dotenv/{jureca,juwels}.env` are those
   clusters' files. Jupiter eval config already points at `/e/data1/datasets/playground/{ot,mmlaion}/`.
-- **The PI's exact path is NOT usable by lee27** (probed 08-28): `/e/data1/datasets` is
+- **The PI's exact path is NOT usable by lee27** (re-probed 08-31, still denied; Jenia re-stated the path 08-30): `/e/data1/datasets` is
   `drwxrws--- root:datasets`; lee27's groups are ccstdl/mmlaion/laionize/synthlaion/reformo/
   transfernetx/open-sci-mm — **no `datasets` group** → `playground/` is Permission denied.
   The lab's own writes there go through jureap59 accounts. **ACTION: JuDoor join request for

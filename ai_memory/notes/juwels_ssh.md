@@ -17,13 +17,14 @@
 
 Submit jobs from the **matching** login side (Cluster↔Booster cross-submit is flaky).
 
-## First login
+## First login / new WiFi
 ```bash
 ai_memory/scripts/jureca_from_clause.sh   # print from= + pubkey line
 # → JuDoor → Manage SSH-keys (JUWELS) → paste → wait ≤15m
 ssh juwels          # or: ssh juwels-booster
 # enter JSC TOTP when prompted
 ```
+- Current (2026-08-12): `136.152.209.31` — keep prior IPs comma-separated if useful
 
 ## Notes for our work
 - Apptainer-bridge workers: handoff prefers **JURECA / JUSUF over JUWELS** when we have accounts there; JUWELS is still useful if you have a project on it.

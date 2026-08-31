@@ -24,7 +24,7 @@ Read when a JURECA login breaks — most often after a cafe/home IP change.
 ai_memory/scripts/jureca_from_clause.sh          # print paste line
 # → JuDoor → Manage SSH-keys (JURECA) → paste → wait ≤15m → ssh jureca
 ```
-- Current (2026-08-10): `135.180.125.128` — keep prior IPs comma-separated if you still use those networks
+- Current (2026-08-12): `136.152.209.31` — keep prior IPs comma-separated if you still use those networks
 - Also JUWELS: same key line, **separate** JuDoor upload — see `ai_memory/notes/juwels_ssh.md` (`ssh juwels` / `ssh juwels-booster`)
 
 ## After login — original check target
