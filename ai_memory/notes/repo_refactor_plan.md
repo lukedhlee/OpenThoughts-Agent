@@ -157,7 +157,11 @@ Practical consequence for the currease campaign: either pin `SKYRL_HOME` at `$C/
 |---|---|---|---|---|---|
 | `c5ca6352` (our 08-14 snapshot, control 1557828) | 07-21 base + our picks | — | 0.42 / 0.95 / 0.0057 | 2.52 | small |
 | `0fdb50f6` (probe 1, 1558819) | 08-16 | #276 #329 #339 #363 #373 | 0.42 / 0.88 / 0.0051 | 2.06 | **small** |
-| `20cdcf7b` (probe 2) | 08-20 | + #399 #405 #422 | pending | | |
+| `20cdcf7b` (probe 2, 1559326) | 08-20 | + #399 #405 #422 | 0.445 / 0.82 / 0.0045 | 2.35 | **small** |
+| `30c49275^` (probe 4, parent of #452) | 08-23 | + #441 #442 #448 | pending | | |
+| `7f43cf9b` (probe 3, 1560170) | 08-23 | + **#452 stochastic-round bf16 AdamW** #453 #454 | pending | | |
 | `bdfef12b` main (1556228) | 08-30 | + #441 #442 #448 #454 #468 #474 … | 0.82 / 0.34 / 0.069 | 3.22 | **big** |
 
 So #363/#373 (the grouped-GEMM tail-row and EP-gradient-averaging fixes) are NOT the cause. Probe checkouts: `$C/MarinSkyRL-bisectN` worktrees (+ our tracking.py offline guard applied uncommitted, else wandb.init hangs on compute) launched from `$C/OpenThoughts-Agent-bN` whose overlay pins `SKYRL_HOME` and whose GSM8K YAML has the two `diag_*` keys stripped (they don't exist upstream). Job 1556228 (main) hung at step 12 in the policy update (12/32 for 30 min) — cancelled; nodes `jpbo-046-[17,19-20,23,27,31]` in `$F/_hang_log.txt`. Currease gate 1557218 COMPLETED 10/10 steps (1h25m, exit 0).
+
+**Prime suspect (2026-08-31 13:40): MarinSkyRL #452 "Stochastically round BF16 AdamW updates" (`30c49275`, 08-23).** Mechanism: the policy keeps bf16 master weights; an AdamW step of lr·sign ≈ 3e-6 on weights of magnitude 1e-2…1e-1 is far below bf16's ~4e-3 relative resolution, so with round-to-nearest most per-parameter updates were silently discarded. Stochastic rounding applies them in expectation. Consequence: **the old lr sweep (lr1e6/3e6/8e6) was measuring "how much of each update survives bf16 rounding", not the algorithm.** Under #452, lr 3e-6 already behaves like the old lr 8e-6, so a fresh lr sweep on main (start ≈1e-6) is needed; the old 08-14 pin would keep training against the rounding artefact. Probes 3 (with #452) and 4 (its parent) are running in parallel to confirm.
