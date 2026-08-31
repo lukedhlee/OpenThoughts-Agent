@@ -91,9 +91,9 @@ PI: "default storage is under /e/, /p/ will be obsolete; for storing use /e/ pat
 - **The PI's exact path is NOT usable by lee27** (re-probed 08-31, still denied; Jenia re-stated the path 08-30): `/e/data1/datasets` is
   `drwxrws--- root:datasets`; lee27's groups are ccstdl/mmlaion/laionize/synthlaion/reformo/
   transfernetx/open-sci-mm — **no `datasets` group** → `playground/` is Permission denied.
-  The lab's own writes there go through jureap59 accounts. **ACTION: JuDoor join request for
-  project `datasets`** (also recommended: `cstdl`). Until then the compliant destination we CAN
-  write is `/e/data1/mmlaion/` (write-probed OK, group mmlaion, setgid, no purge).
+  The lab's own writes there go through jureap59 accounts. **Luke's decision 2026-08-31: don't
+  pursue `datasets` membership for now — `/e/data1/mmlaion/` is enough** (same `/e/data1` no-purge tier,
+  same PI; write-probed OK, group mmlaion, setgid). All lee27 archives live under `/e/data1/mmlaion/lee27/`.
 - **Durable footprint was ZERO before 08-28** — `jutil user dataquota` showed lee27 at 0 on
   exa_data1 while holding **8.99 TB / 1.77M inodes on exa_fscratch (30-day purge)** and 5.58 TB on
   exa_scratch. Storing "under /e/" was satisfied only in the trivial sense; nothing was durable.

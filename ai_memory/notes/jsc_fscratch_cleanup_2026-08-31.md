@@ -20,8 +20,9 @@ hf_hub model caches 139 GB, `models/` 88 GB (Qwen3.6-35B + g1 8B), and ~40k file
 resolves (verified: `torch 2.11.0+cu128` imports through the symlink). They remain on a 30-day-purge tier
 and purge ~09-13..16 by mtime — rebuild recipes are committed under `hpc/env_builds/jupiter/`.
 
-Jenia's stated destination `/e/data1/datasets/playground/mmlaion/` is **still not writable by lee27**
-(no `datasets` group, probed 08-31). JuDoor join request + reply draft were handed to Luke.
+Jenia's stated destination `/e/data1/datasets/playground/mmlaion/` is **not writable by lee27** (no
+`datasets` group, probed 08-31). **Luke decided 08-31 not to pursue `datasets` for now — mmlaion is the
+archive home.** A reply draft to Jenia was handed to Luke.
 
 ## Archive index — `/e/data1/mmlaion/lee27/`
 
