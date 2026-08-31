@@ -1,6 +1,6 @@
 # Repo refactor plan — one clean OTA, one clean SkyRL, harbor on the shelf
 
-Opened 2026-08-30, pruned same day. Status (2026-08-31): **steps 1–3 done, step 4 (gate): both stacks LAUNCH AND TRAIN from the clean branches (1556228 GSM8K, 1557218 currease); numeric parity with the old lr3e6 arm FAILS at step 2 — upstream MarinSkyRL main takes a much larger effective step; control run 1557828 PROVED it is upstream MarinSkyRL (old snapshot on the new OTA+venv reproduces the old small-step numbers); step 5 awaits Luke.** See "Status log" at the bottom. Companion: the OTA Code Atlas
+Opened 2026-08-30, pruned same day. Status (2026-08-31 14:10): **steps 1–4 DONE. Both clean stacks run end-to-end from Jupiter `/e/project1/transfernetx/lee27/code`. Parity with the old numbers holds exactly when MarinSkyRL is pinned at 08-14 and breaks on main because of upstream #452 (stochastic bf16 AdamW rounding, bisected to the commit) — i.e. the old lr sweep was an artefact. Step 5 (delete old clones, PRs) awaits Luke.** See "Status log" at the bottom. Companion: the OTA Code Atlas
 (https://claude.ai/code/artifact/e633ab79-c602-4ca1-a5d7-5b52ce4e3aa2) holds the full inventory this plan
 was made from; this note holds only the decision and the port list.
 
@@ -158,10 +158,22 @@ Practical consequence for the currease campaign: either pin `SKYRL_HOME` at `$C/
 | `c5ca6352` (our 08-14 snapshot, control 1557828) | 07-21 base + our picks | — | 0.42 / 0.95 / 0.0057 | 2.52 | small |
 | `0fdb50f6` (probe 1, 1558819) | 08-16 | #276 #329 #339 #363 #373 | 0.42 / 0.88 / 0.0051 | 2.06 | **small** |
 | `20cdcf7b` (probe 2, 1559326) | 08-20 | + #399 #405 #422 | 0.445 / 0.82 / 0.0045 | 2.35 | **small** |
-| `30c49275^` (probe 4, parent of #452) | 08-23 | + #441 #442 #448 | pending | | |
-| `7f43cf9b` (probe 3, 1560170) | 08-23 | + **#452 stochastic-round bf16 AdamW** #453 #454 | pending | | |
+| `0a41dee9` = `30c49275^` (probe 4, 1560194) | 08-23 | + #441 #442 #448 | 0.46 / 0.99 / 0.0047 | 1.98 | **small** |
+| `7f43cf9b` (probe 3, 1560170) | 08-23 | + **#452 stochastic-round bf16 AdamW** #453 #454 | 0.77 / 0.36 / 0.080 | 2.58 | **big** |
 | `bdfef12b` main (1556228) | 08-30 | + #441 #442 #448 #454 #468 #474 … | 0.82 / 0.34 / 0.069 | 3.22 | **big** |
 
 So #363/#373 (the grouped-GEMM tail-row and EP-gradient-averaging fixes) are NOT the cause. Probe checkouts: `$C/MarinSkyRL-bisectN` worktrees (+ our tracking.py offline guard applied uncommitted, else wandb.init hangs on compute) launched from `$C/OpenThoughts-Agent-bN` whose overlay pins `SKYRL_HOME` and whose GSM8K YAML has the two `diag_*` keys stripped (they don't exist upstream). Job 1556228 (main) hung at step 12 in the policy update (12/32 for 30 min) — cancelled; nodes `jpbo-046-[17,19-20,23,27,31]` in `$F/_hang_log.txt`. Currease gate 1557218 COMPLETED 10/10 steps (1h25m, exit 0).
 
 **Prime suspect (2026-08-31 13:40): MarinSkyRL #452 "Stochastically round BF16 AdamW updates" (`30c49275`, 08-23).** Mechanism: the policy keeps bf16 master weights; an AdamW step of lr·sign ≈ 3e-6 on weights of magnitude 1e-2…1e-1 is far below bf16's ~4e-3 relative resolution, so with round-to-nearest most per-parameter updates were silently discarded. Stochastic rounding applies them in expectation. Consequence: **the old lr sweep (lr1e6/3e6/8e6) was measuring "how much of each update survives bf16 rounding", not the algorithm.** Under #452, lr 3e-6 already behaves like the old lr 8e-6, so a fresh lr sweep on main (start ≈1e-6) is needed; the old 08-14 pin would keep training against the rounding artefact. Probes 3 (with #452) and 4 (its parent) are running in parallel to confirm.
+
+## FINAL (2026-08-31 14:10 CEST) — read this first
+
+**Refactor gate: PASSED.** Both clean branches launch, train and log from the new Jupiter home; the old first-signal numbers are reproduced to the digit at step 1 and the whole 12-step curve is reproduced when MarinSkyRL is the 08-14 snapshot (control 1557828: 0.34 0.42 0.35 0.45 0.41 0.51 0.52 0.52 0.49 0.62 0.53 0.66 vs old W&B lr3e6 0.34 0.34 0.38 0.48 0.44 0.58 0.52 0.50 …).
+
+**Finding: MarinSkyRL #452 (`30c49275`, 2026-08-23, "Stochastically round BF16 AdamW updates") is the single commit that changes the effective update size.** Bisect: parent `0a41dee9` → small (step-2 KL 0.0047), three commits later `7f43cf9b` → big (KL 0.080); #453 is GSPO-only and #454 router-balancing, so #452 it is. Mechanism: with bf16 master weights, lr 3e-6 AdamW steps mostly rounded to zero before; now they land in expectation. **The base30b lr sweep (lr1e6/3e6/8e6, "lr8e6 wins") and the currease lr arms were tuned against that rounding loss and are invalid on main** — on main, lr 3e-6 already trains like the old 8e-6 (GSM8K 0.34→0.82 in one step, 0.97 by step 11, entropy 0.99→0.18).
+
+**Recommendation:** adopt main (the correct optimizer) and re-sweep lr starting one order lower (≈5e-7…2e-6) with entropy/KL as the guard; do not pin 08-14 for the currease campaign. Ask Ben whether #452 was announced — every MarinSkyRL user's lr calibration moved that day.
+
+Other outcomes tonight: currease gate 1557218 COMPLETED 10/10 (1h25m) with proxy, Daytona, harbor df866b30 all working on main; two jobs stalled at their final step (1556228 main at "policy train 12/32", 1557828 control after the step-12 reward) — both at `max_steps`, so suspect the end-of-run path (final save / export) rather than nodes; nodes logged in `$F/_hang_log.txt`. Throwaway probe checkouts `$C/OpenThoughts-Agent-{ctl,b1..b4}` + `$C/MarinSkyRL-{0814,bisect1..4}` can be deleted (all on no-purge project1, small).
+
+Open for Luke (step 5): delete `$F/{OpenThoughts-Agent,MarinSkyRL}` + `$F/repos/*` on Jupiter; open the 7 PRs (4 OTA on `open-thoughts/OpenThoughts-Agent`, 3 MarinSkyRL on `marin-community`); ask Ben for write access; decide the `ai_memory/` home.
