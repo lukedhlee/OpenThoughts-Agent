@@ -833,6 +833,12 @@ def build_skyrl_hydra_args(
     model_path = exp_args.get("model_path")
     if model_path:
         trainer.setdefault("policy", {}).setdefault("model", {})["path"] = model_path
+        # Keep the reference model on the same weights when the yaml declares
+        # one (KL-loss GRPO); otherwise --model_path silently leaves the ref
+        # on the yaml placeholder and the KL term compares against the wrong
+        # model (or fails to load offline).
+        if "ref" in trainer:
+            trainer.setdefault("ref", {}).setdefault("model", {})["path"] = model_path
 
         # Compute served_model_name: extract just the model name from "org/model" format.
         # Harbor/LiteLLM requires model names with exactly one '/' (e.g., "hosted_vllm/Qwen3-8B"),

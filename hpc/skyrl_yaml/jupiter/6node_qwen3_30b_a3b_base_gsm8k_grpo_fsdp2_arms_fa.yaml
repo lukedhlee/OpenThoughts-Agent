@@ -1,0 +1,181 @@
+# Context budget is the single public context declaration (upstream rl_config_utils derives
+# trainer.max_prompt_length / generator.* / terminal_bench.* from it and rejects them if set).
+# Single-turn GSM8K: 3072 window / 2048 response = the validated arms (prompt allowance becomes 1024; GSM8K prompts are <512).
+context_budget:
+  request_window_tokens: 3072
+  max_new_tokens_per_turn: 2048
+  max_turns: 1
+
+entrypoint: skyrl_train.entrypoints.main_base
+
+# Qwen3-30B-A3B-Base GSM8K GRPO validation arms (6 nodes / 24 GPU, FSDP2).
+# Algorithm block = Marianna-parity (KL loss on 0.001, eps_clip_high 0.28,
+# TIS on, cap 2.0); lr is per-arm via the POLICY_LR env override in
+# hpc/skyrl_standard/jupiter/run_gsm8k_moe30b_grpo.sh; gen length is
+# probe-decided (MAX_GENERATE_LENGTH / MAX_MODEL_LEN env overrides).
+# FA variant (3-knob diff from the SDPA arms: flash_attn on, sample packing
+# on, attn_backend auto -> fa2). Runtime = a host venv built by
+# hpc/env_builds/jupiter/build_rl_fa_env.sh (torch 2.11.0+cu128 + flash_attn
+# 2.8.3 cu128torch2.11 aarch64 wheel); point DCFT_RL_ENV at it in
+# hpc/dotenv/jupiter.env. Cache / venv / secrets locations come from the
+# dotenv, not from this file.
+trainer:
+  strategy: fsdp2
+  flash_attn: true
+  use_sample_packing: true
+  attn_backend: auto
+  gradient_checkpointing: true
+  gradient_checkpointing_use_reentrant: true
+  algorithm:
+    advantage_estimator: grpo
+    use_kl_loss: true
+    kl_loss_coef: 0.001
+    eps_clip_low: 0.2
+    eps_clip_high: 0.28
+    loss_reduction: sequence_mean
+    use_tis: true
+    tis_imp_ratio_cap: 2.0
+
+  epochs: 1
+  max_steps: 85
+  update_epochs_per_batch: 1
+
+  train_batch_size: 16
+  policy_mini_batch_size: 16
+  # 32 made the full-val eval take 81 min (42 serial batches barely feeding 8
+  # engines — smoke 1363765). 256 keeps engines saturated; n=1 greedy eval, no
+  # memory risk (max_num_seqs still throttles per-engine concurrency).
+  eval_batch_size: 256
+
+  micro_forward_batch_size_per_gpu: 1
+  micro_train_batch_size_per_gpu: 1
+
+
+  eval_interval: 10
+  eval_before_train: true
+  seed: 42
+  ckpt_interval: 10
+  resume_mode: null
+  hf_save_interval: 999999
+  hf_hub_repo_id: null
+  hf_hub_private: false
+  hf_hub_revision: main
+
+  diag_group_metrics: true
+  dump_train_rollouts: true
+
+  enable_db_registration: false
+
+  project_name: jupiter-base30b-gsm8k-grpo
+  log_level: INFO
+  tracker_commit_each_step: true
+  logger: wandb
+
+  run_name: null
+  ckpt_path: null
+  export_path: null
+
+  policy:
+    model:
+      # Overridden by --model_path (run script resolves a local HF snapshot;
+      # compute nodes have no internet).
+      path: Qwen/Qwen3-30B-A3B-Base
+    optimizer_config:
+      lr: 3.0e-6
+      weight_decay: 0.01
+      adam_betas: [0.9, 0.999]
+      max_grad_norm: 1.0
+    fsdp_config:
+      # 16 policy GPUs give the HBM headroom to keep states on-GPU.
+      cpu_offload: false
+      reshard_after_forward: true
+      fsdp_size: 4
+      expert_model_parallel_size: 4
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+  ref:
+    model:
+      path: Qwen/Qwen3-30B-A3B-Base
+    fsdp_config:
+      # Colocated FSDP2 ref with cpu_offload:false wholesale-bounces the full
+      # ref shard CPU<->GPU every step (upstream e9fc5e8 now FORCES true here).
+      # Placement-only change — loss math identical; policy offload stays false.
+      cpu_offload: true
+      reshard_after_forward: true
+      fsdp_size: 4
+      expert_model_parallel_size: 4
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+
+  placement:
+    colocate_all: false
+    colocate_policy_ref: true
+    # 4 policy nodes (16 GPU) + 2 infer nodes (8 GPU) = 6 nodes / 24 GPU
+    policy_num_nodes: 4
+    ref_num_nodes: 4
+    policy_num_gpus_per_node: 4
+    ref_num_gpus_per_node: 4
+    critic_num_nodes: 1
+    critic_num_gpus_per_node: 4
+    policy_strict_spread_pg: true
+    policy_per_gpu_bundles: true
+    policy_force_cvd_mask: true
+
+generator:
+  backend: vllm
+  timeout_multiplier: 1.0
+  model_dtype: bfloat16
+  enforce_eager: true
+
+  # TP=1 x 8 engines: proven on the 4-node run. Avoids the TP>1 c10d/IPv6 path.
+  inference_engine_tensor_parallel_size: 1
+  num_inference_engines: 8
+  inference_engine_expert_parallel_size: 1
+
+  n_samples_per_prompt: 8
+  eval_n_samples_per_prompt: 1
+
+  gpu_memory_utilization: 0.85
+
+  max_num_seqs: 8
+  max_num_batched_tokens: 4096
+
+  enable_prefix_caching: true
+  enable_chunked_prefill: true
+
+  run_engines_locally: true
+  weight_sync_backend: nccl
+  async_engine: true
+  batched: true
+
+  sampling_params:
+    temperature: 1.0
+    top_p: 1.0
+    top_k: -1
+
+  engine_init_kwargs:
+    # FlashInfer's fused-MoE JIT .so links the GCC-14 module libstdc++
+    # (GLIBCXX_3.4.32) but dlopen resolves the old system /lib64 one — engines
+    # crash-loop (job 1363397). Triton MoE needs no runtime build; same call the
+    # probe made (job 1085876 postmortem). FA attention backend is unaffected.
+    moe_backend: triton
+
+data:
+  train_data: []
+  val_data: []
+
+container:
+  # Experiment knobs only. Runtime locations (caches, venv, LD_LIBRARY_PATH,
+  # secrets, SkyRL checkout) come from hpc/dotenv/jupiter.env.
+  extra_env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    NCCL_DEBUG: WARN
+    SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
+    VLLM_ATTENTION_BACKEND: FLASH_ATTN
+    VLLM_FORCE_IPV4: "1"
+    GLOO_USE_IPV6: "0"
+    NCCL_SOCKET_FAMILY: AF_INET
+    WANDB_PROJECT: jupiter-base30b-gsm8k-grpo
+    WANDB_MODE: offline

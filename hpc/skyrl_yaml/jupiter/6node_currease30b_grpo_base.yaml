@@ -1,0 +1,227 @@
+# Context budget is the single public context declaration (upstream rl_config_utils derives
+# trainer.max_prompt_length / generator.* / terminal_bench.* from it and rejects them if set).
+# 32k window, 4k per turn, unbounded turns — identical to the validated currease runs.
+context_budget:
+  request_window_tokens: 32768
+  max_new_tokens_per_turn: 4096
+  max_turns: 999999
+
+# MarinSkyRL main removed examples/terminal_bench (PR #386, 2026-08-15); the packaged entrypoint is the replacement.
+entrypoint: skyrl_train.entrypoints.terminal_bench
+
+# Curriculum-easy agentic GRPO on Qwen3-30B-A3B-Base (6 nodes / 24 GPU, FSDP2,
+# EP=4, flash_attn + sample packing). Trainer/generator block mirrors
+# 6node_qwen3_30b_a3b_base_gsm8k_grpo_fsdp2_arms_fa.yaml; the harbor block is
+# the standard terminal_bench agentic setup. Sibling files vary only the model
+# (Instruct-2507), lr, max_steps and ckpt_interval. Model path is overridden by
+# --model_path at launch; runtime locations come from hpc/dotenv/jupiter.env.
+
+config_groups:
+  terminal_bench_config: terminal_bench
+
+terminal_bench:
+  trials_dir: null
+  harbor:
+    name: terminus-2
+    enable_summarize: false
+    store_all_messages: true
+    trajectory_config:
+      raw_content: true
+    enable_episode_logging: false
+    record_terminal_session: false
+    enable_pane_logging: false
+    strict_json_parser: true
+    override_timeout_sec: 1800
+    override_cpus: 2
+    override_memory_mb: 4096
+    override_storage_mb: 4096
+    auto_snapshot: true
+    verifier_override_timeout_sec: 120
+    max_retries: 3
+    min_wait_sec: 60.0
+    max_wait_sec: 600.0
+    wait_multiplier: 2.0
+    exclude_exceptions:
+      - VerifierTimeoutError
+      - VerifierRuntimeError
+      - RewardFileNotFoundError
+      - RewardFileEmptyError
+      - VerifierOutputParseError
+    n_concurrent_trials: 64
+    log_level: INFO
+    enable_reward_shaping: false
+    collect_rollout_details: true
+    enable_error_classification: true
+    mask_exceptions:
+      - DaytonaError
+      - EnvironmentStartTimeoutError
+      - NetworkError
+      - ConnectionError
+      - RewardFileNotFoundError
+      - RewardFileEmptyError
+      - AgentEnvironmentTimeoutError
+      - ContextLengthExceededError
+    default_error_treatment: zero
+    passthrough_exceptions:
+      - AgentTimeoutError
+      - ContextLengthExceededError
+  model_info:
+  archiving:
+    enabled: false
+  trace_upload:
+    enabled: false
+
+trainer:
+  strategy: fsdp2
+  flash_attn: true
+  use_sample_packing: true
+  attn_backend: auto
+  gradient_checkpointing: true
+  gradient_checkpointing_use_reentrant: true
+  algorithm:
+    advantage_estimator: grpo
+    use_kl_loss: true
+    kl_loss_coef: 0.001
+    eps_clip_low: 0.2
+    eps_clip_high: 0.28
+    loss_reduction: sequence_mean
+    use_tis: true
+    tis_imp_ratio_cap: 2.0
+
+  epochs: 5
+  max_steps: 50
+  update_epochs_per_batch: 1
+
+  train_batch_size: 16
+  policy_mini_batch_size: 16
+  eval_batch_size: 32
+
+  micro_forward_batch_size_per_gpu: 1
+  micro_train_batch_size_per_gpu: 1
+
+
+  eval_interval: 999999
+  eval_before_train: false
+  seed: 42
+  ckpt_interval: 2
+  resume_mode: null
+  hf_save_interval: 999999
+  hf_hub_repo_id: null
+  hf_hub_private: false
+  hf_hub_revision: main
+
+  diag_group_metrics: true
+  dump_train_rollouts: true
+
+  enable_db_registration: false
+
+  project_name: jupiter-currease30b-grpo
+  log_level: INFO
+  tracker_commit_each_step: true
+  logger: wandb
+
+  run_name: null
+  ckpt_path: null
+  export_path: null
+
+  policy:
+    model:
+      path: Qwen/Qwen3-30B-A3B-Base
+    optimizer_config:
+      lr: 3.0e-6
+      weight_decay: 0.01
+      adam_betas: [0.9, 0.999]
+      max_grad_norm: 1.0
+    fsdp_config:
+      cpu_offload: false
+      reshard_after_forward: true
+      fsdp_size: 4
+      expert_model_parallel_size: 4
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+  ref:
+    model:
+      path: Qwen/Qwen3-30B-A3B-Base
+    fsdp_config:
+      cpu_offload: true
+      reshard_after_forward: true
+      fsdp_size: 4
+      expert_model_parallel_size: 4
+      moe_router_replay: false
+      moe_grouped_gemm: true
+      ep_comm_backend: torch
+
+  placement:
+    colocate_all: false
+    colocate_policy_ref: true
+    policy_num_nodes: 4
+    ref_num_nodes: 4
+    policy_num_gpus_per_node: 4
+    ref_num_gpus_per_node: 4
+    critic_num_nodes: 1
+    critic_num_gpus_per_node: 4
+    policy_strict_spread_pg: true
+    policy_per_gpu_bundles: true
+    policy_force_cvd_mask: true
+
+generator:
+  backend: vllm
+  timeout_multiplier: 1.0
+  model_dtype: bfloat16
+  enforce_eager: false
+
+  inference_engine_tensor_parallel_size: 1
+  num_inference_engines: 8
+  inference_engine_expert_parallel_size: 1
+
+  n_samples_per_prompt: 8
+  eval_n_samples_per_prompt: 1
+
+  gpu_memory_utilization: 0.85
+
+  max_num_seqs: 8
+  max_num_batched_tokens: 4096
+
+  enable_prefix_caching: true
+  enable_chunked_prefill: true
+
+  run_engines_locally: true
+  weight_sync_backend: nccl
+  async_engine: true
+  batched: false
+  enable_http_endpoint: true
+  vllm_stats_interval: 1
+  append_eos_token_after_stop_str_in_multi_turn: true
+
+  sampling_params:
+    temperature: 1.0
+    top_p: 1.0
+    top_k: -1
+
+  engine_init_kwargs:
+    moe_backend: triton
+
+data:
+  train_data: []
+  val_data: []
+
+rollout:
+  fanout:
+    enabled: true
+    num_coordinators: 4
+    cpus_per_coordinator: 8
+
+container:
+  # Experiment knobs only. Runtime locations (caches, venv, LD_LIBRARY_PATH,
+  # secrets, SkyRL checkout) come from hpc/dotenv/jupiter.env.
+  extra_env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    NCCL_DEBUG: WARN
+    SKYRL_WORKER_NCCL_TIMEOUT_IN_S: "1800"
+    VLLM_ATTENTION_BACKEND: FLASH_ATTN
+    VLLM_FORCE_IPV4: "1"
+    GLOO_USE_IPV6: "0"
+    NCCL_SOCKET_FAMILY: AF_INET
+    WANDB_PROJECT: jupiter-currease30b-grpo
+    WANDB_MODE: offline

@@ -166,6 +166,17 @@ export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=1800
 # Combined with TORCH_NCCL_ASYNC_ERROR_HANDLING above, this surfaces the
 # real failure point (often a peer-node HSN socket close on Perlmutter)
 # instead of a downstream SIGABRT in a NCCL destructor.
+#
+# It is also MEMORY-LOAD-BEARING on the 30B EP/FSDP2 GRPO configs, not just a
+# debugging aid. 2026-08-14 A/B on the Qwen3-30B-A3B-Base gsm8k arms (Jupiter,
+# 6 nodes): removing it (to let the heartbeat watchdog abort hung collectives,
+# per upstream MarinSkyRL 449d1eb) made every LONG-generation arm CUDA-OOM
+# within steps 1-13 (594MiB alloc, device-global ~95GB full; five jobs) while
+# the exact same yaml ran hours OOM-free with it set — blocking wait
+# serializes the FSDP2 allgather pipeline and caps peak memory. The cost: a
+# hung EP collective spins at 100% GPU forever with NO watchdog abort (six such
+# hangs) — pair any long run with an external log-mtime stall-watcher.
+# Do not remove again without first buying back memory headroom.
 export NCCL_BLOCKING_WAIT=1
 export OMP_NUM_THREADS=1
 export PYTHONPATH="$WORKDIR:${PYTHONPATH:-}"
