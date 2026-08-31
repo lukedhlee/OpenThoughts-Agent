@@ -1,6 +1,6 @@
 # Repo refactor plan — one clean OTA, one clean SkyRL, harbor on the shelf
 
-Opened 2026-08-30, pruned same day. Status (2026-08-31): **steps 1–3 done, step 4 (gate) running as Jupiter jobs 1553446 (GSM8K lr3e6, 12 steps) + 1553468 (currease instr2507, 10 steps); step 5 awaits Luke.** See "Status log" at the bottom. Companion: the OTA Code Atlas
+Opened 2026-08-30, pruned same day. Status (2026-08-31): **steps 1–3 done, step 4 (gate) running as Jupiter jobs 1555904 (GSM8K lr3e6, 12 steps) + 1555897 (currease instr2507, 10 steps); step 5 awaits Luke.** See "Status log" at the bottom. Companion: the OTA Code Atlas
 (https://claude.ai/code/artifact/e633ab79-c602-4ca1-a5d7-5b52ce4e3aa2) holds the full inventory this plan
 was made from; this note holds only the decision and the port list.
 
@@ -115,3 +115,10 @@ Old OTA branch `lukedhlee/vista-moe-grpo-30b` (tip `5c6096cc`), merge-base with 
 - 1552473 FAILED at 12 s: upstream `jupiter.env` hardcodes `SCRATCH=/e/scratch/jureap59/$USER` and `DCFT=$SCRATCH/OpenThoughts-Agent` then `source "$DCFT/hpc/shell_utils/resolve_rl_repo.sh"` — for lee27 that path is unreadable, `set -e` kills the sbatch before the overlay runs. Fix (in commit 1, `34950b0b`): source the helper relative to the dotenv file (`$(dirname "${BASH_SOURCE[0]}")/../shell_utils`). Upstream-worthy on its own.
 - 1552502 cancelled (mine, demonstrably broken): my overlay had `export PROXYCHAINS_BIN_OVERRIDE=<path>  # comment` — **the dotenv loader does not strip inline comments**, the binary path became "path  # comment", proxy setup was skipped → would have been the dead-proxy case. Rule: no inline comments in `*.local.env`. Also `hpc.launch` without `--experiments_dir` writes `experiments/<job>` INSIDE the checkout; pass `--experiments_dir $SCRATCH/experiments/<job>` (the GSM8K run script already does).
 - OTA branch now: `34950b0b` · `118f5de7` · `563232b5` · `898423fb` (force-pushed; Jupiter clone reset to it).
+
+**2026-08-31 (attempt 3/4) — two more upstream-drift defects fixed; gates relaunched as 1555904 (GSM8K) + 1555897 (currease).**
+
+- 1553446 (GSM8K) crashed in the trainer on `/e/scratch/jureap59/...` + `/e/data1/datasets/playground` paths: `jupiter.env` line 3 clobbers `$DCFT`, so the sbatch's very next line `[ -f "$DCFT/hpc/dotenv/jupiter.local.env" ]` looked under Ben's checkout and **silently skipped the overlay**. Fix (commit 1, `77521dc5`): every sbatch template captures `_OT_DOTENV_DIR="$DCFT/hpc/dotenv"` BEFORE sourcing `<cluster>.env`. (The Python launcher side was already right — verified by importing `hpc.set_environment` on Jupiter.)
+- 1553468 (currease) died on `ModuleNotFoundError: examples.terminal_bench.entrypoints.main_tbench`: MarinSkyRL main deleted it (#386, 08-15) → YAML `entrypoint: skyrl_train.entrypoints.terminal_bench`. 1555059 then died on `Key 'enable_ray_prometheus_stats' is not in struct` → key removed from the 5 currease YAMLs. Both in commit 3 (`a222ab92`). **Upstream OTA main's own Jupiter YAMLs still carry both dead settings — OTA main and MarinSkyRL main are currently not co-runnable; our commit 3 is the fix.**
+- Method that found the remaining incompatibilities in one shot: flatten our YAML keys vs `ppo_base_config.yaml` in the Jupiter venv (`NOT IN BASE` list). Remaining non-base keys are OTA-side (`config_groups`, `trainer.enable_db_registration`, `trainer.hf_hub_*`, `engine_init_kwargs.moe_backend`) and are accepted.
+- OTA branch now: `77521dc5` · `1774a89c` · `a222ab92` · `4350a0fe`.
