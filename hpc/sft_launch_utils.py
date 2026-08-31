@@ -1252,6 +1252,7 @@ def construct_sft_sbatch_script(exp_args: dict, hpc) -> str:
         if hpc.is_containerized
         else _get_sft_conda_activate(hpc, exp_args),
         "cluster_env_file": hpc.dotenv_filename,
+        "cluster_local_env_file": hpc.local_dotenv_filename,
         "cuda_setup": cuda_setup,
         "nccl_exports": hpc.get_nccl_exports(),
         "env_exports": hpc.get_env_exports(),

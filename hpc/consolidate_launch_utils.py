@@ -201,6 +201,7 @@ def launch_consolidate_job(
         )
 
     cluster_env_file = getattr(hpc, "dotenv_filename", "") or ""
+    cluster_local_env_file = getattr(hpc, "local_dotenv_filename", "") or ""
 
     # Generate proxy setup for no-internet clusters (JSC, Leonardo)
     ssh_tunnel_setup = getattr(hpc, "get_ssh_tunnel_setup", lambda: "")()
@@ -218,6 +219,7 @@ def launch_consolidate_job(
         "experiments_dir": experiments_dir,
         "environment_preamble": environment_preamble,
         "cluster_env_file": cluster_env_file,
+        "cluster_local_env_file": cluster_local_env_file,
         "ssh_tunnel_setup": ssh_tunnel_setup,
         "proxy_setup": proxy_setup,
         "consolidate_input": input_value,

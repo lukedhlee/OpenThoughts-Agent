@@ -77,8 +77,16 @@ fi
 
 # --- Source environment files (before RL env activation) ---
 # Source dotenv and secrets first, but NOT DCFT_ACTIVATE_ENV which would clobber RL env
-if [ -n "${DCFT:-}" ] && [ -f "$DCFT/hpc/dotenv/{cluster_env_file}" ]; then
-  source "$DCFT/hpc/dotenv/{cluster_env_file}"
+# Resolve the dotenv dir from the checkout we were launched from BEFORE sourcing
+# <cluster>.env: that file may reset $DCFT/$SCRATCH to a site default (jupiter.env does),
+# which would make the overlay lookup below miss the user's checkout and skip silently.
+_OT_DOTENV_DIR="${DCFT:-}/hpc/dotenv"
+if [ -n "${DCFT:-}" ] && [ -f "$_OT_DOTENV_DIR/{cluster_env_file}" ]; then
+  source "$_OT_DOTENV_DIR/{cluster_env_file}"
+fi
+# Gitignored per-user overlay (<cluster>.local.env); later wins. Mirrors hpc.set_environment.
+if [ -f "$_OT_DOTENV_DIR/{cluster_local_env_file}" ]; then
+  source "$_OT_DOTENV_DIR/{cluster_local_env_file}"
 fi
 if [ -n "${DC_AGENT_SECRET_ENV:-}" ] && [ -f "$DC_AGENT_SECRET_ENV" ]; then
   set -a
@@ -370,11 +378,33 @@ setup_container_runtime "{harbor_env}" "$WORKDIR" || exit $?
 
 # --- Run the RL training job via Python runner ---
 # Ray cluster management is handled by hpc/ray_utils.py using proper srun calls
+# Resolve an absolute interpreter for the runner. On some clusters a bare
+# `python` still resolves to the system interpreter (e.g. /bin/python 3.9)
+# after a successful venv/conda activation because module/XALT hooks re-order
+# PATH. Precedence: explicit RL_PYTHON (dotenv / yaml extra_env) > active venv
+# > active conda env > whatever `python` resolves to.
+if [[ -n "${RL_PYTHON:-}" && -x "${RL_PYTHON}" ]]; then
+  :
+elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+  RL_PYTHON="${VIRTUAL_ENV}/bin/python"
+elif [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
+  RL_PYTHON="${CONDA_PREFIX}/bin/python"
+else
+  RL_PYTHON="$(command -v python || true)"
+fi
+if [[ -z "${RL_PYTHON}" || ! -x "${RL_PYTHON}" ]]; then
+  echo "FATAL: RL_PYTHON='${RL_PYTHON:-}' is not executable" >&2
+  exit 1
+fi
+export RL_PYTHON
+# Make bare `python` in child processes agree with the runner's interpreter.
+export PATH="$(dirname "${RL_PYTHON}"):${PATH}"
+hash -r 2>/dev/null || true
 echo "=== Universal RL Training Runner ==="
 echo "Config: {config_path}"
 echo "Working directory: $WORKDIR"
-echo "Python: $(which python)"
-echo "Python version: $(python --version)"
+echo "Python: $RL_PYTHON (which=$(command -v python || true))"
+echo "Python version: $("$RL_PYTHON" --version)"
 echo "UV_USE_IO_URING: ${UV_USE_IO_URING:-<unset>}"  # libuv io_uring epoll-abort fix; must be 0
 
 # --- Proxy setup for no-internet clusters ---
@@ -392,7 +422,7 @@ else
 fi
 echo "========================================"
 
-python -m hpc.rl_launch_utils --config "{config_path}" &
+"$RL_PYTHON" -m hpc.rl_launch_utils --config "{config_path}" &
 RL_RUNNER_PID=$!
 set +e
 while true; do

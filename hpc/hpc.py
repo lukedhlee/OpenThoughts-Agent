@@ -224,6 +224,16 @@ class HPC(BaseModel):
         hpc_dir = os.path.dirname(os.path.realpath(__file__))
         return os.path.join(hpc_dir, "dotenv", self.dotenv_filename)
 
+    @property
+    def local_dotenv_filename(self) -> str:
+        """Gitignored per-user overlay: ``<cluster>.local.env`` next to the dotenv."""
+        stem, ext = os.path.splitext(self.dotenv_filename)
+        return f"{stem}.local{ext}"
+
+    @property
+    def local_dotenv_path(self) -> str:
+        return os.path.join(os.path.dirname(self.dotenv_path), self.local_dotenv_filename)
+
     # =========================================================================
     # Runtime configuration methods for SBATCH/Ray/vLLM
     # =========================================================================
@@ -418,6 +428,14 @@ class HPC(BaseModel):
         """
         env_parts = []
         for key, value in {**self.env_vars, **self.library_paths}.items():
+            # A value already exported in the calling shell wins over the
+            # cluster default. Inside an RL job this is the sbatch shell
+            # (cluster dotenv + yaml container.extra_env), so a per-user
+            # override (e.g. a different compiler for a JIT'd MoE kernel)
+            # reaches the Ray workers instead of being pinned to hpc.py.
+            override = os.environ.get(key)
+            if override:
+                value = override
             env_parts.append(f"{key}={shlex.quote(str(value))}")
         env_parts.append("PATH=$PATH")
         env_parts.append("LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}")
@@ -426,6 +444,9 @@ class HPC(BaseModel):
         # Propagate CUDA_HOME so Triton can find ptxas on worker nodes
         # (set by 'module load CUDA/...' but not always inherited by Ray workers)
         env_parts.append("CUDA_HOME=${CUDA_HOME:-}")
+        # Prebuilt FlashInfer MoE workspace (must reach Ray workers; --export=ALL
+        # alone is not enough once ray_env_vars rebuilds a fresh `env ...` prefix).
+        env_parts.append("FLASHINFER_WORKSPACE_BASE=${FLASHINFER_WORKSPACE_BASE:-}")
         return " ".join(env_parts)
 
     def get_nccl_exports(self) -> str:
@@ -986,6 +1007,9 @@ jupiter = HPC(
         # and any new file creation under $DCFT/experiments/logs/ EDQUOTs.
         # Symlink fix isn't viable because creating the symlink itself needs
         # a new inode. See reference_jupiter_inode_quota.md.
+        # Per-user: define OT_AGENT_RAY_LOG_DIR in hpc/dotenv/jupiter.env to
+        # override this default (set_environment applies dotenv keys over
+        # env_vars); the default below is only readable/writable by feuer1.
         "OT_AGENT_RAY_LOG_DIR": "/e/data1/datasets/playground/ot-baf/experiments/_ray_logs",
         # Redirect Ray's object-store SPILL directory to GPFS /e/scratch
         # (multi-PB free) instead of the compute node's LOCAL disk (default
@@ -1006,6 +1030,8 @@ jupiter = HPC(
         # objects under `params.directory_path`. The dir is created lazily by
         # Ray. Keep the path short (well under the 107-byte plasma_store socket
         # limit, which lives under --temp-dir, NOT here).
+        # Per-user: set OT_AGENT_RAY_SPILL_DIR in hpc/dotenv/jupiter.env to
+        # point the spill at your own scratch (the default dir is feuer1's).
         "RAY_object_spilling_config": (
             '{"type":"filesystem","params":'
             '{"directory_path":"/e/scratch/jureap59/feuer1/ray_spill"}}'
@@ -1928,25 +1954,59 @@ def detect_hpc() -> HPC:
     raise ValueError(f"HPC not recognized for hostname {hostname}")
 
 
+def _load_dotenv_file(path: str) -> List[str]:
+    """Parse ``export KEY=value`` lines into os.environ; return the keys set."""
+    keys: List[str] = []
+    with open(path, "r") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            if "=" not in line:
+                continue
+
+            key_part, value_part = line.split("=", 1)
+            key = key_part.replace("export ", "").strip()
+            value = value_part.strip().strip('"').strip("'")
+
+            os.environ[key] = os.path.expandvars(value)
+            keys.append(key)
+    return keys
+
+
 def set_environment(hpc_name: HPC) -> None:
-    """Set environment variables for the current HPC"""
+    """Set environment variables for the current HPC.
+
+    Two files are loaded, same parser, later wins:
+
+    1. ``hpc/dotenv/<cluster>.env`` — the tracked cluster dotenv;
+    2. ``hpc/dotenv/<cluster>.local.env`` — an optional, gitignored per-user
+       overlay (see ``<cluster>.local.env.example``), so a user never has to
+       edit the tracked file to point at their own scratch / venv.
+
+    The dotenv layer is also the per-user override for a few HPC-entry fields
+    that would otherwise pin one user's paths into hpc.py:
+
+    - any key either file defines that also exists in ``hpc.env_vars`` replaces
+      the hpc.py default (e.g. ``OT_AGENT_RAY_LOG_DIR``);
+    - ``OT_AGENT_RAY_SPILL_DIR`` rewrites the filesystem spill directory inside
+      ``RAY_object_spilling_config`` (the JSON blob is awkward to write in a
+      dotenv line by hand);
+    - ``DCFT_CONDA_ACTIVATE`` replaces ``hpc.conda_activate`` (set it empty to
+      skip conda entirely and rely on the RL venv / ``DCFT_RL_ENV``).
+
+    Keys neither file defines keep their hpc.py values, so clusters whose
+    dotenv only repeats a default (e.g. ``WANDB_MODE=offline``) are unchanged.
+    """
     dotenv = hpc_name.dotenv_path
     if os.path.exists(dotenv):
-        with open(dotenv, "r") as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
-                    continue
-
-                if "=" not in line:
-                    continue
-
-                key_part, value_part = line.split("=", 1)
-                key = key_part.replace("export ", "").strip()
-                value = value_part.strip().strip('"').strip("'")
-
-                os.environ[key] = os.path.expandvars(value)
+        dotenv_keys = _load_dotenv_file(dotenv)
         print(f"Environment variables set from {dotenv}")
+        local_dotenv = hpc_name.local_dotenv_path
+        if os.path.exists(local_dotenv):
+            dotenv_keys += _load_dotenv_file(local_dotenv)
+            print(f"Environment variables overlaid from {local_dotenv}")
 
         # Legacy compatibility: treat DC_AGENT as the canonical repo root when DCFT is unset.
         if "DCFT" not in os.environ and os.environ.get("DC_AGENT"):
@@ -1957,6 +2017,18 @@ def set_environment(hpc_name: HPC) -> None:
             env_account = os.environ.get("DCFT_GROUP")
             if env_account:
                 hpc_name.account = env_account
+
+        # Per-user overrides of HPC-entry defaults (see docstring).
+        for key in dotenv_keys:
+            if key in hpc_name.env_vars:
+                hpc_name.env_vars[key] = os.environ[key]
+        if "OT_AGENT_RAY_SPILL_DIR" in dotenv_keys and os.environ["OT_AGENT_RAY_SPILL_DIR"]:
+            hpc_name.env_vars["RAY_object_spilling_config"] = (
+                '{"type":"filesystem","params":'
+                f'{{"directory_path":"{os.environ["OT_AGENT_RAY_SPILL_DIR"]}"}}}}'
+            )
+        if "DCFT_CONDA_ACTIVATE" in dotenv_keys:
+            hpc_name.conda_activate = os.environ["DCFT_CONDA_ACTIVATE"]
     else:
         print(
             f"Warning: No dotenv file found for {hpc_name.name} in {dotenv}. Skipping environment variable setup."

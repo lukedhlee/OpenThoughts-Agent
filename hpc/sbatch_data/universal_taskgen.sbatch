@@ -65,8 +65,16 @@ fi
 {conda_activate}
 
 # --- Source environment files ---
-if [ -n "${DCFT:-}" ] && [ -f "$DCFT/hpc/dotenv/{cluster_env_file}" ]; then
-  source "$DCFT/hpc/dotenv/{cluster_env_file}"
+# Resolve the dotenv dir from the checkout we were launched from BEFORE sourcing
+# <cluster>.env: that file may reset $DCFT/$SCRATCH to a site default (jupiter.env does),
+# which would make the overlay lookup below miss the user's checkout and skip silently.
+_OT_DOTENV_DIR="${DCFT:-}/hpc/dotenv"
+if [ -n "${DCFT:-}" ] && [ -f "$_OT_DOTENV_DIR/{cluster_env_file}" ]; then
+  source "$_OT_DOTENV_DIR/{cluster_env_file}"
+fi
+# Gitignored per-user overlay (<cluster>.local.env); later wins. Mirrors hpc.set_environment.
+if [ -f "$_OT_DOTENV_DIR/{cluster_local_env_file}" ]; then
+  source "$_OT_DOTENV_DIR/{cluster_local_env_file}"
 fi
 if [ -n "${DC_AGENT_SECRET_ENV:-}" ] && [ -f "$DC_AGENT_SECRET_ENV" ]; then
   source "$DC_AGENT_SECRET_ENV"

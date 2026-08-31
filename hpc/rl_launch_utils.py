@@ -1399,6 +1399,7 @@ fi"""
         "module_commands": hpc.get_module_commands(),
         "conda_activate": resolve_conda_activate(hpc, exp_args),
         "cluster_env_file": hpc.dotenv_filename,
+        "cluster_local_env_file": hpc.local_dotenv_filename,
         "cuda_setup": cuda_setup,
         "nccl_exports": hpc.get_nccl_exports(),
         "rl_container_env": rl_container_env_block,
@@ -1467,8 +1468,12 @@ def check_rl_environment() -> Optional[Path]:
     candidates.append(Path(__file__).parent.parent / "envs" / "rl")
 
     for candidate in candidates:
-        if candidate.exists() and (candidate / "bin" / "activate").exists():
-            return candidate
+        try:
+            if candidate.exists() and (candidate / "bin" / "activate").exists():
+                return candidate
+        except PermissionError:
+            # e.g. the dotenv points at another user's scratch we cannot read
+            continue
 
     return None
 

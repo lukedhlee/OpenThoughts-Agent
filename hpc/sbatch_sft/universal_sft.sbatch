@@ -54,6 +54,10 @@ export CONDA_BACKUP_FC="${CONDA_BACKUP_FC:-}"
 for _try_dcft in "${DCFT:-}" "${DCFT_PRIVATE:-}" "$PWD"; do
   if [ -n "$_try_dcft" ] && [ -f "$_try_dcft/hpc/dotenv/{cluster_env_file}" ]; then
     source "$_try_dcft/hpc/dotenv/{cluster_env_file}"
+    # Gitignored per-user overlay (<cluster>.local.env); later wins. Mirrors hpc.set_environment.
+    if [ -f "$_try_dcft/hpc/dotenv/{cluster_local_env_file}" ]; then
+      source "$_try_dcft/hpc/dotenv/{cluster_local_env_file}"
+    fi
     break
   fi
 done

@@ -17,10 +17,19 @@ set -euo pipefail
 {environment_preamble}
 
 # --- Source dotenv and secrets ---
+# Capture the dotenv dir before sourcing <cluster>.env (it may reset $DCFT to a site default).
+_OT_DOTENV_DIR=""
 if [ -n "${{DCFT:-}}" ] && [ -f "$DCFT/hpc/dotenv/{cluster_env_file}" ]; then
-  source "$DCFT/hpc/dotenv/{cluster_env_file}"
+  _OT_DOTENV_DIR="$DCFT/hpc/dotenv"
 elif [ -n "${{DC_AGENT:-}}" ] && [ -f "$DC_AGENT/hpc/dotenv/{cluster_env_file}" ]; then
-  source "$DC_AGENT/hpc/dotenv/{cluster_env_file}"
+  _OT_DOTENV_DIR="$DC_AGENT/hpc/dotenv"
+fi
+if [ -n "$_OT_DOTENV_DIR" ]; then
+  source "$_OT_DOTENV_DIR/{cluster_env_file}"
+fi
+# Gitignored per-user overlay (<cluster>.local.env); later wins. Mirrors hpc.set_environment.
+if [ -n "$_OT_DOTENV_DIR" ] && [ -f "$_OT_DOTENV_DIR/{cluster_local_env_file}" ]; then
+  source "$_OT_DOTENV_DIR/{cluster_local_env_file}"
 fi
 
 if [ -n "${{DCFT_ACTIVATE_ENV:-}}" ]; then

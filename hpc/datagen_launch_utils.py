@@ -319,6 +319,9 @@ def launch_datagen_job_v2(exp_args: dict, hpc) -> None:
         if hasattr(hpc, "dotenv_filename")
         else f"{hpc.name.lower()}.env"
     )
+    cluster_local_env_file = getattr(
+        hpc, "local_dotenv_filename", cluster_env_file.replace(".env", ".local.env")
+    )
 
     task_job_id = None
 
@@ -399,6 +402,7 @@ def launch_datagen_job_v2(exp_args: dict, hpc) -> None:
             "module_commands": hpc.get_module_commands(),
             "conda_activate": resolve_conda_activate(hpc, exp_args),
             "cluster_env_file": cluster_env_file,
+            "cluster_local_env_file": cluster_local_env_file,
             "config_path": str(task_config_path),
             "email_address": os.environ.get("EMAIL_ADDRESS", ""),
             "env_exports": hpc.get_env_exports(),
@@ -678,6 +682,7 @@ def launch_datagen_job_v2(exp_args: dict, hpc) -> None:
                 "module_commands": hpc.get_module_commands(),
                 "conda_activate": resolve_conda_activate(hpc, exp_args),
                 "cluster_env_file": cluster_env_file,
+                "cluster_local_env_file": cluster_local_env_file,
                 "config_path": str(trace_config_path),
                 "email_address": os.environ.get("EMAIL_ADDRESS", ""),
                 "harbor_env": harbor_env,
