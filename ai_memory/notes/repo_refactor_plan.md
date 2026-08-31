@@ -1,6 +1,6 @@
 # Repo refactor plan — one clean OTA, one clean SkyRL, harbor on the shelf
 
-Opened 2026-08-30, pruned same day. Status (2026-08-31): **steps 1–3 done, step 4 (gate) running as Jupiter jobs 1556228 (GSM8K lr3e6, 12 steps) + 1557218 (currease instr2507, 10 steps); step 5 awaits Luke.** See "Status log" at the bottom. Companion: the OTA Code Atlas
+Opened 2026-08-30, pruned same day. Status (2026-08-31): **steps 1–3 done, step 4 (gate): both stacks LAUNCH AND TRAIN from the clean branches (1556228 GSM8K, 1557218 currease); numeric parity with the old lr3e6 arm FAILS at step 2 — upstream MarinSkyRL main takes a much larger effective step; control run 1557785 (old MarinSkyRL snapshot + new OTA/venv) isolates it; step 5 awaits Luke.** See "Status log" at the bottom. Companion: the OTA Code Atlas
 (https://claude.ai/code/artifact/e633ab79-c602-4ca1-a5d7-5b52ce4e3aa2) holds the full inventory this plan
 was made from; this note holds only the decision and the port list.
 
@@ -126,3 +126,21 @@ Old OTA branch `lukedhlee/vista-moe-grpo-30b` (tip `5c6096cc`), merge-base with 
 **2026-08-31 (GSM8K attempt 4 = 1556228).** 1555904 died at Ray-head start: with `PROXYCHAINS_BIN_OVERRIDE` set (needed for currease) the launcher wrapped the head in `proxychains4 -f "$PROXYCHAINS_CONF_FILE"` even though no proxy was configured, so the conf did not exist → exit 1 "couldnt find configuration file". Fix in commit 2 (`123269fe`): `ray_utils.py` + `rl_launch_utils.py` only wrap when `PROXYCHAINS_CONF_FILE` names an existing file. OTA branch: `77521dc5` · `123269fe` · `02b96d95` · `75c48903`. Cosmetic: the "Check log file:" path in that error points at `$DCFT/experiments/logs/` while the head log is really under `OT_AGENT_RAY_LOG_DIR` (`$SCRATCH/experiments/_ray_logs/`).
 
 **2026-08-31 (currease attempt 5 = 1557218).** 1555897 got past config + proxy and died in the Harbor runner: `ModuleNotFoundError: harbor_config.errors` — MarinSkyRL main pins harbor `df866b30` (uv.lock) + the `harbor-config` release wheel of the same sha; our freeze had harbor `725fc069` (pre-#57 error taxonomy). Installed both into the venv (torch/vllm/transformers unchanged); recipe updated in commit 4 (`185dd0bc`, `HARBOR_REF`). Lesson: **when bumping MarinSkyRL, re-pin harbor from its uv.lock** — the freeze alone is not a complete spec.
+
+## Gate results (2026-08-31, ~11:40 CEST) — read this first
+
+**Both stacks run end-to-end from the clean branches.** GSM8K (1556228) and curriculum-easy (1557218) both reach training steps with the ported diag metrics live. **Numeric parity with the old lr3e6 arm does NOT hold, and the cause is upstream MarinSkyRL, not the port:**
+
+| | step 1 | step 2 | step 3 |
+|---|---|---|---|
+| old lr3e6 (W&B, 08-14) | 0.336 / ent 0.99 / KL 0.0041 | 0.344 / 1.02 / 0.0048 | 0.383 / 0.84 / 0.0049 |
+| old lr8e6 (W&B, 08-14) | 0.336 / 0.99 / 0.0046 | 0.742 / 0.50 / 0.037 | 0.742 / 0.45 / 0.046 |
+| **new lr3e6 (1556228, MarinSkyRL main bdfef12b)** | **0.336 / 0.99 / 0.0043** | **0.820 / 0.34 / 0.069** | **0.891 / 0.21 / 0.103** |
+
+Step 1 is identical to the digit (same data order, same rollouts, same ref) → the port is faithful. From step 2 the new run at lr 3e-6 moves faster than the old lr **8e-6**. The launched config is the old one (lr 3e-6, 16×8, 1 epoch, `policy_update_steps=1`, grad-norm clipped 3.2→1.0, AdamW) — so the update *count* and nominal size are unchanged; the policy simply moves ~14× further in KL per step. AdamW's first step is scale-invariant, so this is about which parameters actually receive gradient, not loss scaling. Suspects in upstream `36fdbc0a..bdfef12b` (330 commits): the MoE gradient-correctness cluster — #363 "Zero uninitialized tail rows in grouped-GEMM MoE path" (08-12), #373 "Average FSDP2 expert-parallel gradients" (08-13), #399/#422 "Replay MoE routes / keep checkpoint-replay autograd tapes aligned" (08-16/20). If expert gradients were partly wrong or missing on the 08-14 snapshot, **the new fast learning is the correct behaviour and the old lr sweep (lr8e6 winner) was tuned against a bug.** Not yet proven.
+
+**Control run 1557785** = same new OTA branch + same venv, `SKYRL_HOME` pointed at the frozen 08-14 MarinSkyRL (`$C/MarinSkyRL-0814`). If it reproduces old lr3e6 numbers (0.34 at step 2), the difference is 100 % upstream MarinSkyRL; then bisect the four suspects.
+
+**Currease 1557218 step 1:** reward 0.367 (band 0.35–0.45 ✓), entropy 0.16 (≈0.17 ✓), 8.0 min/step (8–22 ✓), proxy path healthy, 8/8 trajectories per batch. `diag/frac_groups_mixed` = 0.06 vs old 0.31–0.44 — **not comparable**: the ported metric counts groups mixed on the *unshaped* outcome, the old one on reward std; std-based twin here = 1−0.9375 = 0.06 too, i.e. 15/16 groups have identical rewards across their 8 samples (62.5 % all-wrong, 31 % all-correct). Worth a look once the run has 5+ steps (low within-group diversity = little GRPO signal), but it is a step-1 reading of a 16-group batch.
+
+Decision needed from Luke (nothing blocks on it tonight): whether "gate = numbers match" (then pin MarinSkyRL to 08-14 for the currease campaign and treat main as a separate migration) or "gate = runs and learns" (then re-tune lr on main; lr3e6 already behaves like the old lr8e6).
