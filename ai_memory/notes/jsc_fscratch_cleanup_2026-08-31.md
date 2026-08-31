@@ -12,11 +12,13 @@ validation 2.0 TB) and almost all the files were the **curriculum-easy fleet's r
 Everything with reuse value was archived to no-purge `/e/data1/mmlaion/lee27/` as single tars before
 deletion; the working environment (`envs/`, `repos/`, `marianna_repro/datasets`) was left intact.
 
-End state (survey-projected; re-verify with `jutil user dataquota`, hourly-stale): **~45k files /
-~230 GB** on `/e/fscratch/reformo/lee27`. The three uv venvs (268k files, 33 GB) were **relocated to
+End state, **measured 08:51 CEST 08-31** (`_inode_survey/fscratch_d3_0831_0851.tsv`; `jutil` lags hourly):
+**43,701 files / 236 GB** on `/e/fscratch/reformo/lee27`, from 1,865,469 / 8,190 GB at 08:12. What remains:
+hf_hub model caches 139 GB, `models/` 88 GB (Qwen3.6-35B + g1 8B), and ~40k files across `repos/`,
+`marianna_repro/`, `tasks/`, `cache/`. The three uv venvs (268k files, 19 GB) were **relocated to
 `/e/fscratch/transfernetx/lee27/envs`** with a symlink left at `$F/envs`, so every YAML/sbatch path still
-resolves (Luke's call; stream F). They are still on a 30-day-purge tier and purge ~09-13..16 by mtime —
-rebuild recipes are committed under `hpc/env_builds/jupiter/`.
+resolves (verified: `torch 2.11.0+cu128` imports through the symlink). They remain on a 30-day-purge tier
+and purge ~09-13..16 by mtime — rebuild recipes are committed under `hpc/env_builds/jupiter/`.
 
 Jenia's stated destination `/e/data1/datasets/playground/mmlaion/` is **still not writable by lee27**
 (no `datasets` group, probed 08-31). JuDoor join request + reply draft were handed to Luke.
@@ -45,8 +47,8 @@ SFT logs), weights excluded. Plus `marianna_deepswe_repro_copy_0812.tar.zst` and
 - Curriculum-easy **older** checkpoints (gs5…gs40 / gs5…gs25 ×2) — 3.6 TB; superseded by the latest.
 - `currease30b_export_gs40/{checkpoints,checkpoints_out}` — redundant FSDP copies of baseline gs40 (132 GB).
 - GSM8K campaign: all 85 dirs incl. 1.57 TB FSDP resume state + 285 GB exports (archived 08-28/29).
-- `experiments/_weights_kept` (262 GB) + all `checkpoints/exports` of the stale set (~130 GB) — Aug 5–11
-  band/sweep pilot weights.
+- `experiments/_weights_kept` (262 GB) + all `checkpoints/exports` of the stale set (123 GB, 200 dirs) —
+  Aug 5–11 band/sweep pilot weights.
 - `checkpoints/ota10k_sft_30ba3b_levanter` (37 GB) — corrupted lineage (SFT-59).
 - **Aug-4 Qwen3.6-35B "canary" MILESTONE weights, 600 GB** (`jupiter_qwen36_35b_r2egym_grpo_canary_n4t1800_20260804h`:
   gs1/gs2 FSDP state 470 GB + HF exports 130 GB). A canary = short 4-node pre-flight that dies first if the
@@ -62,9 +64,14 @@ SFT logs), weights excluded. Plus `marianna_deepswe_repro_copy_0812.tar.zst` and
   `du` needs two passes for the same answer.
 - **Pull weights out first, by rename** (`_ckpt_pending_delete/`), so zstd never sees a checkpoint and the
   arm dirs can be tarred wholesale with no exclude logic. Watch for non-standard names — the canary's
-  weights were `MILESTONE_*_checkpoints`, missed by the `-name checkpoints` sweep.
+  weights were `MILESTONE_*_checkpoints`, missed by the `-name checkpoints` sweep; and a glob like
+  `base30b_gsm8k_lr1e6_*` misses the un-suffixed first attempt `base30b_gsm8k_lr1e6`.
 - **Big files → plain `tar -cf` straight to the destination** (~1 GB/s per stream, 2 parallel);
   **small files → `tar -I zstd`** (429k JSON files → 1.0 GB in 2 min). Never tar locally then copy.
 - **Delete only from a verified list**: each tar appends its source to `verified_delete.list` after
   `tar -tf | wc -l ≥ find | wc -l`; the delete stream waits for A/B/C OK flags and reads that list.
 - Detach with `tmux new-session -d`; `ssh '… nohup … &'` was SIGHUP'd before it wrote a byte.
+- Never `pkill -f <pattern>` from an ssh one-liner whose own command line contains the pattern — it kills
+  the shell running it (happened here; the rest of the one-liner silently never ran).
+- Wall clock for the whole thing: 08:12 survey start → 08:51 final survey = **39 min**, ~7 TB archived or
+  deleted, 1.82M files removed, zero failed verifications.
