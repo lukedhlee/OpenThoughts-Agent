@@ -189,3 +189,38 @@ environment type are all built and exercised. Two smaller things are actually mi
   above. Finding #2 in [[skyrl_git_issue_queue]] confirmed to hit this arm directly: its
   `temperature: 1.0` is inert on the Harbor path. `enable_summarize: false` confirmed correct
   (Luke) and already set — summarization erases the long-horizon persistence this run trains.
+
+---
+
+## 2026-08-31 — refactor bridge: this milestone now runs on the NEW branches
+
+The repo refactor (see `repo_refactor_plan.md`) is complete and gated; every path/branch
+reference above this line is stale. Current world:
+
+**Branches (all `lukedhlee/jupiter`, all pushed to the lukedhlee forks):**
+- OpenThoughts-Agent `185dd0bc` — off open-thoughts main; overlay dotenv (`jupiter.local.env`),
+  conf-gated proxychains, MoE configs in new conventions.
+- MarinSkyRL `c8ff9c82` — off marin-community main `bdfef12b`; _StridedShard fix, offline-W&B
+  guard, diag/* metrics.
+- harbor `1e559885` — **2 commits (offline SIF backend + JURECA worker fleet) on top of
+  `df866b30`, the exact commit MarinSkyRL main pins in uv.lock.** Squashed from
+  `archive/apptainer-opencode-bridge`; all fix(opencode)/fix(terminus) dropped (two were
+  upstreamed as harbor #11/#17). Rides `--harbor-ref` / venv HARBOR_REF until PR'd.
+
+**Jupiter layout:** code + venvs at `/e/project1/transfernetx/lee27/code/` (`$C`) — never
+/e/data1 (0.75 s/file). Venv `$C/envs/rl-fa` built by `hpc/env_builds/jupiter/build_rl_fa_env.sh`;
+overlay at `$C/OpenThoughts-Agent/hpc/dotenv/jupiter.local.env` (no inline comments!).
+
+**What the r2egym launch still needs (the remaining port work):**
+1. `run_r2egym_*.sh` + r2egym YAMLs were deliberately dropped from the new OTA branch —
+   re-port from `archive/vista-20260830` with the new conventions: `context_budget` block
+   (no derived length fields), `entrypoint: skyrl_train.entrypoints.terminal_bench`, no
+   `enable_ray_prometheus_stats`.
+2. Rebuild/point the venv's harbor at our branch: `HARBOR_REF=1e559885` from the lukedhlee
+   fork (harbor-config wheel unchanged — our commits don't touch it).
+3. SIF images + repo mirrors on JSC are untouched by the refactor — reuse per
+   [[apptainer_bridge_handoff]] / [[r2egym_apptainer_reference_impl]].
+
+**⚠ lr:** every learning rate above this line predates MarinSkyRL #452 (stochastic bf16
+AdamW rounding, 08-23) and is invalid on main — same lr now steps ~3x harder. Re-derive;
+start ~one order lower. See `marinskyrl_452_announcement.md`.
