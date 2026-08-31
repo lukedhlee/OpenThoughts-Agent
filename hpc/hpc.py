@@ -557,7 +557,9 @@ elif [[ $NODE_HOST == jwb* ]]; then
 elif [[ $NODE_HOST == jpb* ]] || [[ $NODE_HOST == jpc* ]]; then
     LOGIN_NODE="jpbl-s01-01"
     # Jupiter uses aarch64 build - binary wrapper approach (LD_PRELOAD doesn't work reliably)
-    PROXYCHAINS_BIN="/e/scratch/jureap59/feuer1/proxychains-ng-aarch64/bin/proxychains4"
+    # Default is one user's build (others get Permission denied) — override per-user
+    # via PROXYCHAINS_BIN_OVERRIDE (dotenv / submit shell).
+    PROXYCHAINS_BIN="${PROXYCHAINS_BIN_OVERRIDE:-/e/scratch/jureap59/feuer1/proxychains-ng-aarch64/bin/proxychains4}"
     PROXYCHAINS_MODE="binary"
 elif [[ $NODE_HOST == lrdn* ]] || [[ $NODE_HOST == *.leonardo.local ]]; then
     LOGIN_NODE="login05-ext.leonardo.cineca.it"
@@ -588,10 +590,19 @@ else
     echo "[proxy] ✓ Found proxychains library at $PROXYCHAINS_LIB"
 fi
 
-if [ -z "${SSH_KEY:-}" ]; then
+if [ -z "${SSH_KEY:-}" ] && [ -z "${PROXYCHAINS_SOCKS5_PRESET_HOST:-}" ]; then
     echo "[proxy] SSH_KEY not set - skipping proxy setup"
     echo "[proxy] Set SSH_KEY in your environment to enable internet access"
 else
+    if [ -n "${PROXYCHAINS_SOCKS5_PRESET_HOST:-}" ]; then
+    # Preset SOCKS5 (e.g. a microsocks on a login node): used when compute→login
+    # `ssh -D` is impossible because the account has a second factor enforced
+    # after pubkey even for cluster-internal sources. Optional
+    # PROXYCHAINS_SOCKS5_PRESET_AUTH="user pass" is appended to the ProxyList line.
+    NODE_IP="${PROXYCHAINS_SOCKS5_PRESET_HOST}"
+    TUNNEL_PORT="${PROXYCHAINS_SOCKS5_PRESET_PORT:-1080}"
+    echo "[proxy] ✓ Using preset SOCKS5 proxy at ${NODE_IP}:${TUNNEL_PORT} (skipping SSH tunnel)"
+    else
     # Get this node's IP address for multi-node proxy access
     NODE_IP=$(nslookup $NODE_HOST | grep 'Address' | tail -n1 | awk '{print $2}')
     echo "[proxy] Setting up SSH tunnel to $LOGIN_NODE"
@@ -622,6 +633,7 @@ else
         echo "[proxy] ✗ SSH tunnel failed to start"
         return 0
     fi
+    fi
 
     # ============================================================================
     # Generate proxychains config
@@ -644,9 +656,12 @@ localnet 172.16.0.0/255.240.0.0
 localnet 192.168.0.0/255.255.0.0
 localnet 169.254.0.0/255.255.0.0
 [ProxyList]
-socks5 ${NODE_IP} ${TUNNEL_PORT}
+socks5 ${NODE_IP} ${TUNNEL_PORT}${PROXYCHAINS_SOCKS5_PRESET_AUTH:+ ${PROXYCHAINS_SOCKS5_PRESET_AUTH}}
 PCEOF
 
+    if [ -n "${PROXYCHAINS_SOCKS5_PRESET_AUTH:-}" ]; then
+        chmod 600 "$CFG_PATH"   # conf embeds SOCKS credentials
+    fi
     echo "[proxy] ✓ Generated proxychains config at $CFG_PATH"
     echo "[proxy]   - Internal traffic (10.x.x.x, 172.x.x.x, 169.254.x.x) → DIRECT"
     echo "[proxy]   - External traffic (internet) → PROXY via tunnel"

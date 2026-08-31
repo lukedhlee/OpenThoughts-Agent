@@ -197,8 +197,32 @@ class RayCluster:
 
         # Enable proxychains if the HPC cluster has it configured (e.g., JSC/Jupiter)
         # This allows Ray workers to make proxied external calls (e.g., Daytona API)
-        # Prefer wrapped binary approach (proxychains_binary) over LD_PRELOAD (proxychains_preload)
-        proxychains_binary = getattr(hpc, "proxychains_binary", "")
+        # Prefer wrapped binary approach (proxychains_binary) over LD_PRELOAD (proxychains_preload).
+        # PROXYCHAINS_BIN_OVERRIDE (same hook the sbatch tunnel block honors) wins over
+        # the cluster default; a configured binary that is not executable for this user
+        # (Permission denied → every wrapped command exits 126) is skipped, not fatal.
+        proxychains_binary = (
+            os.environ.get("PROXYCHAINS_BIN_OVERRIDE", "")
+            or getattr(hpc, "proxychains_binary", "")
+            or ""
+        )
+        if proxychains_binary and not os.access(proxychains_binary, os.X_OK):
+            print(
+                f"[ray] proxychains binary not executable, skipping wrap: {proxychains_binary}",
+                flush=True,
+            )
+            proxychains_binary = ""
+        # The wrap is `proxychains4 -f "$PROXYCHAINS_CONF_FILE" ...`; the sbatch only writes that
+        # conf when a proxy is configured (tunnel or SOCKS preset). Without it the wrapped Ray
+        # head exits 1 ("couldnt find configuration file"), so a job that needs no egress
+        # (e.g. GSM8K) must not be wrapped just because a binary is present.
+        proxychains_conf = os.environ.get("PROXYCHAINS_CONF_FILE", "")
+        if proxychains_binary and not (proxychains_conf and os.path.isfile(proxychains_conf)):
+            print(
+                "[ray] no PROXYCHAINS_CONF_FILE (proxy not configured), skipping proxychains wrap",
+                flush=True,
+            )
+            proxychains_binary = ""
         use_proxychains = bool(
             proxychains_binary or getattr(hpc, "proxychains_preload", "")
         )

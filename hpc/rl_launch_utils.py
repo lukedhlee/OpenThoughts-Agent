@@ -1989,9 +1989,30 @@ class RLJobRunner:
         )
 
         hpc = self._get_hpc()
-        setattr(
-            self.config, "proxychains_binary", getattr(hpc, "proxychains_binary", None)
+        # PROXYCHAINS_BIN_OVERRIDE (dotenv / submit shell) wins over the cluster
+        # default, whose binary may not be executable for this user.
+        resolved_proxychains_binary = (
+            os.environ.get("PROXYCHAINS_BIN_OVERRIDE", "")
+            or getattr(hpc, "proxychains_binary", "")
+            or ""
         )
+        if resolved_proxychains_binary and not os.access(
+            resolved_proxychains_binary, os.X_OK
+        ):
+            print(
+                f"[RLJobRunner] proxychains binary not executable, skipping wrap: "
+                f"{resolved_proxychains_binary}",
+                flush=True,
+            )
+            resolved_proxychains_binary = ""
+        _conf = os.environ.get("PROXYCHAINS_CONF_FILE", "")
+        if resolved_proxychains_binary and not (_conf and os.path.isfile(_conf)):
+            print(
+                "[RLJobRunner] no PROXYCHAINS_CONF_FILE (proxy not configured), skipping proxychains wrap",
+                flush=True,
+            )
+            resolved_proxychains_binary = ""
+        setattr(self.config, "proxychains_binary", resolved_proxychains_binary or None)
         num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", self.config.num_nodes))
 
         # Use config values (from CLI overrides) instead of cluster defaults
@@ -2019,7 +2040,7 @@ class RLJobRunner:
             ),
             disable_cpu_bind=getattr(hpc, "disable_cpu_bind", False),
             gpu_bind=getattr(hpc, "gpu_bind", "none"),
-            proxychains_binary=getattr(hpc, "proxychains_binary", None),
+            proxychains_binary=resolved_proxychains_binary or None,
             # Apptainer RL runtime mode (OPT-IN): wrap ray start / ray.init()
             # wait scripts in `apptainer exec --nv` when a SIF is configured.
             container_sif=getattr(self.config, "container_sif", None),
