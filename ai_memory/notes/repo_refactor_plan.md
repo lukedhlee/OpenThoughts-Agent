@@ -150,3 +150,14 @@ Decision needed from Luke (nothing blocks on it tonight): whether "gate = number
 **VERDICT (2026-08-31 12:25 CEST).** Control 1557828 step 2: reward 0.42, entropy 0.95, KL 0.0057, grad-norm 2.56 — the old lr3e6 regime (W&B 08-14: 0.34 / 1.02 / 0.0048). Main (1556228) at the same lr, same rollouts: 0.82 / 0.34 / 0.069. **The clean OTA branch + new venv reproduce the old behaviour when MarinSkyRL is pinned at 08-14; MarinSkyRL `36fdbc0a..bdfef12b` alone changes the effective policy update by ~14× in KL.** Gate status: *runs-and-learns* PASSED for both stacks; *numeric parity* PASSED with MarinSkyRL pinned at `c5ca6352`, FAILED on `main` — and that failure is upstream behaviour, not the port.
 
 Practical consequence for the currease campaign: either pin `SKYRL_HOME` at `$C/MarinSkyRL-0814` (known lr sweep stays valid) or move to main and re-sweep lr (lr 3e-6 on main already behaves like the old 8e-6). Bisect probe launched at the parent of #399 to split {#363, #373} from {#399, #422, #454}.
+
+**Bisect log (GSM8K lr3e6, 6 nodes; "small" = old regime ≈0.34–0.42 / KL≈0.005 at step 2, "big" = ≈0.82 / KL≈0.07).**
+
+| MarinSkyRL commit | date | has | step-2 reward / entropy / KL | grad-norm@1 | regime |
+|---|---|---|---|---|---|
+| `c5ca6352` (our 08-14 snapshot, control 1557828) | 07-21 base + our picks | — | 0.42 / 0.95 / 0.0057 | 2.52 | small |
+| `0fdb50f6` (probe 1, 1558819) | 08-16 | #276 #329 #339 #363 #373 | 0.42 / 0.88 / 0.0051 | 2.06 | **small** |
+| `20cdcf7b` (probe 2) | 08-20 | + #399 #405 #422 | pending | | |
+| `bdfef12b` main (1556228) | 08-30 | + #441 #442 #448 #454 #468 #474 … | 0.82 / 0.34 / 0.069 | 3.22 | **big** |
+
+So #363/#373 (the grouped-GEMM tail-row and EP-gradient-averaging fixes) are NOT the cause. Probe checkouts: `$C/MarinSkyRL-bisectN` worktrees (+ our tracking.py offline guard applied uncommitted, else wandb.init hangs on compute) launched from `$C/OpenThoughts-Agent-bN` whose overlay pins `SKYRL_HOME` and whose GSM8K YAML has the two `diag_*` keys stripped (they don't exist upstream). Job 1556228 (main) hung at step 12 in the policy update (12/32 for 30 min) — cancelled; nodes `jpbo-046-[17,19-20,23,27,31]` in `$F/_hang_log.txt`. Currease gate 1557218 COMPLETED 10/10 steps (1h25m, exit 0).
