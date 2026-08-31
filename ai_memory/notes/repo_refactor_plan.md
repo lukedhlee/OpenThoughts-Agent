@@ -1,6 +1,6 @@
 # Repo refactor plan — one clean OTA, one clean SkyRL, harbor on the shelf
 
-Opened 2026-08-30, pruned same day. Status: **decided, not started.** Companion: the OTA Code Atlas
+Opened 2026-08-30, pruned same day. Status (2026-08-31): **steps 1–3 done, step 4 (gate) running as Jupiter jobs 1552473 (GSM8K lr3e6, 12 steps) + 1552502 (currease instr2507, 10 steps); step 5 awaits Luke.** See "Status log" at the bottom. Companion: the OTA Code Atlas
 (https://claude.ai/code/artifact/e633ab79-c602-4ca1-a5d7-5b52ce4e3aa2) holds the full inventory this plan
 was made from; this note holds only the decision and the port list.
 
@@ -95,3 +95,17 @@ Old OTA branch `lukedhlee/vista-moe-grpo-30b` (tip `5c6096cc`), merge-base with 
 | 5 | MoE reference-worker fixes | MarinSkyRL `d9946bd5`, `c5ca6352` (`skyrl-train/skyrl_train/workers/...` `_fsdp_moe_model_kwargs`) — check upstream `main` for `a906145` first | — |
 | 6 | Per-group GRPO diagnostics | MarinSkyRL `4f62f796` (`diag_utils.py`, trainer hook, `ppo_base_config.yaml` keys `diag_group_metrics`, `dump_train_rollouts`) — compare with upstream #280/#138 | `69f6d74c` (Megatron ckpt + offline tracking snapshot) except the `WANDB_MODE=offline` guard in `utils/tracking.py` if upstream still lacks it |
 | 7–8 | harbor (r2egym) | `lukedhlee/harbor` branch `lukedhlee/apptainer-opencode-bridge` (tip `a12ca6bc`, 30 commits over `marin-community/harbor` main): keep `apptainer` environment + `jureca` worker commits; drop every `fix(opencode)` and `fix(terminus)` commit | OpenCode agent fixes |
+
+## Status log
+
+**2026-08-31 — steps 1–3 done, gate jobs queued.**
+
+- Frozen: `archive/vista-20260830` (OTA), `archive/{jupiter-worktree-0814,engine-init-batch,fix-stridedshard-torch29-20260830}` (MarinSkyRL), `archive/apptainer-opencode-bridge` (harbor). Pushed to the forks.
+- New branches (both `lukedhlee/jupiter`, on the forks; Mac worktrees under `~/refactor/`):
+  - OTA on `origin/main@2ee2eb61` — 4 commits: `859ad6e0` dotenv-driven Jupiter paths + **gitignored `hpc/dotenv/<cluster>.local.env` overlay** (loader + all 5 sbatch templates; `jupiter.local.env.example` documents it) · `4e2aa3eb` preset-SOCKS5 proxy · `c9a0b8b0` MoE configs (6 YAMLs now declare `context_budget:` — upstream rejects hand-set `max_prompt_length`/`max_generate_length`/`max_model_len`; run script's `MAX_GENERATE_LENGTH`/`MAX_MODEL_LEN` map to `context_budget.*` overrides) · `87d6ad13` housekeeping (venv recipe; see venv notes).
+  - MarinSkyRL on `upstream/main@bdfef12b` — 3 commits: torch-2.9 `_StridedShard` import fix · `WANDB_MODE=offline` guard · opt-in `diag/*` per-group metrics + rollout dumps (+6 CPU tests). **Commit 5 (MoE ref-worker) not needed — upstream a906145 is byte-identical.**
+- Surprises vs the plan: upstream already had the Jupiter `HPC(...)` entry, `ulimit -c 0`, `NCCL_BLOCKING_WAIT`, the `hf_hub_repo_id` auto-default was removed upstream (guard moot), and MarinSkyRL is now ONE root distribution (PR #284) whose hatch `force-include` copies `skyrl_train`/`skyrl_gym` into site-packages even for `-e` → the venv recipe installs the root then swaps the copies for a `.pth` onto the checkout so `git pull` is live. `reasoning-gym` is a new upstream dep not in our freeze (installed on top; torch/vllm/transformers unchanged: 2.11.0+cu128 / 0.22.0 / 5.8.1).
+- Jupiter home is **`/e/project1/transfernetx/lee27/code/`** (`OpenThoughts-Agent`, `MarinSkyRL`, `envs/rl-fa`, `envs/uv-python`), NOT `/e/data1/mmlaion` as planned: /e/data1 creates small files at ~0.75 s each (200 files = 150 s vs 0.06 s on fscratch) — a clone never finished. /e/project1 is no-purge, fast, and an `/e/` path. lee27's overlay: `hpc/dotenv/jupiter.local.env` there (copy kept at `~/refactor/jupiter.local.env.lee27`).
+- Gate reference (Atlas "Run it"): GSM8K step-0 reward ≈0.45, rising by step 10; currease reward 0.35–0.45 at step 0–1, `diag/frac_groups_mixed` 0.31–0.44, entropy ~0.17; dead-proxy tell = reward 0.0 + entropy 0 + response_len 1.0. microsocks restarted in tmux `currease_socks` on login02 (10.128.1.2:7011; Daytona health 200 through it).
+- Launch commands used: `/e/project1/transfernetx/lee27/code/gate_gsm8k.sh`, `gate_currease.sh` (logs alongside). Note: upstream launcher turns `trainer.logger=wandb` into console when `WANDB_MODE=offline` — metrics are `WANDB_MIRROR` lines in the job log.
+- Still open for Luke: (a) step 5 — delete old Jupiter clones under `$F/`, switch any symlinks, open the PRs (one per commit onto upstream main); (b) ask Ben for write access; (c) final home of `ai_memory/` + dashboard (now: stays in the old checkout on the Mac).
