@@ -224,3 +224,23 @@ overlay at `$C/OpenThoughts-Agent/hpc/dotenv/jupiter.local.env` (no inline comme
 **⚠ lr:** every learning rate above this line predates MarinSkyRL #452 (stochastic bf16
 AdamW rounding, 08-23) and is invalid on main — same lr now steps ~3x harder. Re-derive;
 start ~one order lower. See `marinskyrl_452_announcement.md`.
+
+**2026-08-31 (later) — launch staged.** The code side is done and validated on Jupiter:
+`run_r2egym_moe30b_grpo.sh` + `6node_qwen3_30b_a3b_r2egym_grpo.yaml` are on OTA
+`lukedhlee/jupiter` (commit `b726d92d`+fixes), ported from the archive with
+`environment_type: apptainer`, n_samples **8** (not the archived 4 — the co-lead's validated
+pairing; n=4 halves P(within-group variance)), lr **3e-7** (post-#452 equivalent of the archived
+1e-6; sweep before trusting), 200 steps / ckpt every 20. The Jupiter venv `$C/envs/rl-fa` now runs
+harbor `lukedhlee/jupiter@1e559885`. Both this YAML and the gate-passed currease YAML pass a
+launcher-faithful hydra struct dry-validation on Jupiter (`$C/dryval.py` — mirrors
+build_skyrl_hydra_args prefix rules).
+
+**What remains is deployment, not code** (compute decisions — operator's call):
+1. Start the bridge: harbor apptainer `server.py` on a login node + worker fleet
+   (adapt `jureca_workers.sbatch` to Jupiter booster/reformo); export
+   `APPTAINER_BRIDGE_URL` in `jupiter.local.env` (script fail-fasts without it).
+2. Prebuild r2egym SIFs into a scratch `sif_cache` (Marianna's prebuild pattern; r2egym base
+   image is multi-arch so it runs on GH200 natively — this is why r2egym lives on Jupiter).
+3. Prefetch `DCAgent/r2egym-patched-full-oracle` + the Qwen3-30B-A3B snapshot on a login node.
+4. Open question flagged: agent = terminus-2 (our RL-validated) vs her terminus-structured vs
+   OpenCode (only agent our bridge was smoke-validated with). YAML says terminus-2.
