@@ -100,7 +100,17 @@ if [[ -z "${WANDB_API_KEY:-}" ]]; then
   exit 1
 fi
 
-if ! compgen -G "$HF_HUB_CACHE/datasets--${TRAIN_DATA//\//--}/snapshots/*" >/dev/null; then
+# TRAIN_DATA may be a local harbor task-dir tree instead of an HF dataset id.
+# Prefer the raw task dirs (tasks/r2egym-raw + allowlist): the patched HF
+# dataset verifies the pre-installed wheel on the scientific-repo bucket (55%
+# of tasks), so its reward is a per-task constant there, and its flattened
+# Dockerfiles miss the prebuilt SIF cache entirely (2026-08-06 resolution).
+if [[ -d "$TRAIN_DATA" ]]; then
+  if ! compgen -G "$TRAIN_DATA/*/instruction.md" >/dev/null; then
+    echo "ERROR: $TRAIN_DATA has no */instruction.md — not a harbor task tree."
+    exit 1
+  fi
+elif ! compgen -G "$HF_HUB_CACHE/datasets--${TRAIN_DATA//\//--}/snapshots/*" >/dev/null; then
   echo "ERROR: $TRAIN_DATA not cached under $HF_HUB_CACHE (compute has no internet)."
   echo "  On a login node: python -c \"from huggingface_hub import snapshot_download; snapshot_download('$TRAIN_DATA', repo_type='dataset')\""
   exit 1
