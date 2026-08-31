@@ -1,6 +1,6 @@
 # Repo refactor plan — one clean OTA, one clean SkyRL, harbor on the shelf
 
-Opened 2026-08-30, pruned same day. Status (2026-08-31): **steps 1–3 done, step 4 (gate) running as Jupiter jobs 1552473 (GSM8K lr3e6, 12 steps) + 1552502 (currease instr2507, 10 steps); step 5 awaits Luke.** See "Status log" at the bottom. Companion: the OTA Code Atlas
+Opened 2026-08-30, pruned same day. Status (2026-08-31): **steps 1–3 done, step 4 (gate) running as Jupiter jobs 1553446 (GSM8K lr3e6, 12 steps) + 1553468 (currease instr2507, 10 steps); step 5 awaits Luke.** See "Status log" at the bottom. Companion: the OTA Code Atlas
 (https://claude.ai/code/artifact/e633ab79-c602-4ca1-a5d7-5b52ce4e3aa2) holds the full inventory this plan
 was made from; this note holds only the decision and the port list.
 
@@ -109,3 +109,9 @@ Old OTA branch `lukedhlee/vista-moe-grpo-30b` (tip `5c6096cc`), merge-base with 
 - Gate reference (Atlas "Run it"): GSM8K step-0 reward ≈0.45, rising by step 10; currease reward 0.35–0.45 at step 0–1, `diag/frac_groups_mixed` 0.31–0.44, entropy ~0.17; dead-proxy tell = reward 0.0 + entropy 0 + response_len 1.0. microsocks restarted in tmux `currease_socks` on login02 (10.128.1.2:7011; Daytona health 200 through it).
 - Launch commands used: `/e/project1/transfernetx/lee27/code/gate_gsm8k.sh`, `gate_currease.sh` (logs alongside). Note: upstream launcher turns `trainer.logger=wandb` into console when `WANDB_MODE=offline` — metrics are `WANDB_MIRROR` lines in the job log.
 - Still open for Luke: (a) step 5 — delete old Jupiter clones under `$F/`, switch any symlinks, open the PRs (one per commit onto upstream main); (b) ask Ben for write access; (c) final home of `ai_memory/` + dashboard (now: stays in the old checkout on the Mac).
+
+**2026-08-31 (later) — first gate attempts died on two launch defects; relaunched as 1553446 (GSM8K) + 1553468 (currease).**
+
+- 1552473 FAILED at 12 s: upstream `jupiter.env` hardcodes `SCRATCH=/e/scratch/jureap59/$USER` and `DCFT=$SCRATCH/OpenThoughts-Agent` then `source "$DCFT/hpc/shell_utils/resolve_rl_repo.sh"` — for lee27 that path is unreadable, `set -e` kills the sbatch before the overlay runs. Fix (in commit 1, `34950b0b`): source the helper relative to the dotenv file (`$(dirname "${BASH_SOURCE[0]}")/../shell_utils`). Upstream-worthy on its own.
+- 1552502 cancelled (mine, demonstrably broken): my overlay had `export PROXYCHAINS_BIN_OVERRIDE=<path>  # comment` — **the dotenv loader does not strip inline comments**, the binary path became "path  # comment", proxy setup was skipped → would have been the dead-proxy case. Rule: no inline comments in `*.local.env`. Also `hpc.launch` without `--experiments_dir` writes `experiments/<job>` INSIDE the checkout; pass `--experiments_dir $SCRATCH/experiments/<job>` (the GSM8K run script already does).
+- OTA branch now: `34950b0b` · `118f5de7` · `563232b5` · `898423fb` (force-pushed; Jupiter clone reset to it).
