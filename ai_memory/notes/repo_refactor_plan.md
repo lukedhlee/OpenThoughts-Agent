@@ -1,6 +1,6 @@
 # Repo refactor plan — one clean OTA, one clean SkyRL, harbor on the shelf
 
-Opened 2026-08-30, pruned same day. Status (2026-08-31): **steps 1–3 done, step 4 (gate) running as Jupiter jobs 1555904 (GSM8K lr3e6, 12 steps) + 1555897 (currease instr2507, 10 steps); step 5 awaits Luke.** See "Status log" at the bottom. Companion: the OTA Code Atlas
+Opened 2026-08-30, pruned same day. Status (2026-08-31): **steps 1–3 done, step 4 (gate) running as Jupiter jobs 1556228 (GSM8K lr3e6, 12 steps) + 1555897 (currease instr2507, 10 steps); step 5 awaits Luke.** See "Status log" at the bottom. Companion: the OTA Code Atlas
 (https://claude.ai/code/artifact/e633ab79-c602-4ca1-a5d7-5b52ce4e3aa2) holds the full inventory this plan
 was made from; this note holds only the decision and the port list.
 
@@ -122,3 +122,5 @@ Old OTA branch `lukedhlee/vista-moe-grpo-30b` (tip `5c6096cc`), merge-base with 
 - 1553468 (currease) died on `ModuleNotFoundError: examples.terminal_bench.entrypoints.main_tbench`: MarinSkyRL main deleted it (#386, 08-15) → YAML `entrypoint: skyrl_train.entrypoints.terminal_bench`. 1555059 then died on `Key 'enable_ray_prometheus_stats' is not in struct` → key removed from the 5 currease YAMLs. Both in commit 3 (`a222ab92`). **Upstream OTA main's own Jupiter YAMLs still carry both dead settings — OTA main and MarinSkyRL main are currently not co-runnable; our commit 3 is the fix.**
 - Method that found the remaining incompatibilities in one shot: flatten our YAML keys vs `ppo_base_config.yaml` in the Jupiter venv (`NOT IN BASE` list). Remaining non-base keys are OTA-side (`config_groups`, `trainer.enable_db_registration`, `trainer.hf_hub_*`, `engine_init_kwargs.moe_backend`) and are accepted.
 - OTA branch now: `77521dc5` · `1774a89c` · `a222ab92` · `4350a0fe`.
+
+**2026-08-31 (GSM8K attempt 4 = 1556228).** 1555904 died at Ray-head start: with `PROXYCHAINS_BIN_OVERRIDE` set (needed for currease) the launcher wrapped the head in `proxychains4 -f "$PROXYCHAINS_CONF_FILE"` even though no proxy was configured, so the conf did not exist → exit 1 "couldnt find configuration file". Fix in commit 2 (`123269fe`): `ray_utils.py` + `rl_launch_utils.py` only wrap when `PROXYCHAINS_CONF_FILE` names an existing file. OTA branch: `77521dc5` · `123269fe` · `02b96d95` · `75c48903`. Cosmetic: the "Check log file:" path in that error points at `$DCFT/experiments/logs/` while the head log is really under `OT_AGENT_RAY_LOG_DIR` (`$SCRATCH/experiments/_ray_logs/`).
