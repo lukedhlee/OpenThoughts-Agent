@@ -24,10 +24,15 @@ if [[ -z "${SCRATCH:-}" && -f "$REPO_ROOT/hpc/dotenv/jupiter.env" ]]; then
 fi
 : "${SCRATCH:?SCRATCH unset — source hpc/dotenv/jupiter.env first}"
 : "${SKYRL_HOME:?SKYRL_HOME unset — source hpc/dotenv/jupiter.env first}"
-# Harbor must match what MarinSkyRL main pins (uv.lock: `harbor` git source + the harbor-config
-# release wheel of the same sha) — the HarborTrajectoryRunner imports harbor_config.errors, which
-# older harbor commits (e.g. 725fc069) do not have.
-: "${HARBOR_REF:=df866b3086f386221e6e04ecf4b09e3cc9ffe44e}"
+# Harbor must be compatible with what MarinSkyRL main pins (uv.lock: `harbor` git source
+# df866b30 + the harbor-config release wheel of the same sha) — the HarborTrajectoryRunner
+# imports harbor_config.errors, which older harbor commits (e.g. 725fc069) do not have.
+# Default HARBOR_REF is lukedhlee/jupiter: the pinned df866b30 plus our two apptainer-bridge
+# commits (offline SIF backend + worker fleet, needed for r2egym). The harbor-config wheel is
+# untouched by those commits, so it stays at the upstream df866b30 release.
+: "${HARBOR_REPO:=https://github.com/lukedhlee/harbor.git}"
+: "${HARBOR_REF:=1e559885}"
+: "${HARBOR_CONFIG_REF:=df866b3086f386221e6e04ecf4b09e3cc9ffe44e}"
 : "${ENV_DIR:=$SCRATCH/envs/rl-fa}"
 : "${BUILD_CACHE:=${DCFT_SCRATCH:-$SCRATCH/otagent}/cache}"
 if [[ -z "${UV:-}" ]]; then
@@ -53,8 +58,8 @@ FREEZE=$HERE/rl-fa.freeze.in
 "$UV" pip install -p "$PY" --no-deps \
   "torchtitan @ git+https://github.com/pytorch/torchtitan@a1fdd7e43694bbfeff5d6ad8ac738c067bb90d41" \
   "dynamic-semaphore @ git+https://github.com/penfever/dynamic-semaphore@4d5f49f290889f4826219b241e1aa42d6466163e" \
-  "harbor[daytona] @ git+https://github.com/marin-community/harbor.git@${HARBOR_REF}" \
-  "https://github.com/marin-community/harbor/releases/download/harbor-config-${HARBOR_REF}/harbor_config-0.1.0-py3-none-any.whl" || exit 30
+  "harbor[daytona] @ git+${HARBOR_REPO}@${HARBOR_REF}" \
+  "https://github.com/marin-community/harbor/releases/download/harbor-config-${HARBOR_CONFIG_REF}/harbor_config-0.1.0-py3-none-any.whl" || exit 30
 
 # MarinSkyRL is one root distribution (PR #284) whose hatch `force-include` COPIES
 # skyrl_train/skyrl_gym into site-packages even for `-e`, so a `git pull` would not be
