@@ -17,7 +17,9 @@ entrypoint: skyrl_train.entrypoints.terminal_bench
 # APPTAINER_BRIDGE_URL in the environment (set it in hpc/dotenv/jupiter.local.env);
 # SIF resolution is worker-side. Train data: DCAgent/r2egym-patched-full-oracle
 # (passed at launch). lr is the post-#452 equivalent of the archived 1e-6 —
-# re-sweep before trusting it.
+# re-sweep before trusting it. n_samples_per_prompt is 8, not the archived 4:
+# the co-lead's validated r2egym recipe filters at k=4 but TRAINS at n=8;
+# n=4 gives P(within-group variance) 0.48 vs 0.73 at n=8 at p=0.15.
 
 config_groups:
   terminal_bench_config: terminal_bench
@@ -182,7 +184,7 @@ generator:
   num_inference_engines: 8
   inference_engine_expert_parallel_size: 1
 
-  n_samples_per_prompt: 4
+  n_samples_per_prompt: 8
   eval_n_samples_per_prompt: 1
 
   gpu_memory_utilization: 0.85
