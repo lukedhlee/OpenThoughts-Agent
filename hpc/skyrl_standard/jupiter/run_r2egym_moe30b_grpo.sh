@@ -205,6 +205,13 @@ fi
 if [[ -n "${N_CONCURRENT_TRIALS+x}" ]]; then
   SKYRL_OVERRIDES+=(--skyrl_override terminal_bench.harbor.n_concurrent_trials="$N_CONCURRENT_TRIALS")
 fi
+# Space-separated key=value hydra overrides with no dedicated env var above,
+# e.g. SKYRL_EXTRA_OVERRIDES="trainer.fully_async.max_staleness_steps=1".
+if [[ -n "${SKYRL_EXTRA_OVERRIDES:-}" ]]; then
+  for _ov in $SKYRL_EXTRA_OVERRIDES; do
+    SKYRL_OVERRIDES+=(--skyrl_override "$_ov")
+  done
+fi
 
 "$LAUNCH_PY" -m hpc.launch \
   "${LAUNCH_ARGS[@]}" \
