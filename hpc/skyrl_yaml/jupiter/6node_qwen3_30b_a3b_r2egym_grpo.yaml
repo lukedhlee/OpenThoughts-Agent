@@ -64,6 +64,7 @@ terminal_bench:
     enable_error_classification: true
     mask_exceptions:
       - BridgeOutageError
+      - BridgeOperationError
       - VerifierInfrastructureError
       - EnvironmentStartTimeoutError
       - NetworkError
