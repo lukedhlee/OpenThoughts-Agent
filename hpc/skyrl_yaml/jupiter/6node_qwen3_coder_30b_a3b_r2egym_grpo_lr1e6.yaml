@@ -1,10 +1,11 @@
 # Context budget is the single public context declaration (upstream rl_config_utils derives
 # trainer.max_prompt_length / generator.* / terminal_bench.* from it and rejects them if set).
-# 40k window, 24k per turn (~16k in) — matched to the co-lead's r2egym budget
-# (40960 / in 15384 / out 24576); the old 4k turn cap let thinking eat whole turns.
+# v5 (2026-09-02): 40k window, 8k per turn -> 32k input. The 24k/turn reservation was
+# ~70x the median completion (p99.9 5k) and capped input at 16,384, killing 71% of
+# rollouts at ~27 turns (probe4). 8k kept over 4k so <0.2% of turns ever truncate.
 context_budget:
   request_window_tokens: 40960
-  max_new_tokens_per_turn: 24576
+  max_new_tokens_per_turn: 8192
   max_turns: 999999
 
 # MarinSkyRL main removed examples/terminal_bench (PR #386, 2026-08-15); the packaged entrypoint is the replacement.
