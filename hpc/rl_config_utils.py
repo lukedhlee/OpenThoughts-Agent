@@ -232,8 +232,11 @@ SKYRL_INTERNAL_ENGINE_KWARGS = frozenset(
         "disable_radix_cache",  # Inverse of enable_prefix_caching
         "max_prefill_tokens",  # Alias for max_num_batched_tokens
         "max_running_requests",  # Alias for max_num_seqs
-        "mm_attention_backend",  # Hardcoded "fa3"
-        "attention_backend",  # Hardcoded "fa3"
+        "mm_attention_backend",  # Hardcoded "fa3" (SGLang)
+        # "attention_backend" removed from the blocklist: only SGLang hardcodes it
+        # ("fa3"); the vLLM path passes it through to EngineArgs untouched, and we
+        # need it to select TRITON_ATTN/FLASHINFER on GH200 (FA3 pathology, 2026-09).
+        # Setting it while using the SGLang backend will still fail at runtime.
         "enable_memory_saver",  # Set from inference_engine_enable_sleep
         "tokenizer",  # Passed from external tokenizer
         "custom_weight_loader",  # Hardcoded SkyRL path
