@@ -210,6 +210,7 @@ generator:
 
   engine_init_kwargs:
     moe_backend: triton
+    attention_backend: FLASHINFER
 
 data:
   train_data: []
