@@ -1,5 +1,5 @@
 #!/bin/bash
-# envgate_tt.sh <task> <mode>   mode = pristine | oracle   (envgate.sh for the TaskTrove-selection tree: SIF by Dockerfile hash)
+# envgate_tt.sh <task> <mode>   mode = pristine | oracle | shell   (envgate.sh for the TaskTrove-selection tree: SIF by Dockerfile hash)
 #
 # Model-independent environment gate for one r2egym task. Mirrors harbor's
 # apptainer worker: instance start + exec instance://, writable ext3 overlay,
@@ -109,7 +109,7 @@ for t in uv tmux asciinema rg opencode; do
 done
 mkdir -p $W/tmp $W/logs/agent $W/logs/artifacts $W/setup_files
 
-cleanup() { apptainer instance stop "$INST" >/dev/null 2>&1; rm -rf "$W"; }
+cleanup() { apptainer instance stop "$INST" >/dev/null 2>&1; [[ "${EG_KEEP:-0}" = 1 ]] || rm -rf "$W"; }
 trap cleanup EXIT
 
 # NOTE the agent_tools bind: without it the wheel cache the patch points at
@@ -151,6 +151,13 @@ fi
 # HEAD before we touch anything, and the expected buggy-parent value.
 HEAD0=$(apptainer exec --cleanenv instance://$INST git -C /testbed rev-parse HEAD 2>/dev/null)
 PARENT=$(apptainer exec --cleanenv instance://$INST git -C /testbed rev-parse ${BASE}^ 2>/dev/null)
+
+if [[ "$MODE" == shell ]]; then
+  # Leave the instance running for interactive use (r2egym_shell.sh exec/verify/stop drive it on this node).
+  trap - EXIT
+  echo "{\"task\":\"$TASK\",\"mode\":\"shell\",\"inst\":\"$INST\",\"w\":\"$W\",\"node\":\"$(hostname -s)\",\"sif\":\"$SIF\",\"head\":\"${HEAD0:0:12}\",\"buggy_parent\":\"${PARENT:0:12}\",\"base_commit\":\"${BASE:0:12}\",\"hpath\":\"$HPATH\"}"
+  exit 0
+fi
 
 PRE="true"
 if [[ "$MODE" == "oracle" ]]; then
