@@ -1,0 +1,11 @@
+
+# The docker image should already have:
+# - The repository code at /testbed
+# - All dependencies installed
+# - The test script at /root/run_tests.sh
+
+# Copy workspace with metadata
+COPY workspace /workspace
+
+WORKDIR /testbed
+RUN mkdir -p /output && chmod 777 /output
