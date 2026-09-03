@@ -94,8 +94,10 @@ DOCKERFILE = """FROM {image}
 # mirror through the bridge's /etc/gitconfig insteadOf rewrite (BRIDGE_GIT_MIRRORS).
 WORKDIR /testbed
 RUN git fetch && git checkout {instance_id}
-RUN mkdir -p /tmp/fakehome && printf 'source /opt/miniconda3/bin/activate testbed 2>/dev/null\\ncd /testbed 2>/dev/null\\n' >> /tmp/fakehome/.bashrc
+RUN mkdir -p /tmp/fakehome && printf 'source /opt/miniconda3/bin/activate testbed 2>/dev/null\\ncd /testbed 2>/dev/null\\n' >> /tmp/fakehome/.bashrc && printf '[ -f ~/.bashrc ] && . ~/.bashrc\\n' > /tmp/fakehome/.bash_profile && cp /tmp/fakehome/.bash_profile /tmp/fakehome/.profile
 {extra_run}"""
+# ^ harbor's terminus-2 tmux pane is a LOGIN shell: it reads .bash_profile/.profile, not .bashrc. Observed in the
+#   first probe traces (2026-09-03): the prompt only showed "(testbed)" after the agent ran `source activate` itself.
 
 # Offline time bomb for astropy-based repos (sunpy): the image's leap-second table expires ~1 year after
 # the build, astropy then tries to download IERS data, and the repo's pytest config turns the warning
