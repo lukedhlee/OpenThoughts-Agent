@@ -39,11 +39,12 @@ ap.add_argument("--daytona", action="store_true", help="environment backend dayt
 ap.add_argument("--socks-env", default="/e/fscratch/reformo/lee27/keys/socks5_currease.env", help="--daytona: file exporting SOCKS_USER/SOCKS_PASS for the microsocks")
 ap.add_argument("--socks-host", default="10.128.1.2"); ap.add_argument("--socks-port", default="7011")
 ap.add_argument("--harbor-src", default="/e/project1/transfernetx/lee27/code/harbor-hook/src", help="--daytona: harbor checkout with the setup_files/setup.sh hook, prepended to PYTHONPATH")
+ap.add_argument("--daytona-key-env", default="/e/fscratch/reformo/lee27/keys/daytona_eval.env", help="--daytona: file with DAYTONA_API_KEY for the org holding the prebuilt snapshots (the template's baked key was found invalid 2026-09-04); sourced AFTER the template's export")
 ap.add_argument("--daytona-mask", default="EnvironmentStartTimeoutError,DaytonaConflictError,DaytonaRateLimitError,SandboxBuildFailedError", help="--daytona: exception names appended to harbor.mask_exceptions")
 a = ap.parse_args()
 if not a.daytona and not a.bridge_url: sys.exit("--bridge-url is required unless --daytona")
 if a.daytona:
-    for f in (a.socks_env, a.harbor_src + "/harbor/trial/trial.py"):
+    for f in (a.socks_env, a.daytona_key_env, a.harbor_src + "/harbor/trial/trial.py"):
         if not os.path.exists(f): sys.exit("--daytona: missing %s" % f)
     if "_run_setup_script" not in open(a.harbor_src + "/harbor/trial/trial.py").read(): sys.exit("--daytona: %s has no setup_files hook" % a.harbor_src)
 alltasks = sorted(d for d in os.listdir(a.tasks) if os.path.isdir(os.path.join(a.tasks, d)))
@@ -84,11 +85,11 @@ for i, ts in enumerate(shards):
     if a.daytona:
         ins = ("export NCCL_PXN_DISABLE=1\nexport HARBOR_TMUX_BATCH_EXEC_TIMEOUT_MARGIN_SEC=%d\n"
                "# --- daytona environment: preset SOCKS (microsocks on jpbl-s01-02) for _setup_proxy; setup-files-hook harbor first on PYTHONPATH ---\n"
-               "set -a; source %s; set +a\n"
+               "set -a; source %s; source %s; set +a\n"
                "export PROXYCHAINS_SOCKS5_PRESET_HOST=%s\nexport PROXYCHAINS_SOCKS5_PRESET_PORT=%s\n"
                "export PROXYCHAINS_SOCKS5_PRESET_AUTH=\"$SOCKS_USER $SOCKS_PASS\"\n"
                "export PYTHONPATH=%s${PYTHONPATH:+:$PYTHONPATH}\n"
-               "unset APPTAINER_BRIDGE_URL\n") % (a.bridge_margin, a.socks_env, a.socks_host, a.socks_port, a.harbor_src)
+               "unset APPTAINER_BRIDGE_URL\n") % (a.bridge_margin, a.socks_env, a.daytona_key_env, a.socks_host, a.socks_port, a.harbor_src)
         assert "DAYTONA_API_KEY" in s, "template sbatch exports no DAYTONA_API_KEY"
     else:
         ins = "export NCCL_PXN_DISABLE=1\nexport HARBOR_TMUX_BATCH_EXEC_TIMEOUT_MARGIN_SEC=%d\nexport APPTAINER_BRIDGE_URL=%s\n" % (a.bridge_margin, a.bridge_url)
