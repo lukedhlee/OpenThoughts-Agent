@@ -81,7 +81,7 @@ for i, ts in enumerate(shards):
         args = [env_key + "daytona" if x.startswith(env_key) else x for x in args]
         mk = "++terminal_bench_config.harbor.mask_exceptions="
         masks = [x for x in args if x.startswith(mk)]; assert len(masks) == 1, "expected one mask_exceptions hydra arg"
-        cur = masks[0][len(mk):].strip("[]"); extra = [m for m in a.daytona_mask.split(",") if m and m not in cur]
+        cur = masks[0][len(mk):].strip("[]"); extra = ['"%s"' % m for m in a.daytona_mask.split(",") if m and m not in cur]  # quoted like the template's entries
         args = [mk + "[" + ",".join([cur] + extra if cur else extra) + "]" if x.startswith(mk) else x for x in args]
         c["harbor_env"] = "daytona"
     c["skyrl_hydra_args"] = args; json.dump(c, open(cp, "w"), indent=2)
