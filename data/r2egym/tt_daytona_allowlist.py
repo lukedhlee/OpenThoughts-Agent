@@ -14,10 +14,13 @@ repo-image re-gate override the v1 verdicts for those repos). Statuses:
 """
 import argparse, collections, csv, glob, json, os
 INFRA = {"EnvironmentStartTimeoutError", "DaytonaConflictError", "DaytonaRateLimitError", "SandboxBuildFailedError",
-         "TimeoutError", "DaytonaError", "ClientConnectorError", "ServerDisconnectedError"}
+         "TimeoutError", "DaytonaError", "ClientConnectorError", "ServerDisconnectedError", "DaytonaConnectionError",
+         "DaytonaSandboxStopError", "DownloadVerifierDirError", "AgentTimeoutError"}
 ap = argparse.ArgumentParser()
 ap.add_argument("--map", required=True); ap.add_argument("--oracle", nargs="+", required=True); ap.add_argument("--nop", nargs="+", required=True)
 ap.add_argument("--out", required=True); ap.add_argument("--retry", default=None); ap.add_argument("--report", default=None)
+ap.add_argument("--retry-oracle", default=None, help="tasks whose ORACLE verdict is infra/missing (re-run oracle only)")
+ap.add_argument("--retry-nop", default=None, help="tasks whose PRISTINE verdict is infra/missing (re-run nop only)")
 ap.add_argument("--exclude", nargs="*", default=[])
 a = ap.parse_args()
 repo = {r["path"]: r["repo"] for r in csv.DictReader(open(a.map), delimiter="\t")}
@@ -51,6 +54,9 @@ for t in tasks:
 allowed = [t for t, _, s, _, _ in rows if s == "pass"]
 open(a.out, "w").write("\n".join(allowed) + "\n")
 if a.retry: open(a.retry, "w").write("\n".join(t for t, _, s, _, _ in rows if s in ("infra", "missing")) + "\n")
+def _needs(x): return x is None or x[0] is None or x[1] in INFRA
+if a.retry_oracle: open(a.retry_oracle, "w").write("\n".join(t for t, _, st, _, _ in rows if st in ("infra", "missing") and _needs(orc.get(t))) + "\n")
+if a.retry_nop: open(a.retry_nop, "w").write("\n".join(t for t, _, st, _, _ in rows if st in ("infra", "missing") and _needs(nop.get(t))) + "\n")
 tab = collections.defaultdict(collections.Counter); tot = collections.Counter()
 for t, rp, s, _, _ in rows: tab[rp][s.split(":")[0]] += 1; tot[s.split(":")[0]] += 1
 cols = ["pass", "fail", "setup", "infra", "missing", "excluded"]
