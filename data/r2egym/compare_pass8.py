@@ -21,8 +21,9 @@ def load(files):
     for f in files:
         for r in csv.DictReader(open(f)):
             t = r["task"]
-            out[t] = {"p": float(r["pass_at_k"]), "succ": int(r["succ"]), "scored": int(r["scored"]), "ctx": int(r["ctx_exceeded"]),
-                      "turns": float(r["med_turns"] or 0), "full": r["full"] == "True"}
+            scored = int(r["scored"] or 0)
+            out[t] = {"p": float(r["pass_at_k"]) if r["pass_at_k"] not in ("", None) else 0.0, "succ": int(r["succ"] or 0), "scored": scored,
+                      "ctx": int(r["ctx_exceeded"] or 0), "turns": float(r["med_turns"] or 0), "full": r["full"] == "True" and scored > 0}
     return out
 J, D = load(a.jsc), load(a.daytona)
 shared = sorted(set(J) & set(D)); paired = [t for t in shared if J[t]["full"] and D[t]["full"]]
