@@ -6,13 +6,14 @@
 
 A task is allowed when (pristine reward == 0.0 AND oracle reward == 1.0) in the gate parts, OR — for tasks shared with
 the raw set and not re-gated here — its raw twin passed the v3 gate (`tt_shared_pairs.txt`: path raw-task gate_v3).
-Gate results win over the carried-over flag when both exist. Records without a parsable reward (timeouts, harness
+Gate results win over the carried-over flag when both exist. `--exclude` lists (e.g. the 293 empty-issue tasks) win over everything. Records without a parsable reward (timeouts, harness
 errors) count as `harness` rows, not as fails, and the task is NOT allowed until re-gated.
 """
 import argparse, collections, csv, glob, json, os
 ap = argparse.ArgumentParser()
 ap.add_argument("--map", required=True); ap.add_argument("--pairs", required=True); ap.add_argument("--parts", nargs="+", required=True)
 ap.add_argument("--out", required=True); ap.add_argument("--report", default=None)
+ap.add_argument("--exclude", nargs="*", default=[], help="files of task names to exclude regardless of the gate (e.g. the empty-issue list); status `excluded`")
 a = ap.parse_args()
 repo = {r["path"]: r["repo"] for r in csv.DictReader(open(a.map), delimiter="\t")}
 carry = {}
@@ -27,10 +28,13 @@ for d in a.parts:
             try: r = json.loads(line)
             except Exception: continue
             if "task" in r and "mode" in r: gate[r["task"]][r["mode"]] = r
+excl = {l.strip() for f in a.exclude for l in open(f) if l.strip() and not l.startswith("#")}
 rows = []
 for p in sorted(repo):
     g = gate.get(p, {}); pr, orc = g.get("pristine"), g.get("oracle")
-    if pr is not None or orc is not None:
+    if p in excl:
+        status, src = "excluded", "list"
+    elif pr is not None or orc is not None:
         err = [m for m, r in (("pristine", pr), ("oracle", orc)) if r is None or r.get("reward") is None or r.get("error") or r.get("timed_out")]
         if err: status = "harness:" + ",".join(err)
         elif pr["reward"] == 0.0 and orc["reward"] == 1.0: status = "pass"
@@ -45,12 +49,12 @@ allowed = [p for p, _, s, _ in rows if s == "pass"]
 open(a.out, "w").write("\n".join(allowed) + "\n")
 tab = collections.defaultdict(collections.Counter)
 for p, rp, s, src in rows: tab[rp][s.split(":")[0]] += 1
-lines = ["repo | tasks | pass | fail | harness | ungated | pass %", "---|---|---|---|---|---|---"]
+lines = ["repo | tasks | pass | fail | harness | ungated | excluded | pass %", "---|---|---|---|---|---|---|---"]
 tot = collections.Counter()
 for rp in sorted(tab, key=lambda r: -sum(tab[r].values())):
     c = tab[rp]; n = sum(c.values()); tot.update(c)
-    lines.append("%s | %d | %d | %d | %d | %d | %.1f" % (rp, n, c["pass"], c["fail"], c["harness"], c["ungated"], 100.0 * c["pass"] / n))
-n = sum(tot.values()); lines.append("**all** | %d | %d | %d | %d | %d | %.1f" % (n, tot["pass"], tot["fail"], tot["harness"], tot["ungated"], 100.0 * tot["pass"] / n))
+    lines.append("%s | %d | %d | %d | %d | %d | %d | %.1f" % (rp, n, c["pass"], c["fail"], c["harness"], c["ungated"], c["excluded"], 100.0 * c["pass"] / n))
+n = sum(tot.values()); lines.append("**all** | %d | %d | %d | %d | %d | %d | %.1f" % (n, tot["pass"], tot["fail"], tot["harness"], tot["ungated"], tot["excluded"], 100.0 * tot["pass"] / n))
 print("\n".join(lines)); print("allowlist -> %s (%d tasks)" % (a.out, len(allowed)))
 if a.report:
     with open(a.report, "w") as f:
