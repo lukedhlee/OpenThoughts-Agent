@@ -67,7 +67,11 @@ for i, ts in enumerate(shards):
            "--max-in", "61440", "--max-out", "4096", "--max-model-len", "65536", "--nodes", str(a.nodes), "--engines", str(a.engines),
            "--parity", "--eval-timeout", "1800", "--wall", a.wall]
     subprocess.check_output(gen, text=True)
-    cp = "%s/%s/configs/%s_rl_config.json" % (EXP, name, name); c = json.load(open(cp))
+    cp = "%s/%s/configs/%s_rl_config.json" % (EXP, name, name)
+    # MarinSkyRL schema after the 2026-09-03 upstream merge: the template still emits pre-merge keys (generator.vllm_stats_interval,
+    # rollout.fanout.*); the other session's fix_merged_keys.py rewrites them (tt60k attempt 1: all 6 shards died in hydra on this)
+    if os.path.exists(C + "/fix_merged_keys.py"): print(subprocess.check_output([sys.executable, C + "/fix_merged_keys.py", cp], text=True).strip())
+    c = json.load(open(cp))
     ebs = -(-len(ts) // 4)
     args = [x for x in c["skyrl_hydra_args"] if not x.startswith(("trainer.eval_batch_size=", "++terminal_bench_config.harbor.verifier_override_timeout_sec="))]
     args += ["trainer.eval_batch_size=%d" % ebs, "++terminal_bench_config.harbor.verifier_override_timeout_sec=%d" % a.verifier_timeout]
