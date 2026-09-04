@@ -21,6 +21,7 @@ HUB = os.path.expanduser("~/.cache/huggingface/hub")
 GITHUB = {"sympy": "sympy/sympy", "tornado": "tornadoweb/tornado", "scrapy": "scrapy/scrapy", "pyramid": "Pylons/pyramid",
           "datalad": "datalad/datalad", "coveragepy": "nedbat/coveragepy", "aiohttp": "aio-libs/aiohttp", "moto": "getmoto/moto",
           "orange3": "biolab/orange3"}
+MODULE = {"coveragepy": "coverage", "orange3": "Orange"}  # import name where it differs from the repo name
 ap = argparse.ArgumentParser()
 ap.add_argument("--repo", required=True, choices=sorted(GITHUB)); ap.add_argument("--out", required=True)
 ap.add_argument("--n", type=int, default=100); ap.add_argument("--seed", type=int, default=20260904)
@@ -50,9 +51,11 @@ for rg in range(pf.num_row_groups):
         ins_p = os.path.join(dst, "instruction.md"); ins = open(ins_p).read(); m = FENCE.match(ins); assert m, path
         commit = re.search(r"git checkout ([0-9a-f]{40})", m.group(1)).group(1)
         df_p = os.path.join(dst, "environment", "Dockerfile"); df = open(df_p).read().rstrip("\n")
-        # the repo baked into the image: cloned once at build time, installed editable so a later checkout is picked up
+        # the repo baked into the image: cloned once at build time, installed editable so a later checkout is picked up.
+        # `cd /` first: the bucket Dockerfile ends in WORKDIR /testbed, and deleting the cwd makes git die with
+        # "fatal: Unable to read current working directory" (attempt 1 of the sympy stress test failed exactly there).
         df += (f"\n\n# --- one image per repo: the repo is part of the environment, not the agent's job ---\n"
-               f"RUN rm -rf /testbed && git clone https://github.com/{GITHUB[a.repo]}.git /testbed\n"
+               f"RUN cd / && rm -rf /testbed && git clone -q https://github.com/{GITHUB[a.repo]}.git /testbed\n"
                f"WORKDIR /testbed\n"
                f"RUN pip install --no-build-isolation -e . 2>/dev/null || pip install -e . 2>/dev/null || pip install --no-build-isolation . 2>/dev/null || pip install . || true\n")
         open(df_p, "w").write(df + "\n"); dockerfiles.add(df)
@@ -62,7 +65,7 @@ for rg in range(pf.num_row_groups):
                     "set -euo pipefail\ncd /testbed\n"
                     f"git checkout -q {commit}\n"
                     "git status --porcelain | head -3\n"
-                    f"python -c \"import {a.repo}\"\n"
+                    f"python -c \"import {MODULE.get(a.repo, a.repo)}\"\n"
                     "git rev-parse --verify HEAD >/dev/null\n")
         os.chmod(os.path.join(dst, "setup_files", "setup.sh"), 0o755)
         open(ins_p, "w").write(ins[m.end():]); made += 1
