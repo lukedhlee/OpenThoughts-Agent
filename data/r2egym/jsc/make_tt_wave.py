@@ -83,6 +83,10 @@ for i, ts in enumerate(shards):
         masks = [x for x in args if x.startswith(mk)]; assert len(masks) == 1, "expected one mask_exceptions hydra arg"
         cur = masks[0][len(mk):].strip("[]"); extra = ['"%s"' % m for m in a.daytona_mask.split(",") if m and m not in cur]  # quoted like the template's entries
         args = [mk + "[" + ",".join([cur] + extra if cur else extra) + "]" if x.startswith(mk) else x for x in args]
+        # auto_snapshot: reuse the prebuilt harbor__<envhash>__snapshot; without it harbor builds per sandbox from the Dockerfile
+        # ("declarative build"), which the eval org forbids — ttd60k attempt 1 died on exactly that (MarinSkyRL FieldMapping
+        # harbor.auto_snapshot -> daytona kwargs, default False).
+        args = [x for x in args if not x.startswith("++terminal_bench_config.harbor.auto_snapshot=")] + ["++terminal_bench_config.harbor.auto_snapshot=true"]
         c["harbor_env"] = "daytona"
     c["skyrl_hydra_args"] = args; json.dump(c, open(cp, "w"), indent=2)
     sp = "%s/%s/sbatch/%s_rl.sbatch" % (EXP, name, name); s = open(sp).read()
