@@ -12,9 +12,20 @@ Runs on the Jupiter login node (python3.9-safe). Adapted by diff from code/snowb
 Everything else is the residual-wave code path: eval_batch_size = ceil(n/4) (one batch per fan-out coordinator),
 HARBOR_TMUX_BATCH_EXEC_TIMEOUT_MARGIN_SEC exported, pool_launch.sh / pool_watch.sh for submit + table + scancel.
 
+  - `--daytona`: environment backend daytona instead of the apptainer bridge (same recipe otherwise). Edits the generated
+    files only (found read-only 2026-09-04): hydra `harbor.environment_type=daytona` + `"harbor_env": "daytona"`; the sbatch
+    gets the preset-SOCKS preamble so the launcher's `_setup_proxy` block builds a proxychains conf pointing at the
+    microsocks on jpbl-s01-02 (10.128.1.2:7011; JSC TOTP blocks compute->login `ssh -D`, the currease probe proved this
+    route) instead of skipping; `PYTHONPATH=<harbor-hook>/src` puts the setup-files-hook harbor (branch
+    lukedhlee/terminus2-think-parity-bridgewait-setuphook) in front of the venv's copy for THIS job only (the shared venv
+    is untouched); Daytona infra errors (sandbox start timeout, conflict, rate limit) are masked like bridge outages.
+    DAYTONA_API_KEY comes from the template's sbatch (must be the org holding the prebuilt snapshots).
+
 Usage:
   make_tt_wave.py --tasks /e/fscratch/reformo/lee27/tasks/r2egym-tt-raw --allow allowlist.txt --prefix tt60k \
       --shards 6 --bridge-url http://10.128.1.2:9924 [--conc 256 --nodes 8 --engines 4 --wall 10:00:00]
+  make_tt_wave.py --tasks /e/fscratch/reformo/lee27/tasks/r2egym-tt-daytona --allow allowlist_daytona.txt --prefix ttd60k \
+      --shards 6 --daytona [--socks-env /e/fscratch/reformo/lee27/keys/socks5_currease.env --harbor-src .../harbor-hook/src]
 """
 import argparse, json, os, shutil, subprocess, sys
 EXP = "/e/fscratch/reformo/lee27/experiments"; TASKS = "/e/fscratch/reformo/lee27/tasks"; C = "/e/project1/transfernetx/lee27/code/snowball"
@@ -23,8 +34,18 @@ ap.add_argument("--tasks", required=True); ap.add_argument("--allow", default=No
 ap.add_argument("--prefix", required=True); ap.add_argument("--shards", type=int, default=6); ap.add_argument("--conc", type=int, default=256)
 ap.add_argument("--nodes", type=int, default=8); ap.add_argument("--engines", type=int, default=4); ap.add_argument("--wall", default="10:00:00")
 ap.add_argument("--bridge-margin", type=int, default=600); ap.add_argument("--k", type=int, default=8)
-ap.add_argument("--bridge-url", required=True); ap.add_argument("--verifier-timeout", type=int, default=600)
+ap.add_argument("--bridge-url", default=None, help="apptainer bridge URL (required unless --daytona)"); ap.add_argument("--verifier-timeout", type=int, default=600)
+ap.add_argument("--daytona", action="store_true", help="environment backend daytona (see module doc)")
+ap.add_argument("--socks-env", default="/e/fscratch/reformo/lee27/keys/socks5_currease.env", help="--daytona: file exporting SOCKS_USER/SOCKS_PASS for the microsocks")
+ap.add_argument("--socks-host", default="10.128.1.2"); ap.add_argument("--socks-port", default="7011")
+ap.add_argument("--harbor-src", default="/e/project1/transfernetx/lee27/code/harbor-hook/src", help="--daytona: harbor checkout with the setup_files/setup.sh hook, prepended to PYTHONPATH")
+ap.add_argument("--daytona-mask", default="EnvironmentStartTimeoutError,DaytonaConflictError,DaytonaRateLimitError,SandboxBuildFailedError", help="--daytona: exception names appended to harbor.mask_exceptions")
 a = ap.parse_args()
+if not a.daytona and not a.bridge_url: sys.exit("--bridge-url is required unless --daytona")
+if a.daytona:
+    for f in (a.socks_env, a.harbor_src + "/harbor/trial/trial.py"):
+        if not os.path.exists(f): sys.exit("--daytona: missing %s" % f)
+    if "_run_setup_script" not in open(a.harbor_src + "/harbor/trial/trial.py").read(): sys.exit("--daytona: %s has no setup_files hook" % a.harbor_src)
 alltasks = sorted(d for d in os.listdir(a.tasks) if os.path.isdir(os.path.join(a.tasks, d)))
 if a.allow:
     keep = {l.strip() for l in open(a.allow) if l.strip() and not l.startswith("#")}
@@ -49,14 +70,34 @@ for i, ts in enumerate(shards):
     ebs = -(-len(ts) // 4)
     args = [x for x in c["skyrl_hydra_args"] if not x.startswith(("trainer.eval_batch_size=", "++terminal_bench_config.harbor.verifier_override_timeout_sec="))]
     args += ["trainer.eval_batch_size=%d" % ebs, "++terminal_bench_config.harbor.verifier_override_timeout_sec=%d" % a.verifier_timeout]
+    if a.daytona:
+        env_key = "++terminal_bench_config.harbor.environment_type="
+        assert sum(x.startswith(env_key) for x in args) == 1, "expected one environment_type hydra arg"
+        args = [env_key + "daytona" if x.startswith(env_key) else x for x in args]
+        mk = "++terminal_bench_config.harbor.mask_exceptions="
+        masks = [x for x in args if x.startswith(mk)]; assert len(masks) == 1, "expected one mask_exceptions hydra arg"
+        cur = masks[0][len(mk):].strip("[]"); extra = [m for m in a.daytona_mask.split(",") if m and m not in cur]
+        args = [mk + "[" + ",".join([cur] + extra if cur else extra) + "]" if x.startswith(mk) else x for x in args]
+        c["harbor_env"] = "daytona"
     c["skyrl_hydra_args"] = args; json.dump(c, open(cp, "w"), indent=2)
     sp = "%s/%s/sbatch/%s_rl.sbatch" % (EXP, name, name); s = open(sp).read()
-    ins = "export NCCL_PXN_DISABLE=1\nexport HARBOR_TMUX_BATCH_EXEC_TIMEOUT_MARGIN_SEC=%d\nexport APPTAINER_BRIDGE_URL=%s\n" % (a.bridge_margin, a.bridge_url)
+    if a.daytona:
+        ins = ("export NCCL_PXN_DISABLE=1\nexport HARBOR_TMUX_BATCH_EXEC_TIMEOUT_MARGIN_SEC=%d\n"
+               "# --- daytona environment: preset SOCKS (microsocks on jpbl-s01-02) for _setup_proxy; setup-files-hook harbor first on PYTHONPATH ---\n"
+               "set -a; source %s; set +a\n"
+               "export PROXYCHAINS_SOCKS5_PRESET_HOST=%s\nexport PROXYCHAINS_SOCKS5_PRESET_PORT=%s\n"
+               "export PROXYCHAINS_SOCKS5_PRESET_AUTH=\"$SOCKS_USER $SOCKS_PASS\"\n"
+               "export PYTHONPATH=%s${PYTHONPATH:+:$PYTHONPATH}\n"
+               "unset APPTAINER_BRIDGE_URL\n") % (a.bridge_margin, a.socks_env, a.socks_host, a.socks_port, a.harbor_src)
+        assert "DAYTONA_API_KEY" in s, "template sbatch exports no DAYTONA_API_KEY"
+    else:
+        ins = "export NCCL_PXN_DISABLE=1\nexport HARBOR_TMUX_BATCH_EXEC_TIMEOUT_MARGIN_SEC=%d\nexport APPTAINER_BRIDGE_URL=%s\n" % (a.bridge_margin, a.bridge_url)
     assert s.count("export NCCL_PXN_DISABLE=1\n") == 1
     s = s.replace("export NCCL_PXN_DISABLE=1\n", ins, 1)
-    assert ("APPTAINER_BRIDGE_URL=%s" % a.bridge_url) in s and ("HARBOR_TMUX_BATCH_EXEC_TIMEOUT_MARGIN_SEC=%d" % a.bridge_margin) in s
+    assert ("HARBOR_TMUX_BATCH_EXEC_TIMEOUT_MARGIN_SEC=%d" % a.bridge_margin) in s
+    assert a.daytona or ("APPTAINER_BRIDGE_URL=%s" % a.bridge_url) in s
     open(sp, "w").write(s)
-    print("%s: %d tasks -> %s; eval_batch_size=%d; verifier %ds; bridge %s; sbatch %s" % (name, len(ts), d, ebs, a.verifier_timeout, a.bridge_url, sp))
+    print("%s: %d tasks -> %s; eval_batch_size=%d; verifier %ds; env %s; sbatch %s" % (name, len(ts), d, ebs, a.verifier_timeout, "daytona (socks %s:%s)" % (a.socks_host, a.socks_port) if a.daytona else "apptainer " + a.bridge_url, sp))
 open("%s/%s_tasks.txt" % (EXP, a.prefix), "w").write("\n".join(tasks) + "\n")
 print('launch: tmux new -d -s pool_launch_%s "bash %s/pool_launch.sh %s %d 150" && tmux new -d -s pool_watch_%s "bash %s/pool_watch.sh %s %d"'
       % (a.prefix, C, a.prefix, a.shards, a.prefix, C, a.prefix, a.shards))
