@@ -9,11 +9,12 @@ the raw set and not re-gated here — its raw twin passed the v3 gate (`tt_share
 Gate results win over the carried-over flag when both exist. `--exclude` lists (e.g. the 293 empty-issue tasks) win over everything. Records without a parsable reward (timeouts, harness
 errors) count as `harness` rows, not as fails, and the task is NOT allowed until re-gated.
 """
-import argparse, collections, csv, glob, json, os
+import argparse, collections, csv, glob, json, os, re
 ap = argparse.ArgumentParser()
 ap.add_argument("--map", required=True); ap.add_argument("--pairs", required=True); ap.add_argument("--parts", nargs="+", required=True)
 ap.add_argument("--out", required=True); ap.add_argument("--report", default=None)
 ap.add_argument("--exclude", nargs="*", default=[], help="files of task names to exclude regardless of the gate (e.g. the empty-issue list); status `excluded`")
+ap.add_argument("--max-verifier-sec", type=float, default=None, help="drop gate-passing tasks whose ORACLE pytest run (`in N s` in the gate tail) exceeds this; status `slow`. The probe kills the verifier at verifier_override_timeout_sec (600 s) including ~60 s of setup.")
 a = ap.parse_args()
 repo = {r["path"]: r["repo"] for r in csv.DictReader(open(a.map), delimiter="\t")}
 carry = {}
@@ -37,7 +38,12 @@ for p in sorted(repo):
     elif pr is not None or orc is not None:
         err = [m for m, r in (("pristine", pr), ("oracle", orc)) if r is None or r.get("reward") is None or r.get("error") or r.get("timed_out")]
         if err: status = "harness:" + ",".join(err)
-        elif pr["reward"] == 0.0 and orc["reward"] == 1.0: status = "pass"
+        elif pr["reward"] == 0.0 and orc["reward"] == 1.0:
+            status = "pass"
+            if a.max_verifier_sec is not None:
+                m = re.search(r"in (\d+(?:\.\d+)?)s", orc.get("tail") or "")
+                if m and float(m.group(1)) > a.max_verifier_sec: status = "slow:%.0f" % float(m.group(1))
+                elif not m: status = "slow:unknown"
         else: status = "fail:p%s/o%s" % (pr["reward"], orc["reward"])
         src = "gate"
     elif p in carry:
@@ -49,12 +55,12 @@ allowed = [p for p, _, s, _ in rows if s == "pass"]
 open(a.out, "w").write("\n".join(allowed) + "\n")
 tab = collections.defaultdict(collections.Counter)
 for p, rp, s, src in rows: tab[rp][s.split(":")[0]] += 1
-lines = ["repo | tasks | pass | fail | harness | ungated | excluded | pass %", "---|---|---|---|---|---|---|---"]
+lines = ["repo | tasks | pass | fail | slow | harness | ungated | excluded | pass %", "---|---|---|---|---|---|---|---|---"]
 tot = collections.Counter()
 for rp in sorted(tab, key=lambda r: -sum(tab[r].values())):
     c = tab[rp]; n = sum(c.values()); tot.update(c)
-    lines.append("%s | %d | %d | %d | %d | %d | %d | %.1f" % (rp, n, c["pass"], c["fail"], c["harness"], c["ungated"], c["excluded"], 100.0 * c["pass"] / n))
-n = sum(tot.values()); lines.append("**all** | %d | %d | %d | %d | %d | %d | %.1f" % (n, tot["pass"], tot["fail"], tot["harness"], tot["ungated"], tot["excluded"], 100.0 * tot["pass"] / n))
+    lines.append("%s | %d | %d | %d | %d | %d | %d | %d | %.1f" % (rp, n, c["pass"], c["fail"], c["slow"], c["harness"], c["ungated"], c["excluded"], 100.0 * c["pass"] / n))
+n = sum(tot.values()); lines.append("**all** | %d | %d | %d | %d | %d | %d | %d | %.1f" % (n, tot["pass"], tot["fail"], tot["slow"], tot["harness"], tot["ungated"], tot["excluded"], 100.0 * tot["pass"] / n))
 print("\n".join(lines)); print("allowlist -> %s (%d tasks)" % (a.out, len(allowed)))
 if a.report:
     with open(a.report, "w") as f:
