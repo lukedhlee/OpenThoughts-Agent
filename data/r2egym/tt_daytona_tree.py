@@ -29,6 +29,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--allow", required=True); ap.add_argument("--out", required=True)
 ap.add_argument("--repo-image", default="sympy,pyramid,tornado,scrapy,datalad", help="comma list of repos built as one image per repo")
 ap.add_argument("--exclude", default=None); ap.add_argument("--n-per-repo", type=int, default=None); ap.add_argument("--seed", type=int, default=20260904)
+ap.add_argument("--warm-commits", type=int, default=6, help="repo-image: also `pip install -e .` at this many of the repo's task commits (date-ordered) at BUILD time, so old-era dependencies are present; 0 = master only")
 ap.add_argument("--tasktrove", default=None)
 ap.add_argument("--map", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "overlap", "tasktrove_v3_upstream_map.tsv"))
 a = ap.parse_args()
@@ -47,7 +48,7 @@ if a.n_per_repo:
 want = sorted(p for ps in by_repo.values() for p in ps); want_set = set(want)
 print(f"allowlisted {len(allow)} → building {len(want)} tasks; repo-image: {sorted(repo_image)}")
 
-dockerfiles = collections.defaultdict(set); made = collections.Counter()
+dockerfiles = collections.defaultdict(set); made = collections.Counter(); commits = collections.defaultdict(dict); pending_df = []
 pf = pq.ParquetFile(a.tasktrove)
 for rg in range(pf.num_row_groups):
     d = pf.read_row_group(rg, columns=["path", "task_binary"]).to_pydict()
@@ -60,17 +61,15 @@ for rg in range(pf.num_row_groups):
         df_p = os.path.join(dst, "environment", "Dockerfile")
         if repo in repo_image:
             cm = re.search(r"git checkout ([0-9a-f]{40})", m.group(1)); assert cm, f"{path}: no checkout commit in preamble"; commit = cm.group(1)
-            df = open(df_p).read().rstrip("\n")
-            # `cd /` first: the bucket Dockerfile ends in WORKDIR /testbed; deleting the cwd makes git die
-            df += (f"\n\n# --- one image per repo: the repo is part of the environment, not the agent's job ---\n"
-                   f"RUN cd / && rm -rf /testbed && git clone -q https://github.com/{GITHUB[repo]}.git /testbed\n"
-                   f"WORKDIR /testbed\n"
-                   f"RUN pip install --no-build-isolation -e . 2>/dev/null || pip install -e . 2>/dev/null || pip install --no-build-isolation . 2>/dev/null || pip install . || true\n")
-            open(df_p, "w").write(df + "\n")
-            open(sh, "w").write("#!/bin/bash\n# Per-task state on top of the per-repo image: check out the buggy commit. No clone, no pip, no network.\n"
+            commits[repo][path] = commit; pending_df.append((repo, df_p))
+            # setup.sh: checkout, then re-link the editable install WITHOUT deps (layout drift, e.g. pyramid moved to src/ in
+            # 2019 — master's editable finder would not see an old commit's package dir), then an import check. No network.
+            open(sh, "w").write("#!/bin/bash\n# Per-task state on top of the per-repo image: check out the buggy commit and re-link the editable install.\n"
+                                "# No clone, no dependency download, no network (deps were installed at image build time across eras).\n"
                                 "set -euo pipefail\ncd /testbed\n"
                                 f"git checkout -q {commit}\n"
                                 "git status --porcelain | head -3\n"
+                                "pip install -q --no-deps --no-build-isolation -e . >/dev/null 2>&1 || pip install -q --no-deps -e . >/dev/null 2>&1 || python setup.py -q develop --no-deps >/dev/null 2>&1 || true\n"
                                 f"python -c \"import {MODULE.get(repo, repo)}\"\n"
                                 "git rev-parse --verify HEAD >/dev/null\n")
         else:
@@ -79,8 +78,26 @@ for rg in range(pf.num_row_groups):
                                 "set -o pipefail\n" + m.group(1) + "\n"
                                 "# readiness: the repo must be checked out at the requested commit\n"
                                 "cd /testbed && git rev-parse --verify HEAD >/dev/null\n")
-        os.chmod(sh, 0o755); open(ins_p, "w").write(ins[m.end():])
-        dockerfiles[repo].add(hashlib.sha256(open(df_p, "rb").read()).hexdigest()[:12]); made[repo] += 1
+        os.chmod(sh, 0o755); open(ins_p, "w").write(ins[m.end():]); made[repo] += 1
+        if repo not in repo_image: dockerfiles[repo].add(hashlib.sha256(open(df_p, "rb").read()).hexdigest()[:12])
+INSTALL = "pip install --no-build-isolation -e . 2>/dev/null || pip install -e . 2>/dev/null || pip install --no-build-isolation . 2>/dev/null || pip install . || true"
+for repo, df_p in pending_df:
+    # warm commits: a deterministic, evenly spaced sample of this repo's task commits (by sorted hash); the Dockerfile orders them
+    # by commit date at build time and installs each, so dependencies from every era accumulate in the image. Same list for every
+    # task of the repo → byte-identical Dockerfile → one snapshot.
+    cs = sorted(set(commits[repo].values())); k = min(a.warm_commits, len(cs))
+    warm = [cs[int(i * (len(cs) - 1) / max(k - 1, 1))] for i in range(k)] if k else []
+    df = open(df_p).read().rstrip("\n")
+    # `cd /` first: the bucket Dockerfile ends in WORKDIR /testbed; deleting the cwd makes git die
+    df += (f"\n\n# --- one image per repo: the repo is part of the environment, not the agent's job ---\n"
+           f"RUN cd / && rm -rf /testbed && git clone -q https://github.com/{GITHUB[repo]}.git /testbed\n"
+           f"WORKDIR /testbed\n"
+           f"RUN {INSTALL}\n")
+    if warm:
+        df += ("# dependencies of older eras: install at a date-ordered sample of the task commits (deps accumulate; layout is re-linked per task in setup.sh)\n"
+               "RUN for c in $(for c in " + " ".join(warm) + "; do echo \"$(git show -s --format=%ct $c) $c\"; done | sort -n | cut -d' ' -f2); do "
+               f"git checkout -q $c && ({INSTALL}); done; git checkout -q -\n")
+    open(df_p, "w").write(df + "\n"); dockerfiles[repo].add(hashlib.sha256(open(df_p, "rb").read()).hexdigest()[:12])
 for r in repo_image:
     assert len(dockerfiles.get(r, ())) <= 1, f"{r}: {len(dockerfiles[r])} distinct Dockerfiles (expected 1)"
 open(os.path.join(a.out, "TASKS.txt"), "w").write("\n".join(want) + "\n")
