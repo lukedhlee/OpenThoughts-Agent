@@ -114,3 +114,21 @@ docker build -t test-r2egym -f environment/Dockerfile .
 # Run the tests
 docker run -v $(pwd):/task test-r2egym bash /task/tests/test.sh
 ```
+
+## Apptainer (JSC) task prompt and verifier hardening (2026-09-06)
+
+`build_tt_raw.py` writes `instruction.md` = our 4-line header (repo at `/testbed`, already at the correct commit, do not clone, no
+network) + TaskTrove's workflow body from `<uploaded_files>` down (issue inside `<issue_description>`, five steps: explore, write
+`/testbed/reproduce_issue.py`, implement, rerun the repro + the repo's tests, final review). TaskTrove's `## Environment Setup` block
+(clone + pip install) is excluded: the SIF already has `/testbed` at the buggy commit and the sandbox has no network (see PATCHING.md for
+what happens otherwise). The text lives in `jsc/tt_prompt.py` (`workflow_instruction`; `tt_prompt.py check` verifies it against the shipped
+TaskTrove tarballs; `tt_prompt.py rewrite` re-prompts an existing task tree). Before 2026-09-06 the file was the header + the bare issue.
+
+`tt_raw_template/test.sh` (the raw R2E-Gym verifier) additionally runs the graded pytest through `/tests/safe_pytest.py` instead of
+`python -m pytest`, so a scratch file in `/testbed` named after a stdlib module cannot shadow it during grading (the images run Python
+3.7-3.9, where `PYTHONSAFEPATH` does nothing), and regenerates `run_tests.sh` if the agent deleted it. Parsed test status maps are identical
+to the original command (verified on aiohttp, pandas, sympy, orange3 SIFs).
+
+`jsc/`: `ttwf_sample.py` (stratified, repo-aware task sample from a pass@8 table), `wf_feat.py` / `wf_digest.py` / `wf_compare.py`
+(per-trial behaviour features, paired trace digests, paired comparison report) — the workflow-prompt re-probe tooling; operational copies
+live in `code/snowball/` on Jupiter.
