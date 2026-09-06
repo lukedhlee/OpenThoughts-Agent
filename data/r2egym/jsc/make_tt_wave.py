@@ -36,6 +36,7 @@ ap.add_argument("--nodes", type=int, default=8); ap.add_argument("--engines", ty
 ap.add_argument("--bridge-margin", type=int, default=600); ap.add_argument("--k", type=int, default=8)
 ap.add_argument("--bridge-url", default=None, help="apptainer bridge URL (required unless --daytona)"); ap.add_argument("--verifier-timeout", type=int, default=600)
 ap.add_argument("--daytona", action="store_true", help="environment backend daytona (see module doc)")
+ap.add_argument("--no-tis", action="store_true", help="trainer.algorithm.use_tis=false (eval-only probes on MarinSkyRL >= cdcb435b: with TIS on, a chunk whose group is fully masked (8/8 exceptions) raises 'rollout_logprobs are required for every generated group' and kills the job mid-probe; ttwf_s0 2026-09-06)")
 ap.add_argument("--socks-env", default="/e/fscratch/reformo/lee27/keys/socks5_currease.env", help="--daytona: file exporting SOCKS_USER/SOCKS_PASS for the microsocks")
 ap.add_argument("--socks-host", default="10.128.1.2"); ap.add_argument("--socks-port", default="7011")
 ap.add_argument("--harbor-src", default="/e/project1/transfernetx/lee27/code/harbor-hook/src", help="--daytona: harbor checkout with the setup_files/setup.sh hook, prepended to PYTHONPATH")
@@ -75,6 +76,7 @@ for i, ts in enumerate(shards):
     ebs = -(-len(ts) // 4)
     args = [x for x in c["skyrl_hydra_args"] if not x.startswith(("trainer.eval_batch_size=", "++terminal_bench_config.harbor.verifier_override_timeout_sec="))]
     args += ["trainer.eval_batch_size=%d" % ebs, "++terminal_bench_config.harbor.verifier_override_timeout_sec=%d" % a.verifier_timeout]
+    if a.no_tis: args = [x for x in args if not x.startswith("trainer.algorithm.use_tis=")] + ["trainer.algorithm.use_tis=false"]
     if a.daytona:
         env_key = "++terminal_bench_config.harbor.environment_type="
         assert sum(x.startswith(env_key) for x in args) == 1, "expected one environment_type hydra arg"
