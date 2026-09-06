@@ -80,6 +80,9 @@ Be thorough in your exploration, testing, and reasoning. It's fine if your think
 # (the repo's visible tests still assert the pre-fix behaviour while the graded tests are hidden -- the 09-06 probe's readers traced
 # reverted-correct-fix, deadlock-on-contradicting-test and done-on-non-covering-suite losses to them) and the reproduction required
 # to assert the issue's stated value. Everything else is verbatim. `variant="tasktrove"` gives the untouched body.
+# 15:20 PT, after the trap reader: graded tests are "not on disk and must not be searched for" (hidden-test hunting ate half an episode),
+# and edge cases limited to what the issue states + "once the reproduction passes, stop editing" (a correct fix was reverted chasing a
+# self-invented edge case). These two lines are UNPROBED; the next arm's P(win | done) and context deaths judge them.
 BODY = """<uploaded_files>
 /testbed
 </uploaded_files>
@@ -91,7 +94,7 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
 </issue_description>
 
 Can you help me implement the necessary changes to the repository so that the requirements specified in the <issue_description> are met?
-The tests that grade your work are hidden and already updated for the fix. The repository's own test files may still assert the OLD behavior that the <issue_description> calls wrong, so do not spend effort on them: a passing or failing existing test is not evidence about your fix.
+The tests that grade your work are hidden: they are not on disk and must not be searched for. They are already updated for the fix. The repository's own test files may still assert the OLD behavior that the <issue_description> calls wrong, so do not spend effort on them: a passing or failing existing test is not evidence about your fix.
 Also the development Python environment is already set up for you (i.e., all dependencies already installed), so you don't need to install other packages.
 Your task is to make the minimal changes to non-test files in the /testbed directory to ensure the <issue_description> is satisfied.
 
@@ -114,7 +117,7 @@ Follow these steps to resolve the issue:
 
 4. VERIFICATION: Test your implementation thoroughly.
 - Rerun your reproduction script after EVERY edit to the source; the fix is not done until it passes
-- Add edge cases to your reproduction script to ensure comprehensive coverage
+- Add edge cases to your reproduction script only for behavior the <issue_description> states; once the reproduction passes, stop editing source unless a regression check fails
 - You may run the repository's existing tests for the modified code as a regression check, but a green existing suite is not evidence that the issue is fixed, and a failing existing test may simply encode the old behavior
 
 5. FINAL REVIEW: Carefully re-read the problem description and compare your changes with the base commit {base_commit}.
