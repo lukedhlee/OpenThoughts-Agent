@@ -10,11 +10,13 @@ SIF is prebuilt with /testbed at the buggy commit and the sandbox has no network
 data/r2egym/PATCHING.md failure (clone fails, /testbed stays empty, the verifier scores a stock wheel). TaskTrove's own
 file contradicts itself there (setup block says install, body says already installed); only the body is true for us.
 
-BODY is byte-for-byte TaskTrove's text from <uploaded_files> down (verified against laion/r2egym-patched-full-oracle-v3
+BODY_TT is byte-for-byte TaskTrove's text from <uploaded_files> down (verified against laion/r2egym-patched-full-oracle-v3
 task tarballs, 2026-09-06: TaskTrove = data/r2egym/utils.py:create_r2egym_instruction with the [ISSUE] wrapper stripped
-from the problem statement; `--check` re-verifies). The issue sits in <issue_description>, once.
+from the problem statement; `check` re-verifies). BODY, the default, is the same text with the two test clauses qualified
+and the reproduction required to assert the issue's stated value (Luke, 2026-09-06 14:30 PT, after the paired probe's readers
+traced three losses to those clauses). The issue sits in <issue_description>, once.
 
-Library:  workflow_instruction(problem_statement, base_commit) -> str      (header + body, wrapper stripped)
+Library:  workflow_instruction(problem_statement, base_commit, variant="fixed"|"tasktrove") -> str   (header + body)
 CLI:      tt_prompt.py rewrite --src <tree> --dst <tree> [--allow <list>] [--parents <tsv>] [--test-sh <file>]
               copy a task tree and replace every instruction.md with the workflow prompt; base commit = metadata's
               tasktrove_base_commit, else <tsv> (task \t docker_image \t parent_commit ...); --test-sh also replaces
@@ -31,7 +33,7 @@ not expect network access. Fix the issue described below by editing the code in
 """
 
 # data/r2egym/utils.py:create_r2egym_instruction, verbatim (kept as a plain string: problem statements contain braces)
-BODY = """<uploaded_files>
+BODY_TT = """<uploaded_files>
 /testbed
 </uploaded_files>
 
@@ -74,6 +76,53 @@ Follow these steps to resolve the issue:
 Be thorough in your exploration, testing, and reasoning. It's fine if your thinking process is lengthy - quality and completeness are more important than brevity.
 """
 
+# The DEFAULT apptainer body (2026-09-06, Luke): TaskTrove's body with the two clauses that are traps on R2E-Gym qualified
+# (the repo's visible tests still assert the pre-fix behaviour while the graded tests are hidden -- the 09-06 probe's readers traced
+# reverted-correct-fix, deadlock-on-contradicting-test and done-on-non-covering-suite losses to them) and the reproduction required
+# to assert the issue's stated value. Everything else is verbatim. `variant="tasktrove"` gives the untouched body.
+BODY = """<uploaded_files>
+/testbed
+</uploaded_files>
+
+I've uploaded a python code repository in the directory /testbed. Consider the following issue description:
+
+<issue_description>
+{problem_statement}
+</issue_description>
+
+Can you help me implement the necessary changes to the repository so that the requirements specified in the <issue_description> are met?
+The tests that grade your work are hidden and already updated for the fix. The repository's own test files may still assert the OLD behavior that the <issue_description> calls wrong, so do not spend effort on them: a passing or failing existing test is not evidence about your fix.
+Also the development Python environment is already set up for you (i.e., all dependencies already installed), so you don't need to install other packages.
+Your task is to make the minimal changes to non-test files in the /testbed directory to ensure the <issue_description> is satisfied.
+
+Follow these steps to resolve the issue:
+
+1. EXPLORATION: First, thoroughly explore the repository structure using tools like `find` and `grep`.
+- Identify all files mentioned in the problem statement
+- Locate where the issue occurs in the codebase
+- Understand the surrounding context and dependencies
+- Use `grep` to search for relevant functions, classes, or error messages
+
+2. Assess whether you can reproduce the issue:
+    - Create a script at /testbed/reproduce_issue.py that demonstrates the error.
+    - Execute this script to confirm the error behavior.
+    - You should reproduce the issue before fixing it.
+    - Your reproduction script must assert the exact expected behavior stated in the <issue_description> (the values or outputs it names), not merely that no error is raised.
+
+3. IMPLEMENTATION: Edit the source code to implement your chosen solution.
+- Make minimal, focused changes to fix the issue
+
+4. VERIFICATION: Test your implementation thoroughly.
+- Rerun your reproduction script after EVERY edit to the source; the fix is not done until it passes
+- Add edge cases to your reproduction script to ensure comprehensive coverage
+- You may run the repository's existing tests for the modified code as a regression check, but a green existing suite is not evidence that the issue is fixed, and a failing existing test may simply encode the old behavior
+
+5. FINAL REVIEW: Carefully re-read the problem description and compare your changes with the base commit {base_commit}.
+- Ensure you've fully addressed all requirements
+
+Be thorough in your exploration, testing, and reasoning. It's fine if your thinking process is lengthy - quality and completeness are more important than brevity.
+"""
+
 
 def strip_issue_wrapper(problem_statement):
     ps = (problem_statement or "").strip()
@@ -82,15 +131,15 @@ def strip_issue_wrapper(problem_statement):
     return ps.strip()
 
 
-def workflow_body(problem_statement, base_commit):
-    """TaskTrove's instruction from <uploaded_files> down (wrapper stripped), no header."""
-    return BODY.replace("{problem_statement}", strip_issue_wrapper(problem_statement)).replace("{base_commit}", base_commit).strip() + "\n"
+def workflow_body(problem_statement, base_commit, variant="fixed"):
+    """TaskTrove's instruction from <uploaded_files> down (wrapper stripped), no header. variant: fixed (default) | tasktrove."""
+    return (BODY if variant == "fixed" else BODY_TT).replace("{problem_statement}", strip_issue_wrapper(problem_statement)).replace("{base_commit}", base_commit).strip() + "\n"
 
 
-def workflow_instruction(problem_statement, base_commit):
-    """The apptainer prompt: header + TaskTrove body. base_commit = the buggy parent (what /testbed is checked out at)."""
+def workflow_instruction(problem_statement, base_commit, variant="fixed"):
+    """The apptainer prompt: header + workflow body (fixed clauses by default). base_commit = the buggy parent (what /testbed is checked out at)."""
     assert re.fullmatch(r"[0-9a-f]{40}", base_commit or ""), "base_commit must be the 40-hex buggy parent commit: %r" % (base_commit,)
-    return HEADER + workflow_body(problem_statement, base_commit)
+    return HEADER + workflow_body(problem_statement, base_commit, variant)
 
 
 def cmd_rewrite(a):
@@ -123,7 +172,7 @@ def cmd_rewrite(a):
         if not base: sys.exit("%s: no tasktrove_base_commit in metadata.json and no --parents row" % t)
         if not a.keep_instruction:
             with open(os.path.join(a.dst, t, "instruction.md"), "w") as f:
-                f.write(workflow_instruction(meta["problem_statement"], base))
+                f.write(workflow_instruction(meta["problem_statement"], base, a.variant))
         if test_sh is not None:
             open(os.path.join(a.dst, t, "tests", "test.sh"), "wb").write(test_sh)
     print("%s %d tasks -> %s (base commit from %s; test.sh %s)" % (
@@ -159,7 +208,7 @@ def cmd_check(a):
             fh = tf.extractfile(m); assert fh is not None, (path, m)
             shipped = fh.read().decode()
             shipped = shipped[shipped.index("<uploaded_files>"):]
-            ours = workflow_body(up[rows[path]["docker_image"]], rows[path]["tt_base_commit"])
+            ours = workflow_body(up[rows[path]["docker_image"]], rows[path]["tt_base_commit"], variant="tasktrove")
             norm = lambda s: "\n".join(l.rstrip() for l in s.strip().splitlines() if l.strip())
             if norm(shipped) == norm(ours): ok += 1
             else:
@@ -177,6 +226,7 @@ if __name__ == "__main__":
     r.add_argument("--allow", default=None); r.add_argument("--parents", default=None); r.add_argument("--test-sh", default=None)
     r.add_argument("--force", action="store_true")
     r.add_argument("--keep-instruction", action="store_true", help="control tree: copy + --test-sh only, leave instruction.md as is")
+    r.add_argument("--variant", default="fixed", choices=["fixed", "tasktrove"], help="workflow body: fixed clauses (default) or TaskTrove verbatim")
     c = sub.add_parser("check"); c.add_argument("--n", type=int, default=20)
     a = ap.parse_args()
     (cmd_rewrite if a.cmd == "rewrite" else cmd_check)(a)
