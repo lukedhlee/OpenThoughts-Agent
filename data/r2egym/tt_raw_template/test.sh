@@ -147,6 +147,29 @@ REWARD_SCRIPT_EOF
 
 chmod +x /tests/calculate_reward.py
 
+# --- Hardening against the agent's own scratch work in /testbed (2026-09-06) ---
+# 1. A scratch file named after a stdlib module (a /testbed/inspect.py has happened) shadows it for the graded run,
+#    because `python -m pytest` puts the cwd at sys.path[0] and pytest cannot even start (~4 % of one probe slice).
+#    PYTHONSAFEPATH fixes that on Python >= 3.11 only; these images run 3.7-3.9. So the graded command launches pytest
+#    through a script in /tests instead of `-m pytest`: sys.path[0] becomes /tests, while cwd, rootdir, conftest and
+#    the arguments stay exactly as R2E-Gym's run_tests.sh has them (parsed status maps verified identical on aiohttp,
+#    pandas, sympy, orange3 SIFs; the shadow case then grades normally).
+# 2. /testbed/run_tests.sh is untracked, so an agent's `git clean -fd` deletes the grader's entry point (the tests
+#    live at /r2e_tests, outside the repo, and survive). Regenerate R2E-Gym's default command when the file is gone.
+cat > /tests/safe_pytest.py << 'SAFE_PYTEST_EOF'
+import sys
+import pytest
+sys.exit(pytest.main())
+SAFE_PYTEST_EOF
+export PYTHONSAFEPATH=1
+if [ ! -f "$ALT_PATH/run_tests.sh" ] && [ -d "$ALT_PATH/r2e_tests" ]; then
+    echo "run_tests.sh missing (deleted by the agent?) -- regenerating the R2E-Gym default command"
+    printf '%s\n' "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' .venv/bin/python -W ignore -m pytest -rA r2e_tests" > "$ALT_PATH/run_tests.sh"
+fi
+if [ -f "$ALT_PATH/run_tests.sh" ]; then
+    sed -i 's#[[:space:]]-m[[:space:]]\+pytest[[:space:]]# /tests/safe_pytest.py #' "$ALT_PATH/run_tests.sh"
+fi
+
 # Run the tests and capture output
 TEST_OUTPUT_FILE="/tmp/test_output.txt"
 if [ -f /root/run_tests.sh ]; then

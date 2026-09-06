@@ -20,8 +20,13 @@ Per task `<out>/<tasktrove path>/`:
   environment/workspace/metadata.json raw keys (instance_id, docker_image, base_commit = fix commit, problem_statement
                                       as upstream incl. the [ISSUE] wrapper, repo_name, expected_output_json, source)
                                       + tasktrove_path / tasktrove_dataset / tasktrove_base_commit for cross-reference
-  tests/test.sh, task.toml            raw templates (tt_raw_template/, verified byte-identical to the raw set)
-  instruction.md                      build_raw.py's header + the issue body with the [ISSUE] wrapper stripped
+  tests/test.sh, task.toml            raw templates (tt_raw_template/; test.sh = the raw verifier + the 2026-09-06
+                                      hardening against agent scratch files in /testbed, see the template)
+  instruction.md                      jsc/tt_prompt.py: our 4-line header + TaskTrove's workflow body from
+                                      <uploaded_files> down (issue inside <issue_description>, [ISSUE] wrapper
+                                      stripped, base commit = TaskTrove's buggy parent); TaskTrove's Environment
+                                      Setup block (clone + pip install) is EXCLUDED. Until 2026-09-06 this was the
+                                      header + the bare issue, which is what the band arms trained on.
 
 Mapping = overlap/tasktrove_v3_upstream_map.tsv (overlap/tasktrove_map.py; test files + expected output verified).
 Usage: build_tt_raw.py --out <dir> [--limit N] [--sif-list <file of cached SIF names>] --apply
@@ -29,13 +34,9 @@ Usage: build_tt_raw.py --out <dir> [--limit N] [--sif-list <file of cached SIF n
 import argparse, glob, hashlib, json, os, re, sys
 
 SP = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(SP, "jsc"))
+from tt_prompt import workflow_instruction  # type: ignore  # noqa: E402  (header + TaskTrove workflow body)
 HUB = os.path.expanduser("~/.cache/huggingface/hub")
-HEADER = """You are working in an existing Python repository checked out at `/testbed`.
-The repository is ALREADY present at the correct commit -- do NOT clone anything, and do
-not expect network access. Fix the issue described below by editing the code in
-`/testbed`.
-
-"""
 TT_DATASET = "laion/r2egym-patched-full-oracle-v3"
 
 ap = argparse.ArgumentParser()
@@ -88,9 +89,6 @@ for r in rows:
     h = hashlib.sha256(df).hexdigest()[:12]
     if sifs is not None and h not in sifs:
         nosif.append((r["path"], u["docker_image"], h))
-    ps = (u["problem_statement"] or "").strip()
-    body = re.sub(r"^\[ISSUE\]\s*", "", ps)
-    body = re.sub(r"\s*\[/ISSUE\]\s*$", "", body).strip()
     meta = {
         "instance_id": u["docker_image"], "docker_image": u["docker_image"], "base_commit": u["commit_hash"],
         "problem_statement": u["problem_statement"], "repo_name": u["repo_name"],
@@ -108,7 +106,7 @@ for r in rows:
         json.dump(meta, f, indent=2)
     open(os.path.join(d, "tests", "test.sh"), "wb").write(tpl["test.sh"])
     open(os.path.join(d, "task.toml"), "wb").write(tpl["task.toml"])
-    open(os.path.join(d, "instruction.md"), "w").write(HEADER + body + "\n")
+    open(os.path.join(d, "instruction.md"), "w").write(workflow_instruction(u["problem_statement"], r["tt_base_commit"]))
 
 print(f"mapped tasks   : {len(rows)}")
 print(f"built          : {made}")
