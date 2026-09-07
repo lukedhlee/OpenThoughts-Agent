@@ -82,6 +82,11 @@ toward saturation before entropy collapse + sane first update; add think-share b
   and signed .2 fractions; tests green. Use it as the ref for the A/B baseline (switch Jupiter's code/MarinSkyRL checkout only after the
   overfit runs end); size eps where the fraction ≈ 1 %; report bounds to Luke before launching the behavior_clip arm.
 
+## Final state 21:30 UTC 09-07 (all runs finished)
+- Five contracts on the same 160 tasks (hist_readouts/hist_sub160_five_readout.md): keep .302, drop .327, last2 .324, placeholder .314, head300 .301 — one ±.03 interval; head:300 keeps thinking at 1.00 at drop's prompt size but dies on context at keep's rate.
+- Overfit under last:2 (async_last2_lr1e6_stale2b, 10 steps): reasoning share .32 → .00 by step 9, reward flat .48 → .47 → RL under a stripped contract eliminates thinking. Hero run: keep. behavior_clip A/B still pending (branch lukedhlee/tis-ratio-tail-fractions for the baseline's tail metrics; eps sizing before the treatment arm).
+- Infra: login02 is out; bridge lives on login01 (10.128.1.1:9926, tmux apptainer_bridge_9926), JUWELS master on login01, fleets 14231158-60 on jwlogin03i:9928 until ~03:00 UTC 09-08. Use `ssh jupiter01`. Mac clock zone shifted overnight: ledger "PT" stamps after 18:00 PT 09-06 are UTC+8 local; trust UTC/CEST.
+
 ## Guardrails
 Do not launch probes or fleets; do not touch tmux hist_sequencer or bridge 9926; ssh always with BatchMode=yes; report times in
 PT; no Co-Authored-By lines in commits; no hand edits on clusters (edit locally, scp the script copies to code/snowball, commit).
