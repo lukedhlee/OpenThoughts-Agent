@@ -13,7 +13,7 @@ tokens at turns 10/20/30. Paired per-task deltas against the first probe with a 
 tasks fully sampled by both. Also writes <out>_attempts.jsonl (one record per attempt) for further analysis.
 Python 3.9 / stdlib; run on the Jupiter login node with OMP_NUM_THREADS=1 (one process, streaming).
 """
-import argparse, collections, glob, json, random, statistics, sys, time
+import argparse, collections, glob, json, os, random, statistics, sys, tarfile, time
 
 E = "/e/fscratch/reformo/lee27/experiments"
 ap = argparse.ArgumentParser()
@@ -28,9 +28,9 @@ TC_TRUE = '"task_complete": true'
 THINK_ID = 128002  # Snowball's think-start token; a completion that starts with it is a thinking turn
 
 
-def read_attempt(p):
+def read_attempt(p, data=None):
     try:
-        d = json.load(open(p))
+        d = json.loads(data) if data is not None else json.load(open(p))
     except Exception:
         return None
     task = d.get("task_name") or p.split("/eval_sessions/")[1].split("/")[1].split("__")[0]
@@ -54,14 +54,29 @@ def read_attempt(p):
 
 def load_probe(name):
     tj = f"{E}/{name}/{name}/trace_jobs"
-    files = glob.glob(f"{tj}/eval_sessions/*/*/attempts/*/result.json")
+    tar = f"{E}/{name}/{name}/trace_archive.tar"
     recs = []
     t0 = time.time()
-    for i, p in enumerate(sorted(files)):
-        rec = read_attempt(p)
-        if rec: recs.append(rec)
-        if (i + 1) % 500 == 0: sys.stderr.write(f"  {name}: {i + 1}/{len(files)} ({time.time() - t0:.0f}s)\n")
-    sys.stderr.write(f"{name}: {len(recs)} attempts read from {len(files)} result files\n")
+    if os.path.isdir(f"{tj}/eval_sessions"):
+        files = glob.glob(f"{tj}/eval_sessions/*/*/attempts/*/result.json")
+        for i, p in enumerate(sorted(files)):
+            rec = read_attempt(p)
+            if rec: recs.append(rec)
+            if (i + 1) % 500 == 0: sys.stderr.write(f"  {name}: {i + 1}/{len(files)} ({time.time() - t0:.0f}s)\n")
+        sys.stderr.write(f"{name}: {len(recs)} attempts read from {len(files)} result files\n")
+    elif os.path.isfile(tar):
+        # probe_watch archived the tree (tar of trace_jobs, one inode): stream the result.json members
+        n = 0
+        with tarfile.open(tar, "r|") as tf:
+            for m in tf:
+                if m.isfile() and m.name.endswith("/result.json") and "/eval_sessions/" in m.name and "/attempts/" in m.name:
+                    n += 1
+                    rec = read_attempt(m.name, data=tf.extractfile(m).read())
+                    if rec: recs.append(rec)
+                    if n % 500 == 0: sys.stderr.write(f"  {name}: {n} from tar ({time.time() - t0:.0f}s)\n")
+        sys.stderr.write(f"{name}: {len(recs)} attempts read from {n} result files in {tar}\n")
+    else:
+        sys.stderr.write(f"{name}: no trace_jobs tree and no trace_archive.tar\n")
     return recs
 
 
