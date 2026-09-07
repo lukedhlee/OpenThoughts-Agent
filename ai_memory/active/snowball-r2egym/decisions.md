@@ -697,3 +697,8 @@ pymethods2test-v3 .496, unitsyn-python-v4 .544; first 300 rows, TaskTrove-verbat
 an apptainer gate and adversarial Opus audits of each source. Prompt rule (prompt-reader agent on artifact cef36083): the r2egym trees'
 fixed-clauses body is the approved prompt; the "weird prompt" to avoid is the 43-word header-only prompt; synthetic sources ship their
 own instruction.md untouched.
+
+### 2026-09-06 18:20 PT — history-think probes, first-trial verification (interim)
+- Drop mode works as intended: on the seven tasks finished under both arms, the prompt at turn 10 is 13.4k tokens under drop vs 20.2k under keep (paired by task); episode input tokens 153k vs 220k median. Recorded histories keep their think spans (the stripper only touches the request).
+- New mechanism, not a bug: without re-fed reasoning the model stops thinking. Its first completion token is the think-start token (id 128002) on 100 % of turns under keep at every depth, but under drop the share falls with depth (turns 0–1 100 %, turns 6–8 ~85 %, turns 10–13 ~65 %, turn 15+ ~50 %, turn 23 ~17 %); it emits the JSON action directly. last:2 drifts the same way (turn 15 ~64 %, turn 21 ~27 %). So "drop" at inference is also "stop thinking late in the episode"; the read-out must separate the window effect from the thinking effect (P(win|done), turns, completion tokens by depth).
+- Inode reality: reformo project quota is 8.0M soft / 8.8M hard and usage was 8,085,161 at 16:20 PT (over soft; writes work while the GPFS grace holds). Monitor now reads jutil + a touch probe; the old df -i monitor read the filesystem total and was useless.
