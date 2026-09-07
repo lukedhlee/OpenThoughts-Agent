@@ -77,8 +77,10 @@ toward saturation before entropy collapse + sane first update; add think-share b
   on 3–28 % of turns from turn 25 on (half of those never close the span) → head:300 launched as the fix candidate. Overfit runs
   under last:2: plumbing clean (masked 0, log-ratio .05), reasoning share rises .31→.42, more length-stops, sync reward .44→.39→.36
   over 3 steps, async flat — read the step tables (sync_table.sh <run>) before judging.
-- behavior_clip task: analysis in decisions.md (00:50 PT entry); per-token log-ratio script data/r2egym/jsc/logratio_dist.py still
-  needs scp + run; report eps bounds before any launch.
+- behavior_clip task: analysis in decisions.md (00:50 and 01:05 PT entries). Dumped batches carry no log-probs, so the trainer must
+  log the tail: MarinSkyRL branch lukedhlee/tis-ratio-tail-fractions (7a1cd4a4, off jupiter-parity64k) adds tis/log_ratio_abs_gt_{.05,.1,.2,.3}
+  and signed .2 fractions; tests green. Use it as the ref for the A/B baseline (switch Jupiter's code/MarinSkyRL checkout only after the
+  overfit runs end); size eps where the fraction ≈ 1 %; report bounds to Luke before launching the behavior_clip arm.
 
 ## Guardrails
 Do not launch probes or fleets; do not touch tmux hist_sequencer or bridge 9926; ssh always with BatchMode=yes; report times in
