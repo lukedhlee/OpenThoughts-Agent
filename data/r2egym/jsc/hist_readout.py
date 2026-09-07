@@ -17,7 +17,7 @@ import argparse, collections, glob, json, os, random, statistics, sys, tarfile, 
 
 E = "/e/fscratch/reformo/lee27/experiments"
 ap = argparse.ArgumentParser()
-ap.add_argument("--probes", nargs="+", required=True, help="label=probe_name ...; the first label is the reference")
+ap.add_argument("--probes", nargs="+", required=True, help="label=probe_name[+probe_name...] ...; the first label is the reference; '+' merges trees (e.g. a top-up probe on the tasks an outage left under-sampled)")
 ap.add_argument("--splits", default=None, help="name=file,name=file (task-id lists); default = one split 'all'")
 ap.add_argument("--exclude", default=None, help="task ids to drop everywhere (one per line, '#' comments)")
 ap.add_argument("--out", default=None); ap.add_argument("--min-scored", type=int, default=8)
@@ -137,7 +137,9 @@ def fmt(v, d=3):
 
 probes = []
 for arg in a.probes:
-    label, name = arg.split("=", 1); probes.append((label, name, load_probe(name)))
+    label, names = arg.split("=", 1)
+    recs = [r for name in names.split("+") for r in load_probe(name)]
+    probes.append((label, names, recs))
 exclude = set()
 if a.exclude:
     exclude = set(l.split("#")[0].strip() for l in open(a.exclude) if l.split("#")[0].strip())
