@@ -209,7 +209,9 @@ def write_targets(keystrokes, cwd="/testbed"):
                 if m and ">" in sg:
                     t = m.group(1)
                     if t not in ("/dev/null", "/dev/stderr", "/dev/stdout") and not t.startswith("&"):
-                        out.append((resolve(t, cwd), how))
+                        # a diff generator redirected into a file IS the habit under test; decide it on the
+                        # segment, not the blob, or a turn that runs `git diff` anywhere taints every write in it
+                        out.append((resolve(t, cwd), "patch_out" if DIFF_PRODUCER.search(sg) else how))
                     break
             else:
                 m = re.search(r"\|\s*tee\s+(?:-a\s+)?([^\s;&|]+)", sg)
@@ -236,11 +238,12 @@ def write_targets(keystrokes, cwd="/testbed"):
     return out, cwd
 
 
-def is_patch_file(path, keystrokes=""):
-    """the write landed in a file holding a DIFF rather than source."""
-    if path and PATCH_NAME.search(os.path.basename(path.strip("'\""))):
+def is_patch_file(path, how=""):
+    """the write landed in a file holding a DIFF rather than source: the name says so, or the segment that wrote it
+    was a diff generator (`git diff > f`, `diff -u a b > f`, `git format-patch`)."""
+    if how == "patch_out":
         return True
-    return bool(path and DIFF_PRODUCER.search(keystrokes or ""))
+    return bool(path and PATCH_NAME.search(os.path.basename(path.strip("'\""))))
 
 
 def attempt_flags(cmds, cwd="/testbed"):
@@ -263,7 +266,7 @@ def attempt_flags(cmds, cwd="/testbed"):
                 if how == "patch_apply":
                     f["edit_src"] = True          # applying a patch mutates the tree
                 continue
-            if is_patch_file(path, c):
+            if is_patch_file(path, how):
                 f["patch_file"] = True
                 # a .patch file is itself a scratch write unless it sits over source
             if _is_scratch(path):
@@ -299,7 +302,12 @@ CASES = [
     ("cat > /tmp/fix.py << 'EOF'\nwith open('pandas/core/algorithms.py','w') as f:\n    f.write(new)\nEOF", "edit_src"),
     ("cd /testbed && cat > reproduce_issue.py << 'EOF'\nprint(1)\nEOF", "write_scratch"),
     ("cd /testbed/pandas/core\ncat > frame.py << 'EOF'\nx\nEOF", "edit_src"),
+    # a blob that inspects with `git diff` AND rewrites source must not mark the source write as a patch file
+    ("git diff --stat\ncat > /testbed/sympy/core/expr.py << 'EOF'\nx\nEOF", "edit_src"),
 ]
+
+NOT_PATCH = ["git diff --stat\ncat > /testbed/sympy/core/expr.py << 'EOF'\nx\nEOF",
+             "cat > /testbed/reproduce_issue.py << 'EOF'\nprint(1)\nEOF"]
 
 if __name__ == "__main__":
     bad = 0
@@ -310,7 +318,11 @@ if __name__ == "__main__":
         if not ok:
             bad += 1
             print("FAIL want=%s got=%s :: %s" % (want, got, c.replace("\n", "\\n")[:90]))
-    print("cases: %d, failures: %d" % (len(CASES), bad))
+    for c in NOT_PATCH:
+        if attempt_flags([c])[0]["patch_file"]:
+            bad += 1
+            print("FAIL patch_file should be False :: %s" % c.replace("\n", "\\n")[:90])
+    print("cases: %d, failures: %d" % (len(CASES) + len(NOT_PATCH), bad))
     try:
         import sys
         sys.path.insert(0, "/e/data1/mmlaion/lee27/experiments/hist_analysis")
