@@ -13,7 +13,7 @@ last:2 (two most recent kept). Harness switch HARBOR_TERMINUS2_HISTORY_THINK (ha
 Decision rule Luke set: drop holds pass@8 within ~.04 of keep with fewer context deaths → RL under the dropped contract;
 hard drop → last:2; both fail → the SFT side (Ben). Ben's teacher (DeepSeek-V3.2) stripped prior reasoning; Marin re-feeds it.
 
-Trial-level result already known (per arm: scored / successes / trial pass / median turns): keep 3521/975/.277/23,
+Per-split result already computed from the pass8 tables (see decisions.md entry 22:10 PT: drop +.014, last2 +.018 overall vs keep, ctx deaths .70 → .64, turns 24 → 33; last:2 recommended, drop alternative). Trial-level result already known (per arm: scored / successes / trial pass / median turns): keep 3521/975/.277/23,
 drop 3517/1012/.288/32, last2 3520/1028/.292/33. Mechanism found on first trials: without re-fed reasoning the model
 progressively stops thinking (first completion token = think-start id 128002 on 100 % of turns under keep at any depth; under
 drop ~85 % at turns 6–8, ~65 % at 10–13, ~50 % by turn 15, ~17 % by turn 23; last:2 drifts the same way). The report must
