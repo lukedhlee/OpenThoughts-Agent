@@ -739,3 +739,38 @@ Luke: "can you do the overfitting run now". clone_sync.sh from snowball_overfit3
 - DCAgent2/nl2bash-tasks-cleaned-oracle-v2 (1,498 rows): NOT usable; exclusion cannot rescue it. Grader = subset match of one captured output file (order ignored 983/983, extras free 1497/1498, 202 tasks with a provably droppable sort/head/uniq); "oracle-v2" solutions call /tests/setup_seeds.sh which no task ships → oracle 18/300 as shipped, 227/300 repaired; 93 % of instructions tell the agent to invent fixtures whose exact contents the expected output encodes; ~1/3 of a 60-task read unwinnable or coin-flip. Clean: 0 TB2 overlap (90 tasks), low duplication, no leaks. Snowball's 5x over Coder most likely learned output protocol. Files in scratchpad adv2_nl2bash/ (REPORT refused by a harness rule; findings in the agent's final message, ledger here).
 - TWO GENERALISING HOLES (ours to fix, harbor apptainer path): (1) harbor reads /logs/verifier/reward.json before reward.txt and test.sh never writes it → planting reward.json pays 1 on any source whose test.sh writes only reward.txt (our r2egym verifier included) — grep the band arms' trajectories for writes under /logs/verifier; (2) restart_environment is a dead key on apptainer, every verifier runs in the agent's container → worker fix: fresh instance for verify, wipe /tests and /logs/verifier before upload, /app off the grader path, absolute-path interpreter, junitxml vs baked-in test count. This fix rescues scaffold-v3 + multifile-v3 (~8k clean easy tasks).
 - Shortlist final: bugsinpy rejected (content), nl2bash rejected (grader), scaffold + multifile usable after the worker fix.
+
+## 2026-09-06 23:15 PT — RL stays on the re-feeding contract (`keep`); the dropped contract passes the rule and is still the wrong trade
+
+The three history-think arms tabled (`experiments/2026-09-06_history_think_probe.md`; report artifact 689872ed). `drop` clears the rule
+Luke set — per-task pass +.014 [−.003, +.031] paired on 421 tasks, context deaths 77.9 → 72.7 % — and I am recommending against it anyway,
+because that +.014 is the residue of two much larger effects: −1.9 pts from the model losing its own reasoning, +5.2 pts from the freed
+window, −2.3 pts that `keep` recoups on context-death attempts whose repo is already fixed. The price of the +.014 is +44 % turns
+(24.4 → 35.1) and +48 % prompt tokens per rollout (667k → 990k), with win efficiency 11.35 → 8.19 wins per 1,000 turns; the extra 10.7
+turns are 17 % productive, 41 % idle, 41 % more searching. In a generator-bound stack that is a throughput regression bought with a gain
+whose interval touches zero. Beat: adopting `drop` on the rule as written (the rule measured a cancellation, not an equivalence);
+`last:2` as a fallback (it recovers 93 % of the token saving and none of the thinking — a replicate of `drop`, not a middle setting).
+
+Mechanism, which is why this generalises: stripping the spans makes the model **stop thinking**, and the cause is self-imitation, not long
+context. `keep` holds 95.7 % thinking turns past 56k tokens of prompt, so context alone never stops it; inside `drop`, depth predicts the
+decay ~3× more strongly than prompt length. What it loses is **pending intentions, not facts** — facts are in the terminal and the terminal
+is re-fed; a decision made and not yet executed lives only in the think block. Signature: reverting its own working fix to run a control
+experiment and never restoring it (restore commands 0.97 → 1.74 per attempt; repeated-command turns 2.0 → 8.9 %; 10,073 of drop's in-loop
+turns are no-think against 176 that think). It never compensates — zero drop attempts of ~3,520 wrote a notes file and the `plan` field
+gets 30 % shorter.
+
+Next experiment, **not run**: a placeholder mode on the same `HARBOR_TERMINUS2_HISTORY_THINK` switch that replaces each old think span with
+a short marker or one-line summary instead of deleting it, so every prior turn still visibly reasons at near-zero token cost. If the
+self-imitation reading is right that gives `drop`'s turn count at `keep`'s thinking rate — the +5.2 without the −1.9. Hypothesis, not result.
+
+Two items that are not this workstream's: (a) **for Ben / the SFT side** — Marin re-feeds prior reasoning but DeepSeek-V3.2, the teacher
+that produced the Stage-3 corpus, strips it by its own chat template, so the targets were generated without the history the template always
+supplies; nobody in marin-community has recorded the mismatch and this probe does not resolve it, it only shows the model is now dependent
+on the re-feeding side of it. (b) **for harbor** — the loops in every arm start when the terminal is not at a shell prompt (open heredoc,
+pager) and the observation does not say so, which makes "send Ctrl-C and look" a locally reasonable fixed point.
+
+Data hygiene note: tonight's outputs went to fscratch because `make_snowball_probe.py` / `probe_ckpt.sh` still default there. The analysis
+extracts are on mmlaion (`experiments/hist_analysis/`); the three trace tars (1.05 TB total) are still on fscratch and need moving, and the
+launcher default needs fixing. Nothing deleted without Luke.
+- 23:00 PT Luke: "launch another overfitting run with staleness 2 to accelerate our findings, in parallel" → snowball_async_last2_lr1e6_stale2 (job 1701112, 16 nodes): identical to 1700921 except trainer.fully_async.max_staleness_steps=2; same bridge 9926 (relief fleet 14229714, 32 nodes/12 h, submitted so seats outlive the hist fleets at 03:42 PT). Read the pair together: reward climb + think-share by step under last:2 at staleness 0 vs 2.
+- 22:55 PT the other session's report (artifact 689872ed, "Snowball loses its plans, not its facts") decomposes the +.014: window +5.2 pts, lost thinking −1.9, keep's ctx-death free passes −2.3; win efficiency −28 % (wins per 1,000 turns), self-imitation mechanism (think share falls with depth, not context fill; last:2 ≈ drop), drop loses pending intentions (revert-and-never-restore, repeat rate 2.0 → 8.9 %). Its recommendation: RL under keep; test a placeholder contract. My revised position: adopt it; next experiment = head:N mode (keep the first ~300 chars of each prior think span), one probe before the hero run; do not launch the hero under last:2.
