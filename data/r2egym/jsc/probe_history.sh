@@ -1,5 +1,6 @@
 #!/bin/bash
-# probe_history.sh <probe_name> <val_dir> <model_dir|base> <keep|drop|last:N> [bridge_url]
+# probe_history.sh <probe_name> <val_dir> <model_dir|base> <keep|drop|last:N|placeholder|head:N> [bridge_url]
+# (placeholder / head:N need PROBE_OVERLAY=.../harbor_overlay/014e7562 or newer)
 #
 # probe_ckpt.sh under the history-think contract: the harbor overlay that carries
 # HARBOR_TERMINUS2_HISTORY_THINK (fork commit e6adddd8) goes first on PYTHONPATH and the
@@ -14,7 +15,7 @@ OVERLAY=${PROBE_OVERLAY:-/e/project1/transfernetx/lee27/code/harbor_overlay/e6ad
 E=/e/fscratch/reformo/lee27/experiments; C=/e/project1/transfernetx/lee27/code/snowball
 PY=/e/project1/transfernetx/lee27/code/envs/snowball/bin/python; O=/e/project1/transfernetx/lee27/code/OpenThoughts-Agent
 export OMP_NUM_THREADS=1
-case "$MODE" in keep|drop|last:[0-9]*) ;; *) echo "mode must be keep, drop or last:N"; exit 1;; esac
+case "$MODE" in keep|drop|last:[0-9]*|placeholder|head:[0-9]*) ;; *) echo "mode must be keep, drop, last:N, placeholder or head:N"; exit 1;; esac
 [ -d "$OVERLAY/harbor" ] || { echo "no overlay at $OVERLAY"; exit 1; }
 MODELARG=(); [ "$M" != base ] && { [ -f "$M/config.json" ] || { echo "no config.json under $M"; exit 1; }; MODELARG=(--model "$M"); }
 python3 $C/make_snowball_probe.py --name $P --val-dir $V --k 8 --conc 256 --max-in 61440 --max-out 4096 --max-model-len 65536 \
