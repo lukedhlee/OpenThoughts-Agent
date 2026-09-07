@@ -58,6 +58,16 @@ login node with heavy Python — OMP_NUM_THREADS=1, no torch/pytest/Ray there; p
 - After tabling, move tars/tables/read-outs to /e/data1/mmlaion/lee27/experiments/<probe>/ (mmlaion is the experiments root;
   fscratch was used tonight because the launcher defaults there) and propose the launcher default fix; ask Luke before deleting.
 
+## Second audit wave (Ben's v4.8 shortlist) — done, verdicts in decisions.md (22:25 PT onward)
+bugsinpy-v4 rejected (LLM-rewritten single files, grader leaked, forgeable); nl2bash rejected (subset-match grader, fake oracle);
+scaffold-v3 + multifile-v3 usable ONLY after a worker-side verifier fix. FIRST ACTION for you: the reward.json hole — harbor reads
+/logs/verifier/reward.json before reward.txt on our apptainer path; grep the band arms' trajectories (and tonight's probes) for
+writes under /logs/verifier or "reward.json"; if the policy ever did it, the arms' rewards are contaminated. Then scope the worker
+fix (fresh instance for verify, wipe /tests + /logs/verifier, /app off PYTHONPATH, absolute python, junitxml + expected count).
+Sync overfit under last:2 is running: snowball_sync_last2_lr1e6 (job 1700921, 16 nodes, bridge 9926, fleets expire 03:42 PT);
+step table: `bash /e/project1/transfernetx/lee27/code/snowball/sync_table.sh snowball_sync_last2_lr1e6`; gate = reward climbs
+toward saturation before entropy collapse + sane first update; add think-share by step (first completion token 128002).
+
 ## Guardrails
 Do not launch probes or fleets; do not touch tmux hist_sequencer or bridge 9926; ssh always with BatchMode=yes; report times in
 PT; no Co-Authored-By lines in commits; no hand edits on clusters (edit locally, scp the script copies to code/snowball, commit).
