@@ -157,8 +157,24 @@ if a.out:
                 rr["prompt_tok_per_turn"] = (sum(r["prompt_lens"]) / len(r["prompt_lens"])) if r["prompt_lens"] else None
                 fh.write(json.dumps(rr) + "\n")
 
+def curves(recs, tasks, max_t=40):
+    """Per turn index: attempts reaching it, think share, median prompt and completion tokens (for the report's charts)."""
+    out = []
+    at = [r for r in recs if r["task"] in tasks]
+    for t in range(1, max_t + 1):
+        pl = [r["prompt_lens"][t - 1] for r in at if len(r["prompt_lens"]) >= t]
+        cl = [r["comp_lens"][t - 1] for r in at if len(r["comp_lens"]) >= t]
+        th = [r["think"][t - 1] for r in at if len(r["think"]) >= t]
+        if len(pl) < 5: break
+        out.append(dict(t=t, n=len(pl), think=(sum(th) / len(th)) if th else None, prompt_med=statistics.median(pl),
+                        comp_med=statistics.median(cl) if cl else None))
+    return out
+
+
+curve_out = {}
 lines = []
 for sname, stasks in splits.items():
+    curve_out[sname] = {label: curves(recs, stasks) for label, _, recs in probes}
     lines.append(f"\n## split {sname} ({len(stasks)} tasks)")
     lines.append("| probe | full tasks | mean per-task pass | solved>=1 | trial pass | ctx death | turns med | turns@death | done | P(win|done) | wins declared | prompt tok/turn | prompt@t10 | @t20 | @t30 | think turns | think@t10 | think@t20 | comp tok med | nulls |")
     lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
@@ -179,5 +195,6 @@ for sname, stasks in splits.items():
 text = "\n".join(lines)
 print(text)
 if a.out:
+    json.dump(curve_out, open(a.out + "_curves.json", "w"))
     open(a.out + "_readout.md", "w").write(text + "\n")
     sys.stderr.write(f"wrote {a.out}_readout.md and {a.out}_attempts.jsonl\n")
