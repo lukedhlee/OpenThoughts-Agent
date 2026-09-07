@@ -99,7 +99,7 @@ def main():
         if os.path.exists(ip): out.append("--- instruction.md (workflow arm; the header arm has only the first 4 lines + the issue)"); out.append(textwrap.indent(open(ip, errors="replace").read()[:4500], "  "))
         summ = []
         for short, prefix, tree in ARMS:
-            atts = sorted(glob.glob("%s/%s_s*/%s_s*/trace_jobs/eval_sessions/*/%s__*/attempts/*" % (E, prefix, prefix, task)), key=lambda p: int(os.path.basename(p)))
+            atts = sorted(glob.glob("%s/%s_s[0-9]/%s_s[0-9]/trace_jobs/eval_sessions/*/%s__*/attempts/*" % (E, prefix, prefix, task)), key=lambda p: int(os.path.basename(p)))
             counts, chosen = pick(atts, a.max_att)
             out.append("\n\n######## ARM %s (%s): %dW/%dL/%dN over %d attempts; showing %d" % (short, "header prompt" if short == "hd" else "workflow prompt", counts["WIN"], counts["LOSS"], counts["NULL"], len(atts), len(chosen)))
             for att, tag in chosen: digest(att, "%s-%s" % (short, tag), out)
