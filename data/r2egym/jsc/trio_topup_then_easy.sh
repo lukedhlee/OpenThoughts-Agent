@@ -3,7 +3,7 @@
 # 1. wait for the r2egym trio to table; read it out (strict min-scored 8 and relaxed 6).
 # 2. top-up: every val441 task that any arm left with < 8 scored attempts goes into a small tree; three top-up probes
 #    (keep/drop/last:2) run on it on the EXISTING 768 seats; merged read-out (base + top-up per arm).
-# 3. six easy probes (keep/drop x 3 sources) on the same seats; per-pair read-outs (full 300 and audited-clean).
+# 3. (removed) the six easy probes: cancelled after the adversarial audits disqualified all three sources.
 E=/e/fscratch/reformo/lee27/experiments; C=/e/project1/transfernetx/lee27/code/snowball; T=/e/fscratch/reformo/lee27/tasks
 O=$E/hist_readouts; A=$E/easy3_audit; X=$E; mkdir -p $O; export OMP_NUM_THREADS=1
 SPL="idval=$X/tt_v2_idval.txt,oodval=$X/tt_v2_oodval.txt,heldout=$X/tt_v2_heldout.txt"
@@ -48,17 +48,5 @@ if [ "$n" -gt 0 ]; then
   MERGE_K=snowball_hist_keep_base+snowball_hist_keep_topup; MERGE_D=snowball_hist_drop_base+snowball_hist_drop_topup; MERGE_L=snowball_hist_last2_base+snowball_hist_last2_topup
   python3 $C/hist_readout.py --probes keep=$MERGE_K drop=$MERGE_D last2=$MERGE_L --splits $SPL --out $O/hist_r2egym_merged >> $O/log 2>&1
 fi
-log "launching the six easy probes on the existing seats"
-for s in curriculumeasy:curriculum-easy pymethods2testv3:pymethods2test-v3 unitsynpythonv4:unitsyn-python-v4; do
-  short=${s%%:*}; src=${s##*:}
-  for m in keep drop; do bash $C/probe_history.sh snowball_easy2_${short}_${m}_base $T/tt-easy3/$src base $m >> $O/log 2>&1; done
-done
-sleep 180
-for s in curriculumeasy:curriculum-easy pymethods2testv3:pymethods2test-v3 unitsynpythonv4:unitsyn-python-v4; do
-  short=${s%%:*}; src=${s##*:}
-  until settled snowball_easy2_${short}_keep_base snowball_easy2_${short}_drop_base; do sleep 60; done
-  log "$src pair tabled: read-out"
-  python3 $C/hist_readout.py --probes keep=snowball_easy2_${short}_keep_base drop=snowball_easy2_${short}_drop_base --out $O/easy_${short} >> $O/log 2>&1
-  python3 $C/hist_readout.py --probes keep=snowball_easy2_${short}_keep_base drop=snowball_easy2_${short}_drop_base --exclude $A/exclude_${src}.txt --out $O/easy_${short}_clean >> $O/log 2>&1
-done
+# easy-source probes cancelled by Luke 2026-09-06 21:10 PT: the audits disqualify all three sources, no GPU hours on them.
 log ALL_DONE
