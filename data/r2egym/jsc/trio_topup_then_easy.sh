@@ -7,10 +7,18 @@
 E=/e/fscratch/reformo/lee27/experiments; C=/e/project1/transfernetx/lee27/code/snowball; T=/e/fscratch/reformo/lee27/tasks
 O=$E/hist_readouts; A=$E/easy3_audit; X=$E; mkdir -p $O; export OMP_NUM_THREADS=1
 SPL="idval=$X/tt_v2_idval.txt,oodval=$X/tt_v2_oodval.txt,heldout=$X/tt_v2_heldout.txt"
-tabled() { for p in "$@"; do [ -f $E/$p/$p/pass8_summary.json ] || [ -z "$(squeue -u $USER -h -n $p -o %T)" ] || return 1; done; return 0; }
+# settled = probe_watch has tabled ($E/<p>/pass8_summary.json) or the job is gone, AND the trace tree is either archived
+# (trace_archive.tar present, trace_jobs removed) or still a tree with the job gone for >= 15 min (tar failed or never ran).
+settled() { for p in "$@"; do
+  d=$E/$p/$p; job=$(squeue -u $USER -h -n $p -o %T)
+  { [ -f $E/$p/pass8_summary.json ] || [ -z "$job" ]; } || return 1
+  if [ -f $d/trace_archive.tar ] && [ ! -d $d/trace_jobs ]; then continue; fi
+  if [ -z "$job" ] && [ -d $d/trace_jobs ]; then m=$(( $(date +%s) - $(stat -c %Y $d/trace_jobs) )); [ $m -ge 900 ] && [ ! -f $d/trace_archive.tar ] && continue; fi
+  return 1
+done; return 0; }
 log() { echo "$(date) $*" >> $O/log; }
 log "sequencer start: waiting for the r2egym trio"
-until tabled snowball_hist_keep_base snowball_hist_drop_base snowball_hist_last2_base; do sleep 60; done
+until settled snowball_hist_keep_base snowball_hist_drop_base snowball_hist_last2_base; do sleep 60; done
 log "trio tabled: read-outs"
 python3 $C/hist_readout.py --probes keep=snowball_hist_keep_base drop=snowball_hist_drop_base last2=snowball_hist_last2_base --splits $SPL --out $O/hist_r2egym >> $O/log 2>&1
 python3 $C/hist_readout.py --probes keep=snowball_hist_keep_base drop=snowball_hist_drop_base last2=snowball_hist_last2_base --splits $SPL --min-scored 6 --out $O/hist_r2egym_min6 >> $O/log 2>&1
@@ -35,7 +43,7 @@ if [ "$n" -gt 0 ]; then
   log "top-up tree: $(ls $TT | wc -l) tasks; launching the three top-up probes on the existing seats"
   for m in keep drop last:2; do nm=${m/last:2/last2}; bash $C/probe_history.sh snowball_hist_${nm}_topup $TT base $m >> $O/log 2>&1; done
   sleep 180
-  until tabled snowball_hist_keep_topup snowball_hist_drop_topup snowball_hist_last2_topup; do sleep 60; done
+  until settled snowball_hist_keep_topup snowball_hist_drop_topup snowball_hist_last2_topup; do sleep 60; done
   log "top-ups tabled: merged read-out"
   MERGE_K=snowball_hist_keep_base+snowball_hist_keep_topup; MERGE_D=snowball_hist_drop_base+snowball_hist_drop_topup; MERGE_L=snowball_hist_last2_base+snowball_hist_last2_topup
   python3 $C/hist_readout.py --probes keep=$MERGE_K drop=$MERGE_D last2=$MERGE_L --splits $SPL --out $O/hist_r2egym_merged >> $O/log 2>&1
@@ -48,7 +56,7 @@ done
 sleep 180
 for s in curriculumeasy:curriculum-easy pymethods2testv3:pymethods2test-v3 unitsynpythonv4:unitsyn-python-v4; do
   short=${s%%:*}; src=${s##*:}
-  until tabled snowball_easy2_${short}_keep_base snowball_easy2_${short}_drop_base; do sleep 60; done
+  until settled snowball_easy2_${short}_keep_base snowball_easy2_${short}_drop_base; do sleep 60; done
   log "$src pair tabled: read-out"
   python3 $C/hist_readout.py --probes keep=snowball_easy2_${short}_keep_base drop=snowball_easy2_${short}_drop_base --out $O/easy_${short} >> $O/log 2>&1
   python3 $C/hist_readout.py --probes keep=snowball_easy2_${short}_keep_base drop=snowball_easy2_${short}_drop_base --exclude $A/exclude_${src}.txt --out $O/easy_${short}_clean >> $O/log 2>&1
