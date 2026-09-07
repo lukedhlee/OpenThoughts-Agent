@@ -26,6 +26,7 @@ a = ap.parse_args()
 
 TC_TRUE = '"task_complete": true'
 THINK_ID = 128002  # Snowball's think-start token; a completion that starts with it is a thinking turn
+ECHO_TEXT = "[reasoning omitted]"  # the placeholder mode's note; a recorded (model-emitted) turn containing it is an echo
 
 
 def read_attempt(p, data=None):
@@ -48,7 +49,8 @@ def read_attempt(p, data=None):
     last_asst = next((m for m in reversed(am) if isinstance(m, dict) and m.get("role") == "assistant"), None)
     tc = bool(last_asst and TC_TRUE in (last_asst.get("content") or "").replace(" ", "").replace('"task_complete":true', TC_TRUE))
     n_asst = sum(1 for m in am if isinstance(m, dict) and m.get("role") == "assistant")
-    return dict(task=task, reward=r, exc=e, turns=len(pl) or n_asst, prompt_lens=pl, comp_lens=cl, think=th,
+    echo = sum(1 for m in am if isinstance(m, dict) and m.get("role") == "assistant" and ECHO_TEXT in (m.get("content") or ""))
+    return dict(task=task, reward=r, exc=e, turns=len(pl) or n_asst, prompt_lens=pl, comp_lens=cl, think=th, echo=echo, n_asst=n_asst,
                 in_tok=ar.get("n_input_tokens"), out_tok=ar.get("n_output_tokens"), tc=tc)
 
 
@@ -108,6 +110,7 @@ def summarize(recs, tasks):
         v = [r["think"][k - 1] for r in at if len(r["think"]) >= k]
         return (sum(v) / len(v)) if v else None
     comp_all = [c for r in at for c in r["comp_lens"]]
+    echo_turns = sum(r.get("echo", 0) for r in at); asst_turns = sum(r.get("n_asst", 0) for r in at)
     return dict(attempts=len(at), scored=len(scored), nulls=len(at) - len(scored),
                 trial_pass=len(wins) / max(1, len(scored)),
                 ctx_death=ctx / max(1, len(at)), turns_med=statistics.median(turns) if turns else None,
@@ -119,6 +122,7 @@ def summarize(recs, tasks):
                 prompt_t10=p_at(10), prompt_t20=p_at(20), prompt_t30=p_at(30),
                 think=(sum(th_all) / len(th_all)) if th_all else None, think_t10=th_at(10), think_t20=th_at(20),
                 comp_med=statistics.median(comp_all) if comp_all else None,
+                echo=(echo_turns / asst_turns) if asst_turns else None,
                 out_tok_med=statistics.median([r["out_tok"] for r in at if r["out_tok"]]) if any(r["out_tok"] for r in at) else None)
 
 
@@ -178,8 +182,8 @@ lines = []
 for sname, stasks in splits.items():
     curve_out[sname] = {label: curves(recs, stasks) for label, _, recs in probes}
     lines.append(f"\n## split {sname} ({len(stasks)} tasks)")
-    lines.append("| probe | full tasks | mean per-task pass | solved>=1 | trial pass | ctx death | turns med | turns@death | done | P(win|done) | wins declared | prompt tok/turn | prompt@t10 | @t20 | @t30 | think turns | think@t10 | think@t20 | comp tok med | nulls |")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("| probe | full tasks | mean per-task pass | solved>=1 | trial pass | ctx death | turns med | turns@death | done | P(win|done) | wins declared | prompt tok/turn | prompt@t10 | @t20 | @t30 | think turns | think@t10 | think@t20 | comp tok med | echo | nulls |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     pt = {}
     for label, name, recs in probes:
         pt[label] = {t: v for t, v in per_task(recs, a.min_scored).items() if t in stasks}
@@ -187,7 +191,7 @@ for sname, stasks in splits.items():
         full = pt[label]
         mean_pass = (sum(full.values()) / len(full)) if full else None
         solved = sum(1 for v in full.values() if v > 0)
-        lines.append(f"| {label} | {len(full)} | {fmt(mean_pass)} | {solved} | {fmt(s['trial_pass'])} | {fmt(s['ctx_death'])} | {fmt(s['turns_med'], 0)} | {fmt(s['turns_at_death_med'], 0)} | {fmt(s['done'])} | {fmt(s['p_win_given_done'])} | {fmt(s['wins_declared'])} | {fmt(s['prompt_tok_per_turn'], 0)} | {fmt(s['prompt_t10'], 0)} | {fmt(s['prompt_t20'], 0)} | {fmt(s['prompt_t30'], 0)} | {fmt(s['think'], 2)} | {fmt(s['think_t10'], 2)} | {fmt(s['think_t20'], 2)} | {fmt(s['comp_med'], 0)} | {s['nulls']} |")
+        lines.append(f"| {label} | {len(full)} | {fmt(mean_pass)} | {solved} | {fmt(s['trial_pass'])} | {fmt(s['ctx_death'])} | {fmt(s['turns_med'], 0)} | {fmt(s['turns_at_death_med'], 0)} | {fmt(s['done'])} | {fmt(s['p_win_given_done'])} | {fmt(s['wins_declared'])} | {fmt(s['prompt_tok_per_turn'], 0)} | {fmt(s['prompt_t10'], 0)} | {fmt(s['prompt_t20'], 0)} | {fmt(s['prompt_t30'], 0)} | {fmt(s['think'], 2)} | {fmt(s['think_t10'], 2)} | {fmt(s['think_t20'], 2)} | {fmt(s['comp_med'], 0)} | {fmt(s['echo'], 4)} | {s['nulls']} |")
     ref = probes[0][0]
     for label, _, _ in probes[1:]:
         both = sorted(set(pt[ref]) & set(pt[label]))
