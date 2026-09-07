@@ -16,7 +16,9 @@ from the problem statement; `check` re-verifies). BODY, the default, is the same
 and the reproduction required to assert the issue's stated value (Luke, 2026-09-06 14:30 PT, after the paired probe's readers
 traced three losses to those clauses). The issue sits in <issue_description>, once.
 
-Library:  workflow_instruction(problem_statement, base_commit, variant="fixed"|"tasktrove") -> str   (header + body)
+Library:  workflow_instruction(problem_statement, base_commit, variant="fixed"|"tasktrove"|"inplace") -> str   (header + body)
+          "inplace" = "fixed" plus ONE sentence (INPLACE_CLAUSE, 2026-09-07): grading reads /testbed at episode end, there is no
+          patch file and no submission artifact, edit in place. Built for the idval A/B that measures whether naming it moves pass@8.
 CLI:      tt_prompt.py rewrite --src <tree> --dst <tree> [--allow <list>] [--parents <tsv>] [--test-sh <file>]
               copy a task tree and replace every instruction.md with the workflow prompt; base commit = metadata's
               tasktrove_base_commit, else <tsv> (task \t docker_image \t parent_commit ...); --test-sh also replaces
@@ -83,6 +85,16 @@ Be thorough in your exploration, testing, and reasoning. It's fine if your think
 # 15:20 PT, after the trap reader: graded tests are "not on disk and must not be searched for" (hidden-test hunting ate half an episode),
 # and edge cases limited to what the issue states + "once the reproduction passes, stop editing" (a correct fix was reverted chasing a
 # self-invented edge case). These two lines are UNPROBED; the next arm's P(win | done) and context deaths judge them.
+# The in-place clause (2026-09-07, Luke). `variant="inplace"` = BODY plus ONE added sentence, inserted after the "minimal changes"
+# line, and nothing else -- the two trees a probe compares differ by exactly this string. Hypothesis: the Stage-3 corpus told the model to
+# save its fix to a patch file, our harness reads no such file, and ~20 % of losing attempts write the fix somewhere nothing looks at
+# (09-03 pre-RL report partition; the ~5 pt pass@1 ceiling is derived in experiments/2026-09-06_history_think_probe.md, spin-off section).
+# UNPROBED until the 09-07 idval A/B reads out.
+INPLACE_CLAUSE = ("Your work is graded from the state of the files in /testbed at the end of the episode: there is no patch file and no "
+                  "submission artifact, so a diff written to a file (a .patch, a fix.diff, anything under /tmp) changes nothing -- apply "
+                  "every edit in place to the source file itself, with `sed -i`, a heredoc that rewrites the file, or a short Python "
+                  "script that reads it and writes it back.")
+
 BODY = """<uploaded_files>
 /testbed
 </uploaded_files>
@@ -126,6 +138,14 @@ Follow these steps to resolve the issue:
 Be thorough in your exploration, testing, and reasoning. It's fine if your thinking process is lengthy - quality and completeness are more important than brevity.
 """
 
+_ANCHOR = "Your task is to make the minimal changes to non-test files in the /testbed directory to ensure the <issue_description> is satisfied.\n"
+assert BODY.count(_ANCHOR) == 1
+BODY_INPLACE = BODY.replace(_ANCHOR, _ANCHOR + INPLACE_CLAUSE + "\n", 1)
+assert len(BODY_INPLACE) == len(BODY) + len(INPLACE_CLAUSE) + 1
+
+BODIES = {"fixed": BODY, "tasktrove": BODY_TT, "inplace": BODY_INPLACE}
+
+
 
 def strip_issue_wrapper(problem_statement):
     ps = (problem_statement or "").strip()
@@ -135,12 +155,12 @@ def strip_issue_wrapper(problem_statement):
 
 
 def workflow_body(problem_statement, base_commit, variant="fixed"):
-    """TaskTrove's instruction from <uploaded_files> down (wrapper stripped), no header. variant: fixed (default) | tasktrove."""
-    return (BODY if variant == "fixed" else BODY_TT).replace("{problem_statement}", strip_issue_wrapper(problem_statement)).replace("{base_commit}", base_commit).strip() + "\n"
+    """TaskTrove's instruction from <uploaded_files> down (wrapper stripped), no header. variant: fixed (default) | tasktrove | inplace."""
+    return BODIES[variant].replace("{problem_statement}", strip_issue_wrapper(problem_statement)).replace("{base_commit}", base_commit).strip() + "\n"
 
 
 def workflow_instruction(problem_statement, base_commit, variant="fixed"):
-    """The apptainer prompt: header + workflow body (fixed clauses by default). base_commit = the buggy parent (what /testbed is checked out at)."""
+    """The apptainer prompt: header + workflow body (fixed clauses by default; `inplace` adds INPLACE_CLAUSE). base_commit = the buggy parent (what /testbed is checked out at)."""
     assert re.fullmatch(r"[0-9a-f]{40}", base_commit or ""), "base_commit must be the 40-hex buggy parent commit: %r" % (base_commit,)
     return HEADER + workflow_body(problem_statement, base_commit, variant)
 
@@ -229,7 +249,7 @@ if __name__ == "__main__":
     r.add_argument("--allow", default=None); r.add_argument("--parents", default=None); r.add_argument("--test-sh", default=None)
     r.add_argument("--force", action="store_true")
     r.add_argument("--keep-instruction", action="store_true", help="control tree: copy + --test-sh only, leave instruction.md as is")
-    r.add_argument("--variant", default="fixed", choices=["fixed", "tasktrove"], help="workflow body: fixed clauses (default) or TaskTrove verbatim")
+    r.add_argument("--variant", default="fixed", choices=["fixed", "tasktrove", "inplace"], help="workflow body: fixed clauses (default), TaskTrove verbatim, or fixed + the in-place clause")
     c = sub.add_parser("check"); c.add_argument("--n", type=int, default=20)
     a = ap.parse_args()
     (cmd_rewrite if a.cmd == "rewrite" else cmd_check)(a)
