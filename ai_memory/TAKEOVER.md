@@ -68,6 +68,18 @@ Sync overfit under last:2 is running: snowball_sync_last2_lr1e6 (job 1700921, 16
 step table: `bash /e/project1/transfernetx/lee27/code/snowball/sync_table.sh snowball_sync_last2_lr1e6`; gate = reward climbs
 toward saturation before entropy collapse + sane first update; add think-share by step (first completion token 128002).
 
+## Overnight state at 00:50 PT 09-07 (Mac→Jupiter ControlMaster expired; Luke asleep)
+- Running on Jupiter unattended: snowball_sync_last2_lr1e6 (1700921, ends ~03:50 PT), snowball_async_last2_lr1e6_stale2 (1701112),
+  probes snowball_hist_placeholder_sub160 (1701150) and snowball_hist_head300_sub160 (1701286) on the 160-task subset
+  ($E/hist_sub160.txt). tmux waiters: placeholder_readout, sub160_readout (five-arm read-out → $E/hist_readouts/hist_sub160_five_readout.md),
+  hist_sequencer (merged trio read-out → hist_r2egym_merged_readout.md). probe_watch tables+archives each probe.
+- Findings so far: placeholder keeps thinking (.98 at turn 20, .96 at 30) at drop's prompt size, but the model echoes the note
+  on 3–28 % of turns from turn 25 on (half of those never close the span) → head:300 launched as the fix candidate. Overfit runs
+  under last:2: plumbing clean (masked 0, log-ratio .05), reasoning share rises .31→.42, more length-stops, sync reward .44→.39→.36
+  over 3 steps, async flat — read the step tables (sync_table.sh <run>) before judging.
+- behavior_clip task: analysis in decisions.md (00:50 PT entry); per-token log-ratio script data/r2egym/jsc/logratio_dist.py still
+  needs scp + run; report eps bounds before any launch.
+
 ## Guardrails
 Do not launch probes or fleets; do not touch tmux hist_sequencer or bridge 9926; ssh always with BatchMode=yes; report times in
 PT; no Co-Authored-By lines in commits; no hand edits on clusters (edit locally, scp the script copies to code/snowball, commit).
