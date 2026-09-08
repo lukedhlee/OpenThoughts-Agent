@@ -278,7 +278,21 @@ def summarize(trajectories: List[Dict[str, Any]]) -> Dict[str, Any]:
         if cost:
             replay.append(cost["replay_multiplier"])
     n = len(trajectories)
+    # Turn-0 fingerprints: in "text" mode vLLM applies the chat template
+    # server-side, in "tokens" mode the client applies it. If these disagree the
+    # two loops are not conditioned identically and the comparison is unfair, so
+    # record enough to check it offline.
+    fingerprints = [
+        {
+            "task": t["task"][:40],
+            "len": len(t["prompt_token_ids"][0]) if t["prompt_token_ids"] and t["prompt_token_ids"][0] else None,
+            "head": list(t["prompt_token_ids"][0][:24]) if t["prompt_token_ids"] and t["prompt_token_ids"][0] else None,
+            "tail": list(t["prompt_token_ids"][0][-8:]) if t["prompt_token_ids"] and t["prompt_token_ids"][0] else None,
+        }
+        for t in trajectories[:8]
+    ]
     return {
+        "turn0_fingerprints": fingerprints,
         "n_trajectories": n,
         "n_declined": declined,
         "decline_fraction": declined / max(n, 1),
