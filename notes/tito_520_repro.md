@@ -21,8 +21,11 @@ Three consequences follow, in the order worth acting on:
 2. **Decline probability compounds with trajectory length**, so a fixed "~20% of
    trajectories" understates it for long agentic rollouts and overstates it for short ones.
    The per-token hazard for the Snowball serving tokenizer is ≈1.7e-4.
-3. **Repair A (token-preserving serving) works and is cheap; repair B (per-turn replay)
-   is exact but costs 12× the training tokens** on a 25-turn trajectory.
+3. **Repair A (token-preserving serving) removes the failure completely** — zero declines
+   across every configuration — and slightly *improves* throughput. Its real costs are
+   elsewhere: Harbor gives up server-side templating and tool-call parsing, and the rollout
+   distribution shifts. **Repair B (per-turn replay) is exact and needs no serving change
+   but costs 12× the training tokens** on a 25-turn trajectory.
 
 ## The two failure modes are not the same bug
 
@@ -73,7 +76,7 @@ mismatch offset 13,387, 257 tokens into turn 8's completion, `[10122, 90]` → `
 
 ### Live, against vLLM on a GH200
 
-Qwen3-1.7B, `enable_thinking: false`, 32 trajectories per row, code-heavy tasks with
+Qwen3-1.7B, `enable_thinking: false`, 64 trajectories per row, code-heavy tasks with
 synthetic terminal observations fed back. `text` is Harbor's transport today; `tokens` is
 repair A. Both loops run the same tasks and seeds against the same server.
 
@@ -97,7 +100,8 @@ The 100% strict-decline column is the Qwen3 template asymmetry, not #520: for th
 family full TITO never succeeds, whatever the tokenizer does.
 
 Repair A was also consistently *faster* on the same work — 28.5 s vs 48.0 s for the
-16-turn row, and ahead at every turn count — and the mechanism shows up directly in vLLM's
+16-turn row of the 32-trajectory pass, and ahead at every turn count — and the mechanism
+shows up directly in vLLM's
 prefix-cache counters: **74.4% hit rate under text transport against 98.0% under token
 transport** (32 trajectories, 8 turns). A token-transported prompt is an exact extension of
 the previous one, so the KV prefix cache hits all the way; anything that shifts the
