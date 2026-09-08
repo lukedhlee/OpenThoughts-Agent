@@ -30,8 +30,10 @@ source $SCRATCH/miniconda3/bin/activate otagent
 - DCFT shared (read-only): `/scratch/08002/gsmyrnis/dcft_shared/`
 - Negin/Richard eval traces: `/scratch/08134/negin/dc-agent-shared/dc-agent/eval/tacc/jobs/`
 
-> **⚠ Allocation**: `CCR24067` — **107,765 SUs** available, **expires 2025-12-31**. Monitor periodically
-> (SUs are consumed per GPU-hour). Check balance: `bbalance`.
+> **⚠ Allocation**: `CCR24067` — **105,757 SUs** available, **expires 2026-12-31** (re-checked live
+> 2026-09-08). Monitor periodically (SUs are consumed per GPU-hour).
+> **`bbalance` does not exist on Vista** — the command is **`taccinfo`**, which prints the balance
+> AND the disk quotas in one block.
 >
 > **⚠ Use `gg` for builds/installs.** `uv` and other Rust tools OOM on the shared login node; use `srun -p gg`.
 
@@ -43,6 +45,13 @@ source $SCRATCH/miniconda3/bin/activate otagent
 | `/work` | 0 GB | 1,024 GB | project work — currently unused |
 
 ## Partitions & QOS
+
+> **Live QOS limits (re-read 2026-09-08 via `sacctmgr show qos`)** — note the per-user NODE caps,
+> which the table below does not carry: `qgh` 48h, 20 jobs, **96 nodes per user / 64 per job**;
+> `qgg` 48h, 20 jobs, **96 per user / 32 per job**; `qdevelopment` 2h, 1 job, **8 nodes**;
+> and a NEW **`qgb`** (Grace-Blackwell, partition `gb`, 18 nodes) 12h, 2 jobs, **18 nodes**.
+> So one job can hold at most **64 GH200s**, and one user at most 96 — a hard ceiling worth
+> checking against any multi-node plan sized on another cluster.
 
 | Partition | QOS | MaxWall | MaxJobs (running) | MaxSubmit (total) | Use |
 |---|---|---|---|---|---|
@@ -396,4 +405,19 @@ setfacl -R -d -m o::--- /path/to/dir
   if `srun`/`idev` lands on such a node, exit and request a fresh allocation.
 - **SkyRL TACC setup**: <https://github.com/NovaSky-AI/SkyRL/blob/arm/skyrl-train/scripts/tacc_setup.sh>
   (the `arm` branch has TACC-specific setup).
-- **SUs expire 2025-12-31.** Check `bbalance` periodically; request renewal if running low.
+- **SUs expire 2026-12-31** (105,757 left as of 2026-09-08). Check **`taccinfo`** — `bbalance` is
+  not installed on Vista.
+- **`vllm serve` / `api_server` rejects `--disable-log-requests`** on the installed fork wheel
+  (`0.1.dev16611+g76259c63a`); the flag is now **`--no-enable-log-requests`**. A wrong flag kills the
+  server ~10 s in, and the sbatch health loop then burns its whole retry budget — check `vllm.log`
+  for `unrecognized arguments` before assuming a slow load.
+- **vLLM startup on a GH200 is ~4-5 min** (torch import + `torch.compile` ~27 s + CUDA graphs); the
+  first health probe succeeding at ~280 s is normal, not a hang.
+- **`srun` on Vista requires `-p`, `-N` AND `-t`** — every one of them, even for `--overlap` into an
+  existing allocation. It rejects the command otherwise with a submission error, not a usage message.
+- **Serve once, probe many.** For iterative work, have the sbatch hold the server after its first
+  payload (loop until a `STOP` file) and drive further runs into the SAME allocation with
+  `srun -p <part> -N 1 -n 1 -t <hh:mm:ss> --overlap --jobid=<id> bash -c '...'`. This avoids paying
+  the multi-minute model load per iteration and does not consume another job slot.
+- **`env VAR=x cmd` fails inside `srun`** — it resolves `/home1/$USER/.local/bin/env` (not executable)
+  and exits 13. Use `bash -c "export VAR=x; cmd"` instead.
