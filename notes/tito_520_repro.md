@@ -76,17 +76,21 @@ Qwen3-1.7B, `enable_thinking: false`, 32 trajectories per row, code-heavy tasks 
 synthetic terminal observations fed back. `text` is Harbor's transport today; `tokens` is
 repair A. Both loops run the same tasks and seeds against the same server.
 
-| turns | boundaries | strict declines | of those, re-cut (#520) | repair A declines |
-| ---: | ---: | ---: | ---: | ---: |
-| 2 | 32 | 32 (100%) | 3 (9.4%) | 0 |
-| 4 | 96 | 96 (100%) | 6 (6.2%) | 0 |
-| 8 | 224 | 224 (100%) | 45 (20.1%) | 0 |
-| 16 | 480 | 480 (100%) | 60 (12.5%) | 0 |
+| turns | boundaries | strict declines | of those, re-cut (#520) | repair A declines | repair A server-echo mismatches |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 64 | 64 (100%) | 9 (14.1%) | 0 | 0 / 128 |
+| 4 | 192 | 192 (100%) | 21 (10.9%) | 0 | 0 / 256 |
+| 8 | 448 | 448 (100%) | 82 (18.3%) | 0 | 0 / 512 |
+| 16 | 960 | 960 (100%) | 98 (10.2%) | 0 | 0 / 1024 |
 
-Two things to read off this. The re-cut rate — 6–20% of boundaries — matches the 20.8%
-measured on the real Snowball trajectory, so the mechanism reproduces at the same
-magnitude on a different model and tokenizer. And repair A removed every decline across
-all 832 boundaries, with vLLM confirming it ran on the exact IDs the client sent.
+Three things to read off this. The re-cut rate — 210 of 1,664 boundaries, 12.6% — is the
+same magnitude as the 20.8% measured on the real Snowball trajectory, so the mechanism
+reproduces on a different model and a different tokenizer. Repair A removed every decline,
+and vLLM confirmed on all 1,920 requests that it ran on exactly the IDs the client sent,
+with no empty or malformed completions. And repair A is **not behaviour-neutral**: mean
+completion length fell from 288–328 tokens to 201–258, because the model is now
+conditioned on its own untouched history rather than a re-rendered one. Adopting it
+mid-project changes the rollout distribution.
 
 The 100% strict-decline column is the Qwen3 template asymmetry, not #520: for this model
 family full TITO never succeeds, whatever the tokenizer does.
