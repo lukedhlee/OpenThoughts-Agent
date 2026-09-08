@@ -114,18 +114,26 @@ the same `<|start_header_id|>assistant<|end_header_id|>` generation prompt seen 
 retained capture) and its template has no reasoning-block asymmetry. So here the strict
 decline rate *is* the #520 rate, with nothing else mixed in:
 
-| | trajectories declined | boundaries broken | classified | server-echo mismatches | prefix-cache hits |
-| --- | ---: | ---: | --- | ---: | ---: |
-| text (today) | 4 / 8 (50%) | 6 / 40 (15.0%) | all 6 `recut` | — | 89.9% |
-| tokens (repair A) | 0 / 8 | 0 / 40 | — | 0 / 48 | 93.1% |
+64 trajectories per row, both transports against the same server:
 
-15% of boundaries re-cut, against 20.8% on the real Snowball trajectory — the same
-mechanism at the same magnitude, on the same tokenizer family. Not one boundary was
-classified `template`, which is the check that the Qwen3 100% really was the template.
+| turns | text: trajectories declined | text: boundaries re-cut | repair A declines | repair A echo mismatches | replay cost |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 22 / 64 (34.4%) | 26 / 192 (13.5%) | 0 | 0 / 256 | 2.6× |
+| 8 | 52 / 64 (81.2%) | 85 / 448 (19.0%) | 0 | 0 / 512 | 4.6× |
+| 16 | 57 / 64 (89.1%) | 163 / 960 (17.0%) | 0 | 0 / 1024 | 8.6× |
 
-The prefix-cache gap here is 3.2 points rather than Qwen3's 24, confirming that most of the
-Qwen3 throughput difference was the template asymmetry and only a few points of it is #520
-itself.
+**This is the compounding, measured.** The per-boundary rate is flat at 13.5–19.0% — 274 of
+1,600 boundaries, 17.1% overall, matching the 20.8% on the real Snowball trajectory. The
+per-*trajectory* decline rate is what moves: 34% → 81% → 89% as turns double. Every single
+failure classified as `recut`, not one as `template`, which is the check that the Qwen3
+100% really was the template.
+
+Repair A declined nothing anywhere, and vLLM confirmed on all 1,792 requests that it ran on
+exactly the IDs the client sent.
+
+The prefix-cache gap here is 1.9–2.1 points (88.8→90.9, 93.9→95.8, 97.0→97.7) rather than
+Qwen3's 24, confirming that most of the Qwen3 throughput difference was the template
+asymmetry and only a couple of points of it is #520 itself.
 
 ## Repairs
 

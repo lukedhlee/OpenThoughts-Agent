@@ -23,14 +23,29 @@ P(decline) ≈ 1 − exp(−1.7e-4 × sampled tokens): near-certain for a 29k-to
 about even odds at 3k. A single "~20% of trajectories" figure will over- and under-state
 it depending on rollout length.
 
-**Token-preserving serving works.** Two agent loops against one vLLM on a GH200, same
-tasks and seeds — one resending the message list (what Harbor does today), one carrying
-the conversation as integer IDs with observations encoded against a fixed dummy base.
-Across 832 turn boundaries the token loop declined zero, with the server confirming it ran
-on exactly the IDs the client sent; the text loop re-cut 6–20% of boundaries depending on
-turn count. The token loop was also faster at every turn count (28.5 s vs 48.0 s on the
-16-turn config), which is consistent with the re-cut invalidating vLLM's prefix cache — so
-this may be costing generator throughput too.
+**The per-boundary rate is flat; the per-trajectory rate compounds.** On Llama-3.1-8B —
+same tokenizer family as our serving checkpoint, and a template with no reasoning-block
+asymmetry, so the strict decline rate *is* this bug — 64 trajectories per row:
+
+| turns | trajectories declined | boundaries re-cut |
+| ---: | ---: | ---: |
+| 4 | 22 / 64 (34.4%) | 26 / 192 (13.5%) |
+| 8 | 52 / 64 (81.2%) | 85 / 448 (19.0%) |
+| 16 | 57 / 64 (89.1%) | 163 / 960 (17.0%) |
+
+274 of 1,600 boundaries, 17.1%, against 20.8% on the retained trajectory.
+
+**Token-preserving serving works.** The same harness runs a second loop that carries the
+conversation as integer IDs, with observations encoded against a fixed dummy base. It
+declined zero across every row, with the server confirming on all 1,792 requests that it
+ran on exactly the IDs the client sent, and no empty or malformed completions. It also
+lifted vLLM's prefix-cache hit rate by about 2 points at each turn count, so the re-cut is
+costing a little generator throughput as well.
+
+One caveat worth stating: repair A is not behaviour-neutral. Mean completion length fell
+(214→197, 206→193, 201→189 tokens), because the model now conditions on its own untouched
+history rather than a re-rendered one. Adopting it mid-run changes the rollout
+distribution.
 
 **Per-turn replay costs 12×.** Training each turn against its own served prefix is exact
 and needs no serving change, but on the retained 25-turn trajectory it is 565,164
