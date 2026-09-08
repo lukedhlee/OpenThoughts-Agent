@@ -49,6 +49,58 @@ def roundtrip(tok, ids: List[int]) -> Dict[str, Any]:
     }
 
 
+def served_boundaries(tok, capture: Dict[str, Any]) -> Dict[str, Any]:
+    """Ground truth: did the served history preserve each turn's sampled IDs?
+
+    For every turn boundary, compare the next turn's served prompt against
+    ``prompt[t] + completion[t]``. Where it diverges, measure HOW MUCH was
+    re-cut -- the blast radius of one incident, which decides whether an
+    all-or-nothing decline is a proportionate response.
+    """
+    import difflib
+
+    rows, n_broken, diff_positions, context_tokens = [], 0, 0, 0
+    for detail in capture.get("rollout_details") or []:
+        p = detail.get("prompt_token_ids") or []
+        c = detail.get("completion_token_ids") or []
+        for t in range(len(c) - 1):
+            if not p[t] or not c[t] or not p[t + 1]:
+                continue
+            prev = list(p[t]) + list(c[t])
+            cur = list(p[t + 1])
+            context_tokens += len(c[t])
+            if cur[: len(prev)] == prev:
+                rows.append({"turn": t, "preserved": True, "n_sampled": len(c[t])})
+                continue
+            n_broken += 1
+            sampled = list(c[t])
+            window = cur[len(p[t]) : len(p[t]) + len(sampled) + 32]
+            sm = difflib.SequenceMatcher(a=sampled, b=window, autojunk=False)
+            same = sum(bl.size for bl in sm.get_matching_blocks())
+            differing = len(sampled) - same
+            diff_positions += differing
+            first = next((k for k, (a, b) in enumerate(zip(sampled, window)) if a != b), None)
+            rows.append({
+                "turn": t,
+                "preserved": False,
+                "n_sampled": len(sampled),
+                "differing_positions": differing,
+                "first_divergence": first,
+                "sampled_pieces": [tok.id_to_token(x) for x in sampled[max(0, (first or 0) - 2) : (first or 0) + 4]],
+                "served_pieces": [tok.id_to_token(x) for x in window[max(0, (first or 0) - 2) : (first or 0) + 4]],
+            })
+    n = len([r for r in rows])
+    return {
+        "n_boundaries": n,
+        "n_broken": n_broken,
+        "broken_fraction": n_broken / max(n, 1),
+        "differing_context_positions": diff_positions,
+        "context_tokens": context_tokens,
+        "differing_fraction_of_context": diff_positions / max(context_tokens, 1),
+        "rows": rows,
+    }
+
+
 def iter_completions(capture: Dict[str, Any]) -> Iterable[List[int]]:
     for detail in capture.get("rollout_details") or []:
         for ids in detail.get("completion_token_ids") or []:
@@ -97,6 +149,8 @@ def main() -> int:
     unstable = [r for r in per_turn if not r["stable"]]
     total_tokens = sum(r["n_ids"] for r in per_turn)
 
+    boundaries = served_boundaries(tok, capture)
+
     rng = random.Random(args.seed)
     sweep = span_sweep(tok, streams, args.span_lengths, args.span_samples, rng)
 
@@ -109,12 +163,17 @@ def main() -> int:
         "total_sampled_tokens": total_tokens,
         "unstable_per_1k_tokens": 1000 * len(unstable) / max(total_tokens, 1),
         "span_sweep": sweep,
+        "served_boundaries": boundaries,
         "examples": unstable[:10],
     }
     Path(args.out).write_text(json.dumps(result, indent=2))
 
     print(f"turns={result['n_turns']} unstable={result['n_unstable_turns']} "
           f"({result['unstable_turn_fraction']:.1%})  sampled_tokens={total_tokens}")
+    b = boundaries
+    print(f"served boundaries broken={b['n_broken']}/{b['n_boundaries']} ({b['broken_fraction']:.1%}); "
+          f"re-cut context positions {b['differing_context_positions']}/{b['context_tokens']} "
+          f"({b['differing_fraction_of_context']:.3%})")
     for row in sweep:
         print(f"  span {row['span_length']:>5}: {row['rate']:.1%} unstable ({row['unstable']}/{row['samples']})")
     print(f"wrote {args.out}")
