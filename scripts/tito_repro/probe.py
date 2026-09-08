@@ -291,6 +291,19 @@ def summarize(trajectories: List[Dict[str, Any]]) -> Dict[str, Any]:
         cost = replay_cost(p, c)
         if cost:
             replay.append(cost["replay_multiplier"])
+    # Mode B builds its own prompts, so a zero decline rate is true by
+    # construction; what has to be checked is that the SERVER ran on the ids we
+    # sent, and that the conversation stayed well formed.
+    echo_mismatches = sum(
+        1 for t in trajectories for v in (t.get("echo_mismatch") or []) if v
+    )
+    echo_checked = sum(1 for t in trajectories for v in (t.get("echo_mismatch") or []) if v is not None)
+    completion_lengths = [len(c) for t in trajectories for c in t["completion_token_ids"] if c]
+    empty_completions = sum(
+        1 for t in trajectories for c in t["completion_token_ids"] if not c
+    )
+    empty_texts = sum(1 for t in trajectories for x in t["texts"] if not x.strip())
+
     n = len(trajectories)
     # Turn-0 fingerprints: in "text" mode vLLM applies the chat template
     # server-side, in "tokens" mode the client applies it. If these disagree the
@@ -307,6 +320,11 @@ def summarize(trajectories: List[Dict[str, Any]]) -> Dict[str, Any]:
     ]
     return {
         "turn0_fingerprints": fingerprints,
+        "server_echo_checked": echo_checked,
+        "server_echo_mismatches": echo_mismatches,
+        "mean_completion_tokens": (sum(completion_lengths) / len(completion_lengths)) if completion_lengths else None,
+        "empty_completions": empty_completions,
+        "empty_texts": empty_texts,
         "n_trajectories": n,
         "n_declined": declined,
         "decline_fraction": declined / max(n, 1),
@@ -376,7 +394,10 @@ async def main_async(args) -> int:
                 f"({s['decline_fraction']:.1%})  turn_boundaries={s['n_turn_boundaries']} "
                 f"declining={s['n_declining_turn_boundaries']} ({s['turn_decline_fraction']:.1%})  "
                 f"recut={s['n_recut_turn_boundaries']} ({s['recut_fraction']:.1%})  "
-                f"kinds={s['failure_kinds']}  errors={len(errors)}",
+                f"kinds={s['failure_kinds']}  errors={len(errors)}  "
+                f"echo_bad={s['server_echo_mismatches']}/{s['server_echo_checked']}  "
+                f"mean_completion={s['mean_completion_tokens'] and round(s['mean_completion_tokens'])}  "
+                f"empty={s['empty_completions']}",
                 flush=True,
             )
 
