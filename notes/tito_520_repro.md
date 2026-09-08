@@ -116,19 +116,21 @@ decline rate *is* the #520 rate, with nothing else mixed in:
 
 64 trajectories per row, both transports against the same server:
 
-| turns | text: trajectories declined | text: boundaries re-cut | repair A declines | repair A echo mismatches | replay cost |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 4 | 22 / 64 (34.4%) | 26 / 192 (13.5%) | 0 | 0 / 256 | 2.6× |
-| 8 | 52 / 64 (81.2%) | 85 / 448 (19.0%) | 0 | 0 / 512 | 4.6× |
-| 16 | 57 / 64 (89.1%) | 163 / 960 (17.0%) | 0 | 0 / 1024 | 8.6× |
+| turns | text: trajectories declined | text: boundaries re-cut | repair A declines | repair A echo mismatches |
+| ---: | ---: | ---: | ---: | ---: |
+| 4 | 22 / 64 (34.4%) | 26 / 192 (13.5%) | 0 | 0 / 256 |
+| 8 | 52 / 64 (81.2%) | 85 / 448 (19.0%) | 0 | 0 / 512 |
+| 16 | 57 / 64 (89.1%) | 163 / 960 (17.0%) | 0 | 0 / 1024 |
+| 20 | 31 / 32 (96.9%) | 89 / 608 (14.6%) | 0 | 0 / 640 |
 
-**This is the compounding, measured.** The per-boundary rate is flat at 13.5–19.0% — 274 of
-1,600 boundaries, 17.1% overall, matching the 20.8% on the real Snowball trajectory. The
-per-*trajectory* decline rate is what moves: 34% → 81% → 89% as turns double. Every single
-failure classified as `recut`, not one as `template`, which is the check that the Qwen3
-100% really was the template.
+**This is the compounding, measured.** The per-boundary rate is flat at 13.5–19.0% — 363 of
+2,208 boundaries, 16.4% overall, matching the 20.8% on the real Snowball trajectory. The
+per-*trajectory* decline rate is what moves: **34% → 81% → 89% → 97%** as the rollout gets
+longer. At the 25-turn length of a real Snowball trajectory, declining is the norm, not the
+exception. Every single failure classified as `recut`, not one as `template`, which is the
+check that the Qwen3 100% really was the template.
 
-Repair A declined nothing anywhere, and vLLM confirmed on all 1,792 requests that it ran on
+Repair A declined nothing anywhere, and vLLM confirmed on all 2,432 requests that it ran on
 exactly the IDs the client sent.
 
 The prefix-cache gap here is 1.9–2.1 points (88.8→90.9, 93.9→95.8, 97.0→97.7) rather than

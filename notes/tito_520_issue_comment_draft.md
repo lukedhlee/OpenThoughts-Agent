@@ -32,12 +32,15 @@ asymmetry, so the strict decline rate *is* this bug — 64 trajectories per row:
 | 4 | 22 / 64 (34.4%) | 26 / 192 (13.5%) |
 | 8 | 52 / 64 (81.2%) | 85 / 448 (19.0%) |
 | 16 | 57 / 64 (89.1%) | 163 / 960 (17.0%) |
+| 20 | 31 / 32 (96.9%) | 89 / 608 (14.6%) |
 
-274 of 1,600 boundaries, 17.1%, against 20.8% on the retained trajectory.
+363 of 2,208 boundaries, 16.4%, against 20.8% on the retained trajectory. The per-boundary
+rate barely moves; the per-trajectory rate goes 34% → 97% with rollout length. At the
+25-turn length we actually run, declining is the norm.
 
 **Token-preserving serving works.** The same harness runs a second loop that carries the
 conversation as integer IDs, with observations encoded against a fixed dummy base. It
-declined zero across every row, with the server confirming on all 1,792 requests that it
+declined zero across every row, with the server confirming on all 2,432 requests that it
 ran on exactly the IDs the client sent, and no empty or malformed completions. It also
 lifted vLLM's prefix-cache hit rate by about 2 points at each turn count, so the re-cut is
 costing a little generator throughput as well.
