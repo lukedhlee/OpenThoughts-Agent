@@ -212,3 +212,36 @@ sbatch --export=ALL,DCFT=$SCRATCH/OpenThoughts-Agent-tito,MODEL=<model> \
 srun -p gh-dev -N 1 -n 1 -t 00:40:00 --overlap --jobid=<id> bash -c \
     'bash $SCRATCH/OpenThoughts-Agent-tito/scripts/tito_repro/sweep.sh'
 ```
+
+
+## Follow-up: auditing the merged fix (MarinSkyRL#521 + harbor#111)
+
+The fix that landed upstream is the same repair A validated above — and it has a defect of
+its own, verified against `marin-community/vllm@main`, not just our build.
+
+`build_continuation_prompt_token_ids` corrects for the previous turn's end-of-turn marker
+only when `previous_stop_reason` is an `int`. vLLM's `check_stop` sets `stop_reason` **only**
+when a turn ends on a configured `stop_token_ids` entry; when it ends on the model's own EOS
+— every normal chat turn — the EOS branch returns first and `stop_reason` stays `None`. The
+correction therefore never fires in production.
+
+What that costs depends on the template, and there are two distinct failure modes:
+
+| template | harbor's prefix precondition | result |
+| --- | --- | --- |
+| Qwen3 stock | **fails** — the reasoning block renders only for the *last* assistant message, so the dummy base is not a prefix of base+user | raises `ValueError`, uncaught in `Chat.chat()` → kills the trial on turn 2 |
+| `qwen3_with_thinking` / `qwen3_without_thinking` (what MarinSkyRL passes) | passes | the `\n` after `<|im_end|>` is dropped on **every** turn, silently |
+| Llama-3 / Snowball nemotron | passes | correct — the template emits nothing after `<|eot_id|>` |
+
+Measured live on Vista for the stock Qwen3 case: base 20 tokens, continued 34, diverging at
+index 13 where the base carries `<think>\n\n</think>\n\n` and the continued rendering does not.
+
+**Does the dropped separator matter?** Same conversation served both ways, same seeds, 32
+trials on Qwen3-1.7B: the first sampled token is identical in 32/32, but only 2/32
+completions are identical end to end — 94% diverge, typically 50-120 tokens in. So it is not
+a catastrophic break; it is a silent shift in the served distribution that compounds across
+turns of a rollout.
+
+None of the three guards can see it: harbor only verifies vLLM ran on the IDs harbor sent,
+SkyRL's prefix invariant holds by construction on a token-transported prompt, and
+`tito_full/success_fraction` reads 1.0 throughout.
