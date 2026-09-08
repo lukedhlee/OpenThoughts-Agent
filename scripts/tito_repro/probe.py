@@ -173,6 +173,33 @@ class ObservationEncoder:
 CHAT_KWARGS: Dict[str, Any] = {}
 
 
+async def scrape_metrics(client: httpx.AsyncClient, url: str) -> Dict[str, float]:
+    """Read the prefix-cache counters so the two transports can be compared.
+
+    A token-transported prompt is an exact extension of the previous one, so the
+    KV prefix cache should hit all the way; a re-cut invalidates it from the
+    divergence onward. If that is real it shows up here.
+    """
+    keys = ("vllm:prefix_cache_queries_total", "vllm:prefix_cache_hits_total",
+            "vllm:gpu_prefix_cache_queries_total", "vllm:gpu_prefix_cache_hits_total")
+    try:
+        r = await client.get(url, timeout=30.0)
+        r.raise_for_status()
+    except Exception:
+        return {}
+    out: Dict[str, float] = {}
+    for line in r.text.splitlines():
+        if line.startswith("#"):
+            continue
+        name = line.split("{", 1)[0].split(" ", 1)[0]
+        if name in keys:
+            try:
+                out[name] = out.get(name, 0.0) + float(line.rsplit(" ", 1)[1])
+            except (ValueError, IndexError):
+                pass
+    return out
+
+
 async def post(client: httpx.AsyncClient, url: str, body: Dict[str, Any]) -> Dict[str, Any]:
     r = await client.post(url, json=body, timeout=600.0)
     r.raise_for_status()
@@ -254,6 +281,14 @@ async def run_tokens_trajectory(
     return {"mode": "tokens", "task": task, "seed": seed, "prompt_token_ids": prompts,
             "completion_token_ids": completions, "texts": texts,
             "echo_mismatch": echo_mismatch}
+
+
+def _cache_rate(counters: Dict[str, float]) -> str:
+    for q, h in (("vllm:gpu_prefix_cache_queries_total", "vllm:gpu_prefix_cache_hits_total"),
+                 ("vllm:prefix_cache_queries_total", "vllm:prefix_cache_hits_total")):
+        if counters.get(q):
+            return f"{counters.get(h, 0.0) / counters[q]:.1%}"
+    return "n/a"
 
 
 def summarize(trajectories: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -377,8 +412,11 @@ async def main_async(args) -> int:
                         return {"mode": "error", "error": repr(exc), "prompt_token_ids": [],
                                 "completion_token_ids": [], "texts": []}
 
+            metrics_url = args.base_url.rsplit("/v1", 1)[0] + "/metrics"
+            before = await scrape_metrics(client, metrics_url)
             t0 = time.time()
             results = await asyncio.gather(*(guarded(j) for j in jobs))
+            after = await scrape_metrics(client, metrics_url)
             errors = [r for r in results if r.get("mode") == "error"]
             good = [r for r in results if r.get("mode") != "error"]
             out[mode] = {
@@ -386,6 +424,10 @@ async def main_async(args) -> int:
                 "n_errors": len(errors),
                 "errors": [e["error"] for e in errors[:5]],
                 "wall_seconds": round(time.time() - t0, 1),
+                "prefix_cache": {
+                    k: after.get(k, 0.0) - before.get(k, 0.0)
+                    for k in set(before) | set(after)
+                },
                 "trajectories": good if args.dump_trajectories else None,
             }
             s = out[mode]["summary"]
@@ -397,7 +439,8 @@ async def main_async(args) -> int:
                 f"kinds={s['failure_kinds']}  errors={len(errors)}  "
                 f"echo_bad={s['server_echo_mismatches']}/{s['server_echo_checked']}  "
                 f"mean_completion={s['mean_completion_tokens'] and round(s['mean_completion_tokens'])}  "
-                f"empty={s['empty_completions']}",
+                f"empty={s['empty_completions']}  "
+                f"cache={_cache_rate(out[mode]['prefix_cache'])}",
                 flush=True,
             )
 
