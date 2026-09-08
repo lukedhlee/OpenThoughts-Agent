@@ -107,6 +107,26 @@ Read that gap carefully on Qwen3: the template asymmetry shifts every turn's pre
 own, so most of the 24-point difference here is the template, not #520. The Llama-3.1 run
 below isolates the re-cut's own contribution.
 
+#### Llama-3.1-8B — the clean measurement
+
+Llama-3.1 shares the Snowball serving checkpoint's tokenizer family (the same 128k vocab,
+the same `<|start_header_id|>assistant<|end_header_id|>` generation prompt seen in the
+retained capture) and its template has no reasoning-block asymmetry. So here the strict
+decline rate *is* the #520 rate, with nothing else mixed in:
+
+| | trajectories declined | boundaries broken | classified | server-echo mismatches | prefix-cache hits |
+| --- | ---: | ---: | --- | ---: | ---: |
+| text (today) | 4 / 8 (50%) | 6 / 40 (15.0%) | all 6 `recut` | — | 89.9% |
+| tokens (repair A) | 0 / 8 | 0 / 40 | — | 0 / 48 | 93.1% |
+
+15% of boundaries re-cut, against 20.8% on the real Snowball trajectory — the same
+mechanism at the same magnitude, on the same tokenizer family. Not one boundary was
+classified `template`, which is the check that the Qwen3 100% really was the template.
+
+The prefix-cache gap here is 3.2 points rather than Qwen3's 24, confirming that most of the
+Qwen3 throughput difference was the template asymmetry and only a few points of it is #520
+itself.
+
 ## Repairs
 
 ### A — token-preserving serving
