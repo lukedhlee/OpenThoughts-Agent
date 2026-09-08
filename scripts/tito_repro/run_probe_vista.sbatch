@@ -77,7 +77,7 @@ echo "[tito] starting vLLM"
     --host 127.0.0.1 \
     --max-model-len "$MAX_MODEL_LEN" \
     --gpu-memory-utilization "$GPU_MEM_UTIL" \
-    --disable-log-requests \
+    --no-enable-log-requests \
     > "$OUT_DIR/vllm.log" 2>&1 &
 VLLM_PID=$!
 
