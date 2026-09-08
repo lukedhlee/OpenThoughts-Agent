@@ -22,6 +22,16 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+class UnstablePrefix(Exception):
+    """Harbor's own precondition failed: base is not a prefix of base+user."""
+
+    def __init__(self, base_ids, continued_ids, offset):
+        super().__init__("The vLLM chat template does not have a stable continuation prefix")
+        self.base_ids = base_ids
+        self.continued_ids = continued_ids
+        self.offset = offset
+
+
 # Verbatim from harbor/src/harbor/llms/lite_llm.py.
 _TOKEN_IN_TOKEN_OUT_TEMPLATE_BASE = [
     {"role": "user", "content": "I am a user."},
@@ -55,7 +65,11 @@ def build_continuation_prompt_token_ids(
         [*_TOKEN_IN_TOKEN_OUT_TEMPLATE_BASE, {"role": "user", "content": prompt}],
         True, template_options)
     if continued_ids[: len(base_ids)] != base_ids:
-        raise ValueError("The vLLM chat template does not have a stable continuation prefix")
+        # Harbor raises here. Report what actually diverged instead, so the cause
+        # is visible rather than just the symptom.
+        i = next((k for k, (a, b) in enumerate(zip(base_ids, continued_ids)) if a != b),
+                 min(len(base_ids), len(continued_ids)))
+        raise UnstablePrefix(base_ids, continued_ids, i)
 
     cut = len(base_ids)
     if (
@@ -115,9 +129,22 @@ def main() -> int:
     }
 
     # What Harbor will send for turn 1.
-    harbor_prompt = build_continuation_prompt_token_ids(
+    try:
+        harbor_prompt = build_continuation_prompt_token_ids(
         client, args.base_url, args.model, observation, prompt_ids, completion_ids,
-        choice.get("stop_reason"))
+            choice.get("stop_reason"))
+    except UnstablePrefix as exc:
+        report["harbor_precondition"] = "FAILED — build_continuation_prompt_token_ids raises"
+        report["unstable_prefix_offset"] = exc.offset
+        report["base_window"] = exc.base_ids[max(0, exc.offset - 4): exc.offset + 6]
+        report["continued_window"] = exc.continued_ids[max(0, exc.offset - 4): exc.offset + 6]
+        report["base_len"] = len(exc.base_ids)
+        report["continued_len"] = len(exc.continued_ids)
+        print(json.dumps(report, indent=2))
+        if args.out:
+            with open(args.out, "w") as fh:
+                json.dump(report, fh, indent=2)
+        return 0
 
     # Ground truth: what the chat endpoint tokenizes for the same conversation.
     canonical = tokenize_chat(
