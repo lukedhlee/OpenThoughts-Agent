@@ -37,7 +37,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from tito_checks import PREFIX, check_tito, replay_cost  # noqa: E402
+from tito_checks import (  # noqa: E402
+    PREFIX,
+    check_tito,
+    classify_prefix_failure,
+    completion_survived,
+    replay_cost,
+)
 
 # Tasks chosen to make the model emit code, paths and punctuation clusters --
 # where BPE boundaries are least stable, and what a terminal agent emits anyway.
@@ -252,7 +258,8 @@ async def run_tokens_trajectory(
 
 def summarize(trajectories: List[Dict[str, Any]]) -> Dict[str, Any]:
     reasons: Dict[str, int] = {}
-    declined, total_turns, declining_turns = 0, 0, 0
+    failure_kinds: Dict[str, int] = {}
+    declined, total_turns, declining_turns, recut_turns = 0, 0, 0, 0
     replay: List[float] = []
     examples: List[Dict[str, Any]] = []
     for traj in trajectories:
@@ -269,11 +276,18 @@ def summarize(trajectories: List[Dict[str, Any]]) -> Dict[str, Any]:
             reasons[result["reason"]] = reasons.get(result["reason"], 0) + 1
             if result["reason"] == PREFIX and len(examples) < 8:
                 examples.append({k: v for k, v in result.items() if k != "expected_ids" or True})
-        # Per-turn decline rate: check each turn boundary independently.
+        # Per-turn rates. Two different questions: does the STRICT invariant hold
+        # (what the trainer asks), and did the model's own sampled tokens survive
+        # (what #520 is about). A chat template can break the first without
+        # touching the second.
         for t in range(1, len(p)):
             prev = list(p[t - 1]) + list(c[t - 1])
             if list(p[t])[: len(prev)] != prev:
                 declining_turns += 1
+                kind = classify_prefix_failure(p[t - 1], c[t - 1], p[t])
+                failure_kinds[kind] = failure_kinds.get(kind, 0) + 1
+            if not completion_survived(p[t - 1], c[t - 1], p[t]):
+                recut_turns += 1
         cost = replay_cost(p, c)
         if cost:
             replay.append(cost["replay_multiplier"])
@@ -299,6 +313,9 @@ def summarize(trajectories: List[Dict[str, Any]]) -> Dict[str, Any]:
         "n_turn_boundaries": total_turns,
         "n_declining_turn_boundaries": declining_turns,
         "turn_decline_fraction": declining_turns / max(total_turns, 1),
+        "n_recut_turn_boundaries": recut_turns,
+        "recut_fraction": recut_turns / max(total_turns, 1),
+        "failure_kinds": failure_kinds,
         "reasons": reasons,
         "prefix_examples": examples,
         "replay_multiplier_mean": sum(replay) / len(replay) if replay else None,
@@ -358,7 +375,8 @@ async def main_async(args) -> int:
                 f"[{mode}] trajectories={s['n_trajectories']} declined={s['n_declined']} "
                 f"({s['decline_fraction']:.1%})  turn_boundaries={s['n_turn_boundaries']} "
                 f"declining={s['n_declining_turn_boundaries']} ({s['turn_decline_fraction']:.1%})  "
-                f"reasons={s['reasons']}  errors={len(errors)}",
+                f"recut={s['n_recut_turn_boundaries']} ({s['recut_fraction']:.1%})  "
+                f"kinds={s['failure_kinds']}  errors={len(errors)}",
                 flush=True,
             )
 

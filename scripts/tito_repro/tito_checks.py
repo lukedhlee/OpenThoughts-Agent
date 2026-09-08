@@ -105,6 +105,47 @@ def check_tito(
     return {"reason": OK}
 
 
+def completion_survived(prev_prompt, prev_completion, cur_prompt, slack: int = 128) -> bool:
+    """Did the model's sampled IDs survive verbatim into the next served prompt?
+
+    The strict prefix check answers "is the whole served history byte-exact",
+    which a chat template can break on its own -- Qwen3, for instance, puts an
+    empty reasoning block in the generation prompt and drops it when it renders
+    the same turn as history. That is a real decline, but it is not #520.
+
+    #520 is specifically the model's OWN sampled tokens coming back re-cut. This
+    looks only for that: the previous completion appearing contiguously in the
+    next prompt, near where it should be.
+    """
+    if not prev_completion or not cur_prompt:
+        return False
+    start = len(prev_prompt)
+    lo = max(0, start - slack)
+    hi = min(len(cur_prompt), start + slack + len(prev_completion))
+    window = list(cur_prompt[lo:hi])
+    needle = list(prev_completion)
+    n = len(needle)
+    for i in range(0, max(0, len(window) - n) + 1):
+        if window[i : i + n] == needle:
+            return True
+    return False
+
+
+def classify_prefix_failure(prev_prompt, prev_completion, cur_prompt) -> str:
+    """Where did the served history diverge: the template, or the sampled tokens?
+
+    "template" -- divergence falls in the prompt region, i.e. the harness/template
+    rendered the turn differently. "recut" -- the sampled tokens themselves came
+    back with different boundaries, which is #520.
+    """
+    prev = list(prev_prompt) + list(prev_completion)
+    cur = list(cur_prompt)
+    offset = next((i for i, (a, b) in enumerate(zip(prev, cur)) if a != b), min(len(prev), len(cur)))
+    if completion_survived(prev_prompt, prev_completion, cur_prompt):
+        return "template"
+    return "recut" if offset >= len(prev_prompt) else "template_and_recut"
+
+
 def replay_cost(prompt_token_ids: Sequence[Sequence[int]], completion_token_ids: Sequence[Sequence[int]]) -> Dict[str, float]:
     """Cost of the training-side repair: train each turn against its own served prefix.
 
