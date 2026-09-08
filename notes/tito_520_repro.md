@@ -170,12 +170,33 @@ change, but instead of one sequence of length `len(prompt[-1]) + len(completion[
 trains `n_turns` sequences. On the retained 25-turn trajectory that is **12.1×** the
 forward/backward tokens (565,164 vs 46,877).
 
-### C — the one the data suggests
+### C — count it before you fix it
 
-Neither repair addresses what actually costs us today: a two-token re-cut discards the
-whole trajectory's exact assembly, and nothing counts it. Deciding whether an
-all-or-nothing decline is proportionate — versus recording the incident and its blast
-radius — is cheaper than either repair and is a prerequisite for judging them.
+Both repairs are expensive, and the measurement that decides between them is the one nobody
+has taken: **what does the fallback actually produce?**
+
+`scripts/tito_repro/fallback_cost.py` answers it. When full TITO declines, SkyRL
+re-tokenizes the conversation text and splices the recorded completion IDs back over the
+assistant spans. Diffing that against the stream the engine really served:
+
+| | cases | served stream reproduced exactly | divergent positions |
+| --- | ---: | ---: | ---: |
+| retained arm-3 trajectory (production tokenizer + template) | 1 | 1 / 1 | 0 of 46,877 |
+| live Llama-3.1 trajectories | 24 | 22 / 24 (91.7%) | 3 of 49,408 |
+
+The re-tokenization *is* the served stream, because the server tokenized from the same text
+in the first place. So on a Llama/Nemotron-style template the fallback lands on essentially
+the sequence full TITO would have produced; the residual difference is only the two tokens
+per incident where the splice puts the sampled IDs back over the canonical ones — which is
+what TITO was trying to do anyway.
+
+That reorders the work. What a decline costs today on this model family is the *guarantee*
+and the *observability*, not a corrupted training sequence: 0.035% of context positions
+differ from what inference conditioned on. The urgent items are to count declines honestly
+and to assert that the re-tokenization reproduces the served stream — both cheap. Repair A
+becomes the right answer when that assertion starts failing, which is exactly what a
+template asymmetry like Qwen3's does: there the served stream contains tokens the
+re-render drops, and the fallback genuinely is not the served context.
 
 ## Reproducing
 

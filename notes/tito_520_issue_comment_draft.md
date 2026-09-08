@@ -50,6 +50,16 @@ One caveat worth stating: repair A is not behaviour-neutral. Mean completion len
 history rather than a re-rendered one. Adopting it mid-run changes the rollout
 distribution.
 
+**Worth checking before choosing a repair: the fallback may already land in the right
+place.** Re-tokenizing the conversation reproduced the exact stream the engine served on
+the retained trajectory (46,877 positions, zero divergence) and on 22 of 24 live
+trajectories (3 divergent positions in 49,408). That is not a coincidence — the server
+tokenized from the same text. So for a Llama/Nemotron-style template the decline costs the
+guarantee and the observability rather than a corrupted sequence; the residual difference
+is the two tokens per incident the splice restores. Where it stops being true is a template
+that renders history differently from the generation prompt, as Qwen3 does — there the
+fallback really is not the served context.
+
 **Per-turn replay costs 12×.** Training each turn against its own served prefix is exact
 and needs no serving change, but on the retained 25-turn trajectory it is 565,164
 forward/backward tokens against 46,877 for the single linear sequence.
