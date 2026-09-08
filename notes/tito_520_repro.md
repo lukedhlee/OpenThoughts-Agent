@@ -14,9 +14,10 @@ for the entire trajectory, silently, with `tis/exact_match_fraction` still readi
 Three consequences follow, in the order worth acting on:
 
 1. **A recorded capture plus its tokenizer is enough to measure this.** The isolated
-   decode/re-encode test predicts the in-context outcome exactly — 24 of 24 boundaries
-   agree on the retained trajectory. No GPU, no cluster, no live arm needed to get the
-   rate for any model.
+   decode/re-encode test predicts the in-context outcome exactly — 24 of 24 boundaries on
+   the retained Snowball trajectory, and 224 of 224 against a live vLLM (44 predicted
+   breaks, 180 predicted holds, no misses, no false alarms). No GPU, no cluster, no live
+   arm needed to get the rate for any model.
 2. **Decline probability compounds with trajectory length**, so a fixed "~20% of
    trajectories" understates it for long agentic rollouts and overstates it for short ones.
    The per-token hazard for the Snowball serving tokenizer is ≈1.7e-4.
