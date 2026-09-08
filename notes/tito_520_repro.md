@@ -96,11 +96,15 @@ The 100% strict-decline column is the Qwen3 template asymmetry, not #520: for th
 family full TITO never succeeds, whatever the tokenizer does.
 
 Repair A was also consistently *faster* on the same work — 28.5 s vs 48.0 s for the
-16-turn row, and ahead at every turn count. This is not a controlled throughput benchmark,
-but there is an obvious mechanism worth checking properly: a token-transported prompt is
-an exact extension of the previous one, so vLLM's prefix cache hits all the way, while a
-re-cut invalidates the cache from the divergence onward. If that holds, #520 is costing
-generator throughput as well as trajectory exactness.
+16-turn row, and ahead at every turn count — and the mechanism shows up directly in vLLM's
+prefix-cache counters: **74.4% hit rate under text transport against 98.0% under token
+transport** (32 trajectories, 8 turns). A token-transported prompt is an exact extension of
+the previous one, so the KV prefix cache hits all the way; anything that shifts the
+rendered history invalidates it from the divergence onward.
+
+Read that gap carefully on Qwen3: the template asymmetry shifts every turn's prefix on its
+own, so most of the 24-point difference here is the template, not #520. The Llama-3.1 run
+below isolates the re-cut's own contribution.
 
 ## Repairs
 
