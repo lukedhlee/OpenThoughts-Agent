@@ -237,7 +237,7 @@ async def run_text_trajectory(
         if t + 1 < args.turns:
             messages.append({"role": "user", "content": OBSERVATIONS[t % len(OBSERVATIONS)]})
     return {"mode": "text", "task": task, "seed": seed, "prompt_token_ids": prompts,
-            "completion_token_ids": completions, "texts": texts}
+            "completion_token_ids": completions, "texts": texts, "messages": messages}
 
 
 async def run_tokens_trajectory(
