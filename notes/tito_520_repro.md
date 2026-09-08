@@ -91,6 +91,13 @@ all 832 boundaries, with vLLM confirming it ran on the exact IDs the client sent
 The 100% strict-decline column is the Qwen3 template asymmetry, not #520: for this model
 family full TITO never succeeds, whatever the tokenizer does.
 
+Repair A was also consistently *faster* on the same work — 28.5 s vs 48.0 s for the
+16-turn row, and ahead at every turn count. This is not a controlled throughput benchmark,
+but there is an obvious mechanism worth checking properly: a token-transported prompt is
+an exact extension of the previous one, so vLLM's prefix cache hits all the way, while a
+re-cut invalidates the cache from the divergence onward. If that holds, #520 is costing
+generator throughput as well as trajectory exactness.
+
 ## Repairs
 
 ### A — token-preserving serving
