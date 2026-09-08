@@ -42,6 +42,7 @@ def main() -> int:
     ap.add_argument("--base-url", default="http://127.0.0.1:8000/v1")
     ap.add_argument("--model", required=True)
     ap.add_argument("--separator-id", type=int, default=198, help="the token harbor drops (Qwen: newline)")
+    ap.add_argument("--turn-end-id", type=int, default=151645, help="assistant end-of-turn token (Qwen: <|im_end|>)")
     ap.add_argument("--trials", type=int, default=32)
     ap.add_argument("--max-tokens", type=int, default=160)
     ap.add_argument("--temperature", type=float, default=0.7)
@@ -69,14 +70,21 @@ def main() -> int:
             {"role": "user", "content": observation},
         ]
         canonical = tokenize_chat(client, args.base_url, args.model, convo, True)
-        # Harbor's version: the separator after the assistant turn-end is missing.
-        # Find the assistant end-of-turn and drop the separator that follows it.
+        # Harbor's version drops the separator that follows the ASSISTANT turn's
+        # end-of-turn token -- not the one inside the generation prompt. Locate the
+        # assistant message's end-of-turn marker (the 3rd in this conversation:
+        # system, user, assistant, user) and remove the separator right after it.
         broken = list(canonical)
-        for j in range(len(broken) - 1, 0, -1):
-            if broken[j] == args.separator_id:
-                # the separator immediately preceding the next <|im_start|> block
-                broken.pop(j)
-                break
+        ends = [j for j, t in enumerate(broken) if t == args.turn_end_id]
+        if len(ends) < 3:
+            raise RuntimeError(f"expected >=3 end-of-turn markers, found {len(ends)}")
+        j = ends[2]
+        if broken[j + 1] != args.separator_id:
+            raise RuntimeError(
+                f"expected separator {args.separator_id} after the assistant turn-end, "
+                f"found {broken[j + 1]}"
+            )
+        broken.pop(j + 1)
 
         seed = 1000 + i
         text_a, ids_a = complete(client, args.base_url, args.model, canonical, args.max_tokens, seed, args.temperature)
