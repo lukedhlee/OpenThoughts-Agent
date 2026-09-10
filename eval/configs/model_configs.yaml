@@ -449,6 +449,15 @@ models:
     - extra_body={"chat_template_kwargs":{"enable_thinking":true}}
     extra_args: --enable-prefix-caching
 patterns:
+- match: (?i)snowball
+  profiles:
+  - default
+  trust_remote_code: true
+  tensor_parallel_size: 4
+  max_model_len: 32768
+  swap_space: 32
+  reasoning_parser: snowball
+  extra_args: --enable-prefix-caching --enforce-eager --reasoning-parser-plugin ${DCFT}/eval/vllm_plugins/snowball_reasoning_parser.py
 - match: (?i)qwen3\.5
   profiles:
   - default

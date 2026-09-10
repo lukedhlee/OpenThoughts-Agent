@@ -1,4 +1,18 @@
 patterns:
+# Snowball checkpoints (local paths carry "snowball"). Reasoning lives between
+# <|start_think|> / <|end_think|>, which no stock vLLM parser knows; the plugin
+# routes it to reasoning_content so stock Terminus-2 parses a clean action
+# (eval/vllm_plugins/snowball_reasoning_parser.py). Serve geometry below is the
+# 30B-A3B stand-in's (same as the 3[02][Bb] entry); the 67B release needs its own.
+- match: (?i)snowball
+  profiles:
+  - default
+  trust_remote_code: true
+  tensor_parallel_size: 4
+  max_model_len: 32768
+  swap_space: 32
+  reasoning_parser: snowball
+  extra_args: --enable-prefix-caching --enforce-eager --reasoning-parser-plugin ${DCFT}/eval/vllm_plugins/snowball_reasoning_parser.py
 - match: (?i)qwen3\.5
   profiles:
   - default
