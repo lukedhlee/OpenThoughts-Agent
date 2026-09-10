@@ -1,0 +1,38 @@
+[transformers] You are using a model of type `grug_moe` to instantiate a model of type ``. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+[transformers] Ignoring clean_up_tokenization_spaces=True for BPE tokenizer TokenizersBackend. The clean_up_tokenization post-processing step is designed for WordPiece tokenizers and is destructive for BPE (it strips spaces before punctuation). Set clean_up_tokenization_spaces=False to suppress this warning, or set clean_up_tokenization_spaces_for_bpe_even_though_it_will_corrupt_output=True to force cleanup anyway.
+skip_special decode check: '\n\nHello\n{'
+built in 49s, skipped=2
+session=snowball_probe_val_sum_eval_step0 limit=24576 usable=22528 attempts=672 turns=24646
+outcomes: {'AgentTimeoutError': '581 (86.5%)', None: '68 (10.1%)', 'RuntimeError': '16 (2.4%)', 'BridgeOperationTimeoutError': '4 (0.6%)', 'BridgeOperationError': '1 (0.1%)', 'AddTestsDirError': '1 (0.1%)', 'ConnectionResetError': '1 (0.1%)'}
+reward dist: {0.0: 567, 1.0: 82, None: 23}
+context-death 0 (0.0%); clean 68 (10.1%); clean&reward1 36 (5.4%); reward1 total 82
+template overhead per turn (prompt delta - retokenized obs - refed completion): p50=nan p90=nan (n=0)
+
+=== 1. FIXED COST (first prompt, tokens) ===
+per task: p50=973 p90=1134 (n=86) min=875 max=1407; share of 24576: p50=4% p90=5% (n=86); share of usable 22528: p50=4% p90=5% (n=86)
+
+=== 2. PER-TURN COST (tokens) ===
+(a) reasoning (re-fed, markers stripped): p50=239 p90=1127 (n=24646)
+(b) JSON / non-reasoning completion:       p50=402 p90=797 (n=24646)
+(c) observation fed back (incl. harness warning prefix + template): p50=353 p90=1205 (n=24646)
+whole completion as generated: p50=713 p90=1799 (n=24646); reasoning share of completion per turn: p50=36% p90=71% (n=24646); pooled 50%
+per-turn total added to window (a+b+c): p50=1176 p90=2710 (n=24646)
+by turn index (p50 r / j / o): t1: 113/316/1266 | t2: 168/346/753 | t3: 198/363/837 | t4: 282/388/553 | t5: 321/392/542 | t6: 340/398/517 | t7: 341/410/505 | t8: 328/405/468 | t9: 356/415/425 | t10: 318/411/424 | t11: 297/423/407 | t12: 288/418/398 | t13+: 237/413/261
+turns per attempt: all p50=37 p90=52 (n=672); context-death p50=nan p90=nan (n=0)
+
+=== 3. TURNS NEEDED vs AVAILABLE ===
+clean & reward=1.0: n=36 turns p50=23 p90=40 (n=36); final window tokens p50=15681 p90=21272 (n=36); completion tokens p50=21865 p90=34156 (n=36); first edit turn p50=6 p90=15 (n=36); declared task_complete 100%; exc {None: 36}
+clean & reward<1: n=32 turns p50=22 p90=33 (n=32); final window tokens p50=15080 p90=19901 (n=32); completion tokens p50=26268 p90=37516 (n=32); first edit turn p50=6 p90=16 (n=30); declared task_complete 94%; exc {None: 32}
+reward=1.0 any outcome: n=82 turns p50=33 p90=47 (n=82); final window tokens p50=18079 p90=22926 (n=82); completion tokens p50=33592 p90=41886 (n=82); first edit turn p50=6 p90=18 (n=82); declared task_complete 46%; exc {'AgentTimeoutError': 46, None: 36}
+clean & reward=1.0: total tokens processed if never summarized (fixed+reas+json+obs): p50=37213 p90=53166 (n=36); reasoning p50=11496 p90=18305 (n=36); JSON p50=9986 p90=18563 (n=36); obs p50=13929 p90=19232 (n=36)
+all attempts: never edited 20%; first edit turn p50=9 p90=28 (n=538)
+
+=== 4. WASTE ITEMS ===
+observation tokens in dumps >2k tokens: 18% of observation tokens (3.6% of turns); >4k: 0% (0.0% of turns); per-attempt share p50=16% p90=36% (n=672)
+harness warning/error boilerplate: 4.2% of observation tokens; turns with a warning block 99%; warning block size p50=16 p90=43 (n=24466)
+rejected (unparseable) turns: 5.9% of turns; their completion tokens 10.2% of completion tokens; attempts with >=1 rejected turn 81%
+turns repeating the exact previous command batch: 4.4%; repeating any earlier batch in the attempt: 5.5%
+dumps >2k by command category (share of dump tokens): explore=77%, explore+test=5%, edit+explore+run_python=4%, none=3%, edit+explore=2%, explore+run_python=2%, explore+other=1%
+dumps >2k top first-commands: [('cd /testbed', '32.0%'), ('', '3.6%'), ('ls -la', '3.4%'), ('pwd', '1.6%'), ('C-c', '1.5%'), ('cd /testbed/pandas', '1.4%'), ('ls -la src/PIL/', '1.1%'), ('cd /testbed/src/PIL', '1.0%'), ('cat /testbed/Orange/widgets/unsupervised', '0.9%'), ('cat /testbed/Orange/widgets/data/tests/t', '0.7%'), ('ls -la /testbed', '0.6%'), ('cd /app', '0.6%')]
+completions at the output cap (8192): 0.06% of turns; completions with <|start_think|> but no <|end_think|>: 0.08%; completions starting with a doubled <|start_think|>: 0.0%; n(<|start_think|>) per completion {1: 24595, 0: 51}; n(<|end_think|>) {1: 24472, 2: 119, 0: 47, 3: 2}
+rejected turns by turn index: t1=3%, t2=3%, t3=6%, t4=8%, t5=8%, t6=9%, t7=9%, t8=7%, t9=9%, t10=8%, t11=7%, t12=7%, t13=5%

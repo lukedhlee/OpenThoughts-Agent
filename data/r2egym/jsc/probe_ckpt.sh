@@ -4,7 +4,7 @@
 # bridge pinned. The export_probe.sh recipe without the checkpoint wait/export (2026-09-06). Run on the Jupiter login node.
 set -uo pipefail
 P=$1; V=$2; M=$3; B=${4:-http://10.128.1.2:9924}
-E=/e/fscratch/reformo/lee27/experiments; C=/e/project1/transfernetx/lee27/code/snowball
+E=${SNOWBALL_EXP:-/e/fscratch/reformo/lee27/experiments}; export SNOWBALL_EXP=$E; C=/e/project1/transfernetx/lee27/code/snowball
 PY=/e/project1/transfernetx/lee27/code/envs/snowball/bin/python; O=/e/project1/transfernetx/lee27/code/OpenThoughts-Agent
 export OMP_NUM_THREADS=1
 MODELARG=(); [ "$M" != base ] && { [ -f "$M/config.json" ] || { echo "no config.json under $M"; exit 1; }; MODELARG=(--model "$M"); }

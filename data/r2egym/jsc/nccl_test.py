@@ -1,0 +1,15 @@
+import os, sys, time, torch, torch.distributed as dist
+rank = int(os.environ["SLURM_PROCID"]); world = int(os.environ["SLURM_NTASKS"]); local = int(os.environ["SLURM_LOCALID"])
+os.environ.setdefault("RANK", str(rank)); os.environ.setdefault("WORLD_SIZE", str(world)); os.environ.setdefault("LOCAL_RANK", str(local))
+torch.cuda.set_device(local)
+libs = sorted({l.split()[-1] for l in open("/proc/self/maps") if "nccl" in l.lower()})
+print(f"[r{rank}] host={os.uname().nodename} torch={torch.__version__} nccl={torch.cuda.nccl.version()} libs={libs}", flush=True)
+t0 = time.time(); dist.init_process_group("nccl", timeout=__import__("datetime").timedelta(seconds=300))
+print(f"[r{rank}] init_process_group ok in {time.time()-t0:.1f}s", flush=True)
+import glob; open(f"/dev/shm/nccl_probe_r{rank}", "w").write("x"); dist.barrier(); seen = len(glob.glob("/dev/shm/nccl_probe_r*")); print(f"[r{rank}] /dev/shm sees {seen} probe files (4 per node expected if shared)", flush=True)
+x = torch.ones(1 << 20, device="cuda") * (rank + 1)
+dist.all_reduce(x); torch.cuda.synchronize(); print(f"[r{rank}] all_reduce ok sum={x[0].item():.0f} (expect {world*(world+1)//2})", flush=True)
+out = torch.empty(1 << 16, device="cuda")
+src = [torch.full((1 << 16,), float(i), device="cuda") for i in range(world)] if rank == 0 else None
+dist.scatter(out, src, src=0); torch.cuda.synchronize(); print(f"[r{rank}] scatter ok got={out[0].item():.0f}", flush=True)
+dist.barrier(); print(f"[r{rank}] DONE", flush=True); dist.destroy_process_group()

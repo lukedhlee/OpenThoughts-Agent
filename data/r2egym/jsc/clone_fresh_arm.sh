@@ -17,6 +17,8 @@ M=/e/data1/mmlaion/lee27/experiments; mkdir -p $M
 mkdir -p $M/$DST/configs $M/$DST/sbatch $M/$DST/logs && ln -s $M/$DST $E/$DST
 sed "s/$SRC/$DST/g" $E/$SRC/configs/${SRC}_rl_config.json > $E/$DST/configs/${DST}_rl_config.json
 sed "s/$SRC/$DST/g" $E/$SRC/sbatch/${SRC}_rl.sbatch > $E/$DST/sbatch/${DST}_rl.sbatch
+sed -i "s/^export HARBOR_OPENAI_CONNECT_TIMEOUT_SEC=30$/export HARBOR_OPENAI_CONNECT_TIMEOUT_SEC=120/" $E/$DST/sbatch/${DST}_rl.sbatch   # 2026-09-07 connect-timeout fix
+grep -q "HARBOR_OPENAI_CONNECT_TIMEOUT_SEC=120" $E/$DST/sbatch/${DST}_rl.sbatch || { echo "connect timeout sed failed"; exit 1; }
 python3 - $E/$DST/configs/${DST}_rl_config.json $SRC "$T" "${EXTRA[@]}" <<'PY'
 import json, sys
 p, src, T, extra = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]; c = json.load(open(p)); a = c["skyrl_hydra_args"]
@@ -25,6 +27,13 @@ def setk(prefix, val):
     i = [k for k, x in enumerate(a) if x.startswith(prefix)]; assert len(i) == 1, (prefix, i); a[i[0]] = prefix + val
 train = "%s/r2egym-tt-v2-train-x16" % T; val = "%s/r2egym-tt-v2-val441" % T
 setk("trainer.resume_mode=", "none")
+setk("trajectory_runner.process_pool.num_coordinators=", "24")  # 2026-09-07: 12 -> 24 (connect-timeout fix, see clone_resume_v2.sh)
+def setk_or_add(prefix, val):
+    i = [k for k, x in enumerate(a) if x.lstrip("+").startswith(prefix)]; assert len(i) <= 1, (prefix, i)
+    if i: a[i[0]] = "++" + prefix + val
+    else: a.append("++" + prefix + val)
+setk_or_add("terminal_bench_config.harbor.verifier_override_timeout_sec=", "2400")   # 2026-09-07: template 150 s made slow suites false zeros
+setk_or_add("terminal_bench_config.harbor.preserve_logprobs_on_timeout=", "false")   # 2026-09-07: mask verifier/agent timeouts instead of reward 0
 a[:] = [x for x in a if not x.startswith("trainer.resume_path=")]
 setk("data.train_data=", '["%s"]' % train); setk("data.val_data=", '["%s"]' % val)
 c["train_data"] = [train]; c["train_data_sources"] = [train]; c["val_data"] = [val]; c["val_data_sources"] = [val]
