@@ -57,6 +57,9 @@ setk("data.val_data=", '["%s"]' % val); c["val_data"] = [val]; c["val_data_sourc
 train = "%s/r2egym-tt-v2-train-basecurr-x16" % T   # 1,003 tasks: 728 train + 275 base-learnable rest (curriculum_build.py, 2026-09-11)
 setk("data.train_data=", '["%s"]' % train); c["train_data"] = [train]
 if "train_data_sources" in c: c["train_data_sources"] = [train]
+# a fresh arm that RESUMES on chain restart (the smoke ran resume_mode=none), KL off (Luke 2026-09-11)
+setk("trainer.resume_mode=", "latest")
+setk("trainer.algorithm.use_kl_loss=", "false"); setk("trainer.algorithm.kl_loss_coef=", "0.0")
 setk("trainer.epochs=", "3")                              # 3 epochs of 1,003 tasks / 64 = ~48 steps; max_steps 200 stays as the cap
 setk("trainer.max_steps=", "200")
 setk("trainer.train_batch_size=", "64"); setk("trainer.policy_mini_batch_size=", "64")
