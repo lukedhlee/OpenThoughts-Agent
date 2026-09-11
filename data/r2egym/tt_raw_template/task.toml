@@ -18,3 +18,9 @@ tags = [
 [verifier]
 restart_environment = false
 timeout_sec = 720.0
+# Removed from the sandbox after setup and before the agent starts, restored
+# pristine just before tests/test.sh runs. /r2e_tests holds the graded tests and
+# /workspace/metadata.json the expected pytest status map, both of which an agent
+# running as root could otherwise read or rewrite. Needs harbor with
+# [verifier].hidden_paths (lukedhlee/verifier-hidden-paths).
+hidden_paths = ["/r2e_tests", "/workspace/metadata.json"]
