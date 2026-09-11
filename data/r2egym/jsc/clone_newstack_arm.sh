@@ -37,8 +37,10 @@ sed -i "s/^#SBATCH --nodes=6$/#SBATCH --nodes=$NODES/; s/^#SBATCH --time=04:00:0
 grep -q "^#SBATCH --nodes=$NODES$" $SB && grep -q "^#SBATCH --time=12:00:00$" $SB || { echo "sbatch nodes/time sed failed"; exit 1; }
 if [ "$SPEC" = 1 ]; then
   # the EAGLE-3-capable vLLM tree shadows the venv vLLM (same commit + the grugmoe draft support), as sdon_5n_a ran it
-  sed -i "/^export HARBOR_OPENAI_CONNECT_TIMEOUT_SEC=120$/i export PYTHONPATH=$EAGLE_TREE\${PYTHONPATH:+:\$PYTHONPATH}" $SB
+  # AFTER the migration-smoke block's `export PYTHONPATH="$WORKDIR"` reset (an earlier export is wiped by it; 1762795 died that way)
+  sed -i "/^export PYTHONPATH=\"\$WORKDIR\"$/a export PYTHONPATH=$EAGLE_TREE\${PYTHONPATH:+:\$PYTHONPATH}\necho \"vllm overlay: \$(\"\$RL_PYTHON\" -c 'import vllm; print(vllm.__file__)')\"" $SB
   grep -q "^export PYTHONPATH=$EAGLE_TREE" $SB || { echo "eagle3 PYTHONPATH sed failed"; exit 1; }
+  awk "/^export PYTHONPATH=\"\$WORKDIR\"$/{r=NR} /^export PYTHONPATH=$(echo $EAGLE_TREE | sed 's#/#\\/#g')/{e=NR} END{exit !(e>r)}" $SB || { echo "eagle3 export is not after the WORKDIR reset"; exit 1; }
   EXTRA+=("++generator.engine_init_kwargs.speculative_config={method:eagle3,model:$DRAFT,num_speculative_tokens:3}")
 fi
 # the two scrollback knobs the recipe carries (MarinSkyRL b3a288bb): read whole test logs, same window on both backends
