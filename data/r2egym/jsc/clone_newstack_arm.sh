@@ -77,7 +77,13 @@ assert not any("chat_template_content_format" in x for x in a), "content-format 
 mask = ["BridgeOutageError", "BridgeOperationError", "VerifierInfrastructureError", "EnvironmentStartTimeoutError",
         "NetworkError", "ConnectionError", "RewardFileNotFoundError", "RewardFileEmptyError", "AgentEnvironmentTimeoutError",
         "ConnectionResetError", "BridgeOperationTimeoutError", "RuntimeError", "VerifierTimeoutError", "TrialNotScoredError",
-        "VerificationNotCompletedError", "ValueError", "APIConnectionError", "BadRequestError"]
+        "VerificationNotCompletedError", "ValueError", "APIConnectionError", "BadRequestError",
+        # 2026-09-11 arm C-b step 1: harbor persists the raw transport exception names (httpx ConnectTimeout /
+        # ReadError, 59 of 512 trajectories, clustered while the trainer process stalls its inference endpoint);
+        # unlisted names fall to the zero default and were trained as reward 0. Mask the transport family.
+        "ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout", "ReadError", "WriteError", "ConnectError",
+        "RemoteProtocolError", "TimeoutException", "TransportError", "OpenAITransportConnectTimeoutError",
+        "LLMRequestTimeoutError", "APITimeoutError"]
 setk("terminal_bench_config.harbor.mask_exceptions=", json.dumps(mask, separators=(",", ":")))
 zero_key = "terminal_bench_config.harbor.zero_exceptions="
 if not any(x.lstrip("+").startswith(zero_key) for x in a):
