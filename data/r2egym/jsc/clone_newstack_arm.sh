@@ -1,5 +1,8 @@
 #!/bin/bash
 # clone_newstack_arm.sh <dst_name> [submit=0] [extra hydra args...] — a FRESH arm (from the Stage-3 base) on the tt-v2 split
+# Env: NODES=40|20 (default 40; 20 = 8 policy + 12 generator, fsdp 32, 12 engines, 1,056 seats / 16 coordinators),
+#      SPEC=0|1 (default 0; 1 = serve with the adapted EAGLE-3 draft: the marin_vllm_eagle3 tree on PYTHONPATH +
+#      generator.engine_init_kwargs.speculative_config, as in snowball_ttband_sdon_5n_a; acceptance length 2.5 healthy).
 # on the NEW stack (venv snowball-v2, harbor-marin, marinskyrl-marin): clones snowball_ttband_migsmoke_v2_c (the 6-node
 # migration smoke, 2026-09-10) and grows it to the old fresh arm's size (snowball_ttband_v2train_fulldist_gmm_seats1584_x16_a):
 # 40 nodes = 16 policy + 24 generator, 1,584 seats, batch 64 x 8, 24 coordinators, ckpt every 6, HF export every 12;
@@ -15,6 +18,10 @@
 # so a shell the model killed stays a failure.
 set -euo pipefail
 SRC=snowball_ttband_migsmoke_v2_c; DST=$1; SUBMIT=${2:-0}; shift 2 2>/dev/null || shift $#; EXTRA=("$@")
+NODES=${NODES:-40}; SPEC=${SPEC:-0}
+case "$NODES" in 40) POL=16; ENG=24; FSDP=64; SEATS=1584; COORD=24;; 20) POL=8; ENG=12; FSDP=32; SEATS=1056; COORD=16;; *) echo "NODES must be 40 or 20"; exit 1;; esac
+DRAFT=/e/data1/mmlaion/lee27/eagle3/probe_adapt_20260911/checkpoints/3; EAGLE_TREE=/e/project1/transfernetx/lee27/code/src/marin_vllm_eagle3
+[ "$SPEC" = 1 ] && { [ -d $DRAFT ] && [ -d $EAGLE_TREE/vllm ] || { echo "draft or eagle3 vllm tree missing"; exit 1; }; }
 E=/e/fscratch/reformo/lee27/experiments; T=/e/fscratch/reformo/lee27/tasks; OTA=/e/project1/transfernetx/lee27/code/OpenThoughts-Agent; C=/e/project1/transfernetx/lee27/code/snowball
 case "$DST" in *"$SRC"*) echo "dst name must not contain the src name"; exit 1;; esac
 case "$DST" in *snowball_ttband*) ;; *) echo "dst must contain snowball_ttband (store_reaper)"; exit 1;; esac
@@ -26,14 +33,21 @@ mkdir -p $M/$DST/configs $M/$DST/sbatch $M/$DST/logs && ln -s $M/$DST $E/$DST
 sed "s/$SRC/$DST/g" $E/$SRC/configs/${SRC}_rl_config.json > $E/$DST/configs/${DST}_rl_config.json
 sed "s/$SRC/$DST/g" $E/$SRC/sbatch/${SRC}_rl.sbatch > $E/$DST/sbatch/${DST}_rl.sbatch
 SB=$E/$DST/sbatch/${DST}_rl.sbatch
-sed -i "s/^#SBATCH --nodes=6$/#SBATCH --nodes=40/; s/^#SBATCH --time=04:00:00$/#SBATCH --time=12:00:00/" $SB
-grep -q "^#SBATCH --nodes=40$" $SB && grep -q "^#SBATCH --time=12:00:00$" $SB || { echo "sbatch nodes/time sed failed"; exit 1; }
+sed -i "s/^#SBATCH --nodes=6$/#SBATCH --nodes=$NODES/; s/^#SBATCH --time=04:00:00$/#SBATCH --time=12:00:00/" $SB
+grep -q "^#SBATCH --nodes=$NODES$" $SB && grep -q "^#SBATCH --time=12:00:00$" $SB || { echo "sbatch nodes/time sed failed"; exit 1; }
+if [ "$SPEC" = 1 ]; then
+  # the EAGLE-3-capable vLLM tree shadows the venv vLLM (same commit + the grugmoe draft support), as sdon_5n_a ran it
+  sed -i "/^export HARBOR_OPENAI_CONNECT_TIMEOUT_SEC=120$/i export PYTHONPATH=$EAGLE_TREE\${PYTHONPATH:+:\$PYTHONPATH}" $SB
+  grep -q "^export PYTHONPATH=$EAGLE_TREE" $SB || { echo "eagle3 PYTHONPATH sed failed"; exit 1; }
+  EXTRA+=("++generator.engine_init_kwargs.speculative_config={method:eagle3,model:$DRAFT,num_speculative_tokens:3}")
+fi
 # the two scrollback knobs the recipe carries (MarinSkyRL b3a288bb): read whole test logs, same window on both backends
 sed -i "/^export HARBOR_OPENAI_CONNECT_TIMEOUT_SEC=120$/a export HARBOR_TMUX_CAPTURE_BUDGET_CHARS=400000\nexport HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000" $SB
 grep -q "^export HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000$" $SB || { echo "scrollback env sed failed"; exit 1; }
-python3 - $E/$DST/configs/${DST}_rl_config.json $SRC "$T" "${EXTRA[@]}" <<'PY'
+python3 - $E/$DST/configs/${DST}_rl_config.json $SRC "$T" "$NODES:$POL:$ENG:$FSDP:$SEATS:$COORD" "${EXTRA[@]}" <<'PY'
 import json, sys
-p, src, T, extra = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]; c = json.load(open(p)); a = c["skyrl_hydra_args"]
+p, src, T, geo, extra = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]; c = json.load(open(p)); a = c["skyrl_hydra_args"]
+NODES, POL, ENG, FSDP, SEATS, COORD = geo.split(":")
 assert not any(src in x for x in a), "src name survived the sed"
 def setk(prefix, val):
     i = [k for k, x in enumerate(a) if x.lstrip("+").startswith(prefix)]; assert len(i) == 1, (prefix, i)
@@ -43,12 +57,12 @@ setk("data.val_data=", '["%s"]' % val); c["val_data"] = [val]; c["val_data_sourc
 setk("trainer.epochs=", "3")                              # 3 epochs of 728 tasks / 64 = ~34 steps; max_steps 200 stays as the cap
 setk("trainer.max_steps=", "200")
 setk("trainer.train_batch_size=", "64"); setk("trainer.policy_mini_batch_size=", "64")
-setk("trainer.placement.policy_num_nodes=", "16"); setk("trainer.placement.ref_num_nodes=", "16")
-setk("trainer.policy.fsdp_config.fsdp_size=", "64"); setk("trainer.ref.fsdp_config.fsdp_size=", "64")
-setk("generator.num_inference_engines=", "24")            # (40 - 16) nodes x 4 GPUs / (4 dp x 1 tp)
+setk("trainer.placement.policy_num_nodes=", POL); setk("trainer.placement.ref_num_nodes=", POL)
+setk("trainer.policy.fsdp_config.fsdp_size=", FSDP); setk("trainer.ref.fsdp_config.fsdp_size=", FSDP)
+setk("generator.num_inference_engines=", ENG)             # (NODES - POL) nodes x 4 GPUs / (4 dp x 1 tp)
 setk("generator.eval_n_samples_per_prompt=", "8")
-setk("terminal_bench_config.harbor.n_concurrent_trials=", "1584")
-setk("trajectory_runner.process_pool.num_coordinators=", "24")   # 1584 / 24 = 66 trials per coordinator, the proven ceiling
+setk("terminal_bench_config.harbor.n_concurrent_trials=", SEATS)
+setk("trajectory_runner.process_pool.num_coordinators=", COORD)   # 66 trials per coordinator, the proven ceiling
 # re-sync 2026-09-11: retired engine kwarg + audited error policy (see header)
 a[:] = [x for x in a if not x.lstrip("+").startswith("generator.engine_init_kwargs.chat_template_content_format=")]
 assert not any("chat_template_content_format" in x for x in a), "content-format arg survived"
@@ -62,7 +76,7 @@ if not any(x.lstrip("+").startswith(zero_key) for x in a):
     a.append("++" + zero_key + json.dumps(["TmuxSessionEndedError"], separators=(",", ":")))
 else:
     setk(zero_key, json.dumps(["TmuxSessionEndedError"], separators=(",", ":")))
-c["num_nodes"] = 40
+c["num_nodes"] = int(NODES)
 for x in extra:
     pre = x.split("=")[0].lstrip("+") + "="; i = [k for k, y in enumerate(a) if y.lstrip("+").startswith(pre)]
     assert len(i) <= 1, (x, i)
@@ -73,7 +87,7 @@ c["skyrl_hydra_args"] = a; json.dump(c, open(p, "w"), indent=2)
 keys = ("resume", "train_data", "val_data", "staleness", "optimizer_config.lr", "run_name", "epochs", "max_steps", "train_batch", "use_tis",
         "num_inference_engines", "n_concurrent_trials", "ckpt_interval", "hf_save_interval", "eval_interval", "grouped_mm", "num_coordinators",
         "verifier_override", "preserve_logprobs", "skip_special", "collect_rollout", "policy_num_nodes", "fsdp_size",
-        "mask_exceptions", "zero_exceptions", "passthrough_exceptions")
+        "mask_exceptions", "zero_exceptions", "passthrough_exceptions", "speculative_config")
 print("model_path:", c["model_path"], "num_nodes:", c["num_nodes"]); print("arm hydra args:", *[x for x in a if any(k in x for k in keys)], sep="\n   ")
 PY
 python3 $C/fix_merged_keys.py $E/$DST/configs/${DST}_rl_config.json
