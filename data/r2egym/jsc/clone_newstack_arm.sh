@@ -6,7 +6,7 @@
 # on the NEW stack (venv snowball-v2, harbor-marin, marinskyrl-marin): clones snowball_ttband_migsmoke_v2_c (the 6-node
 # migration smoke, 2026-09-10) and grows it to the old fresh arm's size (snowball_ttband_v2train_fulldist_gmm_seats1584_x16_a):
 # 40 nodes = 16 policy + 24 generator, 1,584 seats, batch 64 x 8, 24 coordinators, ckpt every 6, HF export every 12;
-# trains 3 epochs of r2egym-tt-v2-train-x16 (728 tasks -> ~34 steps); val = r2egym-tt-v2-val441 with in-run eval OFF
+# trains 3 epochs of r2egym-tt-v2-train-basecurr-x16 (1,003 tasks -> ~48 steps); val = r2egym-tt-v2-val441 with in-run eval OFF
 # (held-out scores come from external probes on the exports, same as the old arm). Keeps the smoke's clean settings
 # (verifier 2400, preserve_logprobs_on_timeout false, connect timeout 120) and adds the two scrollback knobs the recipe
 # now carries. Derived from clone_fresh_arm.sh (store image + mount hash + mmlaion symlink).
@@ -25,7 +25,7 @@ DRAFT=/e/data1/mmlaion/lee27/eagle3/probe_adapt_20260911/checkpoints/3; EAGLE_TR
 E=/e/fscratch/reformo/lee27/experiments; T=/e/fscratch/reformo/lee27/tasks; OTA=/e/project1/transfernetx/lee27/code/OpenThoughts-Agent; C=/e/project1/transfernetx/lee27/code/snowball
 case "$DST" in *"$SRC"*) echo "dst name must not contain the src name"; exit 1;; esac
 case "$DST" in *snowball_ttband*) ;; *) echo "dst must contain snowball_ttband (store_reaper)"; exit 1;; esac
-[ -d $T/r2egym-tt-v2-train-x16 ] && [ -d $T/r2egym-tt-v2-val441 ] || { echo "task trees missing"; exit 1; }
+[ -d $T/r2egym-tt-v2-train-basecurr-x16 ] && [ -d $T/r2egym-tt-v2-val441 ] || { echo "task trees missing"; exit 1; }
 [ -d $E/$DST ] && squeue -h -u $USER -n $DST -o %i | grep -q . && { echo "$DST has a job in squeue - refusing"; exit 1; }
 M=/e/data1/mmlaion/lee27/experiments; mkdir -p $M
 [ -L $E/$DST ] && rm -f $E/$DST; rm -rf $E/$DST $M/$DST
@@ -54,7 +54,10 @@ def setk(prefix, val):
     a[i[0]] = a[i[0]][: a[i[0]].index(prefix)] + prefix + val
 val = "%s/r2egym-tt-v2-val441" % T
 setk("data.val_data=", '["%s"]' % val); c["val_data"] = [val]; c["val_data_sources"] = [val]
-setk("trainer.epochs=", "3")                              # 3 epochs of 728 tasks / 64 = ~34 steps; max_steps 200 stays as the cap
+train = "%s/r2egym-tt-v2-train-basecurr-x16" % T   # 1,003 tasks: 728 train + 275 base-learnable rest (curriculum_build.py, 2026-09-11)
+setk("data.train_data=", '["%s"]' % train); c["train_data"] = [train]
+if "train_data_sources" in c: c["train_data_sources"] = [train]
+setk("trainer.epochs=", "3")                              # 3 epochs of 1,003 tasks / 64 = ~48 steps; max_steps 200 stays as the cap
 setk("trainer.max_steps=", "200")
 setk("trainer.train_batch_size=", "64"); setk("trainer.policy_mini_batch_size=", "64")
 setk("trainer.placement.policy_num_nodes=", POL); setk("trainer.placement.ref_num_nodes=", POL)
