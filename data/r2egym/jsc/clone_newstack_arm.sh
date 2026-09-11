@@ -7,6 +7,12 @@
 # (held-out scores come from external probes on the exports, same as the old arm). Keeps the smoke's clean settings
 # (verifier 2400, preserve_logprobs_on_timeout false, connect timeout 120) and adds the two scrollback knobs the recipe
 # now carries. Derived from clone_fresh_arm.sh (store image + mount hash + mmlaion symlink).
+# 2026-09-11 re-sync onto marin main (harbor e05e2532, MarinSkyRL 4db3ab39): drops the retired
+# generator.engine_init_kwargs.chat_template_content_format arg (MarinSkyRL #545 lets vLLM own rendering; the key would now
+# reach vLLM's engine kwargs), and carries the audited error policy: the TITO prefix-mismatch ValueError and raw OpenAI transport
+# errors are masked (they were trained as reward 0), the dead ContextLengthExceededError mask entry and the removed
+# TmuxSessionLostError class are gone, and TmuxSessionEndedError (upstream's new name, classified infrastructure) is scored 0
+# so a shell the model killed stays a failure.
 set -euo pipefail
 SRC=snowball_ttband_migsmoke_v2_c; DST=$1; SUBMIT=${2:-0}; shift 2 2>/dev/null || shift $#; EXTRA=("$@")
 E=/e/fscratch/reformo/lee27/experiments; T=/e/fscratch/reformo/lee27/tasks; OTA=/e/project1/transfernetx/lee27/code/OpenThoughts-Agent; C=/e/project1/transfernetx/lee27/code/snowball
@@ -43,6 +49,19 @@ setk("generator.num_inference_engines=", "24")            # (40 - 16) nodes x 4 
 setk("generator.eval_n_samples_per_prompt=", "8")
 setk("terminal_bench_config.harbor.n_concurrent_trials=", "1584")
 setk("trajectory_runner.process_pool.num_coordinators=", "24")   # 1584 / 24 = 66 trials per coordinator, the proven ceiling
+# re-sync 2026-09-11: retired engine kwarg + audited error policy (see header)
+a[:] = [x for x in a if not x.lstrip("+").startswith("generator.engine_init_kwargs.chat_template_content_format=")]
+assert not any("chat_template_content_format" in x for x in a), "content-format arg survived"
+mask = ["BridgeOutageError", "BridgeOperationError", "VerifierInfrastructureError", "EnvironmentStartTimeoutError",
+        "NetworkError", "ConnectionError", "RewardFileNotFoundError", "RewardFileEmptyError", "AgentEnvironmentTimeoutError",
+        "ConnectionResetError", "BridgeOperationTimeoutError", "RuntimeError", "VerifierTimeoutError", "TrialNotScoredError",
+        "VerificationNotCompletedError", "ValueError", "APIConnectionError", "BadRequestError"]
+setk("terminal_bench_config.harbor.mask_exceptions=", json.dumps(mask, separators=(",", ":")))
+zero_key = "terminal_bench_config.harbor.zero_exceptions="
+if not any(x.lstrip("+").startswith(zero_key) for x in a):
+    a.append("++" + zero_key + json.dumps(["TmuxSessionEndedError"], separators=(",", ":")))
+else:
+    setk(zero_key, json.dumps(["TmuxSessionEndedError"], separators=(",", ":")))
 c["num_nodes"] = 40
 for x in extra:
     pre = x.split("=")[0].lstrip("+") + "="; i = [k for k, y in enumerate(a) if y.lstrip("+").startswith(pre)]
@@ -53,7 +72,8 @@ for x in extra:
 c["skyrl_hydra_args"] = a; json.dump(c, open(p, "w"), indent=2)
 keys = ("resume", "train_data", "val_data", "staleness", "optimizer_config.lr", "run_name", "epochs", "max_steps", "train_batch", "use_tis",
         "num_inference_engines", "n_concurrent_trials", "ckpt_interval", "hf_save_interval", "eval_interval", "grouped_mm", "num_coordinators",
-        "verifier_override", "preserve_logprobs", "skip_special", "collect_rollout", "policy_num_nodes", "fsdp_size")
+        "verifier_override", "preserve_logprobs", "skip_special", "collect_rollout", "policy_num_nodes", "fsdp_size",
+        "mask_exceptions", "zero_exceptions", "passthrough_exceptions")
 print("model_path:", c["model_path"], "num_nodes:", c["num_nodes"]); print("arm hydra args:", *[x for x in a if any(k in x for k in keys)], sep="\n   ")
 PY
 python3 $C/fix_merged_keys.py $E/$DST/configs/${DST}_rl_config.json
