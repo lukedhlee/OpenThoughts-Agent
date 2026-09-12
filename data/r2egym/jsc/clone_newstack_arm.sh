@@ -119,7 +119,9 @@ diff <(sed "s/$DST/NAME/g; s/$NEWH/HASH/g" $E/$DST/configs/${DST}_rl_config.json
 echo "--- sbatch diff vs smoke c:"; diff <(sed "s/$DST/NAME/g; s/$NEWH/HASH/g" $SB) <(sed "s/$SRC/NAME/g; s/$OLDH/HASH/g" $E/$SRC/sbatch/${SRC}_rl.sbatch) || true
 # 2026-09-11: trial dirs on the head node's tmpfs, not inside the fuse2fs artifact store (5 mkdir+touch took 17 s there vs
 # 0.007 s on /dev/shm; every trial-lifecycle file op ran on the coordinator event loop and stalled ~65 other trials). The store
-# mount stays as launcher bookkeeping; nothing reads it during training. Trial dirs older than 90 min are pruned every 5 min.
+# mount stays as launcher bookkeeping; nothing reads it during training. A trial dir is ~40 MB and a 1,056-seat arm finishes
+# ~5,000 trials/h (~200 GB/h), so finished trials (lifecycle-result.json older than 10 min) are pruned every 60 s and the
+# oldest 200 dirs go whenever /dev/shm passes 75 % (22:50 PT: the 90-min age rule filled S3's 239 GB tmpfs in 80 min).
 SHM=/dev/shm/otagent_trials/$DST/trace_jobs
 sed -i "s#\(++terminal_bench_config.trials_dir=\)[^\"]*#\1$SHM#" $E/$DST/configs/${DST}_rl_config.json
 grep -q "trials_dir=$SHM\"" $E/$DST/configs/${DST}_rl_config.json || { echo "trials_dir sed failed"; exit 1; }
@@ -130,7 +132,7 @@ b = open(sb).read()
 marker = 'mkdir -p "$ARTIFACT_STORE_MOUNT/trace_jobs"\n'
 assert b.count(marker) == 1, "store marker missing"
 ins = (marker + f'SHM_TRIALS={shm}; mkdir -p "$SHM_TRIALS"; echo "trials_dir on tmpfs: $SHM_TRIALS ($(df -h /dev/shm | tail -n 1))"\n'
-       + '( while true; do find "$SHM_TRIALS" -mindepth 1 -maxdepth 1 -type d -mmin +90 -exec rm -rf {} + 2>/dev/null; sleep 300; done ) &\n')
+       + '( while true; do find "$SHM_TRIALS" -mindepth 3 -maxdepth 3 -name lifecycle-result.json -mmin +10 -printf "%h\\n" 2>/dev/null | sed "s#/attempts/[0-9]*$##" | sort -u | xargs -r rm -rf; u=$(df /dev/shm | tail -n 1 | awk "{print \\$5}" | tr -d %); if [ "$u" -gt 75 ]; then ls -tr "$SHM_TRIALS" | head -n 200 | sed "s#^#$SHM_TRIALS/#" | xargs -r rm -rf; fi; sleep 60; done ) &\\n')
 open(sb, "w").write(b.replace(marker, ins))
 PYSHM
 grep -q "SHM_TRIALS=$SHM" $SB || { echo "sbatch tmpfs insert failed"; exit 1; }
