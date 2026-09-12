@@ -19,7 +19,7 @@
 set -euo pipefail
 SRC=snowball_ttband_migsmoke_v2_c; DST=$1; SUBMIT=${2:-0}; shift 2 2>/dev/null || shift $#; EXTRA=("$@")
 NODES=${NODES:-40}; SPEC=${SPEC:-0}
-case "$NODES" in 40) POL=16; ENG=24; FSDP=64; SEATS=1584; COORD=24;; 20) POL=8; ENG=12; FSDP=32; SEATS=1056; COORD=16;; *) echo "NODES must be 40 or 20"; exit 1;; esac
+case "$NODES" in 40) POL=16; ENG=24; FSDP=64; SEATS=1584; COORD=24;; 20) POL=8; ENG=12; FSDP=32; SEATS=1056; COORD=16;; 12) POL=4; ENG=8; FSDP=16; SEATS=1024; COORD=16;; *) echo "NODES must be 40, 20 or 12"; exit 1;; esac
 DRAFT=/e/data1/mmlaion/lee27/eagle3/probe_adapt_20260911/checkpoints/3; EAGLE_TREE=/e/project1/transfernetx/lee27/code/src/marin_vllm_eagle3
 [ "$SPEC" = 1 ] && { [ -d $DRAFT ] && [ -d $EAGLE_TREE/vllm ] || { echo "draft or eagle3 vllm tree missing"; exit 1; }; }
 E=/e/fscratch/reformo/lee27/experiments; T=/e/fscratch/reformo/lee27/tasks; OTA=/e/project1/transfernetx/lee27/code/OpenThoughts-Agent; C=/e/project1/transfernetx/lee27/code/snowball
@@ -117,4 +117,22 @@ grep -q "ARTIFACT_STORE_MOUNT=\"/tmp/otagent-artifact-stores/$DST-$NEWH\"" $SB
 echo "--- config diff vs smoke c (names/hashes normalised):"
 diff <(sed "s/$DST/NAME/g; s/$NEWH/HASH/g" $E/$DST/configs/${DST}_rl_config.json) <(sed "s/$SRC/NAME/g; s/$OLDH/HASH/g" $E/$SRC/configs/${SRC}_rl_config.json) || true
 echo "--- sbatch diff vs smoke c:"; diff <(sed "s/$DST/NAME/g; s/$NEWH/HASH/g" $SB) <(sed "s/$SRC/NAME/g; s/$OLDH/HASH/g" $E/$SRC/sbatch/${SRC}_rl.sbatch) || true
+# 2026-09-11: trial dirs on the head node's tmpfs, not inside the fuse2fs artifact store (5 mkdir+touch took 17 s there vs
+# 0.007 s on /dev/shm; every trial-lifecycle file op ran on the coordinator event loop and stalled ~65 other trials). The store
+# mount stays as launcher bookkeeping; nothing reads it during training. Trial dirs older than 90 min are pruned every 5 min.
+SHM=/dev/shm/otagent_trials/$DST/trace_jobs
+sed -i "s#\(++terminal_bench_config.trials_dir=\)[^\"]*#\1$SHM#" $E/$DST/configs/${DST}_rl_config.json
+grep -q "trials_dir=$SHM\"" $E/$DST/configs/${DST}_rl_config.json || { echo "trials_dir sed failed"; exit 1; }
+python3 - $SB "$SHM" <<'PYSHM'
+import sys
+sb, shm = sys.argv[1:3]
+b = open(sb).read()
+marker = 'mkdir -p "$ARTIFACT_STORE_MOUNT/trace_jobs"\n'
+assert b.count(marker) == 1, "store marker missing"
+ins = (marker + f'SHM_TRIALS={shm}; mkdir -p "$SHM_TRIALS"; echo "trials_dir on tmpfs: $SHM_TRIALS ($(df -h /dev/shm | tail -n 1))"\n'
+       + '( while true; do find "$SHM_TRIALS" -mindepth 1 -maxdepth 1 -type d -mmin +90 -exec rm -rf {} + 2>/dev/null; sleep 300; done ) &\n')
+open(sb, "w").write(b.replace(marker, ins))
+PYSHM
+grep -q "SHM_TRIALS=$SHM" $SB || { echo "sbatch tmpfs insert failed"; exit 1; }
+echo "trials_dir on tmpfs: $SHM"
 [ "$SUBMIT" = 1 ] && cd $OTA && DCFT=$PWD sbatch $SB || echo "not submitted (SUBMIT=$SUBMIT): $SB"
