@@ -1,13 +1,17 @@
 #!/bin/bash
 # jureca_fleet_launch.sh — submit N apptainer sandbox fleets on JURECA (dc-cpu) that register on a Jupiter bridge,
 # through the Jupiter->JURECA ControlMaster. Run FROM the Jupiter login node that hosts the bridge.
-#   usage: [NODES=48] [FLEETS=2] [PORT=9923] [TIME=24:00:00] [TAG=v3] bash jureca_fleet_launch.sh
+#   usage: [NODES=48] [FLEETS=2] [PORT=9923] [TIME=06:00:00] [TAG=v3] bash jureca_fleet_launch.sh
+# TIME defaults to 6 h, not 24: synthlaion's dc-cpu contingent is spent (JSC notice 2026-09-09), so the
+# project sits in the exhausted-quota QoS -- low priority behind every funded project, MaxWall 6 h, and
+# consumption still charged. A 24 h request is rejected outright now. Prefer the JUWELS fleet (laionize,
+# normal priority) while this holds; see fleet/juwels_workers.sbatch.
 # Every env the sbatch reads must be passed explicitly (--export=ALL): an `ssh … sbatch` shell carries none
 # (JUWELS pool9 died in 8 s on HARBOR_SRC unset, 2026-09-05). Verify the .out header within a minute of the start.
 set -u
 SOCK=${SOCK:-~/.ssh/cm_jureca/qwen36}; SOCK=$(eval echo $SOCK); HOST=${HOST:-jureca}
 NODES=${NODES:-48}; FLEETS=${FLEETS:-2}; PORT=${PORT:-9923}; LOGIN=${LOGIN:-jrlogin05i}
-TIME=${TIME:-24:00:00}; TAG=${TAG:-v3}; WPN=${WPN:-32}
+TIME=${TIME:-06:00:00}; TAG=${TAG:-v3}; WPN=${WPN:-32}
 SRC=/p/project1/synthlaion/lee27/harbor/src
 DIR=$SRC/harbor/environments/apptainer
 W="ssh -o BatchMode=yes -S $SOCK $HOST"
