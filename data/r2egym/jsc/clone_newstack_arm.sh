@@ -132,7 +132,7 @@ b = open(sb).read()
 marker = 'mkdir -p "$ARTIFACT_STORE_MOUNT/trace_jobs"\n'
 assert b.count(marker) == 1, "store marker missing"
 ins = (marker + f'SHM_TRIALS={shm}; mkdir -p "$SHM_TRIALS"; echo "trials_dir on tmpfs: $SHM_TRIALS ($(df -h /dev/shm | tail -n 1))"\n'
-       + '( while true; do find "$SHM_TRIALS" -mindepth 3 -maxdepth 3 -name lifecycle-result.json -mmin +10 -printf "%h\\n" 2>/dev/null | sed "s#/attempts/[0-9]*$##" | sort -u | xargs -r rm -rf; u=$(df /dev/shm | tail -n 1 | awk "{print \\$5}" | tr -d %); if [ "$u" -gt 75 ]; then ls -tr "$SHM_TRIALS" | head -n 200 | sed "s#^#$SHM_TRIALS/#" | xargs -r rm -rf; fi; sleep 60; done ) &\\n')
+       + '( bash /e/project1/transfernetx/lee27/code/snowball/shm_prune.sh "$SHM_TRIALS" 10 70 60 ) &\\n')
 open(sb, "w").write(b.replace(marker, ins))
 PYSHM
 grep -q "SHM_TRIALS=$SHM" $SB || { echo "sbatch tmpfs insert failed"; exit 1; }
