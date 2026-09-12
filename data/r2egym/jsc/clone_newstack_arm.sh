@@ -1,6 +1,10 @@
 #!/bin/bash
 # clone_newstack_arm.sh <dst_name> [submit=0] [extra hydra args...] — a FRESH arm (from the Stage-3 base) on the tt-v2 split
-# Env: NODES=40|20 (default 40; 20 = 8 policy + 12 generator, fsdp 32, 12 engines, 1,056 seats / 16 coordinators),
+# Env: NODES=40|20|12 (default 40; 20 = 8 policy + 12 generator, fsdp 32, 12 engines, 1,056 seats / 16 coordinators;
+#      12 = 4 policy + 8 generator, fsdp 16, 8 engines, 528 seats / 16 coordinators. 528, not more: the 2026-09-06
+#      bench measured 6.5 updates/h at 1,584 seats against 6.0 at 528, so the extra seats bought 8 % for 3x the
+#      sandbox nodes. 528 over 8 engine nodes is 16.5 sequences per GPU, the documented safe floor. The 40- and
+#      20-node seat counts are left alone: they are the golden-arm and benched comparison points),
 #      SPEC=0|1 (default 0; 1 = serve with the adapted EAGLE-3 draft: the marin_vllm_eagle3 tree on PYTHONPATH +
 #      generator.engine_init_kwargs.speculative_config, as in snowball_ttband_sdon_5n_a; acceptance length 2.5 healthy).
 # on the NEW stack (venv snowball-v2, harbor-marin, marinskyrl-marin): clones snowball_ttband_migsmoke_v2_c (the 6-node
@@ -19,7 +23,7 @@
 set -euo pipefail
 SRC=snowball_ttband_migsmoke_v2_c; DST=$1; SUBMIT=${2:-0}; shift 2 2>/dev/null || shift $#; EXTRA=("$@")
 NODES=${NODES:-40}; SPEC=${SPEC:-0}
-case "$NODES" in 40) POL=16; ENG=24; FSDP=64; SEATS=1584; COORD=24;; 20) POL=8; ENG=12; FSDP=32; SEATS=1056; COORD=16;; 12) POL=4; ENG=8; FSDP=16; SEATS=1024; COORD=16;; *) echo "NODES must be 40, 20 or 12"; exit 1;; esac
+case "$NODES" in 40) POL=16; ENG=24; FSDP=64; SEATS=1584; COORD=24;; 20) POL=8; ENG=12; FSDP=32; SEATS=1056; COORD=16;; 12) POL=4; ENG=8; FSDP=16; SEATS=528; COORD=16;; *) echo "NODES must be 40, 20 or 12"; exit 1;; esac
 DRAFT=/e/data1/mmlaion/lee27/eagle3/probe_adapt_20260911/checkpoints/3; EAGLE_TREE=/e/project1/transfernetx/lee27/code/src/marin_vllm_eagle3
 [ "$SPEC" = 1 ] && { [ -d $DRAFT ] && [ -d $EAGLE_TREE/vllm ] || { echo "draft or eagle3 vllm tree missing"; exit 1; }; }
 E=/e/fscratch/reformo/lee27/experiments; T=/e/fscratch/reformo/lee27/tasks; OTA=/e/project1/transfernetx/lee27/code/OpenThoughts-Agent; C=/e/project1/transfernetx/lee27/code/snowball
