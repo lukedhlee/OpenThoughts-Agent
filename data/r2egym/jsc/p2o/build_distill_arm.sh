@@ -35,10 +35,16 @@ t=$(find $T/$PTREE -mindepth 1 -maxdepth 1 -type d -print -quit); grep -q "^Work
 grep -q "^    context_distillation:" $MS/skyrl-train/skyrl_train/config/ppo_base_config.yaml || {
   echo "MarinSkyRL checkout $MS lacks trainer.algorithm.context_distillation: merge lukedhlee/p2o-context-distillation into lukedhlee/snowball-r2egym and git pull"; exit 1; }
 echo "prompted tree ok: $PTREE ($n_dst tasks, block $BLOCK); MarinSkyRL checkout at $(git -C $MS rev-parse --short HEAD) carries the feature"
-NODES=${NODES:-12} SPEC=${SPEC:-1} TRAIN_TREE=$PTREE bash $C/clone_newstack_arm.sh "$DST" "$SUBMIT" \
+NODES=${NODES:-12} SPEC=${SPEC:-1} TRAIN_TREE=$PTREE bash $C/clone_newstack_arm.sh "$DST" 0 \
   trainer.algorithm.context_distillation.enabled=true \
   trainer.algorithm.context_distillation.tis_reference=rollout \
   trainer.algorithm.context_distillation.on_failure=error \
   trainer.max_steps=12 \
   trainer.policy.optimizer_config.lr=5e-7 \
   "${EXTRA[@]}"
+# Preflight on the head node: 1782191 died 6 min in because a compute node still saw the base config from before the
+# git pull (the file is 8 min old at submit; the project filesystem caches attributes). Fail in seconds, not minutes.
+SB=$E/$DST/sbatch/${DST}_rl.sbatch; YAML=$MS/skyrl-train/skyrl_train/config/ppo_base_config.yaml
+sed -i "/^export HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000$/a grep -q \"^    context_distillation:\" $YAML || { echo \"FATAL: stale ppo_base_config on \$(hostname): context_distillation missing\"; exit 97; }" $SB
+grep -q "stale ppo_base_config" $SB || { echo "preflight insert failed"; exit 1; }
+[ "$SUBMIT" = 1 ] && cd /e/project1/transfernetx/lee27/code/OpenThoughts-Agent && DCFT=$PWD sbatch $SB || echo "not submitted (SUBMIT=$SUBMIT): $SB"
