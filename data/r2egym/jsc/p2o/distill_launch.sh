@@ -52,6 +52,6 @@ grep -q "^#SBATCH --time=$ARM_WALL$" $SB || { echo "walltime sed failed"; $W "sc
 J=$(cd $OTA && DCFT=$PWD sbatch --parsable $SB); [ -n "$J" ] || { echo "arm sbatch failed"; $W "scancel $F"; exit 3; }
 echo "arm $J $(date -Is)" >> $IDS; echo "ARM $J ($DST, $ARM_WALL)"
 # 5. watcher
-tmux kill-session -t p2od_watch 2>/dev/null; tmux new -d -s p2od_watch "bash $E/p2o/distill_watch.sh $J $F $DST"
+tmux kill-session -t p2od_watch 2>/dev/null; tmux new -d -s p2od_watch "STOP_STEP=${STOP_STEP:-12} bash $E/p2o/distill_watch.sh $J $F $DST"
 echo "watcher tmux p2od_watch; ids $IDS; log $LOG"
 squeue -h -u $USER -o "%i %j %T %M %D"

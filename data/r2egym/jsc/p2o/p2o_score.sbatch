@@ -17,7 +17,7 @@ set -uo pipefail
 module load GCC/14.3.0
 module load nvidia-compilers/25.9-CUDA-13
 C=/e/project1/transfernetx/lee27/code; E=/e/fscratch/reformo/lee27/experiments
-M=/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888
+M=${MODEL:-/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888}   # MODEL=<exported checkpoint dir> scores that checkpoint
 PY=$C/envs/snowball/bin/python
 MODE=${MODE:-prescreen}; OUT=${OUT:-$E/p2o/$MODE}; TRACES=${TRACES:-}
 mkdir -p $OUT $E/p2o/logs
@@ -30,7 +30,7 @@ CACHE=/e/data1/mmlaion/lee27/experiments/snowball_ep_layout_20260909/cache
 export VLLM_CACHE_ROOT=$CACHE/vllm XDG_CACHE_HOME=$CACHE/xdg TRITON_CACHE_DIR=$CACHE/triton TORCHINDUCTOR_CACHE_DIR=$CACHE/inductor FLASHINFER_WORKSPACE_BASE=$CACHE/flashinfer TMPDIR=/tmp/p2o_${SLURM_JOB_ID}
 mkdir -p "$TMPDIR"
 pids=(); cleanup() { for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done; }; trap cleanup EXIT TERM INT
-echo "mode=$MODE out=$OUT job=$SLURM_JOB_ID node=$(hostname) start=$(date -Is)"
+echo "model=$M mode=$MODE out=$OUT job=$SLURM_JOB_ID node=$(hostname) start=$(date -Is)"
 "$PY" -c 'import vllm,torch; print("vllm", vllm.__version__, "torch", torch.__version__)'
 CUDA_VISIBLE_DEVICES=0,1,2,3 VLLM_PORT=30000 "$PY" -m vllm.entrypoints.openai.api_server \
  --model "$M" --served-model-name snowball --port 8000 \
@@ -52,7 +52,7 @@ echo "SERVER_READY $(date -Is)"
 # leave ~8 min for the merge and shutdown inside the 2 h wall
 BUDGET=$(( ${WALL_SEC:-7200} - 8*60 - $(( $(date +%s) - $(date -d "$(squeue -h -j $SLURM_JOB_ID -o %S)" +%s 2>/dev/null || date +%s) )) ))
 [ "$BUDGET" -gt 600 ] || BUDGET=$(( ${WALL_SEC:-7200} - 15*60 ))
-ARGS="--mode $MODE --out $OUT --workers ${WORKERS:-8} --time-budget $BUDGET"
+ARGS="--mode $MODE --out $OUT --workers ${WORKERS:-8} --time-budget $BUDGET --tokenizer $M"
 [ -n "$TRACES" ] && ARGS="$ARGS --traces $TRACES"
 "$PY" $E/p2o/score_shift.py $ARGS > "$OUT/client_$SLURM_JOB_ID.log" 2>&1
 tail -5 "$OUT/client_$SLURM_JOB_ID.log"

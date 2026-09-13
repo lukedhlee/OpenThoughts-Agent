@@ -34,6 +34,7 @@ ap.add_argument("--url", default="http://localhost:8000"); ap.add_argument("--se
 ap.add_argument("--workers", type=int, default=16)
 ap.add_argument("--out", default=E + "/p2o/prescreen")
 ap.add_argument("--max-len", type=int, default=65536)
+ap.add_argument("--tokenizer", default=M, help="tokenizer dir (an exported checkpoint carries the base tokenizer)")
 ap.add_argument("--time-budget", type=int, default=0, help="seconds; stop starting new units after this")
 ap.add_argument("--merge", action="store_true"); ap.add_argument("--dry", action="store_true")
 ap.add_argument("--per-turn", action="store_true", help="score every turn's served prompt separately (slow: DP routing defeats the prefix cache); default = one request per unit-variant on the final context, assistant spans located inside it")
@@ -81,7 +82,7 @@ B = json.load(open(a.blocks)); DELIM = B["delim"]
 INS = {k: DELIM + v + ("" if v.endswith("\n") else "\n") for k, v in B["blocks"].items()}
 
 from transformers import AutoTokenizer  # noqa: E402
-tok = AutoTokenizer.from_pretrained(M)
+tok = AutoTokenizer.from_pretrained(a.tokenizer)
 enc = lambda s: tok.encode(s, add_special_tokens=False)
 dec = lambda ids: tok.decode(ids, skip_special_tokens=False)
 
