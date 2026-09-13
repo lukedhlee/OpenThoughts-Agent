@@ -36,7 +36,7 @@ echo "prompted tree ok: $PTREE ($n_dst tasks, block $BLOCK); MarinSkyRL checkout
 NODES=${NODES:-12} SPEC=${SPEC:-1} TRAIN_TREE=$PTREE bash $C/clone_newstack_arm.sh "$DST" "$SUBMIT" \
   trainer.algorithm.context_distillation.enabled=true \
   trainer.algorithm.context_distillation.tis_reference=rollout \
-  trainer.algorithm.context_distillation.on_failure=mask \
+  trainer.algorithm.context_distillation.on_failure=error \
   trainer.max_steps=12 \
   trainer.policy.optimizer_config.lr=5e-7 \
   "${EXTRA[@]}"
