@@ -3,7 +3,8 @@ no skyrl/torch import; login-node safe with OMP_NUM_THREADS=1) and list every ov
 import json, sys, re
 from hydra import initialize_config_dir, compose
 from hydra.errors import ConfigCompositionException
-CONF = "/e/project1/transfernetx/lee27/code/MarinSkyRL/skyrl-train/skyrl_train/config"
+# the checkout the snowball-v2 venv installs (2026-09-13; was the pre-migration MarinSkyRL clone)
+CONF = "/e/project1/transfernetx/lee27/code/marinskyrl-marin/skyrl-train/skyrl_train/config"
 args = json.load(open(sys.argv[1]))["skyrl_hydra_args"]; bad = []
 with initialize_config_dir(version_base=None, config_dir=CONF):
     while True:

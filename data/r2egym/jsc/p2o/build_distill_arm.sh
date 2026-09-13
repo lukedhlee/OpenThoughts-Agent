@@ -27,9 +27,11 @@ TREE=r2egym-tt-v2-train-basecurr-x16; PTREE=$TREE-pA; BLOCK=${BLOCK:-A}
 if [ ! -d $T/$PTREE ]; then
   python3 $E/p2o/p2o_train_tree.py --src $T/$TREE --dst $T/$PTREE --block $BLOCK --blocks $E/p2o/blocks.json || { echo "prompted tree build FAILED"; exit 1; }
 fi
-n_src=$(ls $T/$TREE | wc -l); n_dst=$(ls $T/$PTREE | wc -l)
+# (find, not ls | head: under pipefail a 16k-entry ls dies of SIGPIPE and set -e kills the script silently)
+# the source tree's entries are symlinks to task dirs (x16 replicas); the prompted copy holds real dirs
+n_src=$(find $T/$TREE -mindepth 1 -maxdepth 1 \( -type d -o -type l \) | wc -l); n_dst=$(find $T/$PTREE -mindepth 1 -maxdepth 1 -type d | wc -l)
 [ "$n_src" = "$n_dst" ] || { echo "tree size mismatch: $TREE $n_src vs $PTREE $n_dst"; exit 1; }
-t=$(ls $T/$PTREE | head -n 1); grep -q "^Working guidance:$" $T/$PTREE/$t/instruction.md || { echo "block missing in $PTREE/$t"; exit 1; }
+t=$(find $T/$PTREE -mindepth 1 -maxdepth 1 -type d -print -quit); grep -q "^Working guidance:$" $t/instruction.md || { echo "block missing in $t"; exit 1; }
 grep -q "^    context_distillation:" $MS/skyrl-train/skyrl_train/config/ppo_base_config.yaml || {
   echo "MarinSkyRL checkout $MS lacks trainer.algorithm.context_distillation: merge lukedhlee/p2o-context-distillation into lukedhlee/snowball-r2egym and git pull"; exit 1; }
 echo "prompted tree ok: $PTREE ($n_dst tasks, block $BLOCK); MarinSkyRL checkout at $(git -C $MS rev-parse --short HEAD) carries the feature"
