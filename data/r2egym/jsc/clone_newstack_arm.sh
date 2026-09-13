@@ -23,13 +23,15 @@
 set -euo pipefail
 SRC=snowball_ttband_migsmoke_v2_c; DST=$1; SUBMIT=${2:-0}; shift 2 2>/dev/null || shift $#; EXTRA=("$@")
 NODES=${NODES:-40}; SPEC=${SPEC:-0}
+# TRAIN_TREE: the training task tree under $T (default = the curriculum tree; the P2O distillation arm passes its -pA copy)
+TRAIN_TREE=${TRAIN_TREE:-r2egym-tt-v2-train-basecurr-x16}; export TRAIN_TREE
 case "$NODES" in 40) POL=16; ENG=24; FSDP=64; SEATS=1584; COORD=24;; 20) POL=8; ENG=12; FSDP=32; SEATS=1056; COORD=16;; 12) POL=4; ENG=8; FSDP=16; SEATS=528; COORD=16;; *) echo "NODES must be 40, 20 or 12"; exit 1;; esac
 DRAFT=/e/data1/mmlaion/lee27/eagle3/probe_adapt_20260911/checkpoints/3; EAGLE_TREE=/e/project1/transfernetx/lee27/code/src/marin_vllm_eagle3
 [ "$SPEC" = 1 ] && { [ -d $DRAFT ] && [ -d $EAGLE_TREE/vllm ] || { echo "draft or eagle3 vllm tree missing"; exit 1; }; }
 E=/e/fscratch/reformo/lee27/experiments; T=/e/fscratch/reformo/lee27/tasks; OTA=/e/project1/transfernetx/lee27/code/OpenThoughts-Agent; C=/e/project1/transfernetx/lee27/code/snowball
 case "$DST" in *"$SRC"*) echo "dst name must not contain the src name"; exit 1;; esac
 case "$DST" in *snowball_ttband*) ;; *) echo "dst must contain snowball_ttband (store_reaper)"; exit 1;; esac
-[ -d $T/r2egym-tt-v2-train-basecurr-x16 ] && [ -d $T/r2egym-tt-v2-val441 ] || { echo "task trees missing"; exit 1; }
+[ -d $T/$TRAIN_TREE ] && [ -d $T/r2egym-tt-v2-val441 ] || { echo "task trees missing ($TRAIN_TREE / r2egym-tt-v2-val441)"; exit 1; }
 [ -d $E/$DST ] && squeue -h -u $USER -n $DST -o %i | grep -q . && { echo "$DST has a job in squeue - refusing"; exit 1; }
 M=/e/data1/mmlaion/lee27/experiments; mkdir -p $M
 [ -L $E/$DST ] && rm -f $E/$DST; rm -rf $E/$DST $M/$DST
@@ -51,7 +53,7 @@ fi
 sed -i "/^export HARBOR_OPENAI_CONNECT_TIMEOUT_SEC=120$/a export HARBOR_TMUX_CAPTURE_BUDGET_CHARS=400000\nexport HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000" $SB
 grep -q "^export HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000$" $SB || { echo "scrollback env sed failed"; exit 1; }
 python3 - $E/$DST/configs/${DST}_rl_config.json $SRC "$T" "$NODES:$POL:$ENG:$FSDP:$SEATS:$COORD" "${EXTRA[@]}" <<'PY'
-import json, sys
+import json, os, sys
 p, src, T, geo, extra = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]; c = json.load(open(p)); a = c["skyrl_hydra_args"]
 NODES, POL, ENG, FSDP, SEATS, COORD = geo.split(":")
 assert not any(src in x for x in a), "src name survived the sed"
@@ -60,7 +62,7 @@ def setk(prefix, val):
     a[i[0]] = a[i[0]][: a[i[0]].index(prefix)] + prefix + val
 val = "%s/r2egym-tt-v2-val441" % T
 setk("data.val_data=", '["%s"]' % val); c["val_data"] = [val]; c["val_data_sources"] = [val]
-train = "%s/r2egym-tt-v2-train-basecurr-x16" % T   # 1,003 tasks: 728 train + 275 base-learnable rest (curriculum_build.py, 2026-09-11)
+train = "%s/%s" % (T, os.environ["TRAIN_TREE"])   # default 1,003 tasks: 728 train + 275 base-learnable rest (curriculum_build.py, 2026-09-11)
 setk("data.train_data=", '["%s"]' % train); c["train_data"] = [train]
 if "train_data_sources" in c: c["train_data_sources"] = [train]
 # a fresh arm that RESUMES on chain restart (the smoke ran resume_mode=none), KL off (Luke 2026-09-11)
