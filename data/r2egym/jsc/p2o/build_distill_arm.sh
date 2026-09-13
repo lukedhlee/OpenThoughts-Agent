@@ -48,8 +48,11 @@ NODES=${NODES:-12} SPEC=${SPEC:-1} TRAIN_TREE=$PTREE bash $C/clone_newstack_arm.
 # its old ppo_base_config, while the Ray driver task ran marinskyrl-marin. Fail in seconds if the composed config lacks the key.
 SB=$E/$DST/sbatch/${DST}_rl.sbatch
 cat > $E/$DST/sbatch/preflight_context_distillation.sh <<'PF'
+# the launcher keeps the sbatch's interpreter (DCFT_RL_ENV=snowball-v2) but takes SKYRL_HOME/PYTHONPATH from the dotenv
+PY_ARM="$RL_PYTHON"
 cd "$WORKDIR" && set -a && source hpc/dotenv/jupiter.env >/dev/null 2>&1; source hpc/dotenv/jupiter.local.env >/dev/null 2>&1; set +a
-"$RL_PYTHON" - <<'PY' || { echo "FATAL: the entrypoint process would compose a ppo_base_config without context_distillation (check RL_REPO_DIR in hpc/dotenv/jupiter.local.env)"; exit 97; }
+echo "preflight: python $PY_ARM, SKYRL_HOME=$SKYRL_HOME"
+"$PY_ARM" - <<'PY' || { echo "FATAL: the entrypoint process would compose a ppo_base_config without context_distillation (check RL_REPO_DIR in hpc/dotenv/jupiter.local.env)"; exit 97; }
 import os, sys, skyrl_train.entrypoints.main_base as m
 yaml = open(os.path.join(m.config_dir, "ppo_base_config.yaml")).read()
 print("entrypoint config dir:", m.config_dir); sys.exit(0 if "context_distillation:" in yaml else 1)
