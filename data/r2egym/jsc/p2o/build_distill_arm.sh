@@ -42,9 +42,19 @@ NODES=${NODES:-12} SPEC=${SPEC:-1} TRAIN_TREE=$PTREE bash $C/clone_newstack_arm.
   trainer.max_steps=12 \
   trainer.policy.optimizer_config.lr=5e-7 \
   "${EXTRA[@]}"
-# Preflight on the head node: 1782191 died 6 min in because a compute node still saw the base config from before the
-# git pull (the file is 8 min old at submit; the project filesystem caches attributes). Fail in seconds, not minutes.
-SB=$E/$DST/sbatch/${DST}_rl.sbatch; YAML=$MS/skyrl-train/skyrl_train/config/ppo_base_config.yaml
-sed -i "/^export HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000$/a grep -q \"^    context_distillation:\" $YAML || { echo \"FATAL: stale ppo_base_config on \$(hostname): context_distillation missing\"; exit 97; }" $SB
-grep -q "stale ppo_base_config" $SB || { echo "preflight insert failed"; exit 1; }
+# Preflight on the head node, in the env the launcher hands the entrypoint process (it re-sources hpc/dotenv/jupiter.env +
+# jupiter.local.env, whose SKYRL_HOME goes first on PYTHONPATH): runs a and b (1782191, 1782377) died at Hydra composition
+# because that process imported code/MarinSkyRL (the pre-migration clone, RL_REPO_DIR in jupiter.local.env) and composed
+# its old ppo_base_config, while the Ray driver task ran marinskyrl-marin. Fail in seconds if the composed config lacks the key.
+SB=$E/$DST/sbatch/${DST}_rl.sbatch
+cat > $E/$DST/sbatch/preflight_context_distillation.sh <<'PF'
+cd "$WORKDIR" && set -a && source hpc/dotenv/jupiter.env >/dev/null 2>&1; source hpc/dotenv/jupiter.local.env >/dev/null 2>&1; set +a
+"$RL_PYTHON" - <<'PY' || { echo "FATAL: the entrypoint process would compose a ppo_base_config without context_distillation (check RL_REPO_DIR in hpc/dotenv/jupiter.local.env)"; exit 97; }
+import os, sys, skyrl_train.entrypoints.main_base as m
+yaml = open(os.path.join(m.config_dir, "ppo_base_config.yaml")).read()
+print("entrypoint config dir:", m.config_dir); sys.exit(0 if "context_distillation:" in yaml else 1)
+PY
+PF
+sed -i "/^export HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000$/a bash $E/$DST/sbatch/preflight_context_distillation.sh || exit 97" $SB
+grep -q "preflight_context_distillation.sh" $SB || { echo "preflight insert failed"; exit 1; }
 [ "$SUBMIT" = 1 ] && cd /e/project1/transfernetx/lee27/code/OpenThoughts-Agent && DCFT=$PWD sbatch $SB || echo "not submitted (SUBMIT=$SUBMIT): $SB"

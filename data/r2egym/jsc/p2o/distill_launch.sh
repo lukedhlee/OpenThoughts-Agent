@@ -31,12 +31,16 @@ for old in "localhost:9924" "10.128.1.1:9924" "$IP:9924"; do ssh -O cancel -R "$
 ssh -O forward -R "${JW}:9925:${IP}:9924" -S $SOCK juwels || { echo "forward failed"; exit 1; }
 $W "curl -s -m 8 http://jwlogin03i:9925/status | grep -q workers_alive" || { echo "forward not answering from JUWELS"; exit 1; }
 echo "forward jwlogin03i:9925 -> $IP:9924 ok"
-# 3. fleet
-F=$($W "cd /p/project1/synthlaion/lee27/fleet && sbatch --parsable --nodes=$FLEET_NODES --time=$FLEET_WALL --export=ALL,HARBOR_SRC=/p/project1/synthlaion/lee27/harbor/src,WORKERS_PER_NODE=32,STAGING_BASE=/tmp/apptainer_staging,BRIDGE_LOGIN=jwlogin03i,BRIDGE_PORT=9925,MAX_CHAIN=0 -J apptainer_workers_juwels_p2od juwels_workers.sbatch")
-[ -n "$F" ] || { echo "fleet sbatch failed"; exit 1; }
-echo "fleet $F $(date -Is)" >> $IDS; echo "FLEET $F ($FLEET_NODES nodes x 32 seats, $FLEET_WALL, no chain)"
-ok=0; for i in $(seq 1 120); do sleep 5; curl -s -m 3 http://$IP:9924/status | grep -q '"workers_alive": true' && { ok=1; echo "workers_alive after $((i*5))s"; break; }; done
-[ $ok = 1 ] || { echo "fleet did not register in 10 min; cancelling $F"; $W "scancel $F"; exit 2; }
+# 3. fleet (FLEET=<id> reuses a fleet that is already registered on this bridge, e.g. after an arm died at startup)
+if [ -n "${FLEET:-}" ] && curl -s -m 3 http://$IP:9924/status | grep -q '"workers_alive": true' && $W "squeue -h -j $FLEET -o %T" | grep -q RUNNING; then
+  F=$FLEET; echo "REUSING FLEET $F (running, workers alive)"
+else
+  F=$($W "cd /p/project1/synthlaion/lee27/fleet && sbatch --parsable --nodes=$FLEET_NODES --time=$FLEET_WALL --export=ALL,HARBOR_SRC=/p/project1/synthlaion/lee27/harbor/src,WORKERS_PER_NODE=32,STAGING_BASE=/tmp/apptainer_staging,BRIDGE_LOGIN=jwlogin03i,BRIDGE_PORT=9925,MAX_CHAIN=0 -J apptainer_workers_juwels_p2od juwels_workers.sbatch")
+  [ -n "$F" ] || { echo "fleet sbatch failed"; exit 1; }
+  echo "fleet $F $(date -Is)" >> $IDS; echo "FLEET $F ($FLEET_NODES nodes x 32 seats, $FLEET_WALL, no chain)"
+  ok=0; for i in $(seq 1 120); do sleep 5; curl -s -m 3 http://$IP:9924/status | grep -q '"workers_alive": true' && { ok=1; echo "workers_alive after $((i*5))s"; break; }; done
+  [ $ok = 1 ] || { echo "fleet did not register in 10 min; cancelling $F"; $W "scancel $F"; exit 2; }
+fi
 # 4. arm (built, then pinned to this bridge and capped at ARM_WALL, then submitted)
 bash $E/p2o/build_distill_arm.sh $DST 0 > $E/p2o/build_${DST}.log 2>&1 || { echo "arm build FAILED, see $E/p2o/build_${DST}.log"; $W "scancel $F"; exit 3; }
 grep -E "^extra:|prompted tree ok|trials_dir on tmpfs|model_path" $E/p2o/build_${DST}.log
