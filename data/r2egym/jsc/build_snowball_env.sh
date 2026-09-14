@@ -17,7 +17,12 @@
 #   ROOT=/e/project1/reformo/$USER/snowball bash build_snowball_env.sh            # = all steps, each skipped when already done
 #   ROOT=... bash build_snowball_env.sh vllm trainer                              # re-run named steps only
 # Steps, in order: tools python clones torch vllm trainer overlay smoke
-# Knobs: SCRATCH (default /e/fscratch/reformo/$USER), CACHE (default $ROOT/cache), MAX_JOBS (16), STAGE_MODULE (Stages/2026).
+# Knobs: SCRATCH (default /e/fscratch/reformo/$USER; caches + experiments), CACHE (default $SCRATCH/cache/snowball_build),
+#        MAX_JOBS (16), STAGE_MODULE (Stages/2026).
+# Quotas: ROOT gets ~170k files / ~16 GB (venv 109k, vLLM tree 62k); the build caches are another ~150k files and go to CACHE.
+#         JSC project1 inode quotas are per PROJECT (4 M soft), so pick a project with room: `check` prints the line.
+#         2026-09-14: /e/project1/reformo was already over its inode soft limit (4.18 M / 4 M), so reformo members should
+#         use ROOT=/e/project1/ccstdl/$USER/snowball SCRATCH=/e/fscratch/ccstdl/$USER (0.33 M / 4 M used) when they are in ccstdl.
 #
 # Provenance: the recipe is the login-node build of 2026-09-02 (jpbl-s01-02, 63 min compile) + the trainer layer of
 # install_trainer_layer.sh + the 09-10 marin migration (harbor-marin/marinskyrl-marin editable), see .claude/ops/jupiter/ops.md.
@@ -49,7 +54,7 @@ MODULES=(CUDA/13 GCC/14.3.0 CMake Ninja Rust/1.88.0)        # what the 2026-09-0
 # ----------------------------------------------------------------------------- layout
 : "${ROOT:?set ROOT (e.g. ROOT=/e/project1/reformo/\$USER/snowball) — everything is built under it}"
 SCRATCH=${SCRATCH:-/e/fscratch/reformo/$USER}
-CACHE=${CACHE:-$ROOT/cache}
+CACHE=${CACHE:-$SCRATCH/cache/snowball_build}   # uv/pip/cargo caches: inode-heavy, keep them OFF project1 (its inode quota is per project)
 ENV=$ROOT/envs/snowball; PY=$ENV/bin/python
 SRC=$ROOT/src/marin_vllm
 OTA=$ROOT/OpenThoughts-Agent
@@ -73,6 +78,14 @@ load_modules() {
   export CUDA_HOME="$(dirname "$(dirname "$(command -v nvcc || true)")")"; export PATH="$CUDA_HOME/bin:$PATH"
 }
 
+quota_line() { # path kind -> the project quota row for that filesystem (jutil is a login-shell function on JSC)
+  local proj; proj=$(printf '%s' "$1" | awk -F/ '$2=="e" && ($3=="project1" || $3=="fscratch") {print $4}')
+  [ -n "$proj" ] || { echo "  $2: $1 is not under /e/project1 or /e/fscratch; no quota check"; return; }
+  local row; row=$(bash -lc "jutil project dataquota -p $proj" 2>/dev/null | awk -v k="exa_$2" '$4==k')
+  [ -n "$row" ] || { echo "  $2 quota for project $proj: jutil unavailable"; return; }
+  echo "$row" | awk -v p="$proj" -v k="$2" '{du=$7/1024/1024/1024; ds=$8/1024/1024/1024; printf "  %s quota (%s): %.1f / %.0f TB, inodes %d / %d soft (%.0f%%)%s\n", k, p, du, ds, $10, $11, 100*$10/$11, ($10>0.9*$11 ? "  <-- NEAR/OVER the inode limit: pick another project" : "")}'
+}
+
 # ----------------------------------------------------------------------------- steps
 step_check() {
   say "check: host $(hostname)"
@@ -88,7 +101,7 @@ step_check() {
     printf "  %-75s %s\n" "$r" "$(git ls-remote $r 2>/dev/null | awk 'NR==1{print substr($1,1,8)} END{if(NR==0)print "UNREACHABLE"}')"; done
   echo "  (vllm is pinned at $VLLM_SHA, fetched by the clone step; ls-remote only proves the host is reachable)"
   printf "  ulimit -u %s (login-node pid cgroup; MAX_JOBS=%s NVCC_THREADS=%s fits)\n" "$(ulimit -u)" "$MAX_JOBS" "$NVCC_THREADS"
-  df -h "$ROOT" | tail -1 | awk '{print "  free on ROOT fs: "$4}'
+  quota_line "$ROOT" project1; quota_line "$SCRATCH" fscratch
   say "check: done (nothing built). Budget ~20 GB, ~170k files, ~90 min."
 }
 
