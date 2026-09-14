@@ -4,7 +4,8 @@
 # What it builds under $ROOT (no access to anyone else's project tree is needed):
 #   envs/uv-python/           uv-managed CPython 3.12.13 (aarch64)
 #   envs/snowball/            the venv: torch 2.11.0+cu130, marin vLLM built from source (GH200 = sm_90),
-#                             MarinSkyRL trainer layer (rl-fa pins), flash-attn 2.8.3, harbor + harbor-config editable
+#                             MarinSkyRL trainer layer (rl-fa pins), flash-attn 2.8.3, harbor + harbor-config editable,
+#                             then every package pinned to the exact version of Jupiter's snowball-v2 (snowball-v2.freeze)
 #   src/marin_vllm/           marin-community/vllm @ fa50698a (the MarinSkyRL uv.lock pin), compiled in place (editable)
 #   marinskyrl-marin/         marin-community/MarinSkyRL  branch lukedhlee/snowball-r2egym   (on sys.path via .pth)
 #   harbor-marin/             marin-community/harbor      branch lukedhlee/snowball-r2egym   (editable install)
@@ -186,17 +187,17 @@ PY
 
 step_trainer() {
   done_marker trainer && { say "trainer: done"; return; }
-  local FREEZE=$OTA/hpc/env_builds/jupiter/rl-fa.freeze.in DELTA=$ROOT/snowball/snowball.delta.in
+  local FREEZE=$OTA/hpc/env_builds/jupiter/rl-fa.freeze.in V2=$ROOT/snowball/snowball-v2.freeze
   [ -f "$FREEZE" ] || die "missing $FREEZE (OTA checkout on $OTA_BRANCH?)"
-  [ -f "$DELTA" ] || DELTA=$(dirname "${BASH_SOURCE[0]}")/snowball.delta.in   # beside this script when run from a clone
-  [ -f "$DELTA" ] || die "missing snowball.delta.in (ships next to this script in data/r2egym/jsc)"
+  [ -f "$V2" ] || V2=$(dirname "${BASH_SOURCE[0]}")/snowball-v2.freeze   # beside this script when run from a clone
+  [ -f "$V2" ] || die "missing snowball-v2.freeze (ships next to this script in data/r2egym/jsc)"
   say "trainer: rollback manifest -> $ROOT/envs/snowball.post_build.freeze"
   "$UV" pip freeze -p "$PY" > "$ROOT/envs/snowball.post_build.freeze"
   # rl-fa pins minus what the vLLM build already owns (torch/vllm/triton/transformers/nvidia-*...) minus what is present.
   FREEZE_IN=$FREEZE FILTERED=$ROOT/envs/snowball.freeze.filtered.in UV_BIN=$UV VENV_PY=$PY "$PY" - <<'PY' || die "freeze filter"
 import json, os, re, subprocess
 have = {p["name"].lower().replace("_", "-") for p in json.loads(subprocess.check_output([os.environ["UV_BIN"], "pip", "list", "-p", os.environ["VENV_PY"], "--format=json"]))}
-skip = re.compile(r"^(torch|torchvision|torchaudio|vllm|flashinfer|triton|pytorch-triton|transformers|numpy|xformers|nvidia|cuda|flash-attn|tokenizers|safetensors|huggingface|skyrl|harbor|dynamic-semaphore|torchtitan|transformer-engine|marinskyrl)")
+skip = re.compile(r"^(torch(vision|audio)?$|vllm|flashinfer|triton|pytorch-triton|transformers|numpy|xformers|nvidia|cuda|flash-attn|tokenizers|safetensors|huggingface|skyrl|harbor|dynamic-semaphore|torchtitan|transformer-engine|marinskyrl)")
 out, dropped = [], 0
 for line in open(os.environ["FREEZE_IN"]):
     s = line.strip()
@@ -208,14 +209,38 @@ open(os.environ["FILTERED"], "w").write("\n".join(out) + "\n")
 print(f"filtered pins: keep {len(out)} (missing from venv), drop {dropped} (present or vllm-owned)")
 PY
   "$UV" pip install -p "$PY" --no-deps -r "$ROOT/envs/snowball.freeze.filtered.in" --index-strategy unsafe-best-match || die "freeze install"
-  say "trainer: delta packages ($(wc -l < "$DELTA") pins)"
-  "$UV" pip install -p "$PY" --no-deps -r "$DELTA" || die "delta install"
   say "trainer: git pins, harbor (editable, harbor-marin), harbor-config, flash-attn wheel — all --no-deps"
   "$UV" pip install -p "$PY" --no-deps "$TORCHTITAN_PIN" "$DYNSEM_PIN" || die "git pins"
   "$UV" pip install -p "$PY" --no-deps -e "$ROOT/harbor-marin" || die "harbor editable"
   "$UV" pip install -p "$PY" --no-deps -e "$ROOT/harbor-marin/packages/harbor-config" || die "harbor-config editable"
   [ -f "$CACHE/tmp/$FA_WHL" ] || curl -sL -o "$CACHE/tmp/$FA_WHL" "$FA_URL" || die "flash-attn wheel download"
   "$UV" pip install -p "$PY" --no-deps "$CACHE/tmp/$FA_WHL" || die "flash-attn install"
+  # Exact pin-down: the vLLM build resolves its unpinned runtime deps at build time (transformers, tokenizers, openai, ...
+  # drifted ~30 versions between 09-02 and 09-14), so bring every package to the version snowball-v2 runs. --no-deps,
+  # torch/vllm/editables untouched. Idempotent: a second run installs nothing.
+  say "trainer: exact pin-down to $(basename "$V2")"
+  V2_FREEZE=$V2 PINS=$ROOT/envs/snowball.pindown.in UV_BIN=$UV VENV_PY=$PY "$PY" - <<'PY' || die "pin-down list"
+import json, os, re, subprocess
+norm = lambda s: s.lower().replace("_", "-")
+have = {norm(p["name"]): p["version"] for p in json.loads(subprocess.check_output([os.environ["UV_BIN"], "pip", "list", "-p", os.environ["VENV_PY"], "--format=json"]))}
+pins, missing, changed = [], 0, 0
+for line in open(os.environ["V2_FREEZE"]):
+    s = line.strip()
+    if not s or s.startswith("#") or s.startswith("-e ") or "@ file://" in s: continue
+    if " @ " in s:                      # VCS pin: only if absent (versions are not comparable)
+        name = norm(s.split(" @ ", 1)[0])
+        if name not in have: pins.append(s); missing += 1
+        continue
+    name, ver = s.split("==", 1); name = norm(name)
+    if name in ("torch", "vllm"): continue
+    if name not in have: pins.append(s); missing += 1
+    elif have[name] != ver: pins.append(s); changed += 1
+open(os.environ["PINS"], "w").write("\n".join(pins) + "\n")
+print(f"pin-down: install {missing} missing + {changed} version changes ({len(have)} packages present)")
+PY
+  if [ -s "$ROOT/envs/snowball.pindown.in" ]; then
+    "$UV" pip install -p "$PY" --no-deps -r "$ROOT/envs/snowball.pindown.in" --index-strategy unsafe-best-match || die "pin-down install"
+  fi
   # MarinSkyRL on sys.path via .pth files (never `pip install -e` its root: that copies skyrl_train into site-packages and shadows the checkout)
   local SP; SP=$("$PY" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
   rm -rf "$SP/skyrl_gym" "$SP/skyrl_train"
@@ -284,7 +309,7 @@ step_smoke() {
   OMP_NUM_THREADS=1 SRC="$SRC" HB="$ROOT/harbor-marin" MS="$ROOT/marinskyrl-marin" "$PY" - <<'PY'
 import importlib, os
 bad = 0
-for m in ("torch","vllm","transformers","ray","harbor","harbor_config","skyrl_train","skyrl_gym","marinskyrl","torchtitan","dynamic_semaphore","flash_attn","hydra","omegaconf","wandb","peft","deepspeed","loguru"):
+for m in ("torch","vllm","transformers","ray","harbor","harbor_config","skyrl_train","skyrl_gym","marinskyrl","torchtitan","torchdata","reasoning_gym","dynamic_semaphore","flash_attn","hydra","omegaconf","wandb","peft","loguru"):
     try:
         mod = importlib.import_module(m); print("OK  ", m, getattr(mod, "__version__", ""), getattr(mod, "__file__", ""))
     except Exception as e:
