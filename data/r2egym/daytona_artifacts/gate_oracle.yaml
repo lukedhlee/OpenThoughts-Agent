@@ -1,0 +1,33 @@
+# harbor gate for an artifact-shape tree (tt_daytona_tree_v3.py): oracle agent on every task of the tree.
+# Run with the hook-enabled harbor: export PYTHONPATH=/Users/lukedhlee/harbor-wt/snowball-r2egym/src
+#   set -a; source ~/.config/otagent/secrets.env; set +a
+#   /Users/lukedhlee/harbor/.venv/bin/harbor jobs start --config gate_oracle.yaml
+# Replace TREE_DIR and JOBS_DIR. Expect oracle = 1.0 and nop = 0.0 on every task; anything else is a broken artifact.
+job_name: tree_v3_oracle
+jobs_dir: JOBS_DIR
+n_attempts: 1
+n_concurrent_trials: 8
+quiet: false
+timeout_multiplier: 1.0
+retry:
+  max_retries: 3
+  include_exceptions:
+  - DaytonaRateLimitError
+  - EnvironmentStartTimeoutError
+  - DaytonaSandboxStopError
+environment:
+  type: daytona
+  force_build: false
+  delete: true
+  override_cpus: 2
+  override_memory_mb: 4096
+  override_storage_mb: 8192
+  kwargs:
+    auto_snapshot: true      # without it the org rejects the per-sandbox Dockerfile build
+verifier:
+  override_timeout_sec: 900
+agents:
+- name: oracle
+  override_timeout_sec: 900
+datasets:
+- path: TREE_DIR

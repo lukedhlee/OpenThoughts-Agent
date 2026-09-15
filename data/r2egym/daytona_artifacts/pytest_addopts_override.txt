@@ -1,0 +1,31 @@
+# Tasks whose base commit's pytest config adds a test path to every pytest call, so the verifier's pytest would also run
+# the repo's own suite. tt_daytona_tree_v3.py clears the ini addopts on the verifier's first pytest call for these.
+# Pillow: setup.cfg `addopts = -vx Tests` until 7da17ad41 (2019-01-13, "Improve pytest configuration to allow specific
+# tests as CLI args"). Derived over all 574 pillow tasks of the pool with a Pillow clone:
+#   git -C Pillow show <base_commit>:setup.cfg | grep -qx 'addopts = -vx Tests'
+# Only pillow was scanned.
+r2egym-v1-04492
+r2egym-v1-04512
+r2egym-v1-04539
+r2egym-v1-04577
+r2egym-v1-04601
+r2egym-v1-04636
+r2egym-v1-04709
+r2egym-v1-04718
+r2egym-v1-04737
+r2egym-v1-04748
+r2egym-v1-04754
+r2egym-v1-04773
+r2egym-v1-04781
+r2egym-v1-04782
+r2egym-v1-04848
+r2egym-v1-04858
+r2egym-v1-04865
+r2egym-v1-04875
+r2egym-v1-04879
+r2egym-v1-04921
+r2egym-v1-04947
+r2egym-v1-04994
+r2egym-v1-04996
+r2egym-v1-05005
+r2egym-v1-05094
