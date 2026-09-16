@@ -16,7 +16,7 @@ set -euo pipefail
 SRC=snowball_ttband_ns_c_lr5e7_c; DST=${1:-snowball_ttband_daytona1k_a}
 NODES=20; POL=8; ENG=12; FSDP=32; BATCH=64; STEPS=${STEPS:-4}; WALL=${WALL:-02:00:00}
 # Seats per arm and the org-wide create budget split. Two arms at once: SEATS=512 SHARES=32 for each (16 coordinators x 2 jobs),
-# so the two jobs together stay at the org's 5 creates/s and under its ~1,000 concurrent sandboxes.
+# so the two jobs together stay at the 5 creates/s we measured and under one user's ~1,000 concurrent sandboxes (the cap is per person).
 SEATS=${SEATS:-1024}; COORD=${COORD:-16}; SHARES=${SHARES:-$COORD}
 E=/e/fscratch/reformo/lee27/experiments; M=/e/data1/mmlaion/lee27/experiments; T=/e/fscratch/reformo/lee27/tasks
 OTA=/e/project1/transfernetx/lee27/code/OpenThoughts-Agent; C=/e/project1/transfernetx/lee27/code/snowball
