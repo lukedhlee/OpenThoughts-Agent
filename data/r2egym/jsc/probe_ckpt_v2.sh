@@ -9,7 +9,8 @@
 # Run on the Jupiter login node that hosts the bridge.
 set -uo pipefail
 P=$1; V=$2; M=$3; B=${4:-http://10.128.1.2:9922}
-NODES=${NODES:-12}; ENGINES=${ENGINES:-8}; CONC=${CONC:-256}; WALL=${WALL:-05:00:00}; VERIF=${VERIF:-1200}
+# VERIF default 1200 -> 2400 on 2026-09-15: a 1,200 s verifier nulls attempts under sandbox load (false zeros, decisions 09-07).
+NODES=${NODES:-12}; ENGINES=${ENGINES:-8}; CONC=${CONC:-256}; WALL=${WALL:-05:00:00}; VERIF=${VERIF:-2400}
 # coordinators: the dispatcher splits n_concurrent_trials across process_pool.num_coordinators, and a coordinator that
 # multiplexes far more than ~66 trials starves its own asyncio loops (2026-09-07: 12 x 132 produced 150-250 spurious 30 s
 # connect timeouts per step; 2026-09-09: the probe template's 4 coordinators x 256 trials halved probe throughput).
@@ -40,8 +41,12 @@ import json, sys
 p, coord = sys.argv[1], sys.argv[2]
 c = json.load(open(p))
 a = [x for x in c["skyrl_hydra_args"]
-     if not x.startswith("trainer.algorithm.use_tis=") and not x.startswith("trajectory_runner.process_pool.num_coordinators=")]
-a += ["trainer.algorithm.use_tis=false", "trajectory_runner.process_pool.num_coordinators=%s" % coord]
+     if not x.startswith("trainer.algorithm.use_tis=") and not x.startswith("trajectory_runner.process_pool.num_coordinators=")
+     and not x.startswith("trajectory_runner.process_pool.eval_spread_coordinators=")]
+# eval_spread_coordinators (MarinSkyRL a03b2773, 2026-09-15): without it the eval session runs every trial in coordinator 0
+# and a 512-seat probe collapses on that one event loop (the s24 refresh screen r1). Needs marinskyrl-marin >= a03b2773.
+a += ["trainer.algorithm.use_tis=false", "trajectory_runner.process_pool.num_coordinators=%s" % coord,
+      "trajectory_runner.process_pool.eval_spread_coordinators=true"]
 c["skyrl_hydra_args"] = a; json.dump(c, open(p, "w"), indent=2)
 PYEOF
 $PY $C/validate_hydra_args.py $E/$P/configs/${P}_rl_config.json 2>&1 | tail -1

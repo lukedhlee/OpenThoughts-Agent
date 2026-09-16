@@ -20,9 +20,13 @@
 # errors are masked (they were trained as reward 0), the dead ContextLengthExceededError mask entry and the removed
 # TmuxSessionLostError class are gone, and TmuxSessionEndedError (upstream's new name, classified infrastructure) is scored 0
 # so a shell the model killed stays a failure.
+#      MODEL=<hf export dir> (default unset = the Stage-3 base): start from an export; sets trainer.policy/ref.model.path,
+#      served_model_name (= the dir basename) and the top-level json model_path together (2026-09-15).
+#      BRIDGE=http://10.128.1.2:<port> (default unset = harbor's APPTAINER_BRIDGE_URL default): pin the sandbox bridge.
 set -euo pipefail
 SRC=snowball_ttband_migsmoke_v2_c; DST=$1; SUBMIT=${2:-0}; shift 2 2>/dev/null || shift $#; EXTRA=("$@")
-NODES=${NODES:-40}; SPEC=${SPEC:-0}
+NODES=${NODES:-40}; SPEC=${SPEC:-0}; MODEL=${MODEL:-}; BRIDGE=${BRIDGE:-}; export MODEL
+if [ -n "$MODEL" ]; then [ -f "$MODEL/config.json" ] && [ -f "$MODEL/model.safetensors.index.json" ] || { echo "MODEL is not an HF export: $MODEL"; exit 1; }; fi
 # TRAIN_TREE: the training task tree under $T (default = the curriculum tree; the P2O distillation arm passes its -pA copy)
 TRAIN_TREE=${TRAIN_TREE:-r2egym-tt-v2-train-basecurr-x16}; export TRAIN_TREE
 case "$NODES" in 40) POL=16; ENG=24; FSDP=64; SEATS=1584; COORD=24;; 20) POL=8; ENG=12; FSDP=32; SEATS=1056; COORD=16;; 12) POL=4; ENG=8; FSDP=16; SEATS=528; COORD=16;; *) echo "NODES must be 40, 20 or 12"; exit 1;; esac
@@ -52,6 +56,8 @@ fi
 # the two scrollback knobs the recipe carries (MarinSkyRL b3a288bb): read whole test logs, same window on both backends
 sed -i "/^export HARBOR_OPENAI_CONNECT_TIMEOUT_SEC=120$/a export HARBOR_TMUX_CAPTURE_BUDGET_CHARS=400000\nexport HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000" $SB
 grep -q "^export HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000$" $SB || { echo "scrollback env sed failed"; exit 1; }
+# 2026-09-15: pin the sandbox bridge (same line the probe builders write); unset = harbor's default, which is another workstream's pool
+if [ -n "$BRIDGE" ]; then sed -i "/^export DCFT_RL_ENV=/a export APPTAINER_BRIDGE_URL=$BRIDGE" $SB; grep -q "^export APPTAINER_BRIDGE_URL=$BRIDGE$" $SB || { echo "bridge pin failed"; exit 1; }; echo "bridge pinned: $BRIDGE"; fi
 python3 - $E/$DST/configs/${DST}_rl_config.json $SRC "$T" "$NODES:$POL:$ENG:$FSDP:$SEATS:$COORD" "${EXTRA[@]}" <<'PY'
 import json, os, sys
 p, src, T, geo, extra = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]; c = json.load(open(p)); a = c["skyrl_hydra_args"]
@@ -97,6 +103,15 @@ if not any(x.lstrip("+").startswith(zero_key) for x in a):
 else:
     setk(zero_key, json.dumps(["TmuxSessionEndedError"], separators=(",", ":")))
 c["num_nodes"] = int(NODES)
+m = os.environ.get("MODEL", "")
+if m:
+    # 2026-09-15: start the arm from an HF export instead of the Stage-3 base (the step-24 continuation on the refreshed pool
+    # is a cold restart: max_ckpts_to_keep=2 rotated the raw step-24 checkpoint away). Four keys move together; the served
+    # name is the export dir's basename ("model"), and a wrong served_model_name 400s every LLM call (two probes lost 09-14).
+    setk("trainer.policy.model.path=", m); setk("trainer.ref.model.path=", m)
+    setk("generator.engine_init_kwargs.served_model_name=", os.path.basename(m.rstrip("/")))
+    c["model_path"] = m
+    print("model:", m, "(served as", os.path.basename(m.rstrip("/")) + ")")
 for x in extra:
     pre = x.split("=")[0].lstrip("+") + "="; i = [k for k, y in enumerate(a) if y.lstrip("+").startswith(pre)]
     assert len(i) <= 1, (x, i)
