@@ -4,6 +4,8 @@ On Jupiter, proxychains makes external connection setup block the Python event l
 
 The measured comparison and its limits live in `ai_memory/active/snowball-r2egym/research/2026-09-15_daytona_proxy_tokenization.md`.
 
+Measured on the gateway (job 1821426, 2026-09-15): 128/256/512/1,056 sandboxes with a 35 s idle gap after every fourth command, 83,250 commands, zero errors, cold and warm p99 under 1 s, every seat served, cleanup verified. `summarize_fixed_ramp.py` tabulates a run and applies the thresholds. A second ramp (1825863) added the warm 1,056 plateau (p99 .995 s vs 6.1 s through proxychains) and 64 replacements under load (33 s, new seats' first command .6 s p50). With real agents: 1,024 at once (1825178, `scale_1024.sbatch`) had zero transport errors in 44,956 calls and terminal p50 .97 s; 256 with rollout details on (1825574, `scale_tok256.sbatch`) kept tokenization at 9 ms p50 / .48 s p99. Note `collect_rollout_details=False` disables harbor's tokenize calls entirely.
+
 ## Candidate deployment change
 
 Run `async_socks_connect_proxy.py` as a separate process on the same node as the Harbor coordinator. It binds only to `127.0.0.1`, accepts HTTP CONNECT, and negotiates the existing SOCKS connection asynchronously. TLS stays between the client and Daytona.
