@@ -8,7 +8,7 @@
 #     egress through ONE ASYNC LOOPBACK GATEWAY PER NODE to the login-node microsocks (no proxychains: it blocks the
 #     coordinator event loop on every reconnect, research/2026-09-15_daytona_proxy_tokenization.md), no bridge.
 #   - code under test first on PYTHONPATH and as SKYRL_HOME (the launcher runs the entrypoint with cwd $SKYRL_HOME/skyrl-train):
-#     harbor f8155dcd (lukedhlee/daytona-create-pacing) and MarinSkyRL f616e800 (lukedhlee/daytona-create-shares), each one commit
+#     harbor 9940bdfd (lukedhlee/snowball-r2egym tip: create pacing + tokenize budget + plain $ prompt) and MarinSkyRL f616e800 (lukedhlee/daytona-create-shares), each one commit
 #     on top of the lukedhlee/snowball-r2egym tips the shared venv installs; the job exits 97 if either is not what imports.
 #   - tasks: all 1,000 training-pool tasks that pass the Daytona gate (the control arm trained on the same 1,003-task pool).
 # Runs on the Jupiter login node with python3 (stdlib) only.
@@ -28,7 +28,7 @@ GWDEPS=/e/fscratch/reformo/lee27/experiments/tokenization_transport_20260915/dep
 [ -f $GWPY ] && [ -d $GWDEPS/python_socks ] || { echo "gateway script or its deps missing"; exit 1; }
 case "$DST" in *snowball_ttband*) ;; *) echo "dst must contain snowball_ttband (store_reaper)"; exit 1;; esac
 squeue -h -u "$USER" -n "$DST" -o %i | grep -q . && { echo "$DST has a job in squeue - refusing"; exit 1; }
-[ "$(git -C $DS_HARBOR rev-parse --short=8 HEAD)" = f8155dcd ] && [ -z "$(git -C $DS_HARBOR status --short)" ] || { echo "harbor-pacing is not a clean f8155dcd"; exit 1; }
+[ "$(git -C $DS_HARBOR rev-parse --short=8 HEAD)" = 9940bdfd ] && [ -z "$(git -C $DS_HARBOR status --short)" ] || { echo "harbor-pacing is not a clean 9940bdfd"; exit 1; }
 [ "$(git -C $DS_SKYRL rev-parse --short=8 HEAD)" = f616e800 ] && [ -z "$(git -C $DS_SKYRL status --short)" ] || { echo "marinskyrl-shares is not a clean f616e800"; exit 1; }
 
 # --- 1. task tree: every training-pool task on the Daytona allowlist (1,000), copied like the smoke's 64 ---
@@ -131,7 +131,7 @@ b, n = re.subn(r'^DAYTONA_API_KEY_OVERRIDE="dtn_[0-9a-f]+"\n', lambda m: key_blo
 assert n == 1 and "dtn_" not in b, "key override line"
 sub1("export HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000\n", "export HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000\n" + (
     "# --- Daytona 1k arm: sandbox backend ---\n"
-    "# harbor f8155dcd paces sandbox creates at this org-wide rate; MarinSkyRL f616e800 gives each rollout coordinator 1/num_coordinators of it\n"
+    "# harbor 9940bdfd paces sandbox creates at this org-wide rate; MarinSkyRL f616e800 gives each rollout coordinator 1/num_coordinators of it\n"
     "export HARBOR_DAYTONA_CREATE_RATE=5 HARBOR_DAYTONA_CREATE_SHARES=%s\n"
     "# SOCKS credentials for the per-node gateway (started below in place of _setup_proxy); never proxychains on this job\n"
     "set -a; source %s; set +a\n"
@@ -163,7 +163,7 @@ sub1('setup_container_runtime "apptainer" "$WORKDIR" || exit $?\n', 'setup_conta
 eagle = "export PYTHONPATH=/e/project1/transfernetx/lee27/code/src/marin_vllm_eagle3${PYTHONPATH:+:$PYTHONPATH}\n"
 sub1(eagle, eagle + (
     "# --- Daytona 1k arm: code under test shadows the venv's editable installs (harbor-marin b964a5f6, marinskyrl-marin 20032472) ---\n"
-    "DS_HARBOR=%s   # f8155dcd = lukedhlee/snowball-r2egym + sandbox-create pacing\n"
+    "DS_HARBOR=%s   # 9940bdfd = lukedhlee/snowball-r2egym tip: create pacing, tokenize budget, plain $ prompt\n"
     "DS_SKYRL=%s   # f616e800 = lukedhlee/snowball-r2egym + create shares per coordinator\n"
     "# the launcher runs the entrypoint with cwd $SKYRL_HOME/skyrl-train, which wins over PYTHONPATH (gotchas 2026-09-13)\n"
     "export SKYRL_HOME=$DS_SKYRL RL_REPO_DIR=$DS_SKYRL\n"
