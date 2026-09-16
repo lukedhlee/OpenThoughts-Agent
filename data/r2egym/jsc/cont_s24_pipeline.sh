@@ -41,7 +41,11 @@ fleet_ready(){ # <label> <nodes> [max_min]: every node logged its worker start a
   log "FLEET $1 NOT ready after $max min ($n/$nodes nodes)"; return 1
 }
 fleet_release(){ local id; id=$(cat $D/fleet_$1 2>/dev/null) || return 0; [ -n "$id" ] || return 0; $JW "scancel $id" && { mv $D/fleet_$1 $D/fleet_$1.released; log "RELEASE fleet $1 $id"; } || log "RELEASE fleet $1 $id FAILED (retry next poll)"; }
-job_gone(){ ! squeue -h -j "$1" -o %T 2>/dev/null | grep -q .; }
+job_gone(){ # true only when squeue answered without the job AND sacct shows a terminal state; a slurmctld hiccup also returns
+  # empty output (09-16: one poll read a PENDING arm as gone), and a false "gone" would release the fleet and resubmit the arm
+  local out rc; out=$(squeue -h -j "$1" -o %T 2>&1); rc=$?
+  if [ $rc -eq 0 ]; then [ -z "$out" ] || return 1; else echo "$out" | grep -q "Invalid job id" || return 1; fi
+  sacct -j "$1" -X -n -o State 2>/dev/null | grep -qE "COMPLETED|CANCELLED|FAILED|TIMEOUT|NODE_FAIL|OUT_OF_MEMORY|PREEMPTED|DEADLINE|BOOT_FAIL"; }
 snapshot(){ log "queue: $(squeue -h -u $USER -o '%i:%j:%T:%M' | tr '\n' ' ') | fleets: $($JW "squeue -h -u lee27 -o '%i:%T:%M'" 2>/dev/null | tr '\n' ' ') | bridge: $(status | cut -c1-120)"; }
 
 log "=== pipeline start NAME=$NAME ARM=$ARM ANCHOR=$ANCHOR FINAL=$FINAL"
