@@ -8,8 +8,9 @@
 #   C  final: export_hf.sbatch of the arm's global_step_24 (1 node, ~4 min), then the same probe on that export; 8 GPU + 16-node fleet
 #   R  readout: v2val_compare.py + heldout_compare.py, anchor vs final -> $D/readout.md
 # Every JUWELS fleet is submitted here and released BY JOB ID the moment its consumer leaves squeue (09-12: 432 CPU node-h idled when
-# the release depended on a Mac session). Markers in $D let a re-run resume where it stopped. This script never cancels a GPU job:
-# a dead arm is reported (FAILED marker) and left to the operator.
+# the release depended on a Mac session). Markers in $D let a re-run resume where it stopped. The only GPU job this script cancels
+# is the arm once checkpoint 24 is on disk; an arm Slurm kills before it writes a log (node-boot failure, 09-16) is resubmitted at
+# most twice; any other dead arm is reported (FAILED marker) and left to the operator.
 # Usage (login02, inside tmux):  bash cont_s24_pipeline.sh            env: NAME ARM ANCHOR FINAL (defaults below)
 set -uo pipefail
 NAME=${NAME:-cont_s24_refresh}; ARM=${ARM:-snowball_ttband_ns_cont24_refresh_a}
@@ -84,7 +85,19 @@ while [ ! -f $D/A_DONE ] || [ ! -f $D/B_DONE ]; do
      && [ -f $E/$ARM/$ARM/checkpoints/global_step_24/trainer_state.pt ] && [ -z "$(find $E/$ARM/$ARM/checkpoints/global_step_24 -mmin -2 2>/dev/null | head -1)" ]; then
     touch $D/B_TRAINED; log "ARM B checkpoint 24 complete and quiet; cancelling $(cat $D/job_B)"; scancel $(cat $D/job_B)
   fi
-  [ ! -f $D/B_DONE ] && job_gone $(cat $D/job_B) && { fleet_release B; touch $D/B_DONE; log "B gone ($(sacct -j $(cat $D/job_B) -n -o State,Elapsed,NNodes -X | head -1))"; }
+  if [ ! -f $D/B_DONE ] && job_gone $(cat $D/job_B); then
+    fleet_release B
+    st=$(sacct -j $(cat $D/job_B) -n -o State%30,Elapsed,NNodes -X | head -1)
+    # 09-16: Slurm cancelled the arm ("CANCELLED by 0") 2 min into CONFIGURING, no log written (a node failed to boot), no requeue;
+    # resubmit the same sbatch, at most twice in total, never a job that got far enough to write its log
+    if [ ! -f $D/B_TRAINED ] && [ -z "$(ls $E/$ARM/logs/*_$(cat $D/job_B).out 2>/dev/null)" ] && [ $(ls $D/job_B.* 2>/dev/null | wc -l) -lt 2 ]; then
+      mv $D/job_B $D/job_B.$(cat $D/job_B).killed_before_log; rm -f $D/fleet_B.released
+      J=$(cd $O && DCFT=$PWD sbatch --parsable $E/$ARM/sbatch/${ARM}_rl.sbatch) && { echo $J > $D/job_B; log "ARM B gone before writing a log ($st); resubmitted as $J"; } \
+        || { log "ARM B resubmit failed ($st)"; touch $D/B_DONE; }
+    else
+      touch $D/B_DONE; log "B gone ($st)"
+    fi
+  fi
   [ -f $D/A_DONE ] && [ -f $D/B_DONE ] && break
   (( $(date +%s) % 600 < 60 )) && snapshot
   sleep 60
