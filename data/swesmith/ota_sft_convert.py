@@ -7,8 +7,10 @@ split) with three deltas the OTA release forces:
 
   * selection is by ROW ID (``<shard>:<offset>``) against the 2026-09-18 audit manifest, because OTA
     rows carry no canonical identity outside the SWE-smith slice;
-  * rows are screened here rather than upstream: structurally incomplete traces and tasks our
-    checkpoint or our evals already saw are dropped (see ``verdict``);
+  * rows are screened here rather than upstream. ``--screen reference`` (the default since 2026-09-19,
+    Luke: "put them back") keeps every row the release trained on and drops only rows flagged for
+    evaluation leakage; ``--screen strict`` is the 2026-09-18 screen (structurally incomplete traces,
+    Stage-3 overlap and the pygments environment dropped too, 37 % of the release);
   * ``summarization-*`` rows are KEPT. They are Harbor's own proactive-compaction path — the handoff
     prompt is byte-identical to ``terminus_2.py`` — so their trailing prose turns are admitted while
     every earlier turn must still parse as a Terminus-2 action.
@@ -49,10 +51,25 @@ SWE = {"swesmith", "issue"}
 MAX_PROSE_TURNS = 3
 
 
-def verdict(r: dict) -> tuple[str | None, str | None]:
-    """Return (kind, drop_reason). kind is 'action' or 'compaction' for rows we keep."""
+EVAL_LEAK = {"eval_same_issue_or_prompt"}
+
+
+def verdict(r: dict, screen: str = "reference") -> tuple[str | None, str | None]:
+    """Return (kind, drop_reason). kind is 'action' or 'compaction' for rows we keep.
+
+    reference: the release's own training set (every trace, timed-out and mid-work ones included, as
+    OpenThoughts-Agent trained it) minus rows flagged for evaluation leakage. The screen that gates
+    the model is the evaluation, not trace completeness.
+    strict: the 2026-09-18 screen, kept for reproducing ota_sft_100k_v1.
+    """
     reasons = set(r["reasons"])
     summarization = (r["trace_source"] or "").startswith("summarization")
+    if screen == "reference":
+        if reasons & EVAL_LEAK:
+            return None, "decon"
+        if r["source"] in SWE and "eval_patch_line_overlap_review" in r["flags"]:
+            return None, "decon_review_flag"
+        return ("compaction" if summarization else "action"), None
     if r["source"] in SWE and "missing_original_task_prompt" in reasons:
         return None, "no_task_identity"
     if reasons & DECON:
@@ -83,6 +100,7 @@ def main() -> None:
     ap.add_argument("--slices", default=",".join(SLICES), help="comma list of slices to emit")
     ap.add_argument("--heldout-frac", type=float, default=0.05)
     ap.add_argument("--no-compaction", action="store_true", help="drop the summarization/compaction rows")
+    ap.add_argument("--screen", choices=("reference", "strict"), default="reference", help="see verdict()")
     args = ap.parse_args()
 
     from transformers import AutoTokenizer
@@ -96,7 +114,7 @@ def main() -> None:
     stats: collections.Counter = collections.Counter()
     for line in open(args.manifest):
         r = json.loads(line)
-        kind, why = verdict(r)
+        kind, why = verdict(r, args.screen)
         if kind is None:
             stats[f"drop:{why}"] += 1
             continue
@@ -106,7 +124,10 @@ def main() -> None:
         if r["source"] not in wanted:
             stats["drop:slice_not_requested"] += 1
             continue
-        selected[r["row_id"]] = {"slice": r["source"], "kind": kind, "base_task": r["base_task"], "instance_id": r["instance_id"]}
+        selected[r["row_id"]] = {
+            "slice": r["source"], "kind": kind, "base_task": r["base_task"], "instance_id": r["instance_id"],
+            "audit_reasons": ",".join(sorted(r["reasons"])), "final_complete": bool(r["final_complete"]),
+        }
 
     def split_of(base_task: str) -> str:
         h = int(hashlib.sha256(base_task.encode()).hexdigest()[:8], 16)
@@ -161,6 +182,8 @@ def main() -> None:
                     "trial_name": r["trial_name"],
                     "episode": r["episode"],
                     "instance_id": pick["instance_id"],
+                    "audit_reasons": pick["audit_reasons"],
+                    "final_complete": pick["final_complete"],
                 }
             )
 
@@ -179,6 +202,8 @@ def main() -> None:
             ("trial_name", pa.string()),
             ("episode", pa.string()),
             ("instance_id", pa.string()),
+            ("audit_reasons", pa.string()),
+            ("final_complete", pa.bool_()),
         ]
     )
     out = Path(args.out)
@@ -202,6 +227,7 @@ def main() -> None:
         "manifest": str(args.manifest),
         "slices": wanted,
         "heldout_frac": args.heldout_frac,
+        "screen": args.screen,
         "compaction_rows_kept": not args.no_compaction,
         "counts": dict(stats),
         "per_slice": {

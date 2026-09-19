@@ -1,0 +1,78 @@
+#!/bin/bash
+# ota_lane.sh — one LANE of Snowball SFT arms on an OTA cache: for each learning rate in LRS, train one arm
+# (standard SFT, or TailSFT when TAIL_FRACTION > 0), then export the requested epoch checkpoints and score each
+# export on HELDOUT with heldout_nll.sbatch. Arms in a lane run one after another (the chain waits on each run
+# job); two lanes may run side by side, started a few minutes apart (gotchas 2026-09-17: two 64-rank JAX jobs
+# compiling in the same minute wedged one of them).
+#
+# Required env: LANE (name), CACHE (built cache dir), LRS ("2e-5 5e-5"), EPOCHS, HELDOUT (parquet), OUT_ROOT.
+# Optional: TAIL_FRACTION (0 = standard), TAIL_REF (.npy, required when TAIL_FRACTION > 0), EXPORT_EPOCHS
+# ("final" = last checkpoint only, "all" = every packed epoch), SNOWBALL_WALL, SBATCH_ACCOUNT, TAG (run-id suffix),
+# SCORE_TIME (scoring job wall; ~1 s per held-out row + 5 min server start).
+# Runs on a LOGIN node inside tmux; every heavy step is a Slurm job. Log: $S/logs/ota/lane_$LANE.log
+set -uo pipefail
+S=/e/data1/mmlaion/lee27/snowball-sft
+C=/e/project1/transfernetx/lee27/code/snowball
+MOE=/e/project1/transfernetx/lee27/code/marin-sft/experiments/june_tpu_67b_a2b/moe
+TOK=/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888
+: "${LANE:?}" "${CACHE:?}" "${LRS:?}" "${EPOCHS:?}" "${HELDOUT:?}" "${OUT_ROOT:?}"
+TAIL_FRACTION=${TAIL_FRACTION:-0}
+EXPORT_EPOCHS=${EXPORT_EPOCHS:-final}
+TAG=${TAG:-}
+export SNOWBALL_STAGE=ota
+export SNOWBALL_DATASET_ID=open-thoughts/OpenThoughts-Agent-SFT-100K
+export SNOWBALL_DATASET_REVISION=45fb28fcc38d352133cb28a1c8a43a2f14fea97b
+export SNOWBALL_EXP=$S/experiments/snowball-ota-sft
+export SNOWBALL_CACHE=$CACHE
+export SNOWBALL_PARQUET_LIST=${PARQUET_LIST:-$S/data/ota_sft_100k_v2/parquet.list}
+export EPOCHS
+export SNOWBALL_KEEP_PER_EPOCH=1
+export SNOWBALL_WALL=${SNOWBALL_WALL:-02:00:00}
+export SBATCH_ACCOUNT=${SBATCH_ACCOUNT:-laionize}
+export CHAIN_STEPS=run
+if [ "$TAIL_FRACTION" != 0 ]; then
+  : "${TAIL_REF:?TailSFT needs the reference .npy}"
+  [ -f "$TAIL_REF" ] || { echo "no reference vector at $TAIL_REF"; exit 1; }
+  export SNOWBALL_TAIL_FRACTION=$TAIL_FRACTION SNOWBALL_TAIL_REF=$TAIL_REF
+fi
+mkdir -p "$S/logs/ota" "$OUT_ROOT"
+LOG=$S/logs/ota/lane_$LANE.log
+say() { echo "[$(date -u +%FT%TZ)] [$LANE] $*" | tee -a "$LOG"; }
+say "LANE_START lrs='$LRS' epochs=$EPOCHS tail=$TAIL_FRACTION cache=$CACHE heldout=$HELDOUT"
+
+for LR in $LRS; do
+  ARM=lr$LR-ep$EPOCHS$TAG
+  [ "$TAIL_FRACTION" != 0 ] && ARM=$ARM-tail${TAIL_FRACTION#0.}
+  export SNOWBALL_LR=$LR
+  export SNOWBALL_OUTPUT=$OUT_ROOT/$ARM
+  export SNOWBALL_RUN_ID=snowball-ota-$LANE-$ARM
+  # the chain keeps its "run done" marker per stage; give every arm its own marker dir via SNOWBALL_SCRATCH? No:
+  # the marker is $S/logs/ota/.done.run, shared. Remove it before each arm so a finished earlier arm is not
+  # mistaken for this one (the chain also checks the checkpoint dir, which is per arm).
+  rm -f "$S/logs/ota/.done.run"
+  say "ARM_START $ARM lr=$LR output=$SNOWBALL_OUTPUT"
+  if ! bash -l "$C/snowball_sft_chain.sh" >> "$LOG" 2>&1; then say "ARM_FAILED $ARM (chain); continuing with the next lr"; continue; fi
+  STEPS=$(cat "$S/logs/ota/.done.run" 2>/dev/null || true)
+  [ -n "$STEPS" ] || { say "ARM_FAILED $ARM (no step count)"; continue; }
+  EPOCH_STEPS=$((STEPS / EPOCHS))
+  say "ARM_DONE $ARM steps=$STEPS epoch=$EPOCH_STEPS"
+  if [ "$EXPORT_EPOCHS" = all ]; then epochs=$(seq 1 "$EPOCHS"); else epochs=$EPOCHS; fi
+  for e in $epochs; do
+    st=$((e * EPOCH_STEPS)); [ "$e" = "$EPOCHS" ] && st=$STEPS
+    CK=$SNOWBALL_OUTPUT/checkpoints/step-$st
+    EX=$SNOWBALL_OUTPUT/export-step$st-hf-bf16
+    [ -d "$CK" ] || { say "no checkpoint $CK; skipping epoch $e"; continue; }
+    if [ -f "$EX/config.json" ]; then jx=""; else
+      jx=$(sbatch --parsable -o "$S/logs/snowball-export.%j.log" --account="$SBATCH_ACCOUNT" \
+        --export=ALL,MARIN_ROOT=/e/project1/transfernetx/lee27/code/marin-sft,MARIN_PYTHON=/e/project1/transfernetx/lee27/code/envs/marin-grug-sft/bin/python,SNOWBALL_EXPORT_CHECKPOINT="$CK",SNOWBALL_EXPORT_OUTPUT="$EX",SNOWBALL_EXPORT_TOKENIZER="$TOK" \
+        "$MOE/jupiter_snowball_export.sbatch") || { say "export submit failed for $ARM epoch $e"; continue; }
+      say "EXPORT_SUBMITTED $ARM epoch $e job $jx -> $EX"
+    fi
+    NAME=ota-$LANE-$ARM-ep$e
+    js=$(SBATCH_TIMELIMIT=${SCORE_TIME:-00:45:00} sbatch --parsable ${jx:+--dependency=afterok:$jx} --account="$SBATCH_ACCOUNT" \
+      --export=ALL,MODEL="$EX",PARQUET="$HELDOUT",NAME="$NAME" "$C/heldout_nll.sbatch") \
+      && say "SCORE_SUBMITTED $ARM epoch $e job $js -> $S/logs/heldout_nll_$NAME.json" \
+      || say "score submit failed for $ARM epoch $e"
+  done
+done
+say "LANE_DONE; curve: grep -h '\"nll\"' $S/logs/heldout_nll_ota-$LANE-*.json"
