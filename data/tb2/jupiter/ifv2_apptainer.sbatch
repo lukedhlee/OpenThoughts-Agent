@@ -76,9 +76,11 @@ URL="http://$(hostname -s).jupiter.internal:8000/v1"
 echo "$URL" > $ENDPOINT_DIR/$SLURM_JOB_ID
 printf 'model=%s\npolicy=%s\ngen=%s\ndraft=%s\nserved=%s\n' "$MODEL" "$POLICY" "$GEN" "$DRAFT" "$SERVED" > $ENDPOINT_DIR/$SLURM_JOB_ID.meta
 echo "ENDPOINT $URL (file $ENDPOINT_DIR/$SLURM_JOB_ID)"
-# --- apptainer bridge + workers on this node (harbor-v01 = the v0.1 pin run_tb2.sh uses; same code as harbor-marin) ---
-APT=/e/fscratch/reformo/lee27/code/harbor-v01/src/harbor/environments/apptainer
-[ -f $APT/server.py ] || APT=/e/project1/transfernetx/lee27/code/harbor-marin/src/harbor/environments/apptainer
+# --- apptainer bridge + workers on this node. The bridge comes from harbor-marin (lukedhlee/snowball-r2egym), NOT the
+# v0.1 pin: upstream 7b18505a's ThreadedHTTPServer keeps Python's listen backlog of 5, so the login node's first
+# connect gets refused while the dispatcher is polling (smokes 2 and 3 on 2026-09-19); the fork honours
+# BRIDGE_LISTEN_BACKLOG / BRIDGE_MAX_HANDLER_THREADS. The harbor client side stays on the v0.1 pin (run_tb2.sh). ---
+APT=/e/project1/transfernetx/lee27/code/harbor-marin/src/harbor/environments/apptainer
 SIF=/e/scratch/reformo/lee27/sif; STG=/tmp/lee27_ifv2_staging; mkdir -p $STG
 export BRIDGE_CLOSE_AFTER_RESPONSE=1 BRIDGE_MAX_HANDLER_THREADS=256 BRIDGE_LISTEN_BACKLOG=1024
 BPORT=${BPORT:-9930}
