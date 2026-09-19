@@ -6,7 +6,8 @@
 # with the resume line below: the trainer picks up its own checkpoint and the schedule continues unchanged.
 # Cost, stated before starting, at EPOCHS=1 (~630 steps, 6.4 s per step on 16 nodes): prep 1 node ~1 h 45
 # (1.8 node-h); each arm ~1 h 10 + start-up on 16 nodes (~20 node-h); TailSFT reference pass ~50 min on 16 nodes
-# (~13 node-h); 2 exports (0.8); base + 2 scorings of the 1,200-row held-out (1.2). About 57 node-hours in all.
+# (~13 node-h); a checkpoint every 210 steps (~29k / 58k / 88k trajectories seen) -> 6 exports (2.4) and base + 6
+# scorings of the 1,200-row held-out (2.8), the data-scaling ladder inside one epoch. About 60 node-hours in all.
 # Resume an arm to its second epoch (~20 node-h) later:
 #   SNOWBALL_RESUME=1 LANE=fullstd CACHE=$EXP/cache-all-v2 LRS=<lr> EPOCHS=2 SNOWBALL_SCHEDULE_EPOCHS=2 \
 #     EXPORT_EPOCHS=final HELDOUT=<same> OUT_ROOT=$EXP/full [TAIL_FRACTION=0.25 TAIL_REF=...] bash ota_lane.sh
@@ -35,10 +36,10 @@ say "cache ready: $(head -c 300 "$CACHE/train/.stats.json" 2>/dev/null)"
 
 jb=$(SBATCH_TIMELIMIT=01:00:00 sbatch --parsable --account=laionize --export=ALL,MODEL=/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888,PARQUET="$HELDOUT",NAME=ota-sub-base-full "$C/heldout_nll.sbatch") && say "base score job $jb"
 
-tmux new -d -s ota_full_std "LANE=fullstd CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS='$LR_STD' EPOCHS=$EPOCHS EXPORT_EPOCHS=all HELDOUT=$HELDOUT OUT_ROOT=$EXP/full SNOWBALL_WALL=03:00:00 SCORE_TIME=01:00:00 bash -l $C/ota_lane.sh; sleep 3600"
+tmux new -d -s ota_full_std "LANE=fullstd CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS='$LR_STD' EPOCHS=$EPOCHS EXPORT_EPOCHS=kept KEEP_EVERY=210 HELDOUT=$HELDOUT OUT_ROOT=$EXP/full SNOWBALL_WALL=03:00:00 SCORE_TIME=01:00:00 bash -l $C/ota_lane.sh; sleep 3600"
 say "std lane started (tmux ota_full_std)"
 for i in $(seq 1 120); do squeue -u lee27 -h -o "%j %T" | grep -q "snowball-ota-fullstd.* RUNNING" && break; sleep 30; done
 sleep 300
-tmux new -d -s ota_full_tail "CACHE=$CACHE REF_OUT=$EXP/tail/ref_all_v2.npy REF_EPOCHS=4 SNOWBALL_WALL=02:00:00 bash -l $C/ota_tail_ref.sh && LANE=fulltail CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS='$LR_TAIL' EPOCHS=$EPOCHS EXPORT_EPOCHS=all HELDOUT=$HELDOUT OUT_ROOT=$EXP/full TAIL_FRACTION=0.25 TAIL_REF=$EXP/tail/ref_all_v2.npy SNOWBALL_WALL=03:00:00 SCORE_TIME=01:00:00 bash -l $C/ota_lane.sh; sleep 3600"
+tmux new -d -s ota_full_tail "CACHE=$CACHE REF_OUT=$EXP/tail/ref_all_v2.npy REF_EPOCHS=4 SNOWBALL_WALL=02:00:00 bash -l $C/ota_tail_ref.sh && LANE=fulltail CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS='$LR_TAIL' EPOCHS=$EPOCHS EXPORT_EPOCHS=kept KEEP_EVERY=210 HELDOUT=$HELDOUT OUT_ROOT=$EXP/full TAIL_FRACTION=0.25 TAIL_REF=$EXP/tail/ref_all_v2.npy SNOWBALL_WALL=03:00:00 SCORE_TIME=01:00:00 bash -l $C/ota_lane.sh; sleep 3600"
 say "tail lane started (tmux ota_full_tail)"
 say "FULL_PAIR_LAUNCHED"
