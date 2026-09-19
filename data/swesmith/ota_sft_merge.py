@@ -57,7 +57,7 @@ def main() -> None:
     for name, tabs in (("ota-all-train", train), ("ota-all-heldout", heldout), ("ota-sub-train", sub_train), ("ota-sub-heldout", sub_heldout)):
         tab = pa.concat_tables(tabs)
         f = args.out / f"{name}-00000-of-00001.parquet"
-        pq.write_table(tab, f, compression="zstd")
+        pq.write_table(tab, f, compression="zstd", row_group_size=1000)  # small row groups: a >2 GB nested row group breaks the cache reader (job 1891342)
         written[f.name] = (len(tab), hashlib.sha256(f.read_bytes()).hexdigest())
     for s in SLICES:
         for split in ("train", "heldout"):
