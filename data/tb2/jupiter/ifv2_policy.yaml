@@ -1,13 +1,15 @@
 # ifv2_policy.yaml — the 477 held-out if-v2 instruction-following tasks (Nemotron-RL IF, Harbor tarballs from TaskTrove
 # laion__nemotron-gym-instruction-following-v3) through terminus-2 on Daytona, under the same v0.1 budgets as the TB2
 # probe (tb2_marin_policy.yaml); 32 concurrent trials = the server's --max-num-seqs. All 477 tasks share one
-# environment (python:3.11-slim-bookworm, no packages) -> one Daytona snapshot harbor__b7537eaa1e7c__snapshot, which
-# must exist (the org refuses declarative builds and sits at its 40-snapshot cap on 2026-09-19).
+# environment (python:3.11-slim-bookworm, no packages; Dockerfile hash dc02d52d2529) -> one SIF,
+# /e/scratch/reformo/lee27/sif/build_ifv2-dc02d52d2529.sif (tmux + asciinema baked in; compute nodes have no internet).
 # Result per trial: result.json verifier_result.rewards.reward; task_name = the tarball name -> joins to
 # $S/data/ota_if_sft_v1/ifv2-heldout-tasks.jsonl (teacher pass rate on the same 477: 0.568).
 #
 # run_tb2.sh fills __JOB_NAME__ and __API_BASE__:
+#   MODEL=<export> sbatch ifv2_apptainer.sbatch; then
 #   TASKS=/e/data1/mmlaion/lee27/tasks/ifv2_heldout477 NTASKS=477 POLICY_FILE=ifv2_policy.yaml bash run_tb2.sh <serve job> ifv2ho_<tag>_<date>
+#   (or bash ifv2_chain.sh <tag> <export>, which does both, summarizes and releases the node)
 job_name: __JOB_NAME__
 jobs_dir: /e/data1/mmlaion/lee27/experiments/tb2_jobs
 n_attempts: 1
@@ -33,10 +35,11 @@ retry:
   min_wait_sec: 1.0
   max_wait_sec: 60.0
 environment:
-  type: daytona
+  type: apptainer            # sandboxes on the serve node (ifv2_apptainer.sbatch); no Daytona snapshot, no CPU fleet
   force_build: false
   kwargs:
-    auto_snapshot: true
+    bridge_url: __BRIDGE_URL__
+    sif_cache: /e/scratch/reformo/lee27/sif
 agents:
   - name: terminus-2
     model_name: hosted_vllm/snowball
