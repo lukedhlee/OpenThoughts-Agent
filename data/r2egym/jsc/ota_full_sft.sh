@@ -18,7 +18,7 @@
 # The base reference for the curve is independent of the run and can go first (1 node, ~15 min, 0.25 node-h):
 #   sbatch --export=ALL,MODEL=/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888,\
 #     PARQUET=$S/data/ota_sft_100k_v1/ota-all-heldout-00000-of-00001.parquet,NAME=ota-base \
-#     /e/project1/transfernetx/lee27/code/OpenThoughts-Agent/data/swesmith/heldout_nll.sbatch
+#     /e/project1/transfernetx/lee27/code/snowball/heldout_nll.sbatch
 # An arm counts if held-out NLL falls below that base with think-span NLL not above the base's think value,
 # and the dose to keep is the earliest epoch within 0.01 of the best one.
 set -uo pipefail
@@ -66,7 +66,7 @@ for e in $(seq 1 "$EPOCHS"); do
   fi
   js=$(sbatch --parsable ${jx:+--dependency=afterok:$jx} \
     --export=ALL,MODEL="$EX",PARQUET="$D/ota-all-heldout-00000-of-00001.parquet",NAME="ota-$SCOPE-ep$e" \
-    /e/project1/transfernetx/lee27/code/OpenThoughts-Agent/data/swesmith/heldout_nll.sbatch) \
+    $C/heldout_nll.sbatch) \
     && say "epoch $e scoring job $js -> $S/logs/heldout_nll_ota-$SCOPE-ep$e.json"
 done
 say "ALL_SUBMITTED; read the curve with: grep -h heldout_nll $S/logs/heldout_nll_ota-$SCOPE-ep*.json"
