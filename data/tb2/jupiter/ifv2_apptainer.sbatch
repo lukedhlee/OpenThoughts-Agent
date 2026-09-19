@@ -85,16 +85,24 @@ BPORT=${BPORT:-9930}
 # the worker must NOT inherit vLLM's cache/temp variables (they point at fscratch, which is full): apptainer uses
 # TMPDIR for its own session files and the first smoke lost every tmux server between two execs
 CLEAN=(env -u TMPDIR -u XDG_CACHE_HOME -u TRITON_CACHE_DIR -u TORCHINDUCTOR_CACHE_DIR -u FLASHINFER_WORKSPACE_BASE -u VLLM_CACHE_ROOT -u PYTHONPATH)
-"${CLEAN[@]}" $PY $APT/server.py --port $BPORT --host 0.0.0.0 > $LOGS/bridge_$SLURM_JOB_ID.log 2>&1 &
+"${CLEAN[@]}" $PY -u $APT/server.py --port $BPORT --host 0.0.0.0 > $LOGS/bridge_$SLURM_JOB_ID.log 2>&1 &
 BPID=$!
 sleep 3
-"${CLEAN[@]}" $PY $APT/worker.py --bridge-url http://127.0.0.1:$BPORT --sif-cache $SIF --staging-base $STG --num-workers ${NWORKERS:-40} \
+"${CLEAN[@]}" $PY -u $APT/worker.py --bridge-url http://127.0.0.1:$BPORT --sif-cache $SIF --staging-base $STG --num-workers ${NWORKERS:-40} \
     > $LOGS/worker_$SLURM_JOB_ID.log 2>&1 &
 WPID=$!
 BURL="http://$(hostname -s).jupiter.internal:$BPORT"
-curl -sf --max-time 10 $BURL/ >/dev/null 2>&1 || curl -s --max-time 10 $BURL/ >/dev/null 2>&1 || true
+sleep 5
+# readiness = a real request answered over the node's external address, not just a bound port
+for i in $(seq 1 12); do curl -s --max-time 5 -X POST -H 'Content-Type: application/json' -d '{}' $BURL/env/list >/dev/null 2>&1 && break; sleep 5; done
+curl -s --max-time 5 -X POST -H 'Content-Type: application/json' -d '{}' $BURL/env/list | head -c 200; echo
 kill -0 $BPID || { echo "bridge died"; tail -20 $LOGS/bridge_$SLURM_JOB_ID.log; }
+kill -0 $WPID || { echo "worker died"; tail -20 $LOGS/worker_$SLURM_JOB_ID.log; }
+# liveness monitor: the exact second the bridge or the worker disappears goes to this log
+( while sleep 5; do kill -0 $BPID 2>/dev/null || { echo "$(date +%T) BRIDGE_DIED"; break; }; done ) &
+( while sleep 5; do kill -0 $WPID 2>/dev/null || { echo "$(date +%T) WORKER_DIED"; break; }; done ) &
+echo "$(date +%T) bridge+worker up"
 echo "$BURL" > $ENDPOINT_DIR/$SLURM_JOB_ID.bridge
 echo "BRIDGE $BURL (workers ${NWORKERS:-40}, sif $SIF, staging $STG)"
-trap 'echo "wall/term: stopping server + bridge"; kill $SPID $WPID $BPID 2>/dev/null; rm -rf $STG; rm -f $ENDPOINT_DIR/$SLURM_JOB_ID $ENDPOINT_DIR/$SLURM_JOB_ID.bridge' TERM EXIT
+trap 'trap - TERM EXIT; echo "$(date +%T) wall/term: stopping server + bridge"; kill $SPID $WPID $BPID 2>/dev/null; rm -rf $STG; rm -f $ENDPOINT_DIR/$SLURM_JOB_ID $ENDPOINT_DIR/$SLURM_JOB_ID.bridge; exit 0' TERM EXIT
 wait $SPID
