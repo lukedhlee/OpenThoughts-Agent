@@ -10,7 +10,7 @@
 # ("final" = last checkpoint only, "all" = every packed epoch, "kept" = every kept checkpoint), KEEP_EVERY,
 # SNOWBALL_WALL, SBATCH_ACCOUNT, TAG (run-id suffix),
 # SCORE_TIME (scoring job wall; ~1 s per held-out row + 5 min server start).
-# Runs on a LOGIN node inside tmux; every heavy step is a Slurm job. Log: $S/logs/ota/lane_$LANE.log
+# Runs on a LOGIN node inside tmux; every heavy step is a Slurm job. Log: $S/logs/$SNOWBALL_STAGE/lane_$LANE.log
 set -uo pipefail
 S=/e/data1/mmlaion/lee27/snowball-sft
 C=/e/project1/transfernetx/lee27/code/snowball
@@ -20,9 +20,10 @@ TOK=/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888
 TAIL_FRACTION=${TAIL_FRACTION:-0}
 EXPORT_EPOCHS=${EXPORT_EPOCHS:-final}
 TAG=${TAG:-}
-export SNOWBALL_STAGE=ota
-export SNOWBALL_DATASET_ID=open-thoughts/OpenThoughts-Agent-SFT-100K
-export SNOWBALL_DATASET_REVISION=45fb28fcc38d352133cb28a1c8a43a2f14fea97b
+# stage + provenance are overridable so a sibling stage (ota_if = OTA + the if-v2 slice) reuses this lane
+export SNOWBALL_STAGE=${SNOWBALL_STAGE:-ota}
+export SNOWBALL_DATASET_ID=${SNOWBALL_DATASET_ID:-open-thoughts/OpenThoughts-Agent-SFT-100K}
+export SNOWBALL_DATASET_REVISION=${SNOWBALL_DATASET_REVISION:-45fb28fcc38d352133cb28a1c8a43a2f14fea97b}
 export SNOWBALL_EXP=$S/experiments/snowball-ota-sft
 export SNOWBALL_CACHE=$CACHE
 export SNOWBALL_PARQUET_LIST=${PARQUET_LIST:-$S/data/ota_sft_100k_v2/parquet.list}
@@ -40,8 +41,8 @@ if [ "$TAIL_FRACTION" != 0 ]; then
   [ -f "$TAIL_REF" ] || { echo "no reference vector at $TAIL_REF"; exit 1; }
   export SNOWBALL_TAIL_FRACTION=$TAIL_FRACTION SNOWBALL_TAIL_REF=$TAIL_REF
 fi
-mkdir -p "$S/logs/ota" "$OUT_ROOT"
-LOG=$S/logs/ota/lane_$LANE.log
+mkdir -p "$S/logs/$SNOWBALL_STAGE" "$OUT_ROOT"
+LOG=$S/logs/$SNOWBALL_STAGE/lane_$LANE.log
 say() { echo "[$(date -u +%FT%TZ)] [$LANE] $*" | tee -a "$LOG"; }
 say "LANE_START lrs='$LRS' epochs=$EPOCHS schedule_epochs=$SNOWBALL_SCHEDULE_EPOCHS resume=$SNOWBALL_RESUME tail=$TAIL_FRACTION cache=$CACHE heldout=$HELDOUT"
 
@@ -50,14 +51,14 @@ for LR in $LRS; do
   [ "$TAIL_FRACTION" != 0 ] && ARM=$ARM-tail${TAIL_FRACTION#0.}
   export SNOWBALL_LR=$LR
   export SNOWBALL_OUTPUT=$OUT_ROOT/$ARM
-  export SNOWBALL_RUN_ID=snowball-ota-$LANE-$ARM
+  export SNOWBALL_RUN_ID=snowball-$SNOWBALL_STAGE-$LANE-$ARM
   # the chain keeps its "run done" marker per stage; give every arm its own marker dir via SNOWBALL_SCRATCH? No:
-  # the marker is $S/logs/ota/.done.run, shared. Remove it before each arm so a finished earlier arm is not
+  # the marker is $S/logs/$SNOWBALL_STAGE/.done.run, shared. Remove it before each arm so a finished earlier arm is not
   # mistaken for this one (the chain also checks the checkpoint dir, which is per arm).
-  rm -f "$S/logs/ota/.done.run"
+  rm -f "$S/logs/$SNOWBALL_STAGE/.done.run"
   say "ARM_START $ARM lr=$LR output=$SNOWBALL_OUTPUT"
   if ! bash -l "$C/snowball_sft_chain.sh" >> "$LOG" 2>&1; then say "ARM_FAILED $ARM (chain); continuing with the next lr"; continue; fi
-  STEPS=$(cat "$S/logs/ota/.done.run" 2>/dev/null || true)
+  STEPS=$(cat "$S/logs/$SNOWBALL_STAGE/.done.run" 2>/dev/null || true)
   [ -n "$STEPS" ] || { say "ARM_FAILED $ARM (no step count)"; continue; }
   EPOCH_STEPS=$((STEPS / EPOCHS))
   say "ARM_DONE $ARM steps=$STEPS epoch=$EPOCH_STEPS"
@@ -75,11 +76,11 @@ for LR in $LRS; do
         "$MOE/jupiter_snowball_export.sbatch") || { say "export submit failed for $ARM step $st"; continue; }
       say "EXPORT_SUBMITTED $ARM step $st job $jx -> $EX"
     fi
-    NAME=ota-$LANE-$ARM-step$st
+    NAME=$SNOWBALL_STAGE-$LANE-$ARM-step$st
     js=$(SBATCH_TIMELIMIT=${SCORE_TIME:-00:45:00} sbatch --parsable ${jx:+--dependency=afterok:$jx} --account="$SBATCH_ACCOUNT" \
       --export=ALL,MODEL="$EX",PARQUET="$HELDOUT",NAME="$NAME" "$C/heldout_nll.sbatch") \
       && say "SCORE_SUBMITTED $ARM step $st job $js -> $S/logs/heldout_nll_$NAME.json" \
       || say "score submit failed for $ARM step $st"
   done
 done
-say "LANE_DONE; curve: grep -h '\"nll\"' $S/logs/heldout_nll_ota-$LANE-*.json"
+say "LANE_DONE; curve: grep -h '\"nll\"' $S/logs/heldout_nll_$SNOWBALL_STAGE-$LANE-*.json"
