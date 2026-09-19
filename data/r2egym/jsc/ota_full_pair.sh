@@ -36,10 +36,11 @@ say "cache ready: $(head -c 300 "$CACHE/train/.stats.json" 2>/dev/null)"
 
 jb=$(SBATCH_TIMELIMIT=01:00:00 sbatch --parsable --account=laionize --export=ALL,MODEL=/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888,PARQUET="$HELDOUT",NAME=ota-all-base "$C/heldout_nll.sbatch") && say "base score job $jb"
 
-tmux new -d -s ota_full_std "LANE=fullstd CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS='$LR_STD' EPOCHS=$EPOCHS EXPORT_EPOCHS=kept KEEP_EVERY=210 HELDOUT=$HELDOUT OUT_ROOT=$EXP/full SNOWBALL_WALL=03:00:00 SCORE_TIME=01:00:00 bash -l $C/ota_lane.sh; sleep 3600"
+# tmux sessions take the tmux SERVER's environment, not this script's, so every knob goes on the command line.
+tmux new -d -s ota_full_std "SNOWBALL_SCHEDULE_EPOCHS=$SNOWBALL_SCHEDULE_EPOCHS LANE=fullstd CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS='$LR_STD' EPOCHS=$EPOCHS EXPORT_EPOCHS=kept KEEP_EVERY=210 HELDOUT=$HELDOUT OUT_ROOT=$EXP/full SNOWBALL_WALL=03:00:00 SCORE_TIME=01:00:00 bash -l $C/ota_lane.sh; sleep 3600"
 say "std lane started (tmux ota_full_std)"
 for i in $(seq 1 120); do squeue -u lee27 -h -o "%j %T" | grep -q "snowball-ota-fullstd.* RUNNING" && break; sleep 30; done
 sleep 300
-tmux new -d -s ota_full_tail "CACHE=$CACHE REF_OUT=$EXP/tail/ref_all_v2.npy REF_EPOCHS=4 SNOWBALL_WALL=02:00:00 bash -l $C/ota_tail_ref.sh && LANE=fulltail CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS='$LR_TAIL' EPOCHS=$EPOCHS EXPORT_EPOCHS=kept KEEP_EVERY=210 HELDOUT=$HELDOUT OUT_ROOT=$EXP/full TAIL_FRACTION=0.25 TAIL_REF=$EXP/tail/ref_all_v2.npy SNOWBALL_WALL=03:00:00 SCORE_TIME=01:00:00 bash -l $C/ota_lane.sh; sleep 3600"
+tmux new -d -s ota_full_tail "CACHE=$CACHE REF_OUT=$EXP/tail/ref_all_v2.npy REF_EPOCHS=4 SNOWBALL_WALL=02:00:00 bash -l $C/ota_tail_ref.sh && SNOWBALL_SCHEDULE_EPOCHS=$SNOWBALL_SCHEDULE_EPOCHS LANE=fulltail CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS='$LR_TAIL' EPOCHS=$EPOCHS EXPORT_EPOCHS=kept KEEP_EVERY=210 HELDOUT=$HELDOUT OUT_ROOT=$EXP/full TAIL_FRACTION=0.25 TAIL_REF=$EXP/tail/ref_all_v2.npy SNOWBALL_WALL=03:00:00 SCORE_TIME=01:00:00 bash -l $C/ota_lane.sh; sleep 3600"
 say "tail lane started (tmux ota_full_tail)"
 say "FULL_PAIR_LAUNCHED"
