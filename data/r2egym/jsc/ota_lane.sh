@@ -30,6 +30,8 @@ export SNOWBALL_KEEP_PER_EPOCH=1
 export SNOWBALL_WALL=${SNOWBALL_WALL:-02:00:00}
 export SBATCH_ACCOUNT=${SBATCH_ACCOUNT:-laionize}
 export CHAIN_STEPS=run
+# lr-schedule horizon and in-place resume (launch_jupiter_snowball_r2egym.sh): both pass through the environment
+export SNOWBALL_SCHEDULE_EPOCHS=${SNOWBALL_SCHEDULE_EPOCHS:-$EPOCHS} SNOWBALL_RESUME=${SNOWBALL_RESUME:-0}
 if [ "$TAIL_FRACTION" != 0 ]; then
   : "${TAIL_REF:?TailSFT needs the reference .npy}"
   [ -f "$TAIL_REF" ] || { echo "no reference vector at $TAIL_REF"; exit 1; }
@@ -38,10 +40,10 @@ fi
 mkdir -p "$S/logs/ota" "$OUT_ROOT"
 LOG=$S/logs/ota/lane_$LANE.log
 say() { echo "[$(date -u +%FT%TZ)] [$LANE] $*" | tee -a "$LOG"; }
-say "LANE_START lrs='$LRS' epochs=$EPOCHS tail=$TAIL_FRACTION cache=$CACHE heldout=$HELDOUT"
+say "LANE_START lrs='$LRS' epochs=$EPOCHS schedule_epochs=$SNOWBALL_SCHEDULE_EPOCHS resume=$SNOWBALL_RESUME tail=$TAIL_FRACTION cache=$CACHE heldout=$HELDOUT"
 
 for LR in $LRS; do
-  ARM=lr$LR-ep$EPOCHS$TAG
+  ARM=lr$LR-sched$SNOWBALL_SCHEDULE_EPOCHS$TAG   # the dir is named by the schedule, not the epochs run, so a resume reuses it
   [ "$TAIL_FRACTION" != 0 ] && ARM=$ARM-tail${TAIL_FRACTION#0.}
   export SNOWBALL_LR=$LR
   export SNOWBALL_OUTPUT=$OUT_ROOT/$ARM
