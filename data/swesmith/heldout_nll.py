@@ -24,6 +24,11 @@ import requests
 START, END = 128002, 128003
 
 
+def _mean_or_none(values):
+    values = list(values)
+    return st.mean(values) if values else None
+
+
 def score_one(url, served, ids, session):
     r = session.post(
         f"{url}/v1/completions",
@@ -117,8 +122,9 @@ def main():
         "think_nll": think_nll / max(think_n, 1), "think_tokens": think_n,
         "rest_nll": rest_nll / max(rest_n, 1), "rest_tokens": rest_n,
         "per_sequence_nll_median": st.median(p["nll"] for p in per) if per else None,
-        "pass_nll": st.mean(p["nll"] for p in per if str(p["result"]) in ("1.0", "1")) if per else None,
-        "fail_nll": st.mean(p["nll"] for p in per if str(p["result"]) not in ("1.0", "1")) if per else None,
+        # OTA rows carry no verifier label (result is None or an error class), so either group may be empty
+        "pass_nll": _mean_or_none(p["nll"] for p in per if str(p["result"]) in ("1.0", "1")),
+        "fail_nll": _mean_or_none(p["nll"] for p in per if str(p["result"]) not in ("1.0", "1")),
         "by_slice": {
             sl: {
                 "sequences": len(g),
