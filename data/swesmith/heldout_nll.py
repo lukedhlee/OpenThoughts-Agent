@@ -59,7 +59,10 @@ def main():
 
     tok = AutoTokenizer.from_pretrained(args.tokenizer_dir)
     assert tok.convert_tokens_to_ids("<|start_think|>") == START
-    rows = pq.read_table(args.parquet, columns=["conversations", "instance_id", "result"]).to_pylist()
+    # A multi-slice parquet (OTA) carries slice / row_id; the Kimi split has neither, so both are optional.
+    have = set(pq.read_schema(args.parquet).names)
+    cols = ["conversations", "instance_id", "result"] + [c for c in ("slice", "row_id") if c in have]
+    rows = pq.read_table(args.parquet, columns=cols).to_pylist()
     if args.limit:
         rows = rows[: args.limit]
 
@@ -73,7 +76,7 @@ def main():
         ids, mask = list(enc["input_ids"]), list(enc["assistant_masks"])
         if len(ids) > args.max_len:
             continue
-        seqs.append((r["instance_id"], r["result"], ids, mask))
+        seqs.append((r.get("row_id") or r["instance_id"], r.get("slice"), r["result"], ids, mask))
     print(f"sequences {len(seqs)} (of {len(rows)} rows), assistant tokens {sum(sum(m) for _, _, _, m in seqs)}", flush=True)
 
     session = requests.Session()
@@ -82,7 +85,7 @@ def main():
     tot_nll = tot_n = think_nll = think_n = rest_nll = rest_n = 0.0
 
     def work(item):
-        inst, res, ids, mask = item
+        inst, sl, res, ids, mask = item
         lp = score_one(args.url, args.served, ids, session)
         s_all = n_all = s_th = n_th = s_re = n_re = 0.0
         in_think = False
@@ -97,11 +100,11 @@ def main():
                     s_re += -l; n_re += 1
             if tid == END:
                 in_think = False
-        return inst, res, len(ids), s_all, n_all, s_th, n_th, s_re, n_re
+        return inst, sl, res, len(ids), s_all, n_all, s_th, n_th, s_re, n_re
 
     with cf.ThreadPoolExecutor(args.concurrency) as ex:
-        for k, (inst, res, n_ids, s_all, n_all, s_th, n_th, s_re, n_re) in enumerate(ex.map(work, seqs), 1):
-            per.append({"instance_id": inst, "result": res, "tokens": n_ids, "assistant_tokens": n_all,
+        for k, (inst, sl, res, n_ids, s_all, n_all, s_th, n_th, s_re, n_re) in enumerate(ex.map(work, seqs), 1):
+            per.append({"instance_id": inst, "slice": sl, "result": res, "tokens": n_ids, "assistant_tokens": n_all,
                         "nll": s_all / max(n_all, 1), "think_nll": s_th / max(n_th, 1), "rest_nll": s_re / max(n_re, 1)})
             tot_nll += s_all; tot_n += n_all; think_nll += s_th; think_n += n_th; rest_nll += s_re; rest_n += n_re
             if k % 50 == 0:
@@ -116,11 +119,22 @@ def main():
         "per_sequence_nll_median": st.median(p["nll"] for p in per) if per else None,
         "pass_nll": st.mean(p["nll"] for p in per if str(p["result"]) in ("1.0", "1")) if per else None,
         "fail_nll": st.mean(p["nll"] for p in per if str(p["result"]) not in ("1.0", "1")) if per else None,
+        "by_slice": {
+            sl: {
+                "sequences": len(g),
+                "assistant_tokens": sum(p["assistant_tokens"] for p in g),
+                "heldout_nll": sum(p["nll"] * p["assistant_tokens"] for p in g) / max(sum(p["assistant_tokens"] for p in g), 1),
+            }
+            for sl, g in sorted(
+                ((sl, [p for p in per if p["slice"] == sl]) for sl in {p["slice"] for p in per if p["slice"]})
+            )
+        },
         "elapsed_s": round(time.time() - t0),
         "per_sequence": per,
     }
     json.dump(summary, open(args.out, "w"), indent=1)
     print(json.dumps({k: v for k, v in summary.items() if k != "per_sequence"}, indent=1))
+    print("HELDOUT_NLL", f"{summary['heldout_nll']:.4f}", flush=True)
     print("HELDOUT_NLL_DONE")
 
 
