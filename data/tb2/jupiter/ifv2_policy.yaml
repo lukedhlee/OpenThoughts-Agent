@@ -1,0 +1,56 @@
+# ifv2_policy.yaml — the 477 held-out if-v2 instruction-following tasks (Nemotron-RL IF, Harbor tarballs from TaskTrove
+# laion__nemotron-gym-instruction-following-v3) through terminus-2 on Daytona, under the same v0.1 budgets as the TB2
+# probe (tb2_marin_policy.yaml); 32 concurrent trials = the server's --max-num-seqs. All 477 tasks share one
+# environment (python:3.11-slim-bookworm, no packages) -> one Daytona snapshot harbor__b7537eaa1e7c__snapshot, which
+# must exist (the org refuses declarative builds and sits at its 40-snapshot cap on 2026-09-19).
+# Result per trial: result.json verifier_result.rewards.reward; task_name = the tarball name -> joins to
+# $S/data/ota_if_sft_v1/ifv2-heldout-tasks.jsonl (teacher pass rate on the same 477: 0.568).
+#
+# run_tb2.sh fills __JOB_NAME__ and __API_BASE__:
+#   TASKS=/e/data1/mmlaion/lee27/tasks/ifv2_heldout477 NTASKS=477 POLICY_FILE=ifv2_policy.yaml bash run_tb2.sh <serve job> ifv2ho_<tag>_<date>
+job_name: __JOB_NAME__
+jobs_dir: /e/data1/mmlaion/lee27/experiments/tb2_jobs
+n_attempts: 1
+n_concurrent_trials: 32
+timeout_multiplier: 1.0
+quiet: true
+release_trial_payloads_in_memory: true
+retry:
+  max_retries: 10
+  include_exceptions:
+    - InternalServerError
+    - APIConnectionError
+    - APITimeoutError
+    - ArtifactUploadTimeoutError
+    - ArtifactWriterBacklogError
+    - CancelledError
+    - ContextManagementInfrastructureError
+    - LLMRequestTimeoutError
+    - SandboxBuildFailedError
+    - TrialTimeoutError
+  exclude_exceptions: []
+  wait_multiplier: 2.0
+  min_wait_sec: 1.0
+  max_wait_sec: 60.0
+environment:
+  type: daytona
+  force_build: false
+  kwargs:
+    auto_snapshot: true
+agents:
+  - name: terminus-2
+    model_name: hosted_vllm/snowball
+    kwargs:
+      api_base: __API_BASE__
+      # the v0.1 budgets, verbatim from the issue's standalone block
+      model_info:
+        max_input_tokens: 32768
+        max_output_tokens: 8192
+        input_cost_per_token: 0.0
+        output_cost_per_token: 0.0
+      # the one Snowball-specific setting: its think delimiters are special tokens and marin's snowball entries keep them
+      # (skip_special_tokens=false); everything else is harbor 7b18505a's default, including summarization (on, 8,000 free tokens)
+      extra_body:
+        skip_special_tokens: false
+datasets:
+  - path: /e/data1/mmlaion/lee27/tasks/ifv2_heldout477
