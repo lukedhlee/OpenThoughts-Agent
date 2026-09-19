@@ -140,7 +140,6 @@ def build(label, tasks):
                 masks = json.loads(a.split('=', 1)[1])
         updates['++terminal_bench_config.harbor.environment_type'] = 'daytona'
         updates['++terminal_bench_config.harbor.auto_snapshot'] = 'true'
-        updates['++terminal_bench_config.harbor.mask_exceptions'] = json.dumps(masks + [m for m in DAYTONA_INFRA if m not in masks], separators=(',', ':'))
     if EVAL_SPREAD:
         updates['trajectory_runner.process_pool.eval_spread_coordinators'] = 'true'
     if MODEL:
@@ -169,6 +168,15 @@ def build(label, tasks):
     sbpath = out / 'sbatch' / (name + '_rl.sbatch')
     sbpath.write_text(sb)
     call(['bash', str(C / 'draftify_probe.sh'), name])
+    if DAYTONA:
+        # draftify_probe.sh resets mask_exceptions from the arm template; add the Daytona infrastructure names after it
+        cfg = json.loads(cf.read_text())
+        masks = []
+        for a in cfg['skyrl_hydra_args']:
+            if a.lstrip('+').startswith('terminal_bench_config.harbor.mask_exceptions='):
+                masks = json.loads(a.split('=', 1)[1])
+        setarg(cfg['skyrl_hydra_args'], '++terminal_bench_config.harbor.mask_exceptions', json.dumps(masks + [m for m in DAYTONA_INFRA if m not in masks], separators=(',', ':')))
+        cf.write_text(json.dumps(cfg, indent=2))
     call(['bash', '-n', str(sbpath)])
     checked = json.loads(cf.read_text())['skyrl_hydra_args']
     assert any('speculative_config=' in a for a in checked)
@@ -176,6 +184,7 @@ def build(label, tasks):
     assert f'generator.eval_n_samples_per_prompt={ROUND_ATTEMPTS if DAYTONA else 4}' in checked
     if DAYTONA:
         assert '++terminal_bench_config.harbor.environment_type=daytona' in checked
+        assert any('DaytonaRateLimitError' in a for a in checked), 'Daytona mask names'
         assert 'dtn_' not in sbpath.read_text() and 'APPTAINER_BRIDGE_URL=http' not in sbpath.read_text()
     return name
 
@@ -193,12 +202,14 @@ def daytona_sbatch(sb, out):
                  '[ -n "$DAYTONA_API_KEY_OVERRIDE" ] || { echo "FATAL: no DAYTONA_API_KEY in %s" >&2; exit 96; }') % (KEYF, KEYF)
     sb, n = re.subn(r'^DAYTONA_API_KEY_OVERRIDE=.*$', lambda m: key_block, sb, flags=re.M)
     assert n == 1 and 'dtn_' not in sb, 'key override line'
-    sb, n = re.subn(r'^export APPTAINER_BRIDGE_URL=.*$', 'unset APPTAINER_BRIDGE_URL   # Daytona screen: no apptainer bridge', sb, flags=re.M)
+    sb, n = re.subn(r'^export APPTAINER_BRIDGE_URL=.*$', lambda m: (
+        'unset APPTAINER_BRIDGE_URL   # Daytona screen: no apptainer bridge\n'
+        '# --- Daytona screen: sandbox backend (harbor paces creates at this org-wide rate; each coordinator takes 1/shares of it);\n'
+        '# SOCKS credentials for the per-node gateway started below, sourced here so they precede it ---\n'
+        f'export HARBOR_DAYTONA_CREATE_RATE=5 HARBOR_DAYTONA_CREATE_SHARES={SHARES}\n'
+        f'set -a; source {SOCKSF}; set +a'), sb, flags=re.M)
     assert n == 1, 'bridge line'
-    sub1('export HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000\n', 'export HARBOR_TMUX_CAPTURE_MAX_WINDOW_LINES=2000\n'
-         '# --- Daytona screen: sandbox backend (harbor paces creates at this org-wide rate; each coordinator takes 1/shares of it) ---\n'
-         f'export HARBOR_DAYTONA_CREATE_RATE=5 HARBOR_DAYTONA_CREATE_SHARES={SHARES}\n'
-         f'set -a; source {SOCKSF}; set +a\n')
+    assert sb.index(SOCKSF) < sb.index('GW_DIR=') if 'GW_DIR=' in sb else True
     gw = str(out / 'gateway')
     sub1('\n_setup_proxy\n', '\n'
          '# --- Daytona screen: transport = one async loopback gateway per node, no proxychains (research/2026-09-15_daytona_proxy_tokenization.md) ---\n'
