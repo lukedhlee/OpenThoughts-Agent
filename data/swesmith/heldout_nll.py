@@ -77,7 +77,7 @@ def main():
         if len(ids) > args.max_len:
             continue
         seqs.append((r.get("row_id") or r["instance_id"], r.get("slice"), r["result"], ids, mask))
-    print(f"sequences {len(seqs)} (of {len(rows)} rows), assistant tokens {sum(sum(m) for _, _, _, m in seqs)}", flush=True)
+    print(f"sequences {len(seqs)} (of {len(rows)} rows), assistant tokens {sum(sum(m) for *_, m in seqs)}", flush=True)
 
     session = requests.Session()
     t0 = time.time()
