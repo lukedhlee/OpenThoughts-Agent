@@ -82,10 +82,13 @@ APT=/e/fscratch/reformo/lee27/code/harbor-v01/src/harbor/environments/apptainer
 SIF=/e/scratch/reformo/lee27/sif; STG=/tmp/lee27_ifv2_staging; mkdir -p $STG
 export BRIDGE_CLOSE_AFTER_RESPONSE=1 BRIDGE_MAX_HANDLER_THREADS=256 BRIDGE_LISTEN_BACKLOG=1024
 BPORT=${BPORT:-9930}
-$PY $APT/server.py --port $BPORT --host 0.0.0.0 > $LOGS/bridge_$SLURM_JOB_ID.log 2>&1 &
+# the worker must NOT inherit vLLM's cache/temp variables (they point at fscratch, which is full): apptainer uses
+# TMPDIR for its own session files and the first smoke lost every tmux server between two execs
+CLEAN=(env -u TMPDIR -u XDG_CACHE_HOME -u TRITON_CACHE_DIR -u TORCHINDUCTOR_CACHE_DIR -u FLASHINFER_WORKSPACE_BASE -u VLLM_CACHE_ROOT -u PYTHONPATH)
+"${CLEAN[@]}" $PY $APT/server.py --port $BPORT --host 0.0.0.0 > $LOGS/bridge_$SLURM_JOB_ID.log 2>&1 &
 BPID=$!
 sleep 3
-$PY $APT/worker.py --bridge-url http://127.0.0.1:$BPORT --sif-cache $SIF --staging-base $STG --num-workers ${NWORKERS:-40} \
+"${CLEAN[@]}" $PY $APT/worker.py --bridge-url http://127.0.0.1:$BPORT --sif-cache $SIF --staging-base $STG --num-workers ${NWORKERS:-40} \
     > $LOGS/worker_$SLURM_JOB_ID.log 2>&1 &
 WPID=$!
 BURL="http://$(hostname -s).jupiter.internal:$BPORT"
