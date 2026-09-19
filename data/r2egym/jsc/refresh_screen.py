@@ -450,6 +450,15 @@ def run_daytona():
             todo = manifest if rnd == 0 else round_entries(manifest, report(names))
             if not todo:
                 break
+            if (D / ('job_' + label)).exists() and (E / name).exists():
+                # a restarted controller adopts the round an earlier one submitted (e.g. to change SCREEN_ACCOUNT for later rounds)
+                probe = (D / ('job_' + label)).read_text().strip()
+                names.append(name)
+                log(f'ADOPT {name} {probe} ({"in queue" if probe_in_queue(probe) else "finished"})')
+                if probe_in_queue(probe):
+                    wait_probe(name, probe, len(todo) * ROUND_ATTEMPTS)
+                probe = None
+                continue
             log(f'ROUND {rnd}: {len(set(todo))} tasks, {len(todo)} tree entries x {ROUND_ATTEMPTS} attempts')
             build(label, todo)
             if not SUBMIT:

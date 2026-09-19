@@ -10,7 +10,7 @@ export REFRESH_NAME=$1 MODEL=$2 DAYTONA=1 POOL=train EVAL_SPREAD=1 STAGES=ab
 export ROUND_ATTEMPTS=${ROUND_ATTEMPTS:-2} CAP=${CAP:-4}
 export GPU_NODES=8 ENGINES=4 CONC=${CONC:-448} NUM_COORDINATORS=16 SHARES=${SHARES:-32} CPU_NODES=0 WORKERS_PER_NODE=0
 export TASKS_PER_SHARD=2000 CANARY_TASKS=0 GPU_WALL=${GPU_WALL:-05:00:00} CANARY_GPU_WALL=${GPU_WALL:-05:00:00}
-export SUBMIT=${SUBMIT:-1} SCREEN_ACCOUNT=${SCREEN_ACCOUNT:-laionize} OMP_NUM_THREADS=1
+export SUBMIT=${SUBMIT:-1} SCREEN_ACCOUNT=${SCREEN_ACCOUNT:-open-sci-mm} OMP_NUM_THREADS=1
 C=/e/project1/transfernetx/lee27/code/snowball; E=/e/fscratch/reformo/lee27/experiments; PY=/e/project1/transfernetx/lee27/code/envs/snowball-v2/bin/python
 [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
 timeout 5 bash -c "</dev/tcp/10.128.1.2/7011" 2>/dev/null || { echo "microsocks 10.128.1.2:7011 (the compute nodes' path) is not reachable"; exit 1; }
