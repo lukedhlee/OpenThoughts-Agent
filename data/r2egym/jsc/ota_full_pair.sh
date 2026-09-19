@@ -21,7 +21,7 @@ C=/e/project1/transfernetx/lee27/code/snowball
 D=$S/data/ota_sft_100k_v2
 EXP=$S/experiments/snowball-ota-sft
 CACHE=$EXP/cache-all-v2
-HELDOUT=$D/ota-sub-heldout-00000-of-00001.parquet   # 300 rows per slice, the same file the sweep scored, ~25 min per export
+HELDOUT=$D/ota-all-heldout-00000-of-00001.parquet   # all 4,728 held-out rows: scoring 1,200 took 200 s, so the full file is ~13 min per export
 LOG=$S/logs/ota/full_pair.log; mkdir -p "$S/logs/ota"
 say() { echo "[$(date -u +%FT%TZ)] [full] $*" | tee -a "$LOG"; }
 say "FULL_PAIR_START lr_std=$LR_STD lr_tail=$LR_TAIL epochs=$EPOCHS schedule_epochs=$SNOWBALL_SCHEDULE_EPOCHS"
@@ -34,7 +34,7 @@ if [ ! -f "$CACHE/train/.stats.json" ]; then
 fi
 say "cache ready: $(head -c 300 "$CACHE/train/.stats.json" 2>/dev/null)"
 
-jb=$(SBATCH_TIMELIMIT=01:00:00 sbatch --parsable --account=laionize --export=ALL,MODEL=/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888,PARQUET="$HELDOUT",NAME=ota-sub-base-full "$C/heldout_nll.sbatch") && say "base score job $jb"
+jb=$(SBATCH_TIMELIMIT=01:00:00 sbatch --parsable --account=laionize --export=ALL,MODEL=/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888,PARQUET="$HELDOUT",NAME=ota-all-base "$C/heldout_nll.sbatch") && say "base score job $jb"
 
 tmux new -d -s ota_full_std "LANE=fullstd CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS='$LR_STD' EPOCHS=$EPOCHS EXPORT_EPOCHS=kept KEEP_EVERY=210 HELDOUT=$HELDOUT OUT_ROOT=$EXP/full SNOWBALL_WALL=03:00:00 SCORE_TIME=01:00:00 bash -l $C/ota_lane.sh; sleep 3600"
 say "std lane started (tmux ota_full_std)"
