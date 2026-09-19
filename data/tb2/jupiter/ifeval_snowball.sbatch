@@ -75,5 +75,5 @@ curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' -
 trap 'echo "stopping server"; kill $SPID 2>/dev/null' TERM EXIT
 export OMP_NUM_THREADS=1
 $PY $C/tb2/ifeval_gen.py --url http://localhost:8000/v1 --model "$SERVED" --inp $IFE/ifeval_input_data.jsonl --out $OUT \
-    --max-tokens ${MAX_TOKENS:-8192} --conc ${CONC:-32} 2>&1 | tee $LOGS/gen_${TAG}_$SLURM_JOB_ID.log
+    --max-tokens ${MAX_TOKENS:-8192} --conc ${CONC:-32} --temperature ${TEMP:-0} 2>&1 | tee $LOGS/gen_${TAG}_$SLURM_JOB_ID.log
 echo "IFEVAL_DONE $TAG $(wc -l < $OUT) rows"

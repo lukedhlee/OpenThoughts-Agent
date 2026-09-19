@@ -8,12 +8,18 @@ instruction-level strict/loose accuracy, and how many responses were truncated, 
 import json, re, sys
 from lm_eval.tasks.ifeval import utils
 
+OPEN, CLOSE = r"(?:<think>|<\|start_think\|>)", r"(?:</think>|<\|end_think\|>)"
+LENIENT = "--lenient" in sys.argv          # keep all text, drop only the markers (what a user with no parser sees)
+
 def strip_think(s):
-    s = re.sub(r"<think>.*?</think>", "", s, flags=re.S)
-    if "<think>" in s:              # unclosed: everything after it is reasoning
-        s = s.split("<think>", 1)[0]
-    if "</think>" in s:             # unopened (Tezos-style): everything before it is reasoning
-        s = s.split("</think>", 1)[1]
+    if LENIENT:
+        return re.sub(OPEN + "|" + CLOSE, "", s).strip()
+    s = re.sub(OPEN + ".*?" + CLOSE, "", s, flags=re.S)
+    if re.search(OPEN, s):          # unclosed: everything from the last opener on is reasoning
+        s = re.split(OPEN, s)[0]
+    if re.search(CLOSE, s):         # stray closer: everything before the last one is reasoning
+        s = re.split(CLOSE, s)[-1]
+    s = re.sub(r"<\|[a-z_]+\|>", "", s)   # any other special token
     return s.strip()
 
 def score(path):
@@ -23,7 +29,7 @@ def score(path):
     for r in rows:
         raw = r["response"] or ""
         if r.get("reasoning"): thought += 1
-        if "<think>" in raw or "</think>" in raw: thought += 1
+        if re.search(OPEN, raw): thought += 1
         resp = strip_think(raw)
         if not resp: empty += 1
         if r["finish_reason"] == "length": trunc += 1
@@ -37,8 +43,8 @@ def score(path):
     return dict(n=len(rows), **m, truncated=trunc, thought=thought, empty=empty, errors=err, mean_completion_tokens=toks / max(1, len(rows)))
 
 if __name__ == "__main__":
-    res = {p: score(p) for p in sys.argv[1:]}
+    res = {p: score(p) for p in sys.argv[1:] if not p.startswith("--")}
     print(f"{'file':28s} {'n':>4s} {'P-strict':>8s} {'I-strict':>8s} {'P-loose':>8s} {'I-loose':>8s} {'trunc':>5s} {'think':>5s} {'empty':>5s} {'err':>3s} {'tok':>6s}")
     for p, r in res.items():
         print(f"{p[-28:]:28s} {r['n']:4d} {r['prompt_level_strict_acc']*100:8.1f} {r['inst_level_strict_acc']*100:8.1f} {r['prompt_level_loose_acc']*100:8.1f} {r['inst_level_loose_acc']*100:8.1f} {r['truncated']:5d} {r['thought']:5d} {r['empty']:5d} {r['errors']:3d} {r['mean_completion_tokens']:6.0f}")
-    json.dump(res, open("ifeval_scores.json", "w"), indent=1)
+    json.dump(res, open("ifeval_scores%s.json" % ("_lenient" if LENIENT else ""), "w"), indent=1)
