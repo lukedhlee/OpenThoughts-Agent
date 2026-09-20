@@ -9,14 +9,14 @@ set -euo pipefail
 JOB=${1:?serve job id}; NAME=${2:?run name (model, policy, date)}; MODE=${3:-full}
 C=/e/project1/transfernetx/lee27/code; W=$C/tb2
 E=/e/fscratch/reformo/lee27/experiments/tb2; JOBS=/e/data1/mmlaion/lee27/experiments/tb2_jobs
-HARBOR_SRC=/e/fscratch/reformo/lee27/code/harbor-v01/src   # marin-community/harbor @ 7b18505a, the v0.1 pin
+HARBOR_SRC=${HARBOR_SRC:-/e/fscratch/reformo/lee27/code/harbor-v01/src}   # marin-community/harbor @ 7b18505a, the v0.1 pin; HARBOR_SRC=<clone>/src overrides (the RST probe needs the setup-files hook, code/harbor-hook)
 PY=$C/envs/snowball-v2/bin/python; HARBOR=$C/envs/snowball-v2/bin/harbor
 KEYF=/e/fscratch/reformo/lee27/keys/daytona_eval.env
 TASKS=${TASKS:-/e/fscratch/reformo/lee27/tasks/terminal_bench_2}   # TASKS=<dir> for another benchmark (swebench_verified_random100)
 NTASKS=${NTASKS:-89}
 # SHARD=i/n splits the task list across servers (same 16-wide concurrency per server; merge the job dirs to score)
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1   # login-node pid cap
-[ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = 7b18505a ] || { echo "harbor-v01 is not at the v0.1 pin 7b18505a"; exit 1; }
+[ "$HARBOR_SRC" != /e/fscratch/reformo/lee27/code/harbor-v01/src ] || [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = 7b18505a ] || { echo "harbor-v01 is not at the v0.1 pin 7b18505a"; exit 1; }
 [ "$(ls -d $TASKS/*/ | wc -l)" = "$NTASKS" ] || { echo "task tree at $TASKS does not have $NTASKS tasks"; exit 1; }
 URL=$(cat $E/endpoints/$JOB 2>/dev/null) || { echo "no endpoint file for job $JOB (server not up, or gone)"; exit 1; }
 squeue -h -j $JOB -o %T | grep -q RUNNING || { echo "serve job $JOB is not RUNNING"; exit 1; }
