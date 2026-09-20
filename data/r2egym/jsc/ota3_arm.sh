@@ -1,5 +1,6 @@
 #!/bin/bash
-# ota3_arm.sh — one SFT arm on a 2026-09-20 corpus (STAGE = ota3_if | ota3_if_rst | ota3_if_rstsucc | rst_if), the
+# ota3_arm.sh — one SFT arm on a 2026-09-20 corpus (STAGE = ota3_if | ota3_if_rst | ota3_if_rstsucc | rst_if |
+# ota3_if_rst_fmt | ota3_if_rst_beh, the last two = data/rst/filter_corpus.py filter arms on the ota3_if_rst mix), the
 # ota_if_arm.sh recipe unchanged: lr 1e-4, one epoch of a 2-epoch cosine, a permanent checkpoint at each third of the
 # epoch (KEEP_EVERY = epoch steps / 3, from the cache's token count at 64 x 32,768 tokens per step), export + held-out
 # NLL per checkpoint. PREP_ONLY=1 builds the cache and stops (step 5 of the plan; ~1 node-h per corpus).
@@ -8,7 +9,7 @@
 set -uo pipefail
 S=/e/data1/mmlaion/lee27/snowball-sft
 C=/e/project1/transfernetx/lee27/code/snowball
-: "${STAGE:?ota3_if | ota3_if_rst | ota3_if_rstsucc | rst_if}"
+: "${STAGE:?ota3_if | ota3_if_rst | ota3_if_rstsucc | rst_if | ota3_if_rst_fmt | ota3_if_rst_beh}"
 case $STAGE in ota3_if) D=$S/data/ota3_if_sft_v1;; rst_if) D=$S/data/rst_if_sft_v1;; *) D=$S/data/${STAGE}_v1;; esac   # corpus dirs from data/rst/build_corpora.py
 EXP=$S/experiments/snowball-ota-sft
 CACHE=$EXP/cache-$STAGE-v1
