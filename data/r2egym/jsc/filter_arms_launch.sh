@@ -19,7 +19,7 @@ done
 for rule in fmt beh; do
   st=ota3_if_rst_$rule
   tmux new-session -d -s arm_$st "STAGE=$st bash -l $C/snowball/ota3_arm.sh; sleep 3600"
-  tmux new-session -d -s readout_$st "sleep 900; bash $W/ota3_readout.sh $st 2; sleep 600"
+  tmux new-session -d -s readout_$st "sleep 900; bash $W/ota3_readout.sh $st 3; sleep 600"
   say "launched arm_$st + readout_$st"
   sleep 420
 done
