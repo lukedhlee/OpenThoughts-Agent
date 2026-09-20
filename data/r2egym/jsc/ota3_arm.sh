@@ -17,8 +17,14 @@ LR=${LR:-1e-4}
 KEEP_EVERY=${KEEP_EVERY:-}   # default: a third of the epoch, computed from the cache's token count below
 STEP_TOKENS=$((64 * 32768))  # packed sequences per step x packing length (the ota3_if cache: 1,036,278,000 tokens -> 495 steps)
 export SNOWBALL_STAGE=$STAGE
-export SNOWBALL_DATASET_ID=open-thoughts/OpenThoughts-Agent-SFT-100K+open-athena/nemotron-gym-if-v2-qwen3.5-122b-32k-traces+open-athena/recursive-task-synthesis-glm-5.3-rollouts
-export SNOWBALL_DATASET_REVISION=45fb28fcc38d352133cb28a1c8a43a2f14fea97b+50b7f77+dd6f34cb
+# provenance must equal the stage's pin in vista_snowball_chat.py STAGES (validate_cache_provenance compares the strings)
+OTA_ID=open-thoughts/OpenThoughts-Agent-SFT-100K; IF_ID=open-athena/nemotron-gym-if-v2-qwen3.5-122b-32k-traces; RST_ID=open-athena/recursive-task-synthesis-glm-5.3-rollouts
+OTA_REV=45fb28fcc38d352133cb28a1c8a43a2f14fea97b; IF_REV=50b7f77; RST_REV=dd6f34cb
+case $STAGE in
+  ota3_if) export SNOWBALL_DATASET_ID=$OTA_ID+$IF_ID SNOWBALL_DATASET_REVISION=$OTA_REV+$IF_REV;;
+  rst_if)  export SNOWBALL_DATASET_ID=$IF_ID+$RST_ID SNOWBALL_DATASET_REVISION=$IF_REV+$RST_REV;;
+  *)       export SNOWBALL_DATASET_ID=$OTA_ID+$IF_ID+$RST_ID SNOWBALL_DATASET_REVISION=$OTA_REV+$IF_REV+$RST_REV;;
+esac
 mkdir -p "$S/logs/$STAGE"; LOG=$S/logs/$STAGE/arm.log
 say() { echo "[$(date -u +%FT%TZ)] [$STAGE] $*" | tee -a "$LOG"; }
 [ -f "$D/parquet.list" ] || { say "no corpus at $D"; exit 1; }
