@@ -9,7 +9,7 @@
 set -uo pipefail
 TAG=${1:?tag}; MODEL=${2:?model export dir}; MODE=${3:-full}
 C=/e/project1/transfernetx/lee27/code; W=$C/tb2; E=/e/fscratch/reformo/lee27/experiments/tb2
-TASKS=${TASKS:-/e/data1/mmlaion/lee27/tasks/rst_heldout_daytona}
+TASKS=${TASKS:-/e/data1/mmlaion/lee27/tasks/rst_heldout_daytona_v2}   # v2 = teacher-parity sandboxes (2 CPU / 4 GB, 1,800 s agent), centos vault fix
 NTASKS=${NTASKS:-$(ls -d $TASKS/*/ | wc -l)}
 NAME=rstho_${TAG}_$(date +%Y%m%d_%H%M); [ "$MODE" = smoke ] && NAME=${NAME}_smoke
 LOG=$E/logs/rst_chain_$TAG.log; mkdir -p $E/logs

@@ -22,9 +22,36 @@ TMUX = ("if command -v tmux >/dev/null 2>&1 && command -v asciinema >/dev/null 2
         "elif command -v apk >/dev/null 2>&1; then apk add --no-cache tmux; fi")
 
 
+CENTOS_VAULT = ("sed -i -e 's/^mirrorlist=/#mirrorlist=/' -e 's|^#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|' /etc/yum.repos.d/CentOS-*.repo && ")
+
+
 def base_dockerfile(base: str) -> str:
+    fix = CENTOS_VAULT if base.startswith("centos:7") else ""  # centos 7 is EOL: its mirrorlist is gone, yum needs the vault
     return (f"FROM {base}\n\nENV DEBIAN_FRONTEND=noninteractive\n\n# shared per-base image; the task's own Dockerfile steps run from setup_files/setup.sh\n"
-            f"RUN {TMUX} \\\n    && mkdir -p /app /tests /logs/verifier\n\nWORKDIR /app\n")
+            f"RUN {fix}{TMUX} \\\n    && mkdir -p /app /tests /logs/verifier\n\nWORKDIR /app\n")
+
+
+# The rollouts were collected with 2 CPU / 4 GB / 6 GB sandboxes and 1,800 s agent / 2,400 s verifier limits on every
+# task (bundle README). The source task.toml files say 1 CPU / 2 GB and 600–1,800 s: the first probe on those lost
+# 12 % of trials to killed tmux sessions (2 GB) and 5 setups to a 600 s build timeout. Parity with the teacher instead.
+RESOURCES = {"cpus": "2", "memory": '"4G"', "storage": '"6G"', "memory_mb": "4096", "storage_mb": "6144", "build_timeout_sec": "1800.0"}
+TIMEOUTS = {"agent": "1800.0", "verifier": "2400.0"}
+
+
+def rewrite_toml(text: str) -> str:
+    out, section = [], None
+    for line in text.splitlines():
+        m = re.match(r"\s*\[(\w+)\]", line)
+        if m:
+            section = m.group(1)
+        kv = re.match(r"\s*(\w+)\s*=", line)
+        key = kv.group(1) if kv else None
+        if section == "environment" and key in RESOURCES:
+            line = f"{key} = {RESOURCES[key]}"
+        elif section in TIMEOUTS and key == "timeout_sec":
+            line = f"timeout_sec = {TIMEOUTS[section]}"
+        out.append(line)
+    return "\n".join(out) + "\n"
 
 
 KEYWORDS = {"FROM", "RUN", "ENV", "ARG", "WORKDIR", "USER", "COPY", "ADD", "SHELL", "CMD", "ENTRYPOINT", "EXPOSE", "LABEL",
@@ -169,8 +196,8 @@ def convert(task_dir: Path, out_dir: Path) -> dict:
         else: shutil.copy2(src_path, dst)
     for rel, content in heredoc_files:
         dst = sf / rel; dst.parent.mkdir(parents=True, exist_ok=True); dst.write_text(content)
-    for name in ("instruction.md", "task.toml"):
-        shutil.copy2(task_dir / name, out_dir / name)
+    shutil.copy2(task_dir / "instruction.md", out_dir / "instruction.md")
+    (out_dir / "task.toml").write_text(rewrite_toml((task_dir / "task.toml").read_text()))
     for sub in ("tests", "solution"):
         if (task_dir / sub).is_dir(): shutil.copytree(task_dir / sub, out_dir / sub, dirs_exist_ok=True)
     return {"base": base, "runs": sum(1 for s in steps if s[0] in ("run", "run_script")), "copies": len(copies) + len(heredoc_files), "workdir": workdir, "user": user, "unsupported": unsupported}
