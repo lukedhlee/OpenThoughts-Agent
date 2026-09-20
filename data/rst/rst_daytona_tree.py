@@ -170,6 +170,9 @@ def convert(task_dir: Path, out_dir: Path) -> dict:
                 sh.append(f'mkdir -p "$(dirname {shlex.quote(d)})" && cp -a "$HERE/{rel}" {shlex.quote(d)}')
         elif kind in ("run", "run_script"):
             assert "RST_RUN_EOF" not in val
+            # 13 of 337 held-out Dockerfiles swap apt to mirrors.aliyun.com (a China mirror); from Daytona's region those
+            # setups ran past 1,800 s and were the only setup failures on 2026-09-20. Use the default archive instead.
+            val = val.replace("mirrors.aliyun.com/ubuntu", "archive.ubuntu.com/ubuntu").replace("mirrors.aliyun.com/debian", "deb.debian.org/debian")
             sh.append(f"cat > /tmp/rst_run_{i}.sh <<'RST_RUN_EOF'\n{val}\nRST_RUN_EOF")
             runner = f"/tmp/rst_run_{i}.sh" if (kind == "run_script" and val.startswith("#!")) else f"bash -e /tmp/rst_run_{i}.sh"
             if usr == "root":
