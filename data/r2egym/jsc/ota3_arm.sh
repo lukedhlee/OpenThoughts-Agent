@@ -8,7 +8,7 @@ set -uo pipefail
 S=/e/data1/mmlaion/lee27/snowball-sft
 C=/e/project1/transfernetx/lee27/code/snowball
 : "${STAGE:?ota3_if | ota3_if_rst | ota3_if_rstsucc}"
-D=$S/data/${STAGE}_v1
+case $STAGE in ota3_if) D=$S/data/ota3_if_sft_v1;; *) D=$S/data/${STAGE}_v1;; esac   # corpus dirs from data/rst/build_corpora.py
 EXP=$S/experiments/snowball-ota-sft
 CACHE=$EXP/cache-$STAGE-v1
 HELDOUT=$D/ota3-heldout-00000-of-00001.parquet

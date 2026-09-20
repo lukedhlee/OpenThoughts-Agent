@@ -35,7 +35,11 @@ SCHEMA = pa.schema([("task", pa.string()), ("base_task", pa.string()), ("row_id"
 EP_RE = re.compile(r"/agent/episode-(\d+)/debug\.json$")
 
 
-def select(rows: list[dict], heldout: set[str], seed: int, min_turns: int) -> dict[str, list[dict]]:
+def select(rows: list[dict], heldout: set[str], seed: int, min_turns: int) -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:
+    """Return (slices, fallbacks). slices['rst-all'] holds each task's first-choice rollout; fallbacks[task] the rest of
+    the task's rollouts in preference order (reward-1 first, then the shortest by output tokens), used when the first
+    choice does not fit the packing length. The 2026-09-20 first pass lost 4,488 of 16,545 tasks to the 32K cap when
+    only one rollout per task was ever read."""
     rng = random.Random(seed)
     bytask: dict[str, list[dict]] = collections.defaultdict(list)
     for r in rows:
@@ -43,6 +47,7 @@ def select(rows: list[dict], heldout: set[str], seed: int, min_turns: int) -> di
             continue
         bytask[r["task_id"]].append(r)
     sel = {"rst-all": [], "rst-succ": [], "rst-succ8": []}
+    fallbacks: dict[str, list[dict]] = {}
     for tid in sorted(bytask):
         cands = sorted(bytask[tid], key=lambda r: r["execution_id"])
         succ = [r for r in cands if r["reward"] == 1]
@@ -50,10 +55,10 @@ def select(rows: list[dict], heldout: set[str], seed: int, min_turns: int) -> di
         rng.shuffle(succ); rng.shuffle(rest)
         pick = (succ + rest)[0]
         sel["rst-all"].append(pick)
-        if pick["reward"] == 1:
-            sel["rst-succ"].append(pick)
+        others = [r for r in succ if r is not pick] + sorted((r for r in rest if r is not pick), key=lambda r: r["output_tokens"] or 0)
+        fallbacks[tid] = others
         sel["rst-succ8"].extend(succ)
-    return sel
+    return sel, fallbacks
 
 
 def conversation_from_trial(tf: tarfile.TarFile, members: dict[str, tarfile.TarInfo], prefix: str) -> list[dict] | None:
@@ -99,6 +104,7 @@ def main() -> None:
     ap.add_argument("--min-turns", type=int, default=5)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--limit-shards", type=int, default=0, help="debug: only read the first N shards")
+    ap.add_argument("--fallback-passes", type=int, default=3, help="how many further rollouts to try for a task whose pick did not fit")
     a = ap.parse_args()
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(a.tokenizer_dir)
@@ -106,62 +112,83 @@ def main() -> None:
 
     heldout = set(json.load(open(a.heldout)))
     rows = pq.read_table(a.raw / "logical_attempts.parquet").to_pylist()
-    sel = select(rows, heldout, a.seed, a.min_turns)
-    wanted: dict[str, dict] = {}  # member_prefix -> row
-    for k, rs in sel.items():
-        for r in rs:
-            wanted.setdefault(r["member_prefix"], r)
-    slices_of: dict[str, set[str]] = collections.defaultdict(set)
-    for k, rs in sel.items():
-        for r in rs:
-            slices_of[r["member_prefix"]].add(k)
-    print(f"selected {len(wanted)} trials: " + ", ".join(f"{k}={len(v)}" for k, v in sel.items()), flush=True)
+    sel, fallbacks = select(rows, heldout, a.seed, a.min_turns)
+    print(f"selected: " + ", ".join(f"{k}={len(v)}" for k, v in sel.items()), flush=True)
 
     stats: collections.Counter = collections.Counter()
     built: dict[str, dict] = {}
-    lengths: dict[str, list[int]] = collections.defaultdict(list)
     exc_kept: collections.Counter = collections.Counter()
-    shards = sorted({r["shard"] for r in wanted.values()})
-    if a.limit_shards:
-        shards = shards[: a.limit_shards]
-    for i, shard in enumerate(shards):
-        need = {p for p, r in wanted.items() if r["shard"] == shard}
-        with tarfile.open(a.raw / shard) as tf:
-            members = {m.name: m for m in tf.getmembers() if m.isfile() and m.name.split("/")[0] in need and EP_RE.search(m.name)}
-            for prefix in sorted(need):
-                r = wanted[prefix]
-                stats["rows_in"] += 1
-                conv = conversation_from_trial(tf, members, prefix)
-                if conv is None:
-                    stats["drop:no_episode_log"] += 1; continue
-                out_conv, bad = [], False
-                for m in conv:
-                    if m["role"] != "assistant":
-                        out_conv.append(m); continue
-                    new = rewrite_assistant(m["content"], stats)
-                    if new is None:
-                        bad = True; break
-                    out_conv.append({"role": "assistant", "content": new})
-                if bad:
-                    stats["drop:malformed_think"] += 1; continue
-                if len(out_conv) < 2 or out_conv[-1]["role"] != "assistant":
-                    stats["drop:shape"] += 1; continue
-                text = tok.apply_chat_template(out_conv, tokenize=False, add_generation_prompt=False)
-                ids = tok(text, add_special_tokens=False)["input_ids"]
-                if len(ids) > PACK_LEN:
-                    stats["drop:over_len"] += 1; continue
-                assert ids.count(128002) == sum(1 for m in out_conv if m["role"] == "assistant")
-                reward = r["reward"]
-                result = "" if reward is None else f"{float(reward):.1f}"
-                if reward is None:
-                    exc_kept[r["exception_type"]] += 1
-                built[prefix] = {"task": r["task_id"], "base_task": r["task_group_id"], "row_id": f"{shard}:{prefix}", "slice": "rst",
-                    "kind": "action", "trace_source": "rst-glm-5.3", "result": result, "conversations": out_conv,
-                    "model": "glm-5.3", "agent": "terminus-2", "trial_name": prefix, "episode": str(r["attempt"]),
-                    "instance_id": r["task_id"], "audit_reasons": r["exception_type"] or "", "final_complete": reward is not None}
-                for k in slices_of[prefix]:
-                    lengths[k].append(len(ids))
-        print(f"[{i + 1}/{len(shards)}] {shard}: built {len(built)} so far, stats {dict(stats)}", flush=True)
+
+    def build_one(tf: tarfile.TarFile, members: dict, shard: str, r: dict) -> int | None:
+        """Convert one trial; store it in built[] and return its token length, or None (reason counted in stats)."""
+        prefix = r["member_prefix"]
+        stats["rows_in"] += 1
+        conv = conversation_from_trial(tf, members, prefix)
+        if conv is None:
+            stats["drop:no_episode_log"] += 1; return None
+        out_conv, bad = [], False
+        for m in conv:
+            if m["role"] != "assistant":
+                out_conv.append(m); continue
+            new = rewrite_assistant(m["content"], stats)
+            if new is None:
+                bad = True; break
+            out_conv.append({"role": "assistant", "content": new})
+        if bad:
+            stats["drop:malformed_think"] += 1; return None
+        if len(out_conv) < 2 or out_conv[-1]["role"] != "assistant":
+            stats["drop:shape"] += 1; return None
+        text = tok.apply_chat_template(out_conv, tokenize=False, add_generation_prompt=False)
+        ids = tok(text, add_special_tokens=False)["input_ids"]
+        if len(ids) > PACK_LEN:
+            stats["drop:over_len"] += 1; return None
+        assert ids.count(128002) == sum(1 for m in out_conv if m["role"] == "assistant")
+        reward = r["reward"]
+        result = "" if reward is None else f"{float(reward):.1f}"
+        if reward is None:
+            exc_kept[r["exception_type"]] += 1
+        built[prefix] = {"task": r["task_id"], "base_task": r["task_group_id"], "row_id": f"{shard}:{prefix}", "slice": "rst",
+            "kind": "action", "trace_source": "rst-glm-5.3", "result": result, "conversations": out_conv,
+            "model": "glm-5.3", "agent": "terminus-2", "trial_name": prefix, "episode": str(r["attempt"]),
+            "instance_id": r["task_id"], "audit_reasons": r["exception_type"] or "", "final_complete": reward is not None,
+            "_tokens": len(ids)}
+        return len(ids)
+
+    def run_pass(wanted: dict[str, dict], label: str) -> None:
+        shards = sorted({r["shard"] for r in wanted.values()})
+        if a.limit_shards:
+            shards = shards[: a.limit_shards]
+        for i, shard in enumerate(shards):
+            need = {p for p, r in wanted.items() if r["shard"] == shard}
+            with tarfile.open(a.raw / shard) as tf:
+                members = {m.name: m for m in tf.getmembers() if m.isfile() and m.name.split("/")[0] in need and EP_RE.search(m.name)}
+                for prefix in sorted(need):
+                    build_one(tf, members, shard, wanted[prefix])
+            print(f"[{label} {i + 1}/{len(shards)}] {shard}: built {len(built)} so far, stats {dict(stats)}", flush=True)
+
+    # pass 1: every first-choice rollout (rst-all) plus every success (rst-succ8)
+    wanted = {r["member_prefix"]: r for k in ("rst-all", "rst-succ8") for r in sel[k]}
+    run_pass(wanted, "pass1")
+    # passes 2..: tasks whose first choice did not fit get their next candidate, up to --fallback-passes times
+    choice = {r["task_id"]: r for r in sel["rst-all"]}
+    for p in range(a.fallback_passes):
+        missing = [t for t, r in choice.items() if r["member_prefix"] not in built and fallbacks[t]]
+        if not missing:
+            break
+        wanted = {}
+        for t in missing:
+            nxt = fallbacks[t].pop(0); choice[t] = nxt
+            if nxt["member_prefix"] in built:  # a success already read in pass 1 that fits
+                continue
+            wanted[nxt["member_prefix"]] = nxt
+        stats[f"fallback_pass{p + 2}_tasks"] = len(missing)
+        print(f"fallback pass {p + 2}: {len(missing)} tasks, {len(wanted)} trials to read", flush=True)
+        run_pass(wanted, f"pass{p + 2}")
+    sel["rst-all"] = [choice[t] for t in sorted(choice)]
+    sel["rst-succ"] = [r for r in sel["rst-all"] if r["reward"] == 1]
+    lengths: dict[str, list[int]] = {k: [built[r["member_prefix"]]["_tokens"] for r in rs if r["member_prefix"] in built] for k, rs in sel.items()}
+    for rec in built.values():
+        rec.pop("_tokens", None)
 
     a.out.mkdir(parents=True, exist_ok=True)
     written: dict[str, str] = {}
