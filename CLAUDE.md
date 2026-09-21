@@ -15,7 +15,7 @@ piece for the task at hand (skills are also invocable by name via the Skill tool
   - **launch:** `rl-agentic-launch-jupiter`, `rl-agentic-launch-iris` (CoreWeave H100), `rl-standard-launch-leonardo` (non-agentic GRPO), `sft-launch` (LLaMA-Factory + axolotl · Delphi), `datagen-launch` (agentic Harbor trace-gen), `datagen-standard-launch` (Curator + `generate.py`), `eval-agentic-launch`, `eval-standard-launch` (+ `*-iris` variants).
   - **cleanup:** `rl-agentic-job-cleanup` (agentic RL + traces), `rl-standard-job-cleanup` (standard GRPO — model + metrics only, no traces), `sft-job-cleanup`, `datagen-job-cleanup`, `eval-agentic-cleanup`, `eval-standard-cleanup`.
   - **monitor:** `monitor-cron-sweep`, `monitor-job-tables`, `rl-job-health-deep-dive` (per-RL-job probe → KILL/NO-KILL), `monitor-restore` (3-hourly sweep loop), `monitor-restore-iris-cron`.
-  - **analysis / data / db:** `analyze-rl-behavior`, `analyze-dataset-token-length`, `analyze-id-eval-ranking` (z-score ranking), `datagen-reduce-dataset-snapshots`, `crud-otagent-supabase`, `crud-purge-stale-eval-placeholders`, `crud-purge-below-gate-evals`.
+  - **analysis / data / db:** `analyze-rl-behavior`, `analyze-dataset-token-length`, `analyze-id-eval-ranking` (z-score ranking), `gepa-prompt-loop` (agentic prompt evolution on R2E-Gym dev/test; the session is the reflection LLM), `datagen-reduce-dataset-snapshots`, `crud-otagent-supabase`, `crud-purge-stale-eval-placeholders`, `crud-purge-below-gate-evals`.
   - **code:** `code-create-staged-plan` → `notes/<codebase>/`, `code-execute-staged-plan` → `agent_logs/`.
   - **build:** `build-gpu-rl-image-iris` (kaniko in-cluster; Mac can't build it).
   - **role:** `supervisor-init` — session bootstrap.
