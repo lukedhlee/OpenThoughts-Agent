@@ -40,6 +40,11 @@ say "cache ready: $(head -c 300 "$CACHE/train/.stats.json" 2>/dev/null)"
 TOK=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['total_tokens'])" "$CACHE/train/.stats.json")
 EPOCH_STEPS=$(( (TOK + STEP_TOKENS - 1) / STEP_TOKENS )); [ -n "$KEEP_EVERY" ] || KEEP_EVERY=$(( EPOCH_STEPS / 3 ))
 say "epoch ~$EPOCH_STEPS steps; checkpoint every $KEEP_EVERY"
-SNOWBALL_SCHEDULE_EPOCHS=2 LANE=${LANE:-$STAGE} CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS="$LR" EPOCHS=1 EXPORT_EPOCHS=kept \
+# RESUME_EPOCHS=2: continue the finished one-epoch arm into its second epoch on the same 2-epoch cosine (same output dir,
+# SNOWBALL_RESUME=1 -> launch_jupiter_snowball_r2egym.sh resumes from the latest kept checkpoint with optimizer + step)
+RESUME_EPOCHS=${RESUME_EPOCHS:-}
+[ -n "$RESUME_EPOCHS" ] && say "RESUME to $RESUME_EPOCHS epochs (schedule 2)"
+SNOWBALL_RESUME=$([ -n "$RESUME_EPOCHS" ] && echo 1 || echo 0) \
+SNOWBALL_SCHEDULE_EPOCHS=2 LANE=${LANE:-$STAGE} CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS="$LR" EPOCHS=${RESUME_EPOCHS:-1} EXPORT_EPOCHS=kept \
 KEEP_EVERY=$KEEP_EVERY HELDOUT=$HELDOUT OUT_ROOT=$EXP/$STAGE SNOWBALL_WALL=02:00:00 SCORE_TIME=01:00:00 bash -l "$C/ota_lane.sh"
 say "ARM_DONE"

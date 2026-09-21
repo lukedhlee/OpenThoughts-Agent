@@ -8,29 +8,42 @@
 # the export is complete). Runs in tmux on the login node. Log: $S/logs/<STAGE>/readout.log
 set -uo pipefail
 STAGE=${1:?stage}; TRIALS=${2:-2}
+# FINAL_STEP=<n>: readout of a resumed arm — skip the LANE_DONE wait, ladder + targets on that kept step only;
+# TAGSUF=<s>: trial tags become <STAGE><s>t<i> (e.g. e2 for the epoch-2 checkpoint)
+FINAL_STEP=${FINAL_STEP:-}; TAGSUF=${TAGSUF:-}
 S=/e/data1/mmlaion/lee27/snowball-sft; C=/e/project1/transfernetx/lee27/code; W=$C/tb2; E=/e/fscratch/reformo/lee27/experiments/tb2
 ARM=lr1e-4-sched2; OUT=$S/experiments/snowball-ota-sft/$STAGE/$ARM; LANE_LOG=$S/logs/$STAGE/lane_$STAGE.log
 LOG=$S/logs/$STAGE/readout.log
 say() { echo "[$(date -u +%FT%TZ)] [readout $STAGE] $*" | tee -a $LOG; }
-say "waiting for LANE_DONE in $LANE_LOG"
-for i in $(seq 1 96); do grep -q LANE_DONE $LANE_LOG 2>/dev/null && break; sleep 300; done   # up to 8 h
-grep -q LANE_DONE $LANE_LOG 2>/dev/null || { say "no LANE_DONE after 8 h"; exit 1; }
-grep -q ARM_FAILED $LANE_LOG && { say "lane reports ARM_FAILED; stopping"; exit 1; }
-steps=$(ls $OUT/checkpoints | grep -oE '^step-[0-9]+$' | cut -d- -f2 | sort -n)
-first=$(echo "$steps" | head -1); final=$(echo "$steps" | tail -1)
-say "kept checkpoints: $(echo $steps | tr '\n' ' '); ladder on $first and $final; targets x$TRIALS on $final"
-for st in $first $final; do
+if [ -n "$FINAL_STEP" ]; then
+  say "waiting for checkpoint step-$FINAL_STEP under $OUT/checkpoints"
+  for i in $(seq 1 144); do [ -d $OUT/checkpoints/step-$FINAL_STEP ] && break; sleep 300; done   # up to 12 h (queue + run)
+  [ -d $OUT/checkpoints/step-$FINAL_STEP ] || { say "no step-$FINAL_STEP after 12 h"; exit 1; }
+  first=$FINAL_STEP; final=$FINAL_STEP; points=$FINAL_STEP
+  say "resume readout: ladder + targets x$TRIALS on step $final"
+else
+  say "waiting for LANE_DONE in $LANE_LOG"
+  for i in $(seq 1 96); do grep -q LANE_DONE $LANE_LOG 2>/dev/null && break; sleep 300; done   # up to 8 h
+  grep -q LANE_DONE $LANE_LOG 2>/dev/null || { say "no LANE_DONE after 8 h"; exit 1; }
+  grep -q ARM_FAILED $LANE_LOG && { say "lane reports ARM_FAILED; stopping"; exit 1; }
+  steps=$(ls $OUT/checkpoints | grep -oE '^step-[0-9]+$' | cut -d- -f2 | sort -n)
+  first=$(echo "$steps" | head -1); final=$(echo "$steps" | tail -1); points="$first $final"
+  say "kept checkpoints: $(echo $steps | tr '\n' ' '); ladder on $first and $final; targets x$TRIALS on $final"
+fi
+for st in $points; do
   EX=$OUT/export-step$st-hf-bf16; NLL=$S/logs/heldout_nll_$STAGE-$STAGE-$ARM-step$st.json
   for i in $(seq 1 90); do [ -f $NLL ] && [ -f $EX/config.json ] && break; sleep 120; done   # up to 3 h (export queue)
   [ -f $EX/config.json ] || { say "no export at $EX after 3 h; skipping step $st"; continue; }
   say "step $st: export ready, held-out NLL $(grep -oE '"nll": *[0-9.]+' $NLL | head -1)"
-  tmux new-session -d -s pair_${STAGE}_s$st "bash $W/probe_pair_chain.sh ${STAGE}s$st $EX; sleep 600"
-  say "launched pair probe tmux pair_${STAGE}_s$st"
+  tmux new-session -d -s pair_${STAGE}${TAGSUF}_s$st "bash $W/probe_pair_chain.sh ${STAGE}${TAGSUF}s$st $EX; sleep 600"
+  say "launched pair probe tmux pair_${STAGE}${TAGSUF}_s$st"
   if [ "$st" = "$final" ]; then
     for t in $(seq 1 $TRIALS); do
-      J=$(MODEL=$EX POLICY=trained sbatch --parsable --time=${SERVE_TIME:-06:00:00} $W/serve_snowball.sbatch)   # 6 h fits a ~4.5 h trial pair and slips under maintenance reservations that defer 12 h jobs || { say "serve sbatch failed (trial $t)"; continue; }
-      tmux new-session -d -s eval_${STAGE}_t$t "bash $W/eval_chain.sh $J ${STAGE}t$t; sleep 600"
-      say "launched targets trial $t: serve $J, tmux eval_${STAGE}_t$t (runs ${STAGE}t${t}swe_v01_* and ${STAGE}t${t}_v01_*)"
+      # 6 h fits a ~4.5 h trial pair and slips under maintenance reservations that defer 12 h jobs
+      J=$(MODEL=$EX POLICY=trained sbatch --parsable --time=${SERVE_TIME:-06:00:00} $W/serve_snowball.sbatch) || { say "serve sbatch failed (trial $t)"; continue; }
+      TAG=${STAGE}${TAGSUF}t$t
+      tmux new-session -d -s eval_${TAG} "bash $W/eval_chain.sh $J $TAG; sleep 600"
+      say "launched targets trial $t: serve $J, tmux eval_${TAG} (runs ${TAG}swe_v01_* and ${TAG}_v01_*)"
       sleep 90
     done
   fi

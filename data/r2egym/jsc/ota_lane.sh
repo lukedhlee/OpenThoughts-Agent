@@ -77,6 +77,7 @@ for LR in $LRS; do
       say "EXPORT_SUBMITTED $ARM step $st job $jx -> $EX"
     fi
     NAME=$SNOWBALL_STAGE-$LANE-$ARM-step$st
+    [ -f "$S/logs/heldout_nll_$NAME.json" ] && { say "score exists for step $st; skipping"; continue; }   # a resume re-lists the old kept steps
     js=$(SBATCH_TIMELIMIT=${SCORE_TIME:-00:45:00} sbatch --parsable ${jx:+--dependency=afterok:$jx} --account="$SBATCH_ACCOUNT" \
       --export=ALL,MODEL="$EX",PARQUET="$HELDOUT",NAME="$NAME" "$C/heldout_nll.sbatch") \
       && say "SCORE_SUBMITTED $ARM step $st job $js -> $S/logs/heldout_nll_$NAME.json" \
