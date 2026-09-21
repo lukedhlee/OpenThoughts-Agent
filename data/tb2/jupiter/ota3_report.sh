@@ -14,7 +14,8 @@ for st in $STAGES; do
   for r in $(ls -d $J/ifv2ho_${st}s[0-9]*_2026* $J/rstho_${st}s[0-9]*_2026* 2>/dev/null); do
     [ -f $r/ifv2_rows.json ] || { echo "  $(basename $r): no rows yet"; continue; }
     case $(basename $r) in ifv2ho_*) B=$BIF;; *) B=$BRST;; esac
-    echo "  $(basename $r): $($PY $W/ifv2_pair.py $r/ifv2_rows.json $B 2>/dev/null | grep -E 'pass@1|paired' | tr '\n' ' ' | cut -c1-200)"
+    # base passed FIRST so the printed B-A reads arm - base (positive = the arm is better)
+    echo "  $(basename $r): $($PY $W/ifv2_pair.py $B $r/ifv2_rows.json 2>/dev/null | grep -E 'pass@1|paired' | sed 's/A pass@1/base pass@1/; s/B pass@1/arm pass@1/; s/B-A/arm-base/' | tr '\n' ' ' | cut -c1-200)"
   done
   for t in 1 2 3 4; do for leg in swe_v01 _v01; do
     for d in $(ls -d $J/${st}t${t}${leg}_2026* 2>/dev/null); do n=$(basename $d)
