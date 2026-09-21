@@ -443,9 +443,23 @@ Measured off the two P2O probes on this exact layout (2026-09-20), not assumed:
 | **8 nodes** | ~12.5 h | finishing in one sitting; reflection has to keep up with the queue |
 | **4 nodes** | ~25 h | the same attempts with real slack to read traces while candidates run |
 
-Both fit the seed wave, about three reflect/gate/accept waves, and the pooled confirmation. Luke picks at
-go time; `NODES=4` and `NODES=8` are the same code, and the runner sizes shards from the live endpoint
-count either way. The pilot (1 node) is off budget.
+Both fit the seed wave, about three reflect/gate/accept rounds, and the pooled confirmation, with
+roughly 13 node-hours of slack:
+
+| item | node-hours |
+|---|---|
+| seed wave: control + 4 seeds, all three legs (5 × 6.0) | 29.8 |
+| 3 rounds × (gate wave 3.8 + one accepted child and control on full dev 11.9) | 47.3 |
+| pooled confirmation | 10.0 |
+| **total / budget** | **87.1 / 100** |
+
+**The binding assumption is about one accepted child per round.** Two accepted children per round
+costs 21.7 a round instead of 15.8, which comes to 105 and overruns. If a round accepts two, drop a
+later round rather than the confirmation — an unconfirmed winner spends the sealed test set on a
+margin that may be noise, which is the one mistake in this loop that cannot be undone.
+
+Luke picks the layout at go time; `NODES=4` and `NODES=8` are the same code, and the runner sizes
+shards from the live endpoint count either way. The pilot (1 node) is off budget.
 
 **On the standing serve job the startup is paid once, at session start, not per candidate.** That is the
 whole reason for the redesign: it is 4 node-hours each time, and a loop that reflects between candidates
