@@ -2,18 +2,23 @@
 # gepa_final.sh — the ONE run on the test set: the winning block against the control, paired, on 500 tasks the loop
 # has never scored, plus the OOD-repo check. Three phases.
 #
-#   bash gepa_final.sh confirm <cand> <cands.json>  # re-run the winner and ctl on DEV at k=2, then judge it
-#   bash gepa_final.sh verdict                      # score the confirm wave and write the pass/fail marker
+#   bash gepa_final.sh confirm <cand> <cands.json> <source wave>   # RERUN winner + ctl on DEV at k=1
+#   bash gepa_final.sh verdict                                     # pooled verdict + the pass/fail marker
 #   bash gepa_final.sh build <cand> <cands.json>    # build the test tree; enqueue nothing
 #   CONFIRM=1 bash gepa_final.sh build <cand> ...   # build AND enqueue both arms onto the standing serve job
 #   bash gepa_final.sh readout                      # paired delta with a bootstrap CI, per bucket and OOD vs ID
 #
 # The CONFIRM step exists because the winner was chosen by looking at dev many times. Selecting a maximum over a
 # dozen candidates on one 500-task set inflates it: the winner is partly whichever candidate got the friendlier
-# noise. So before the sealed test is spent, the winner is re-run against the control on dev at k=2 -- fresh
-# samples, same tasks -- and must clear a paired +0.05 with a bootstrap 95 % interval strictly above zero. A
-# winner that cannot reproduce its own dev margin will not survive the test set either, and finding that out on
-# dev costs 2,000 attempts instead of the one held-out number we get.
+# noise. So before the sealed test is spent, the winner is re-run against the control on dev -- fresh samples, same
+# tasks -- and must clear a paired +0.05 with a bootstrap 95 % interval strictly above zero.
+#
+# It is a k=1 RERUN pooled with the source wave's dev run, not a k=2 re-run. Both give 2 attempts per task per arm
+# and the same statistical content; pooling costs 1,000 attempts (10 node-hours) instead of 2,000 (20), because the
+# first attempt has already been paid for. `gepa_score.py --pool <source wave>` does the pooling, per (task, arm).
+#
+# A winner that cannot reproduce its own dev margin will not survive the test set either, and finding that out on
+# dev costs 10 node-hours instead of the one held-out number we get.
 #
 # Enqueueing normally needs no new go -- the serve job is already paid for. This one does, and CONFIRM=1 is it,
 # because it spends something that cannot be bought back: the test set is scored ONCE. If the readout disappoints,
@@ -35,6 +40,9 @@ MIN_DELTA=${MIN_DELTA:-0.05}
 
 if [ "$PHASE" = confirm ]; then
   CAND=${2:?the winning candidate id}; CANDS=${3:?the cands.json holding its block text}
+  SRC=${4:?the wave whose dev run this pools with, i.e. the winning candidate full-dev wave}
+  [ -d "$E/$SRC" ] || { echo "no source wave at $E/$SRC"; exit 1; }
+  echo "$SRC" > "$E/${WAVE}_confirm_src"
   $PY - "$CANDS" "$CAND" "$E/${CWAVE}_cands.json" <<'PY' || exit 1
 import json, sys
 src, cand, dst = sys.argv[1:4]
@@ -46,16 +54,21 @@ PY
   $PY $G/gepa_tree.py --wave "$CWAVE" --candidates "$E/${CWAVE}_cands.json" --split dev --verify 40 || exit 1
   NT=$(wc -l < "$E/split_dev.txt")
   echo
-  echo "CONFIRM: $NT dev tasks x 2 arms ($CAND and ctl) x k=2 = $((NT * 2 * 2)) attempts ~= $((NT * 2 * 2 / 100)) node-hours"
-  echo "         on the allocation already held. Fresh samples on the same tasks, to check the winner's dev margin"
-  echo "         reproduces before the sealed test set is spent."
-  bash $G/gepa_queue.sh add-all "$CWAVE" 2 || exit 1
-  echo "enqueued at k=2; when it finishes run:  bash $G/gepa_final.sh verdict"
+  echo "CONFIRM: $NT dev tasks x 2 arms ($CAND and ctl) x k=1 = $((NT * 2)) attempts ~= $((NT * 2 / 100)) node-hours"
+  echo "         on the allocation already held. Pooled with wave $SRC's dev run, the verdict sees 2 attempts per"
+  echo "         task per arm -- the same content as a k=2 re-run for half the price, since the first attempt is"
+  echo "         already paid for. Checks the winner's dev margin reproduces before the sealed test set is spent."
+  bash $G/gepa_queue.sh add-all "$CWAVE" 1 || exit 1
+  echo "enqueued at k=1; when it finishes run:  bash $G/gepa_final.sh verdict"
   exit 0
 fi
 
 if [ "$PHASE" = verdict ]; then
-  $PY $G/gepa_score.py "$CWAVE" --leg dev --json "$MARK" || exit 1
+  SRCF=$E/${WAVE}_confirm_src
+  [ -f "$SRCF" ] || { echo "no source wave recorded at $SRCF -- run the confirm phase first"; exit 1; }
+  SRC=$(cat "$SRCF")
+  echo "pooling the confirm rerun with wave $SRC's dev run (2 attempts per task per arm)"
+  $PY $G/gepa_score.py "$CWAVE" --leg dev --pool "$SRC" --json "$MARK" || exit 1
   $PY - "$MARK" "$MIN_DELTA" <<'PY'
 import json, sys
 p, mind = sys.argv[1], float(sys.argv[2])
@@ -64,7 +77,7 @@ ok = False
 for c, r in v["candidates"].items():
     passed = r["delta"] >= mind and r["ci_lo"] > 0
     ok = ok or passed
-    print("%s: paired dev delta %+.3f [%+.3f, %+.3f] over %d tasks at k=2, %d/%d wins -> %s"
+    print("%s: paired dev delta %+.3f [%+.3f, %+.3f] over %d pooled tasks, %d/%d wins -> %s"
           % (c, r["delta"], r["ci_lo"], r["ci_hi"], r["n"], r["wins"], r["losses"],
              "CONFIRMED" if passed else "NOT CONFIRMED"))
     if r.get("oodmini_delta") is not None:

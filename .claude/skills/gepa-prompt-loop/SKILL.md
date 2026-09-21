@@ -4,9 +4,10 @@ description: >-
   Run a GEPA-shaped prompt-evolution loop for Snowball on R2E-Gym, agentically — THIS session is the
   reflection LLM, there is no GEPA framework. A population of general terminal-agent guidance blocks
   (≤ 400 tokens, procedure only) is appended to each task's instruction.md as a strict suffix; each
-  candidate is scored on a 500-task dev split that is SCORES-ONLY, and reflection reads a separate
-  64-task feedback sample drawn from train; selection is a per-task Pareto front over pass plus eight
-  deterministic behaviour axes. Compute is one standing serve job plus a candidate queue. Use when
+  candidate is scored on a fixed 500-task dev split that is SCORES-ONLY, and reflection reads a fresh
+  64-task feedback batch drawn from train per wave; selection is a per-task Pareto front over pass
+  plus eight deterministic behaviour axes. Compute is one standing serve job plus a candidate queue,
+  on a 100 GPU node-hour budget. Use when
   asked to evolve / optimise / search the agent prompt, run a GEPA wave, reflect on a candidate's
   feedback traces, or gate a child block. Scripts:
   data/r2egym/jsc/gepa/. Reference: ai_memory/active/snowball-r2egym/research/2026-09-21_gepa_agentic_loop.md.
@@ -100,7 +101,7 @@ conventions. The behaviour detectors and their provenance → `data/r2egym/jsc/g
 | **reflection** | this session reads the parent's worst FEEDBACK traces and writes 2–3 children with the lesson added |
 | **cheap gate** | child vs parent on the wave's fresh 32, paired wins plus the predicted axis — pass rate alone cannot decide at this n |
 | **judge** | 8 feedback traces hand-graded per accepted child; an axis below 6/8 agreement is FROZEN and leaves the front |
-| **confirm** | the winner re-run vs control on dev at k=2 before the test set is spent |
+| **confirm** | the winner RERUN vs control on dev at k=1, pooled with its own wave's dev run, before the test set is spent |
 | **full eval** | an accepted child is re-scored on all 500 dev tasks and entered in the ledger |
 | **final** | the best block and the control, once, on the 500-task test split, paired, plus the OOD-repo check |
 | **the compute** | one standing serve job (8 nodes, one vLLM server each) plus a login-node queue. A candidate is N `harbor run`s against those servers on Daytona, never its own Slurm job |
@@ -359,8 +360,8 @@ than either parent.
 ### 4.7 Final, once
 
 ```bash
-# 1. CONFIRM first: the winner vs ctl on dev at k=2, fresh samples on the same tasks
-bash gepa_final.sh confirm <best cand> .../<wave>/cands.json
+# 1. CONFIRM first: rerun the winner vs ctl on dev at k=1, pooled with that wave's own dev run
+bash gepa_final.sh confirm <best cand> .../<wave>/cands.json <wave>
 bash gepa_final.sh verdict        # needs paired delta >= +0.05 with the 95 % CI strictly above 0
 
 # 2. only then the sealed test set
@@ -372,9 +373,11 @@ bash gepa_serve.sh down                          # release the nodes when the lo
 
 The confirm step exists because the winner was chosen by looking at dev many times: taking a maximum
 over a dozen candidates on one 500-task set inflates it, and part of the margin is whichever
-candidate drew friendlier noise. `gepa_final.sh build` **refuses** without a passing confirm marker.
-A winner that cannot reproduce its own dev margin on fresh samples would not have survived the test
-set either, and finding that out costs 2,000 dev attempts instead of the one held-out number.
+candidate drew friendlier noise. It is a **k=1 rerun pooled with the source wave's dev run** — same
+two-attempts-per-task content as a k=2 re-run, half the attempts, because the first is already paid
+for. `gepa_final.sh build` **refuses** without a passing confirm marker. A winner that cannot
+reproduce its own dev margin on fresh samples would not have survived the test set either, and
+finding that out costs 10 node-hours instead of the one held-out number.
 
 ## 5. The reflection meta-prompt
 
@@ -440,7 +443,7 @@ Measured off the two P2O probes on this exact layout (2026-09-20), not assumed:
 | **8 nodes** | ~12.5 h | finishing in one sitting; reflection has to keep up with the queue |
 | **4 nodes** | ~25 h | the same attempts with real slack to read traces while candidates run |
 
-Both fit the seed wave, about three reflect/gate/accept waves, and the k=2 confirmation. Luke picks at
+Both fit the seed wave, about three reflect/gate/accept waves, and the pooled confirmation. Luke picks at
 go time; `NODES=4` and `NODES=8` are the same code, and the runner sizes shards from the live endpoint
 count either way. The pilot (1 node) is off budget.
 
@@ -456,13 +459,14 @@ used to pay it over and over.
 | **one full-dev candidate, all three legs** | **596** | **6.0** |
 | gate wave, parent + 2 children + ctl (feedback + gate) | 384 | 3.8 |
 | a 4-arm full-dev wave, all legs | 2,384 | 23.8 |
-| confirm, winner + ctl on dev at k=2 | 2,000 | 20.0 |
+| confirm, winner + ctl RERUN on dev at k=1, pooled with the source wave | 1,000 | 10.0 |
 | final test-500, best + ctl | 1,000 | 10.0 |
 | **the serve job itself** | — | **4.0 once**, then 8 per wall-hour held |
 
 Marginal cost of one more full-dev candidate is **6.0 node-hours** across its three legs. The confirm
-step is the single most expensive item in the loop at 20 node-hours; budget for it from the start
-rather than discovering it at the end. Raise `k` only to settle a
+step is 10 node-hours: it is a **k=1 rerun pooled with the source wave's dev run**, which gives two
+attempts per task per arm for half the price of re-running at k=2, because the first attempt is
+already paid for. Budget for it from the start rather than discovering it at the end. Raise `k` only to settle a
 comparison the axes already call close: `k=2` doubles the bill for about a 1.4× tightening of the interval.
 
 The figure that actually governs spend is now **wall-clock held**, not attempts: 8 nodes cost 8 node-hours

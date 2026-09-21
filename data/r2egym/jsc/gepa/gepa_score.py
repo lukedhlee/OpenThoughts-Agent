@@ -45,6 +45,10 @@ ap.add_argument("--leg", default="dev",
                      "leg and writes scores.csv / summary.md; every other leg writes <leg>_scores.csv / "
                      "<leg>_summary.md. 'feedback' and 'gate' read THIS WAVE's own drawn list.")
 ap.add_argument("--json", default=None, help="also write the per-candidate paired verdict as JSON (gepa_final.sh confirm)")
+ap.add_argument("--pool", action="append", default=[],
+                help="also read these waves' run dirs and POOL their trials with this wave's, per (task, candidate). "
+                     "Used by gepa_final.sh confirm: a k=1 rerun pooled with the original dev run gives 2 attempts "
+                     "per task per arm for the same price as running k=2 once.")
 ap.add_argument("--ctl", default="ctl", help="the control arm's candidate id")
 ap.add_argument("--parent", default=None, help="also compare every candidate against this one (the cheap gate)")
 ap.add_argument("--boot", type=int, default=2000)
@@ -63,6 +67,12 @@ runs = resolve_runs(a.wave, a.runs)
 if not runs:
     sys.exit("no run dirs for wave %s (looked in the queue's done/ records, gepa_jobs/%s_*_s*, and "
              "experiments/gepa%s_s*); pass --runs to point at them explicitly" % (a.wave, a.wave, a.wave))
+for w in a.pool:
+    extra = resolve_runs(w)
+    if not extra:
+        sys.exit("--pool %s: no run dirs for that wave" % w)
+    runs += [d for d in extra if d not in runs]
+    print("pooling wave %s (%d run dirs)" % (w, len(extra)), file=sys.stderr)
 out = a.out or "%s/gepa/%s" % (E, a.wave)
 os.makedirs(out, exist_ok=True)
 rng = random.Random(a.seed)
