@@ -1,25 +1,30 @@
-# gepa_policy.yaml — the harbor policy for one GEPA candidate shard, run from a Jupiter login node against the
-# standing serve job on the Daytona backend. Adapted by diff from data/tb2/jupiter/rst_policy.yaml.
+# gepa_policy.yaml — the harbor policy for one GEPA candidate shard.
 #
-# Kept from the TB2/SWE eval policy: terminus-2, Daytona with auto_snapshot (the eval org forbids per-sandbox
-# declarative builds, so the prebuilt harbor__<envhash>__snapshot must resolve), the v0.1 retry list, quiet,
-# release_trial_payloads_in_memory, and skip_special_tokens=false (Snowball's think delimiters are special tokens
-# and the whole parity contract depends on them surviving the round trip).
+# This is MARIN EVAL POLICY v0.1, the policy the SWE-100 and Terminal-Bench 2 evals ran under (Luke, 2026-09-21).
+# Field for field it matches data/tb2/jupiter/rst_policy.yaml and the config.json of a real v0.1 run
+# (tb2_jobs/otabaseswe_v01_20260919): terminus-2 with its DEFAULTS, 32,768 input / 8,192 output, summarization ON,
+# Daytona with auto_snapshot, the v0.1 retry list, one attempt per task, timeout_multiplier 1.0, and
+# skip_special_tokens=false so Snowball's think delimiters survive the round trip.
 #
-# Changed, and why -- this loop is not a benchmark run, it is the band's own serving contract:
-#   max_input_tokens 61440 / max_output_tokens 4096   the pool60k contract the band was trained and probed under,
-#                                                     not TB2 v0.1's 32,768 / 8,192
-#   enable_summarize: false                           pool60k runs with summarization off; leaving it on changes
-#                                                     what the agent sees mid-episode and would confound a prompt
-#                                                     comparison with a context-management difference
+# Why it matters that this is not the 64k probe contract. A guidance block is being searched for so that it helps
+# the agent in the setting we judge the agent in. Search it under a different context budget and a different
+# context-management policy and you are optimising a different agent: 32k with summarization on hits the summariser
+# where 60k with it off hits the context limit, and a block that helps one can be silent or harmful in the other.
+# So the loop rolls out under the policy the evals use.
 #
-# Expect a LOT of context death, and do not read it as a bug. With summarization off, the control arm of the
-# p2o6all probe ended ~72 % of its trials on ContextLengthExceededError at exactly these budgets, and a 32,768-token
-# SWE run with summarization off ended 100 % of the trials sampled that way. That is why `no_ctx_death` is one of
-# the eight Pareto axes: at this contract it is the single biggest thing a guidance block can move, and block A
-# moved it +0.17 in the fixture.
-#   n_concurrent_trials: __CONC__                     set per shard by gepa_runner.py to the server's seat count
-#   tasks: filled in by gepa_run.sh                   one shard of ONE candidate's dirs, never a whole tree
+# ⚠ THE RL ARMS ROLL OUT UNDER THE 64k CONTRACT (61,440 / 4,096, summarization OFF). A block that wins here is
+# validated for the EVAL policy only. Before it is used to shape RL rollouts it has to be re-checked under that
+# contract -- one paired dev probe at 64k -- because the mechanism it exploits may not exist there.
+#
+# The two deliberate deviations from the v0.1 run, both infrastructure rather than agent behaviour:
+#   jobs_dir            gepa_jobs instead of tb2_jobs, so GEPA runs never mix with the eval runs
+#   n_concurrent_trials set per shard by gepa_runner.py to the server's seat count (32) rather than v0.1's 16.
+#                       Every concurrent trial still owns a seat on its own server, and the agent timeout resolves
+#                       to 3,000 s against turns that take seconds, so this changes throughput and not what a
+#                       trial does. Set CONC=16 if an exactly-v0.1 layout is ever wanted.
+# The harbor is code/harbor-hook rather than the 7b18505a v0.1 pin, because the R2E-Gym Daytona tasks need the
+# setup_files/setup.sh hook. Its terminus-2 carries the same defaults as the pin (enable_summarize True,
+# proactive_summarization_threshold 8000), checked 2026-09-21, so the agent behaves the same.
 #
 # gepa_run.sh fills __JOB_NAME__, __API_BASE__, __CONC__, __ATTEMPTS__ and the task list.
 job_name: __JOB_NAME__
@@ -56,10 +61,11 @@ agents:
     model_name: hosted_vllm/snowball
     kwargs:
       api_base: __API_BASE__
-      enable_summarize: false
+      # v0.1 sets no summarization keys at all, so terminus-2's defaults apply: enable_summarize True,
+      # proactive_summarization_threshold 8000. Do not add enable_summarize here -- its absence IS the policy.
       model_info:
-        max_input_tokens: 61440
-        max_output_tokens: 4096
+        max_input_tokens: 32768
+        max_output_tokens: 8192
         input_cost_per_token: 0.0
         output_cost_per_token: 0.0
       extra_body:
