@@ -20,6 +20,8 @@ Usage (Jupiter login node, python3.9 / stdlib):
   gepa_tree.py --wave w1 --candidates /e/fscratch/reformo/lee27/experiments/gepa/w1_cands.json --split dev_mini
 """
 import argparse, collections, csv, hashlib, json, os, re, shutil, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gepa_feat import read_list, read_split, wave_sample  # noqa: E402
 
 E = "/e/fscratch/reformo/lee27/experiments"
 T = "/e/fscratch/reformo/lee27/tasks"
@@ -27,8 +29,11 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--wave", required=True, help="wave name; tree -> tasks/gepa-<wave>, run prefix -> gepa<wave>")
 ap.add_argument("--candidates", required=True, help='JSON {"delim": ..., "blocks": {"<cand>": "<block text>"}}')
 ap.add_argument("--split", default="feedback,dev",
-                help="comma-separated: feedback,dev | dev_mini | test | a path to a task list / tsv. A wave normally "
-                     "carries BOTH feedback (what the session reads) and dev (what selection scores).")
+                help="comma-separated. PER-WAVE minibatches: `feedback` (64 fresh from train, the only traces the "
+                     "session reads) and `gate` (32 fresh from dev, the cheap gate). FIXED: `dev` (500), `oodmini` "
+                     "(32 OOD-repo train tasks), `dev_mini` (the pilot's fixed 32), `test`. Or a path to a list/tsv.")
+ap.add_argument("--feedback-n", type=int, default=64, help="size of this wave's fresh feedback draw")
+ap.add_argument("--gate-n", type=int, default=32, help="size of this wave's fresh gate draw from dev")
 ap.add_argument("--src", default=T + "/r2egym-tt-daytona", help="source task tree (Daytona shape)")
 ap.add_argument("--dst", default=None, help="default tasks/gepa-<wave>")
 ap.add_argument("--splits-dir", default=E + "/gepa")
@@ -95,7 +100,27 @@ if any(s == "test" for s in splits) and os.environ.get("FINAL") != "1":
              "If this really is the final run, gepa_final.sh sets FINAL=1 for you.")
 
 
+os.makedirs(out, exist_ok=True)
+# PER-WAVE minibatches. A fixed 64 gets fitted to its own quirks after a few waves, so `feedback` and `gate` are
+# redrawn per wave, seeded by the wave name -- reproducible if the wave is rebuilt, fresh for the next one. The list
+# is written into the wave dir and everything downstream (the queue's legs, gepa_worst, gepa_dump's refusal) reads
+# it from there rather than re-deriving it.
+PER_WAVE = {"feedback": ("train", a.feedback_n, ""), "gate": ("dev", a.gate_n, "gate")}
+
+
 def load_split(s):
+    if s in PER_WAVE:
+        src, n, salt = PER_WAVE[s]
+        p = "%s/%s.txt" % (out, s)
+        if os.path.exists(p):
+            return read_list(p)
+        pool = sorted(read_split(src, a.splits_dir))
+        if not pool:
+            sys.exit("no %s split to draw %s from -- run gepa_split.py first" % (src, s))
+        v = wave_sample(a.wave, pool, n, salt, a.splits_dir)
+        open(p, "w").write("\n".join(v) + "\n")
+        print("wave %s drew a fresh %s batch: %d of %d %s tasks -> %s" % (a.wave, s, len(v), len(pool), src, p))
+        return v
     p = s if os.path.exists(s) else "%s/split_%s.txt" % (a.splits_dir, s)
     if not os.path.exists(p):
         sys.exit("no such split list: %s" % p)
@@ -164,7 +189,6 @@ for t in tasks:
         failures += 1
         print("NON-INSTRUCTION FILES DIFFER", t)
 
-os.makedirs(out, exist_ok=True)
 names = ["%s-p%s" % (t, arm) for t in tasks for arm in ARMS]
 open("%s/allow.txt" % out, "w").write("\n".join(names) + "\n")
 json.dump({"wave": a.wave, "split": a.split, "splits": by_split, "src": a.src, "dst": dst, "delim": DELIM,

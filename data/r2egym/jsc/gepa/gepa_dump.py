@@ -33,7 +33,8 @@ ap.add_argument("--turns", default=None, help="turn range, e.g. 0:10 or 12:")
 ap.add_argument("--trial", type=int, default=0, help="which trial of this (task, cand), when k > 1")
 ap.add_argument("--plan", action="store_true", help="also print the plan field (analysis only by default)")
 a = ap.parse_args()
-refuse_closed_task(a.task)   # unconditional: dev and test trajectories are closed, with no override
+# unconditional, no override: dev/test trajectories are closed, and so is another wave's feedback batch
+refuse_closed_task(a.task, a.wave)
 runs = resolve_runs(a.wave, a.runs)
 if not runs:
     sys.exit("no run dirs for wave %s; pass --runs to point at them explicitly" % a.wave)

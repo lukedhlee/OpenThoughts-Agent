@@ -18,7 +18,7 @@ Python 3.9 / stdlib (Jupiter login node).
 """
 import argparse, csv, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gepa_feat import AXES, read_split  # noqa: E402
+from gepa_feat import AXES, read_split, wave_feedback  # noqa: E402
 
 E = "/e/fscratch/reformo/lee27/experiments"
 ap = argparse.ArgumentParser()
@@ -32,14 +32,15 @@ sp = a.scores or "%s/gepa/%s/feedback_scores.csv" % (E, a.wave)
 if not os.path.exists(sp):
     sys.exit("no feedback scores at %s -- run `gepa_score.py %s --leg feedback` first" % (sp, a.wave))
 closed = read_split("dev") | read_split("test")
+fb = set(wave_feedback(a.wave))
 rows, dropped = {}, 0
 for r in csv.DictReader(open(sp)):
-    if r["task"] in closed:
+    if r["task"] in closed or (fb and r["task"] not in fb):
         dropped += 1
         continue
     rows[(r["task"], r["cand"])] = r
 if dropped:
-    print("# dropped %d rows whose tasks are in dev/test: those trajectories are closed to this session\n" % dropped)
+    print("# dropped %d rows outside this wave's feedback batch (dev/test, or another wave's draw)\n" % dropped)
 if not rows:
     sys.exit("no feedback-task rows in %s" % sp)
 

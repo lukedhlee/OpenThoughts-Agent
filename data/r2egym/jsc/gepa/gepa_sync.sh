@@ -14,7 +14,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DST=/e/project1/transfernetx/lee27/code/snowball/gepa
 GO=${1:-}
-FILES="gepa_split.py gepa_tree.py gepa_score.py gepa_feat.py gepa_ledger.py gepa_dump.py gepa_worst.py \
+FILES="gepa_judge.py gepa_split.py gepa_tree.py gepa_score.py gepa_feat.py gepa_ledger.py gepa_dump.py gepa_worst.py \
 gepa_serve.sh gepa_serve.sbatch gepa_serve_node.sh gepa_policy.yaml gepa_run.sh gepa_runner.py gepa_queue.sh \
 gepa_wave.sh gepa_final.sh seed_blocks.json"
 for f in $FILES; do [ -f "$HERE/$f" ] || { echo "missing $HERE/$f"; exit 1; }; done

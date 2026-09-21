@@ -44,10 +44,20 @@ conventions. The behaviour detectors and their provenance → `data/r2egym/jsc/g
   them. The trajectories are closed. Reading the traces of the very tasks selection scores is how a
   prompt gets fitted to 500 particular tasks instead of to the job. `gepa_dump.py` and `gepa_worst.py`
   refuse a dev id, exit 2.
-- **Reflection reads the feedback sample, and nothing else.** `split_feedback.txt` is 64 **train**
-  tasks, stratified like `dev_mini`. Every candidate is rolled out on it (k=1) alongside dev, and it
-  is the only trace the session ever opens. Nothing selects on train, so reading it costs no
-  generalisation.
+- **Reflection reads this wave's feedback batch, and nothing else.** Every wave draws a **fresh 64**
+  train tasks, seeded by the wave name, into `experiments/gepa/<wave>/feedback.txt`. Every candidate
+  is rolled out on it (k=1) alongside dev, and it is the only trace the session ever opens. Nothing
+  selects on train, so reading it costs no generalisation — and because the batch changes each wave,
+  the search cannot start fitting one fixed set of 64. `gepa_dump.py` and `gepa_worst.py` refuse a
+  task from another wave's batch as firmly as they refuse a dev id.
+- **The cheap gate also uses a fresh minibatch.** Each gate wave draws 32 fresh dev tasks
+  (`<wave>/gate.txt`), and the parent and control are re-run on exactly those 32, so the comparison
+  stays paired. `split_dev_mini.txt` is kept only for the pilot. **The full dev-500 stays fixed** —
+  that is what makes candidates comparable across waves.
+- **Every full-dev candidate also runs OODMINI**, 32 train tasks from the held-out repos, scores only.
+  A candidate whose dev delta is positive while its OODMINI delta is below −0.05 is a **specialist**:
+  it bought dev with the band's own repos. The ledger marks it and parent sampling skips it, so the
+  trick cannot breed.
 - **Test is sealed.** Scored exactly once, by `gepa_final.sh`. `gepa_tree.py` refuses to build a tree
   over it without `FINAL=1`, which only `gepa_final.sh` sets.
 - **SWE-bench and Terminal-Bench 2 are outside the loop entirely.** Never rolled out by it, and their
@@ -80,11 +90,15 @@ conventions. The behaviour detectors and their provenance → `data/r2egym/jsc/g
 | **candidate** | one guidance block, ≤ 400 tokens, appended to `instruction.md` behind `\n\n---\nWorking guidance:\n` |
 | **control** | the same task with nothing appended (`-pctl`); every wave carries it |
 | **score** | per task: the verifier reward, plus eight deterministic behaviour features from the trajectory |
-| **dev (500)** | SCORES ONLY. Selection runs on its numbers; its trajectories are closed to the session |
-| **feedback (64)** | train tasks, rolled out for every candidate. The only traces the session ever reads |
+| **dev (500)** | FIXED and SCORES ONLY. Selection runs on its numbers; its trajectories are closed to the session |
+| **feedback (64)** | a FRESH draw from train each wave. The only traces the session ever reads |
+| **gate (32)** | a FRESH draw from dev each gate wave; parent and control re-run on the same 32 |
+| **oodmini (32)** | fixed OOD-repo train tasks, scores only: the specialist check on every full-dev candidate |
 | **selection** | per-task Pareto front over (pass, the eight axes) on DEV; parents sampled by how many tasks they win |
 | **reflection** | this session reads the parent's worst FEEDBACK traces and writes 2–3 children with the lesson added |
-| **cheap gate** | child vs parent on `dev_mini` (32 tasks), paired wins plus the predicted axis — pass rate alone cannot decide at this n |
+| **cheap gate** | child vs parent on the wave's fresh 32, paired wins plus the predicted axis — pass rate alone cannot decide at this n |
+| **judge** | 8 feedback traces hand-graded per accepted child; an axis below 6/8 agreement is FROZEN and leaves the front |
+| **confirm** | the winner re-run vs control on dev at k=2 before the test set is spent |
 | **full eval** | an accepted child is re-scored on all 500 dev tasks and entered in the ledger |
 | **final** | the best block and the control, once, on the 500-task test split, paired, plus the OOD-repo check |
 | **the compute** | one standing serve job (8 nodes, one vLLM server each) plus a login-node queue. A candidate is N `harbor run`s against those servers on Daytona, never its own Slurm job |
@@ -173,9 +187,14 @@ are auto, so one live endpoint means one shard.
    appended — and then starts the second leg on the freed endpoint;
 5. `gepa_score.py w0p --leg feedback` and `--leg dev_mini` produce sane numbers, and
    `gepa_ledger.py add` records the candidates;
-6. `gepa_worst.py` / `gepa_dump.py` open a feedback trace and refuse a dev id.
+6. `gepa_worst.py` / `gepa_dump.py` open a feedback trace and refuse a dev id;
+7. **the runner survives a restart**: kill the `gepa_runner` tmux mid-wave and start it again with
+   `gepa_queue.sh start`. The wave must resume — finished shards stay finished, the running ones keep
+   going in their own tmuxes, and no shard is launched twice. (`gepa_run.sh` refuses a run name whose
+   job dir exists, so a double launch fails loudly rather than corrupting the dir, but the point is
+   that the runner should not try.)
 
-Only when all six hold does the 8-node job in §4.0 make sense. If the pilot dies, it cost one node.
+Only when all seven hold does the 8-node job in §4.0 make sense. If the pilot dies, it cost one node.
 
 ### 4.0 Bring the servers up, once (only after the pilot passes)
 
@@ -197,7 +216,7 @@ queued.
 ### 4.1 Seed the population (wave `w0`)
 
 ```bash
-python3 gepa_tree.py --wave w0 --candidates seed_blocks.json --split feedback,dev
+python3 gepa_tree.py --wave w0 --candidates seed_blocks.json --split feedback,dev,oodmini
 bash gepa_queue.sh add-all w0 1           # control + c000..c003, no new go needed
 bash gepa_queue.sh list
 ```
@@ -221,11 +240,13 @@ Score each candidate **as it finishes**, while the others are still running. Do 
 whole wave.
 
 ```bash
-python3 gepa_score.py w0 --leg feedback    # feedback_scores.csv + feedback_summary.md, what reflection ranks on
+python3 gepa_score.py w0 --leg feedback    # what reflection ranks on (this wave's fresh 64)
+python3 gepa_score.py w0 --leg oodmini     # the specialist check; run it BEFORE the ledger add
 python3 gepa_score.py w0                   # the DEV leg: scores.csv + summary.md, what selection runs on
 python3 gepa_ledger.py add --wave w0 --all --parent c000 \
   --candidates /e/fscratch/reformo/lee27/experiments/gepa/w0/cands.json \
-  --scores /e/fscratch/reformo/lee27/experiments/gepa/w0/scores.csv --accepted
+  --scores /e/fscratch/reformo/lee27/experiments/gepa/w0/scores.csv \
+  --oodmini-delta <from the specialist table> --accepted
 ```
 
 The two legs are scored separately and never merged. The ledger records the **dev** numbers; the
@@ -265,14 +286,18 @@ whether it was right. If a candidate looks better in the feedback traces but dev
 ### 4.5 Cheap gate on `dev_mini`
 
 ```bash
-python3 gepa_tree.py --wave w1g --candidates .../w1_cands.json --split feedback,dev_mini
+python3 gepa_tree.py --wave w1g --candidates .../w1_cands.json --split feedback,gate
 bash gepa_queue.sh add-all w1g 1                 # no new go; keep the queue two deep
-python3 gepa_score.py w1g --parent c000 \
+python3 gepa_score.py w1g --leg gate --parent c000 \
   --gate-axis-name c010=self_check --gate-axis-name c011=no_repeat3
 ```
 
 The gate rule, fixed before the run and printed in the summary: **accept if paired (wins − losses)
-≥ 2, or if the child's predicted axis gains ≥ +0.10 while the paired pass delta stays ≥ −0.02.**
+≥ 2, or if the child's predicted axis gains ≥ +0.10 while the paired pass delta stays ≥ −0.02 and
+pass does not fall on the tasks where that axis actually moved.** That last clause is the one that
+catches detector-gaming: an axis can rise while pass drops on exactly the trials where the new
+behaviour appeared, which means the behaviour made things worse. The summary prints that restricted
+delta in its own column.
 Pass rate alone does not decide — at 32 tasks it cannot. A gate showing no movement on the predicted
 axis means the lesson did not land in behaviour, whatever pass did.
 
@@ -287,7 +312,7 @@ name the predicted axis or judge the child on paired wins.
 ### 4.6 Full dev eval of the accepted children
 
 ```bash
-python3 gepa_tree.py --wave w1 --candidates .../w1_accepted.json --split feedback,dev
+python3 gepa_tree.py --wave w1 --candidates .../w1_accepted.json --split feedback,dev,oodmini
 bash gepa_queue.sh add-all w1 1
 python3 gepa_score.py w1 --parent c000
 python3 gepa_ledger.py add --wave w1 --all --parent c000 --candidates .../w1/cands.json --scores .../w1/scores.csv --accepted
@@ -296,14 +321,58 @@ python3 gepa_ledger.py add --wave w1 --all --parent c000 --candidates .../w1/can
 Then back to §4.3 for the next wave. Build and enqueue the **next** wave's gate before reading this
 one's traces, so the servers have work while you read.
 
+### 4.6a Judge the axis you just relied on
+
+An accepted child was accepted partly because a detector said its predicted axis moved. Check that
+the detector is telling the truth, on 8 traces, by hand:
+
+```bash
+python3 gepa_judge.py w1 c010 --axis self_check     # 8 feedback trials, balanced yes/no, with dump commands
+#   ... read all eight, decide for yourself, then:
+python3 gepa_ledger.py judge --cand c010 --axis self_check --agree 7 --of 8
+```
+
+Below 6 of 8 the ledger **freezes** that axis and `gepa_score.py` drops it from the Pareto front
+until a later judge clears it. This is not ceremony: `in_place` cannot see a write through a
+variable, so it reported the opposite of the truth for a whole wave. An axis that decides selection
+and has never been read is a detector deciding the search.
+
+### 4.6b Merge two front members
+
+When two candidates sit on the front by winning **disjoint** dev tasks, they are likely teaching
+different lessons, and a merge is worth one slot in the next wave. Do it by hand, by clause:
+
+1. Confirm the disjointness: from each one's `scores.csv`, take the tasks where it is on the front
+   and the other is not. Overlapping winners are the same lesson twice — do not merge those.
+2. Write the union **clause by clause**, not paragraph by paragraph: take each block's distinct
+   instructions and drop anything the two say twice in different words.
+3. Cut to fit 400 tokens by dropping the weakest clause of each parent, never by compressing both
+   into denser prose — a block the model cannot follow is worse than a shorter one.
+4. Enter it as a child of the stronger parent, and predict the axis it should move like any other
+   child. A merge that clears the gate on neither parent's axis is not a merge, it is a third block.
+
+There is no script for this. A mechanical union produces contradictory instructions, which is worse
+than either parent.
+
 ### 4.7 Final, once
 
 ```bash
-bash gepa_final.sh build <best cand> /e/fscratch/reformo/lee27/experiments/gepa/<wave>/cands.json
+# 1. CONFIRM first: the winner vs ctl on dev at k=2, fresh samples on the same tasks
+bash gepa_final.sh confirm <best cand> .../<wave>/cands.json
+bash gepa_final.sh verdict        # needs paired delta >= +0.05 with the 95 % CI strictly above 0
+
+# 2. only then the sealed test set
+bash gepa_final.sh build <best cand> .../<wave>/cands.json
 #   -> confirm with Luke, then: CONFIRM=1 bash gepa_final.sh build ...
 bash gepa_final.sh readout
 bash gepa_serve.sh down                          # release the nodes when the loop is over
 ```
+
+The confirm step exists because the winner was chosen by looking at dev many times: taking a maximum
+over a dozen candidates on one 500-task set inflates it, and part of the margin is whichever
+candidate drew friendlier noise. `gepa_final.sh build` **refuses** without a passing confirm marker.
+A winner that cannot reproduce its own dev margin on fresh samples would not have survived the test
+set either, and finding that out costs 2,000 dev attempts instead of the one held-out number.
 
 ## 5. The reflection meta-prompt
 
@@ -333,14 +402,17 @@ Concluding from pass rate alone on `dev_mini`.
 
 ## 6. Selection and stop rules
 
-**Selection.** Per task, a candidate is on the front if no other candidate is ≥ it on pass and on all
-eight axes with at least one strict >. `front_wins` = tasks whose front it is on. Parents are sampled
-∝ `front_wins`. A candidate is removed from the pool only by being dominated everywhere, never by a
+**Selection.** Per task, a candidate is on the front if no other candidate is ≥ it on pass and on
+every LIVE axis with at least one strict >. Frozen axes (§4.6a) are excluded. `front_wins` = tasks
+whose front it is on. Parents are sampled ∝ `front_wins`, **excluding specialists**. A candidate is
+removed from the pool only by being dominated everywhere or by being flagged specialist, never by a
 mean.
 
-**Stop when either holds:**
-- the node-hour budget agreed for the loop is spent, or
-- two consecutive waves add no candidate to the front (no child wins a task no parent already won).
+**Stop when any of these holds:**
+- the node-hour budget agreed for the loop is spent;
+- two consecutive waves add no candidate to the front (no child wins a task no parent already won);
+- every candidate on the front is flagged specialist — the search is buying dev with the band's
+  repos and the prompt channel has nothing general left to give.
 
 Then run §4.7 once and write the readout. A loop that stops on the second rule with the seed still
 winning is a real result: it says the prompt channel is exhausted at this size, and it is worth
@@ -362,14 +434,18 @@ used to pay it over and over.
 | work | attempts | node-hours (eval only) |
 |---|---|---|
 | feedback leg, one candidate | 64 | 0.7 |
+| oodmini leg, one candidate | 32 | 0.3 |
 | dev leg, one candidate | 500 | 5.0 |
-| **one candidate, both legs** | **564** | **5.7** |
-| `dev_mini` gate, parent + 2 children + ctl (feedback + dev_mini) | 384 | 3.8 |
-| a 4-arm dev wave, both legs | 2,256 | 22.6 |
+| **one full-dev candidate, all three legs** | **596** | **6.0** |
+| gate wave, parent + 2 children + ctl (feedback + gate) | 384 | 3.8 |
+| a 4-arm full-dev wave, all legs | 2,384 | 23.8 |
+| confirm, winner + ctl on dev at k=2 | 2,000 | 20.0 |
 | final test-500, best + ctl | 1,000 | 10.0 |
 | **the serve job itself** | — | **4.0 once**, then 8 per wall-hour held |
 
-Marginal cost of one more candidate is **5.7 node-hours** for both legs. Raise `k` only to settle a
+Marginal cost of one more full-dev candidate is **6.0 node-hours** across its three legs. The confirm
+step is the single most expensive item in the loop at 20 node-hours; budget for it from the start
+rather than discovering it at the end. Raise `k` only to settle a
 comparison the axes already call close: `k=2` doubles the bill for about a 1.4× tightening of the interval.
 
 The figure that actually governs spend is now **wall-clock held**, not attempts: 8 nodes cost 8 node-hours

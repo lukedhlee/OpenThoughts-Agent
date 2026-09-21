@@ -49,8 +49,10 @@ if bad:
 # A candidate runs as ORDERED LEGS. feedback first: it is 64 tasks against dev's 500, it finishes quickly, and it is
 # the only thing the session is allowed to read -- so reflection can start while the dev leg is still running.
 splits = man.get("splits") or {man.get("split", "dev"): man["tasks"]}
-order = [s for s in ("feedback", "dev_mini", "dev", "test") if s in splits] + \
-        [s for s in splits if s not in ("feedback", "dev_mini", "dev", "test")]
+# Ordered smallest-first so the readable and cheap legs land before the long dev leg: feedback is what reflection
+# reads, gate/dev_mini decide the cheap gate, oodmini is the specialist guard, dev is the 500-task selection leg.
+ORDER = ("feedback", "gate", "dev_mini", "oodmini", "dev", "test")
+order = [s for s in ORDER if s in splits] + [s for s in splits if s not in ORDER]
 for c in arms:
     legs = []
     for s in order:

@@ -27,6 +27,9 @@ Admission control, in order:
     bounds Daytona: concurrent sandboxes can never exceed live_endpoints x CONC, checked every pass against
     SANDBOX_CAP (~1,000 per user, 5 creates/s). Shards per candidate are AUTO by default -- the live endpoint
     count divided between the in-flight candidates -- so a 1-node pilot and an 8-node job need no reconfiguring;
+  * an ORG guard: the Daytona org is shared with other people's jobs, so before admitting anything the runner asks
+    Daytona how many sandboxes are actually started and holds above ORG_SANDBOX_HOLD. Our own arithmetic only bounds
+    our own share; the budget is org-wide;
   * a login-node THREAD guard. 2026-09-03 a torch import on the login node hit the 4,096 pid ceiling and took
     Jupiter down for everyone. Each harbor run is worth hundreds of threads at conc 32, so the runner refuses to
     admit another candidate while the user's thread count is above PID_GUARD.
@@ -41,6 +44,7 @@ import argparse, glob, json, os, subprocess, sys, time
 E = os.environ.get("GEPA_DIR", "/e/fscratch/reformo/lee27/experiments/gepa")
 G = os.environ.get("GEPA_CODE", "/e/project1/transfernetx/lee27/code/snowball/gepa")
 JOBS = os.environ.get("GEPA_JOBS", "/e/data1/mmlaion/lee27/experiments/gepa_jobs")
+KEYF = os.environ.get("DAYTONA_KEYF", "/e/fscratch/reformo/lee27/keys/daytona_eval.env")
 ap = argparse.ArgumentParser()
 ap.add_argument("--max-inflight", type=int, default=int(os.environ.get("MAX_INFLIGHT", "2")))
 ap.add_argument("--shards", type=int, default=int(os.environ.get("SHARDS_PER_CAND", "0")),
@@ -53,6 +57,10 @@ ap.add_argument("--sandbox-cap", type=int, default=int(os.environ.get("SANDBOX_C
                 help="refuse a layout whose peak concurrent sandboxes would exceed this")
 ap.add_argument("--pid-guard", type=int, default=int(os.environ.get("PID_GUARD", "2800")),
                 help="do not admit while this user's thread count on the login node is above this (cap is 4096)")
+ap.add_argument("--org-hold", type=int, default=int(os.environ.get("ORG_SANDBOX_HOLD", "700")),
+                help="hold admission while this many sandboxes are STARTED in the shared Daytona org")
+ap.add_argument("--daytona-url", default=os.environ.get("DAYTONA_LIST_URL", "https://app.daytona.io/api/sandbox"))
+ap.add_argument("--fake-org-count", type=int, default=None, help="dry-run only: pretend the org has this many started sandboxes")
 ap.add_argument("--poll", type=int, default=int(os.environ.get("POLL", "60")))
 ap.add_argument("--retries", type=int, default=1, help="relaunch a candidate whose shards failed, this many times")
 ap.add_argument("--once", action="store_true")
@@ -94,6 +102,58 @@ def endpoints(job):
         if u:
             out[u] = f
     return out
+
+
+def org_sandboxes():
+    """Sandboxes currently STARTED in the Daytona org, or None if the count could not be read.
+
+    The org is shared: other people's jobs and other teams use the same ~1,000-sandbox budget, so this loop's own
+    arithmetic (live endpoints x conc) is not the whole picture. Before admitting anything, ask Daytona what is
+    actually running and hold if the org is already busy. Listing pages with `nextCursor` (`page=` is ignored) and
+    GET/list is limited to 15,000 per 30 s, so one paged walk per admission pass is well inside the budget.
+
+    None means "could not tell" -- the caller treats that as a soft pass and logs it, because failing closed on a
+    transient API error would stall a loop that is otherwise healthy."""
+    key = os.environ.get("DAYTONA_API_KEY")
+    if not key:
+        for line in (open(KEYF).read().splitlines() if os.path.exists(KEYF) else []):
+            line = line.strip()
+            if line.startswith("DAYTONA_API_KEY"):
+                key = line.split("=", 1)[1].strip().strip('"\'').split("#")[0].strip()
+                break
+    if not key:
+        return None
+    import json as _json
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    started, cursor, pages = 0, None, 0
+    while pages < 40:
+        q = {"limit": "100"}
+        if cursor:
+            q["cursor"] = cursor
+        url = "%s?%s" % (a.daytona_url, urllib.parse.urlencode(q))
+        req = urllib.request.Request(url, headers={"Authorization": "Bearer " + key,
+                                                   "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                d = _json.loads(r.read().decode("utf-8", "replace"))
+        except Exception as e:
+            log("daytona list failed (%s: %s); not holding on an unreadable count" % (type(e).__name__, e))
+            return None
+        if isinstance(d, list):
+            items, cursor = d, None
+        else:
+            items = d.get("items") or d.get("data") or d.get("sandboxes") or []
+            cursor = d.get("nextCursor") or d.get("next_cursor") or None
+        for it in items:
+            st = it.get("state") if isinstance(it, dict) else None
+            if str(st).lower() == "started":
+                started += 1
+        pages += 1
+        if not cursor or not items:
+            break
+    return started
 
 
 def threads_used():
@@ -275,6 +335,15 @@ def admit(free, nlive):
             log("HOLD: %d threads on the login node is above the guard %d (cap 4096); not admitting"
                 % (th, a.pid_guard))
             return
+        n_org = a.fake_org_count if a.fake_org_count is not None else org_sandboxes()
+        if n_org is None:
+            log("org sandbox count unavailable; admitting anyway")
+        else:
+            log("org sandboxes started: %d (hold above %d)" % (n_org, a.org_hold))
+            if n_org > a.org_hold:
+                log("HOLD: the shared Daytona org already has %d sandboxes started, above %d; not admitting"
+                    % (n_org, a.org_hold))
+                return
         p = items(Q)[0]
         it = read(p)
         if not any(l["tasks"] for l in legs_of(it)):

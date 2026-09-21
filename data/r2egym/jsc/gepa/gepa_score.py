@@ -28,7 +28,8 @@ Python 3.9 / stdlib (Jupiter login node; one process, OMP_NUM_THREADS=1).
 """
 import argparse, collections, csv, glob, json, os, random, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gepa_feat import AXES, iter_trials, read_split, resolve_runs, trial_features  # noqa: E402
+from gepa_feat import (AXES, frozen_axes, iter_trials, read_list, read_split,  # noqa: E402
+                       resolve_runs, trial_features)
 
 E = "/e/fscratch/reformo/lee27/experiments"
 ap = argparse.ArgumentParser()
@@ -37,10 +38,13 @@ ap.add_argument("--runs", default=None,
                 help="glob of run dirs; by default the queue's done/<wave>.*.json run_dirs, else the gepa_jobs "
                      "shards, else the fallback probe run under experiments/")
 ap.add_argument("--out", default=None, help="output dir (default experiments/gepa/<wave>)")
-ap.add_argument("--leg", default="dev", choices=["dev", "feedback", "test", "all"],
-                help="which leg of the wave to score. A wave rolls out feedback AND dev; scoring them together "
-                     "would mix the set the session reads with the set selection runs on. 'dev' (the default) is "
-                     "the selection leg; 'feedback' writes feedback_scores.csv / feedback_summary.md")
+ap.add_argument("--leg", default="dev",
+                choices=["dev", "feedback", "gate", "oodmini", "dev_mini", "test", "all"],
+                help="which leg of the wave to score. A wave rolls out several; scoring them together would mix the "
+                     "set the session reads with the set selection runs on. 'dev' (the default) is the selection "
+                     "leg and writes scores.csv / summary.md; every other leg writes <leg>_scores.csv / "
+                     "<leg>_summary.md. 'feedback' and 'gate' read THIS WAVE's own drawn list.")
+ap.add_argument("--json", default=None, help="also write the per-candidate paired verdict as JSON (gepa_final.sh confirm)")
 ap.add_argument("--ctl", default="ctl", help="the control arm's candidate id")
 ap.add_argument("--parent", default=None, help="also compare every candidate against this one (the cheap gate)")
 ap.add_argument("--boot", type=int, default=2000)
@@ -64,9 +68,17 @@ os.makedirs(out, exist_ok=True)
 rng = random.Random(a.seed)
 
 # ---------------------------------------------------------------- read trials
-keep = None if a.leg == "all" else read_split(a.leg)
-if keep is not None and not keep:
-    sys.exit("split list for leg %r is missing or empty -- run gepa_split.py first" % a.leg)
+# `feedback` and `gate` are PER-WAVE draws living in the wave dir; everything else is a fixed split list.
+if a.leg == "all":
+    keep = None
+elif a.leg in ("feedback", "gate"):
+    keep = set(read_list("%s/gepa/%s/%s.txt" % (E, a.wave, a.leg)))
+    if not keep:
+        sys.exit("wave %s has no %s batch (%s/gepa/%s/%s.txt) -- build the tree first" % (a.wave, a.leg, E, a.wave, a.leg))
+else:
+    keep = read_split(a.leg)
+    if not keep:
+        sys.exit("split list for leg %r is missing or empty -- run gepa_split.py first" % a.leg)
 cells = collections.defaultdict(list)
 n = skipped = 0
 for task, cand, td in iter_trials(runs):
@@ -109,11 +121,20 @@ def agg(fs):
 rows = {k: agg(v) for k, v in cells.items()}
 
 # ---------------------------------------------------------------- per-task Pareto front
+# An axis the hand-judge could not confirm is frozen (gepa_ledger.py judge) and takes no part in the front. A
+# detector the session cannot reproduce by reading traces is not evidence, and leaving it in would let a broken
+# detector decide selection.
+FROZEN = frozen_axes("%s/gepa" % E)
+LIVE_AXES = [x for x in AXES if x not in FROZEN]
+if FROZEN:
+    print("frozen axes (excluded from the front): %s" % ", ".join(sorted(FROZEN)), file=sys.stderr)
+
+
 def vec(t, c):
     r = rows.get((t, c))
     if not r or r["pass"] is None:
         return None
-    v = [r["pass"]] + [r[x] if r[x] is not None else 0.0 for x in AXES]
+    v = [r["pass"]] + [r[x] if r[x] is not None else 0.0 for x in LIVE_AXES]
     return v
 
 
@@ -242,7 +263,8 @@ if a.parent:
         sys.exit("--gate-axis-name: %s is not an axis (%s)" % (bad[0], ", ".join(AXES)))
     emit("\n## Cheap gate vs parent `%s`\n" % a.parent)
     emit("Rule, fixed before the run: ACCEPT if paired (wins - losses) >= %d, or if the child's PREDICTED axis gains"
-         " >= %+.2f while the paired pass delta stays >= %+.2f. Pass rate alone does not decide -- at this n it cannot."
+         " >= %+.2f while the paired pass delta stays >= %+.2f AND pass does not fall on the tasks where that axis"
+         " actually moved. Pass rate alone does not decide -- at this n it cannot."
          % (a.gate_wins, a.gate_axis, a.gate_pass_floor))
     if len(predicted) < len([c for c in cands if c not in (a.parent, a.ctl)]):
         emit("\n> ⚠ Some children have no predicted axis, so the gate falls back to the BEST of eight axes for them."
@@ -250,8 +272,8 @@ if a.parent:
              " detector artifact, and those rows are marked `weak`. The p2o6all fixture shows the failure mode --"
              " every arm 'gains' ~+0.17 `in_place` over block A only because A's replace-script style opens a"
              " variable, which the literal-path detector cannot see. Name the axis the reflection predicted.")
-    emit("\n| cand | n | pass d | w/l | axis tested | gain | verdict |")
-    emit("|---|---|---|---|---|---|---|")
+    emit("\n| cand | n | pass d | w/l | axis tested | gain | pass where it moved | verdict |")
+    emit("|---|---|---|---|---|---|---|---|")
     for c in cands:
         if c in (a.parent, a.ctl):
             continue
@@ -263,16 +285,83 @@ if a.parent:
             _, _, _, da = paired(c, a.parent, ax)
             return (sum(da) / len(da)) if da else 0.0
 
+        def pass_where_axis_moved(ax):
+            """Paired pass delta restricted to the tasks where the axis actually moved up.
+
+            An axis can rise while pass falls on exactly those tasks -- the behaviour changed and made things worse.
+            That is the shape of a block that games a detector, so a gain only counts when pass held up where the
+            behaviour appeared. Returns (delta, n)."""
+            d = []
+            for t in tasks:
+                x, y = rows.get((t, a.parent)), rows.get((t, c))
+                if not x or not y or x[ax] is None or y[ax] is None:
+                    continue
+                if y[ax] <= x[ax]:
+                    continue
+                if x["pass"] is None or y["pass"] is None:
+                    continue
+                d.append(y["pass"] - x["pass"])
+            return ((sum(d) / len(d)) if d else 0.0), len(d)
+
         if c in predicted:
             gax, weak = predicted[c], False
         else:
             gax, weak = max(((gain(x), x) for x in AXES))[1], True
         g = gain(gax)
+        dpm, nm = pass_where_axis_moved(gax)
         ok_wins = wl[0] - wl[1] >= a.gate_wins
-        ok_axis = g >= a.gate_axis and dp >= a.gate_pass_floor
-        v = "ACCEPT" if ok_wins else ("ACCEPT" if (ok_axis and not weak) else ("weak" if ok_axis else "reject"))
-        emit("| %s | %d | %+.3f | %d/%d | %s%s | %+.2f | %s |" % (
-            c, m, dp, wl[0], wl[1], gax, " (unpredicted)" if weak else "", g, v))
+        ok_axis = g >= a.gate_axis and dp >= a.gate_pass_floor and dpm >= 0
+        if ok_wins:
+            v = "ACCEPT"
+        elif g >= a.gate_axis and dp >= a.gate_pass_floor and dpm < 0:
+            v = "reject (axis moved, pass fell there)"
+        elif ok_axis and not weak:
+            v = "ACCEPT"
+        elif ok_axis:
+            v = "weak"
+        else:
+            v = "reject"
+        emit("| %s | %d | %+.3f | %d/%d | %s%s | %+.2f | %+.3f (n=%d) | %s |" % (
+            c, m, dp, wl[0], wl[1], gax, " (unpredicted)" if weak else "", g, dpm, nm, v))
+
+# ---------------------------------------------------------------- the specialist check
+# OODMINI rides with every full-dev candidate: 32 train tasks from the repos the v2 split held out. A block that
+# lifts dev while dropping these is fitting the band's repos, not teaching a procedure -- the ledger marks it a
+# specialist and parent sampling skips it, so the trick cannot breed.
+ood_rows = {}
+oodp = "%s/oodmini_scores.csv" % out
+if a.leg == "dev" and os.path.exists(oodp):
+    for r in csv.DictReader(open(oodp)):
+        try:
+            ood_rows[(r["task"], r["cand"])] = float(r["pass"])
+        except (KeyError, ValueError):
+            continue
+if ood_rows:
+    otasks = sorted({t for t, _ in ood_rows})
+    emit("\n## Specialist check (OODMINI: %d OOD-repo train tasks, scores only)\n" % len(otasks))
+    emit("A candidate with dev delta > 0 and OODMINI delta < %.2f is a SPECIALIST: it bought dev with the band's"
+         " repos. gepa_ledger.py marks it and parent sampling skips it.\n" % -0.05)
+    emit("| cand | oodmini pass | d vs %s | dev d | verdict |" % a.ctl)
+    emit("|---|---|---|---|---|")
+    for c in cands:
+        if c == a.ctl:
+            continue
+        d, dv = [], []
+        for t in otasks:
+            x, y = ood_rows.get((t, a.ctl)), ood_rows.get((t, c))
+            if x is not None and y is not None:
+                d.append(y - x)
+        pv = [ood_rows[(t, c)] for t in otasks if (t, c) in ood_rows]
+        _, _, _, dv = paired(c, a.ctl)
+        do = (sum(d) / len(d)) if d else 0.0
+        dd = (sum(dv) / len(dv)) if dv else 0.0
+        emit("| %s | %.3f | %+.3f (n=%d) | %+.3f | %s |" % (
+            c, (sum(pv) / len(pv)) if pv else float("nan"), do, len(d), dd,
+            "SPECIALIST" if (dd > 0 and do < -0.05) else "ok"))
+elif a.leg == "dev":
+    emit("\n## Specialist check\n")
+    emit("No `oodmini_scores.csv` in this wave yet. Score that leg (`gepa_score.py %s --leg oodmini`) before"
+         " accepting a candidate into the ledger -- without it the specialist flag cannot be set." % a.wave)
 
 emit("\n## Sanity\n")
 emit("Dropped-sample rate per arm (an arm far off the others voids the pairing):")
@@ -282,6 +371,23 @@ for c in cands:
     dr = sum(rows[(t, c)]["dropped"] for t in ts)
     pe = sum(rows[(t, c)]["parse_errors"] for t in ts)
     emit("  %-8s %d/%d dropped (%.1f %%), %d unparseable" % (c, dr, tot, 100.0 * dr / max(1, tot), pe))
+if a.json:
+    verdict = {"wave": a.wave, "leg": a.leg, "ctl": a.ctl, "tasks": len(tasks), "candidates": {}}
+    for c in cands:
+        if c == a.ctl:
+            continue
+        m, pr, pc, d = paired(c, a.ctl)
+        lo, hi = ci(d)
+        verdict["candidates"][c] = {
+            "n": m, "ctl_pass": pr, "cand_pass": pc,
+            "delta": (sum(d) / len(d)) if d else 0.0, "ci_lo": lo, "ci_hi": hi,
+            "wins": sum(1 for x in d if x > 0), "losses": sum(1 for x in d if x < 0),
+            "oodmini_delta": (lambda dd: (sum(dd) / len(dd)) if dd else None)(
+                [ood_rows[(t, c)] - ood_rows[(t, a.ctl)] for t in sorted({t for t, _ in ood_rows})
+                 if (t, c) in ood_rows and (t, a.ctl) in ood_rows]) if ood_rows else None,
+        }
+    json.dump(verdict, open(a.json, "w"), indent=1)
+    print("wrote verdict json %s" % a.json)
 open("%s/%ssummary.md" % (out, pre), "w").write("\n".join(L) + "\n")
 print("\n".join(L))
 print("\nwrote %s/%sscores.csv and %s/%ssummary.md" % (out, pre, out, pre))

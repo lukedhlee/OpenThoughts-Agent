@@ -23,7 +23,7 @@ float() is guarded and the failure is recorded rather than swallowed.
 
 Python 3.9 / stdlib (Jupiter login node).
 """
-import glob, json, os, re, statistics as st, sys
+import collections, glob, hashlib, json, os, random, re, statistics as st, sys
 
 # ---------------------------------------------------------------- terminus-2 message parser (p2o_adherence.py)
 def parse_response(msg):
@@ -451,23 +451,131 @@ def read_split(name, E="/e/fscratch/reformo/lee27/experiments/gepa"):
     return {l.strip() for l in open(p) if l.strip() and not l.startswith("#")}
 
 
-def refuse_closed_task(task, E="/e/fscratch/reformo/lee27/experiments/gepa"):
-    """Exit 2 if `task` belongs to a split whose TRAJECTORIES the session may not read.
+def read_list(p):
+    if not os.path.exists(p):
+        return []
+    return [l.strip() for l in open(p) if l.strip() and not l.startswith("#")]
 
-    Dev is scores-only and test is sealed (Luke, 2026-09-21). The session sees dev's per-task reward, behaviour
-    axes, Pareto front and paired wins -- numbers -- and never a dev trace, because reading the traces of the very
-    tasks selection scores is how a prompt gets fitted to those 500 tasks instead of to the job. Reflection reads
-    the feedback sample, which is drawn from train and which nothing selects on.
 
-    This is a mechanical refusal on purpose: an intention in a skill file is not a control."""
+# ---------------------------------------------------------------- per-wave minibatches
+def strat_alloc(pool, want, k, rng):
+    """Pick k items from pool (cell -> [tasks]) so per-cell counts approach `want`. Largest remainder, clipped to
+    availability, deterministic given rng. Shared with gepa_split.py so every sample in the loop is stratified the
+    same way."""
+    cells = sorted(pool)
+    avail = sum(len(pool[c]) for c in cells)
+    if k <= 0 or avail == 0:
+        return []
+    if k > avail:
+        raise ValueError("asked for %d tasks but only %d are available" % (k, avail))
+    tot = sum(max(0.0, want.get(c, 0.0)) for c in cells)
+    if tot <= 0:
+        w = {c: len(pool[c]) * k / float(avail) for c in cells}
+    else:
+        w = {c: max(0.0, want.get(c, 0.0)) * k / tot for c in cells}
+    alloc = {c: min(len(pool[c]), int(w[c])) for c in cells}
+    while sum(alloc.values()) < k:
+        free = [c for c in cells if alloc[c] < len(pool[c])]
+        if not free:
+            break
+        c = max(free, key=lambda c: (w[c] - alloc[c], c))
+        alloc[c] += 1
+    while sum(alloc.values()) > k:
+        c = max([c for c in cells if alloc[c] > 0], key=lambda c: (alloc[c] - w[c], c))
+        alloc[c] -= 1
+    out = []
+    for c in cells:
+        out += rng.sample(sorted(pool[c]), alloc[c])
+    return sorted(out)
+
+
+def wave_rng(wave, salt=""):
+    """A per-wave seed: deterministic for a given wave name, different across waves. Naming a wave twice gets the
+    same minibatch back, which is what makes a re-run reproducible; a new wave gets fresh tasks, which is the point."""
+    h = hashlib.sha256(("gepa/%s/%s" % (wave, salt)).encode()).hexdigest()[:12]
+    return random.Random(int(h, 16))
+
+
+def task_meta(E="/e/fscratch/reformo/lee27/experiments/gepa"):
+    """task -> (bucket, repo) from split.tsv, the stratification key everything in the loop shares."""
+    p = "%s/split.tsv" % E
+    out = {}
+    if not os.path.exists(p):
+        return out
+    with open(p) as f:
+        head = f.readline().rstrip("\n").split("\t")
+        for line in f:
+            r = dict(zip(head, line.rstrip("\n").split("\t")))
+            out[r["task"]] = (r.get("bucket", "?"), r.get("repo", "?"))
+    return out
+
+
+def wave_sample(wave, pool, n, salt="", E="/e/fscratch/reformo/lee27/experiments/gepa"):
+    """A fresh stratified minibatch of `n` tasks from `pool`, seeded by the wave name.
+
+    Fixed minibatches are how a prompt gets fitted to a particular 64 tasks: reuse them across waves and the search
+    starts optimising their quirks. Every wave therefore draws its own feedback and gate sets, and only the 500-task
+    dev split -- which the session never reads -- stays fixed, so candidates remain comparable across waves."""
+    meta = task_meta(E)
+    by = collections.defaultdict(list)
+    for t in pool:
+        by[meta.get(t, ("?", "?"))].append(t)
+    want = {c: float(len(v)) for c, v in by.items()}
+    return strat_alloc(by, want, n, wave_rng(wave, salt))
+
+
+def wave_feedback(wave, E="/e/fscratch/reformo/lee27/experiments/gepa"):
+    """The feedback list this wave actually used, from its own dir. Empty if the wave has not been built."""
+    return read_list("%s/%s/feedback.txt" % (E, wave))
+
+
+def frozen_axes(E="/e/fscratch/reformo/lee27/experiments/gepa"):
+    """Axes the hand-judge disagreed with often enough to distrust (gepa_ledger.py judge). The front ignores them:
+    an axis the session cannot confirm by reading traces is not evidence, and letting it keep deciding the Pareto
+    front would launder a broken detector into the selection rule."""
+    p = "%s/ledger.json" % E
+    if not os.path.exists(p):
+        return set()
+    try:
+        led = json.load(open(p))
+    except Exception:
+        return set()
+    out = set()
+    for r in led:
+        for ax, j in (r.get("judge") or {}).items():
+            if j.get("frozen"):
+                out.add(ax)
+    return out
+
+
+def refuse_closed_task(task, wave=None, E="/e/fscratch/reformo/lee27/experiments/gepa"):
+    """Exit 2 unless `task` is in THIS WAVE's feedback list.
+
+    Two rules, both mechanical because an intention in a skill file is not a control:
+
+      * dev is scores-only and test is sealed (Luke, 2026-09-21). The session sees dev's per-task reward, behaviour
+        axes, Pareto front and paired wins -- numbers -- and never a dev trace, because reading the traces of the
+        very tasks selection scores is how a prompt gets fitted to those 500 tasks instead of to the job.
+      * a task from ANOTHER wave's feedback batch is refused too. Each wave draws a fresh 64 from train, so reading
+        an earlier wave's batch alongside this one quietly rebuilds the fixed set the per-wave draw exists to avoid.
+    """
     for s in ("dev", "test"):
         if task in read_split(s, E):
             sys.stderr.write(
                 "REFUSED: %s is in the %s split, whose trajectories are closed to this session.\n"
                 "  dev is scores-only (gepa_score.py gives you its numbers); test is sealed until gepa_final.sh.\n"
-                "  Read the feedback sample instead -- it is train-set, and it is what reflection is for:\n"
-                "    python3 gepa_worst.py <wave> <cand>        # ranks feedback tasks\n"
+                "  Read this wave's feedback batch instead:\n"
+                "    python3 gepa_worst.py <wave> <cand>        # ranks that wave's feedback tasks\n"
                 "    python3 gepa_dump.py  <wave> <cand> <feedback task>\n" % (task, s))
+            sys.exit(2)
+    if wave:
+        fb = wave_feedback(wave, E)
+        if fb and task not in fb:
+            sys.stderr.write(
+                "REFUSED: %s is not in wave %s's feedback batch (%d tasks, %s/%s/feedback.txt).\n"
+                "  Every wave draws its own 64 from train; reading another wave's batch rebuilds the fixed sample\n"
+                "  the per-wave draw exists to avoid. Use `gepa_worst.py %s <cand>` to pick from this wave's.\n"
+                % (task, wave, len(fb), E, wave, wave))
             sys.exit(2)
 
 
