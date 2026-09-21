@@ -32,13 +32,15 @@ conventions. The behaviour detectors and their provenance → `data/r2egym/jsc/g
 
 ## 1. Hard rules
 
-- **One cost line, at session start, for the serve job.** `gepa_serve.sh up` prints it: nodes × wall.
-  Show it, get the go, then `SUBMIT=1`. Enqueueing a candidate afterwards is free of a new go.
+- **One cost line, at session start, for the serve job.** `gepa_serve.sh up` prints it: nodes × wall,
+  against the **100 node-hour** budget. Show it, get the go, then `SUBMIT=1`. Enqueueing a candidate
+  afterwards is free of a new go; a *second* serve job after the budget is spent is not.
 - **Never let the servers idle.** Keep **at least two candidates queued at all times**. Score and read
   finished candidates while the next ones run. The whole point of the standing job is that the GPUs
   do not wait for a reflection step.
-- **Report node-hours burned in every status line.** `gepa_serve.sh status` prints it. A standing
-  allocation is invisible unless you say what it has cost.
+- **Report burned and remaining in every status line.** `gepa_serve.sh status` prints both against
+  the 100. A standing allocation is invisible unless you say what it has cost: it charges NODES
+  node-hours per wall-hour whether the queue is full or empty.
 - **Dev is scores-only. You never read a dev trace.** Selection runs on dev numbers — per-task reward,
   the behaviour axes, the Pareto front, paired wins and losses — and `gepa_score.py` gives you all of
   them. The trajectories are closed. Reading the traces of the very tasks selection scores is how a
@@ -161,9 +163,9 @@ run` has ever gone against a GEPA tree, and the runner's reap path has only run 
 ```bash
 ssh jupiter
 export OMP_NUM_THREADS=1; cd /e/project1/transfernetx/lee27/code/snowball/gepa
-NODES=1 HOURS=6 bash gepa_serve.sh up          # cost line: 1 node x up to 6 h
+PILOT=1 NODES=1 HOURS=6 bash gepa_serve.sh up   # cost line: 1 node x up to 6 h, OFF the 100 h budget
 #   -> show it, get the go, then:
-SUBMIT=1 NODES=1 HOURS=6 bash gepa_serve.sh up
+SUBMIT=1 PILOT=1 NODES=1 HOURS=6 bash gepa_serve.sh up
 bash gepa_serve.sh status                       # wait for 1 of 1 endpoints
 bash gepa_queue.sh start
 
@@ -203,7 +205,7 @@ ssh jupiter
 export OMP_NUM_THREADS=1; cd /e/project1/transfernetx/lee27/code/snowball/gepa
 bash gepa_serve.sh up                     # prints the COST line; submits nothing
 #   -> show it to Luke, get the go, then:
-SUBMIT=1 bash gepa_serve.sh up            # 8 nodes, one vLLM server each, EAGLE-3 draft
+SUBMIT=1 NODES=8 HOURS=13 bash gepa_serve.sh up   # ~12.5 h of budget; or NODES=4 HOURS=26 for ~25 h
 bash gepa_queue.sh start                  # the runner tmux on the login node
 bash gepa_serve.sh status                 # endpoints up, queue depth, node-hours burned
 ```
@@ -408,8 +410,12 @@ whose front it is on. Parents are sampled ∝ `front_wins`, **excluding speciali
 removed from the pool only by being dominated everywhere or by being flagged specialist, never by a
 mean.
 
+**The budget is 100 GPU node-hours after the pilot** (Luke, 2026-09-21). `gepa_serve.sh status` prints
+burned and remaining on every call, and `gepa_serve.sh up` refuses a further serve job once it is
+spent unless `BUDGET_OVERRIDE=1`, which prints a fresh cost line to approve. The pilot is excluded.
+
 **Stop when any of these holds:**
-- the node-hour budget agreed for the loop is spent;
+- the 100 node-hours are spent;
 - two consecutive waves add no candidate to the front (no child wins a task no parent already won);
 - every candidate on the front is flagged specialist — the search is buying dev with the band's
   repos and the prompt channel has nothing general left to give.
@@ -426,6 +432,17 @@ Measured off the two P2O probes on this exact layout (2026-09-20), not assumed:
   1.29 h on 8 nodes) and 111 for `p2o6all_s0` (2,880 trials, 3.24 h).
 - **plus ≈ 0.5 h × nodes of engine startup** before the first trial — `p2oAc_s0` elapsed 1:48 against
   1:19 of eval. On 8 nodes that is a flat **4 node-hours per job**.
+
+**The loop's budget is 100 GPU node-hours after the pilot.** Two shapes buy the same attempts:
+
+| layout | wall for the whole budget | what it suits |
+|---|---|---|
+| **8 nodes** | ~12.5 h | finishing in one sitting; reflection has to keep up with the queue |
+| **4 nodes** | ~25 h | the same attempts with real slack to read traces while candidates run |
+
+Both fit the seed wave, about three reflect/gate/accept waves, and the k=2 confirmation. Luke picks at
+go time; `NODES=4` and `NODES=8` are the same code, and the runner sizes shards from the live endpoint
+count either way. The pilot (1 node) is off budget.
 
 **On the standing serve job the startup is paid once, at session start, not per candidate.** That is the
 whole reason for the redesign: it is 4 node-hours each time, and a loop that reflects between candidates
