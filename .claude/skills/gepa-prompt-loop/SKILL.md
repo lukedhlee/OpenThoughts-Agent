@@ -68,13 +68,12 @@ conventions. The behaviour detectors and their provenance → `data/r2egym/jsc/g
   are the final base-vs-prompt comparison, run on Luke's go after the loop ends. A block tuned against
   the thing that is supposed to judge it tells us nothing. What the session is allowed to carry from
   them is the general prior in §2.1, which names behaviours and no tasks.
-- **Rollouts use Marin Eval Policy v0.1, not the 64k probe contract.** 32,768 in / 8,192 out with
-  summarization on, matching `tb2_jobs/otabaseswe_v01_20260919` field for field. Search a block under
-  a different context budget and a different context-management policy and you are optimising a
-  different agent: 32k with summarization on hits the summariser where 60k with it off hits the
-  context limit. **The RL arms roll out under the 64k contract, so a winning block is validated for
-  the eval policy only — re-check it with one paired dev probe at 61,440 / 4,096 with summarization
-  off before it is used to shape RL rollouts.**
+- **Rollouts use the RL contract: 61,440 / 4,096, summarization off.** That is what the RL arms roll
+  out under, so it is what the loop searches under — a block found under a different context budget
+  and a different context-management policy is a block found for a different agent. Everything
+  structural still matches Eval Policy v0.1. **The final SWE-100 / TB2 comparison runs under Eval
+  Policy v0.1 (32k/8k, summarization on), so the winning block is validated under the RL contract
+  here and read once under the eval contract at the end.**
 - **Blocks are ≤ 400 tokens and general procedure only.** Never a task id, repo name, file name, test
   name or dataset name. `gepa_tree.py` lints this and refuses to build the tree if a block fails.
   The point is a procedure that would help on any terminal task, not knowledge about these tasks.
@@ -99,7 +98,7 @@ conventions. The behaviour detectors and their provenance → `data/r2egym/jsc/g
 |---|---|
 | **candidate** | one guidance block, ≤ 400 tokens, appended to `instruction.md` behind `\n\n---\nWorking guidance:\n` |
 | **control** | the same task with nothing appended (`-pctl`); every wave carries it |
-| **rollout policy** | **Marin Eval Policy v0.1** — 32,768 in / 8,192 out, terminus-2 defaults with summarization **ON**, Daytona, one attempt per task. The same policy the SWE-100 and TB2 evals ran under |
+| **rollout policy** | the **RL contract** — 61,440 in / 4,096 out, summarization **OFF**, Daytona, one attempt per task. Structurally aligned with Eval Policy v0.1 (retry list, environment, timeouts, `skip_special_tokens`); only the token budgets and the summarization flag differ |
 | **score** | per task: the verifier reward, plus eight deterministic behaviour features from the trajectory |
 | **dev (500)** | FIXED and SCORES ONLY. Selection runs on its numbers; its trajectories are closed to the session |
 | **feedback (64)** | a FRESH draw from train each wave. The only traces the session ever reads |
