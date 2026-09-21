@@ -57,7 +57,7 @@ NSYS=${NSYS:-0}; NSYSW=()
 if [ "$NSYS" = 1 ]; then
   module load Nsight-Systems/2025.5.1 || { echo "no Nsight-Systems module"; exit 1; }
   NSYS_DIR=/e/data1/mmlaion/lee27/nsys; mkdir -p $NSYS_DIR
-  NSYSW=(nsys profile -t cuda,nvtx,nccl,osrt --sample=none --cpuctxsw=none --delay "${NSYS_DELAY:-600}" --duration "${NSYS_DURATION:-60}" --kill=none -f true -o "$NSYS_DIR/serve_$SLURM_JOB_ID")
+  NSYSW=(nsys profile -t cuda,nvtx,osrt --sample=none --cpuctxsw=none --delay "${NSYS_DELAY:-600}" --duration "${NSYS_DURATION:-60}" --kill=none -f true -o "$NSYS_DIR/serve_$SLURM_JOB_ID")
   echo "NSYS capture: delay ${NSYS_DELAY:-600}s duration ${NSYS_DURATION:-60}s -> $NSYS_DIR/serve_$SLURM_JOB_ID.nsys-rep"
 fi
 "${NSYSW[@]}" $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name "$SERVED" --port 8000 \
