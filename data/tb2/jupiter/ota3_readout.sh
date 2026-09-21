@@ -28,7 +28,7 @@ for st in $first $final; do
   say "launched pair probe tmux pair_${STAGE}_s$st"
   if [ "$st" = "$final" ]; then
     for t in $(seq 1 $TRIALS); do
-      J=$(MODEL=$EX POLICY=trained sbatch --parsable $W/serve_snowball.sbatch) || { say "serve sbatch failed (trial $t)"; continue; }
+      J=$(MODEL=$EX POLICY=trained sbatch --parsable --time=${SERVE_TIME:-06:00:00} $W/serve_snowball.sbatch)   # 6 h fits a ~4.5 h trial pair and slips under maintenance reservations that defer 12 h jobs || { say "serve sbatch failed (trial $t)"; continue; }
       tmux new-session -d -s eval_${STAGE}_t$t "bash $W/eval_chain.sh $J ${STAGE}t$t; sleep 600"
       say "launched targets trial $t: serve $J, tmux eval_${STAGE}_t$t (runs ${STAGE}t${t}swe_v01_* and ${STAGE}t${t}_v01_*)"
       sleep 90
