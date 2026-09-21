@@ -26,7 +26,9 @@ T = "/e/fscratch/reformo/lee27/tasks"
 ap = argparse.ArgumentParser()
 ap.add_argument("--wave", required=True, help="wave name; tree -> tasks/gepa-<wave>, run prefix -> gepa<wave>")
 ap.add_argument("--candidates", required=True, help='JSON {"delim": ..., "blocks": {"<cand>": "<block text>"}}')
-ap.add_argument("--split", default="dev", help="dev | dev_mini | test | train, or a path to a task list / tsv")
+ap.add_argument("--split", default="feedback,dev",
+                help="comma-separated: feedback,dev | dev_mini | test | a path to a task list / tsv. A wave normally "
+                     "carries BOTH feedback (what the session reads) and dev (what selection scores).")
 ap.add_argument("--src", default=T + "/r2egym-tt-daytona", help="source task tree (Daytona shape)")
 ap.add_argument("--dst", default=None, help="default tasks/gepa-<wave>")
 ap.add_argument("--splits-dir", default=E + "/gepa")
@@ -84,14 +86,33 @@ for c in sorted(blocks):
 ARMS = ([] if a.no_ctl else ["ctl"]) + sorted(blocks)
 
 # ---------------------------------------------------------------- task list
-sp = a.split if os.path.exists(a.split) else "%s/split_%s.txt" % (a.splits_dir, a.split)
-if not os.path.exists(sp):
-    sys.exit("no such split list: %s" % sp)
-raw = [l.rstrip("\n") for l in open(sp) if l.strip() and not l.startswith("#")]
-if raw and "\t" in raw[0]:  # a tsv (dev120.tsv shape): take the `task` column
-    tasks = [r["task"] for r in csv.DictReader(open(sp), delimiter="\t")]
-else:
-    tasks = raw
+# The test split is the loop's one held-out number and it is scored ONCE, by gepa_final.sh. Building a tree over it
+# is the step that would make an accidental rollout possible, so it needs FINAL=1 in the environment -- a deliberate
+# act, not a flag someone can copy off an old command line.
+splits = [s.strip() for s in a.split.split(",") if s.strip()]
+if any(s == "test" for s in splits) and os.environ.get("FINAL") != "1":
+    sys.exit("refusing to build a tree over the test split: it is rolled out once, by gepa_final.sh.\n"
+             "If this really is the final run, gepa_final.sh sets FINAL=1 for you.")
+
+
+def load_split(s):
+    p = s if os.path.exists(s) else "%s/split_%s.txt" % (a.splits_dir, s)
+    if not os.path.exists(p):
+        sys.exit("no such split list: %s" % p)
+    raw = [l.rstrip("\n") for l in open(p) if l.strip() and not l.startswith("#")]
+    if raw and "\t" in raw[0]:  # a tsv (dev120.tsv shape): take the `task` column
+        return [r["task"] for r in csv.DictReader(open(p), delimiter="\t")]
+    return raw
+
+
+by_split, tasks = {}, []
+for s in splits:
+    v = load_split(s)
+    dup = set(v) & set(tasks)
+    if dup:
+        sys.exit("split %s overlaps an earlier split on %d tasks, e.g. %s" % (s, len(dup), sorted(dup)[:3]))
+    by_split[s] = v
+    tasks += v
 missing = [t for t in tasks if not os.path.isdir(os.path.join(a.src, t))]
 if missing:
     sys.exit("%d split tasks are not in %s, e.g. %s" % (len(missing), a.src, missing[:3]))
@@ -146,10 +167,11 @@ for t in tasks:
 os.makedirs(out, exist_ok=True)
 names = ["%s-p%s" % (t, arm) for t in tasks for arm in ARMS]
 open("%s/allow.txt" % out, "w").write("\n".join(names) + "\n")
-json.dump({"wave": a.wave, "split": a.split, "src": a.src, "dst": dst, "delim": DELIM, "blocks": blocks,
-           "arms": ARMS, "tasks": tasks}, open("%s/cands.json" % out, "w"), indent=1)
+json.dump({"wave": a.wave, "split": a.split, "splits": by_split, "src": a.src, "dst": dst, "delim": DELIM,
+           "blocks": blocks, "arms": ARMS, "tasks": tasks}, open("%s/cands.json" % out, "w"), indent=1)
 md = ["# GEPA wave %s\n" % a.wave,
-      "split `%s` (%d tasks) x arms %s = %d dirs under `%s`" % (a.split, len(tasks), ",".join(ARMS), len(names), dst),
+      "splits %s (%d tasks) x arms %s = %d dirs under `%s`"
+      % (", ".join("`%s` %d" % (s, len(v)) for s, v in by_split.items()), len(tasks), ",".join(ARMS), len(names), dst),
       "byte-identity failures: %d; hashed %d of %d tasks\n" % (failures, len(verify), len(tasks)),
       "| cand | ~tokens | words | bytes |", "|---|---|---|---|"]
 for c in sorted(blocks):

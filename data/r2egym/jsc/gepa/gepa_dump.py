@@ -6,16 +6,21 @@ reader needs to see WHY the run went the way it did: per turn the think flag, th
 the commands it sent, and the tail of the screen it got back. Ends with the reward, the exception and the behaviour
 vector so the reflection is looking at the same numbers the scorer used.
 
-Dev traces are open -- the session may read any of them. Test traces are not read until the final run is done.
+FEEDBACK TASKS ONLY. A dev or test task id is refused, exit 2 (gepa_feat.refuse_closed_task). Dev is scores-only --
+the session gets its rewards, axes, front and paired wins from gepa_score.py and never its traces -- and test is
+sealed until gepa_final.sh. Reading the traces of the tasks selection scores is how a prompt gets fitted to those
+500 tasks instead of to the job, so the reading set is drawn from train and nothing selects on it.
+--allow-closed exists for auditing an OLD fixture run (p2oAc_s0 and the like) and never for a live wave.
 
-  gepa_dump.py w1 c012 r2egym-v1-00009               # the wave's run dirs
-  gepa_dump.py fixture A r2egym-v1-00009 --runs /e/.../p2o6all_s0
-  gepa_dump.py w1 c012 r2egym-v1-00009 --screen 40 --turns 12:20
+  gepa_dump.py w1 c012 <feedback task>
+  gepa_dump.py fixture A r2egym-v1-00009 --runs /e/.../p2o6all_s0 --allow-closed
+  gepa_dump.py w1 c012 <feedback task> --screen 40 --turns 12:20
 Python 3.9 / stdlib (Jupiter login node).
 """
 import argparse, glob, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gepa_feat import AXES, iter_trials, last_attempt, resolve_runs, trial_features, turns_of  # noqa: E402
+from gepa_feat import (AXES, iter_trials, last_attempt, refuse_closed_task, resolve_runs,  # noqa: E402
+                       trial_features, turns_of)
 
 E = "/e/fscratch/reformo/lee27/experiments"
 ap = argparse.ArgumentParser()
@@ -27,7 +32,11 @@ ap.add_argument("--screen", type=int, default=25, help="lines of screen output p
 ap.add_argument("--turns", default=None, help="turn range, e.g. 0:10 or 12:")
 ap.add_argument("--trial", type=int, default=0, help="which trial of this (task, cand), when k > 1")
 ap.add_argument("--plan", action="store_true", help="also print the plan field (analysis only by default)")
+ap.add_argument("--allow-closed", action="store_true",
+                help="audit an OLD fixture run whose ids happen to sit in dev/test; never for a live wave")
 a = ap.parse_args()
+if not a.allow_closed:
+    refuse_closed_task(a.task)
 runs = resolve_runs(a.wave, a.runs)
 if not runs:
     sys.exit("no run dirs for wave %s; pass --runs to point at them explicitly" % a.wave)

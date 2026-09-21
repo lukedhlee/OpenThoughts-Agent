@@ -7,8 +7,14 @@ them on the Daytona backend.
 
   queue/<wave>.<cand>.json   -> waiting             (written by gepa_queue.sh)
   running/<wave>.<cand>.json -> shards in flight    (holds the endpoints and tmux names it owns)
-  done/<wave>.<cand>.json    -> finished, with each shard's harbor run dir
+  done/<wave>.<cand>.json    -> finished, with each leg's harbor run dirs
   runs.jsonl                 -> the append-only RUN ledger: one line per finished candidate
+
+A candidate runs as ORDERED LEGS, feedback then dev. Feedback is 64 train tasks against dev's 500, so it lands
+first and the session can start reading while the dev leg is still going -- and reading is all feedback is for:
+dev is scores-only, and its trajectories are closed (gepa_feat.refuse_closed_task). When a leg finishes the runner
+starts the next one immediately on the endpoints that leg just freed, so a candidate never holds idle servers
+between its legs.
 
 Why runs.jsonl and not ledger.json: ledger.json is the POPULATION ledger and every record in it carries dev scores.
 A finished run is not a scored candidate yet -- the session still has to run gepa_score.py. Writing unscored rows
@@ -130,9 +136,20 @@ def shard_state(name):
     return False, None
 
 
-def reap():
+def legs_of(it):
+    """Back-compat: an item written before legs existed is a single unnamed leg."""
+    return it.get("legs") or [{"leg": it.get("split", "dev"), "tasks": it.get("tasks", [])}]
+
+
+def reap(free):
+    """Finish whatever shards are done. A candidate whose leg completes starts its NEXT leg immediately, reusing the
+    endpoints that leg just freed, so the servers never wait for the whole candidate."""
     for p in items(R):
         it = read(p)
+        if not it.get("shards"):  # mid-candidate, waiting for endpoints to start the next leg
+            if free and start_leg(it, free):
+                write(p, it)
+            continue
         states = [(s, shard_state(s["name"])) for s in it["shards"]]
         if not all(dn for _, (dn, _) in states):
             continue
@@ -142,24 +159,48 @@ def reap():
             s["exit"] = c
             s["run_dir"] = "%s/%s" % (JOBS, s["name"])
             s["trials"] = len(glob.glob("%s/%s/*__*" % (JOBS, s["name"])))
-        it["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        it["status"] = "done" if not bad else "failed"
-        it["run_dirs"] = [s["run_dir"] for s in it["shards"]]
-        it["trials"] = sum(s["trials"] for s in it["shards"])
+        legs = legs_of(it)
+        name = legs[it.get("leg", 0)]["leg"]
+        res = it.setdefault("results", {})
+        res[name] = {"run_dirs": [s["run_dir"] for s in it["shards"]],
+                     "trials": sum(s["trials"] for s in it["shards"]),
+                     "exits": codes, "status": "done" if not bad else "failed",
+                     "finished": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        for s in it["shards"]:
+            if s["url"] in busy_endpoints() or s["url"] in free:
+                continue
+            free.append(s["url"])
+        log("leg %s of %s.%s %s: %d trials over %d shards"
+            % (name, it["wave"], it["cand"], res[name]["status"], res[name]["trials"], len(it["shards"])))
+        it["shards"] = []
+
         if bad and it.get("attempt", 1) <= a.retries:
             log("candidate %s.%s: shards failed %s (exits %s) -- requeueing attempt %d"
                 % (it["wave"], it["cand"], bad, codes, it.get("attempt", 1) + 1))
             it["attempt"] = it.get("attempt", 1) + 1
-            it.pop("shards", None)
+            it["leg"] = 0
+            it.pop("results", None)
             os.remove(p)
             write("%s/%s.%s.json" % (Q, it["wave"], it["cand"]), it)
             continue
+
+        it["leg"] = it.get("leg", 0) + 1
+        if it["leg"] < len(legs):
+            start_leg(it, free)       # may be a no-op if nothing is free; the next pass retries
+            write(p, it)
+            continue
+
+        it["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        it["status"] = "done" if all(v["status"] == "done" for v in it["results"].values()) else "failed"
+        it["run_dirs"] = [d for v in it["results"].values() for d in v["run_dirs"]]
+        it["trials"] = sum(v["trials"] for v in it["results"].values())
         os.remove(p)
         write("%s/%s.%s.json" % (D, it["wave"], it["cand"]), it)
         with open(E + "/runs.jsonl", "a") as f:
             f.write(json.dumps(it) + "\n")
-        log("candidate %s.%s %s: %d trials over %d shards -> %s"
-            % (it["wave"], it["cand"], it["status"], it["trials"], len(it["shards"]), " ".join(it["run_dirs"])))
+        log("candidate %s.%s %s: %d trials over legs %s"
+            % (it["wave"], it["cand"], it["status"], it["trials"],
+               ", ".join("%s(%d)" % (k, v["trials"]) for k, v in it["results"].items())))
 
 
 def busy_endpoints():
@@ -170,11 +211,52 @@ def busy_endpoints():
     return used
 
 
-def admit(job):
-    live = endpoints(job)
-    if not live:
-        return
-    free = [u for u in live if u not in busy_endpoints()]
+def start_leg(it, free):
+    """Launch the current leg's shards over `free` endpoints (mutated). True if it started."""
+    legs = legs_of(it)
+    i = it.get("leg", 0)
+    if i >= len(legs) or not free:
+        return False
+    leg, tasks = legs[i]["leg"], legs[i]["tasks"]
+    if not tasks:
+        return False
+    n = min(a.shards, len(free), len(tasks))
+    shards = []
+    for j in range(n):
+        part = tasks[j::n]
+        name = "%s_%s_%s_s%d" % (it["wave"], it["cand"], leg, j)
+        if it.get("attempt", 1) > 1:
+            name += "_r%d" % it["attempt"]
+        lst = "%s/runs/%s.tasks" % (E, name)
+        if not a.dry_run:
+            with open(lst, "w") as f:
+                f.write("\n".join(part) + "\n")
+        shards.append({"name": name, "url": free[j], "tasks": len(part), "list": lst, "leg": leg})
+    cmdline = ["bash %s/gepa_run.sh %s %s %s %s %d %d"
+               % (G, s["name"], s["url"], it["tree"], s["list"], a.conc, it.get("k", 1)) for s in shards]
+    if a.dry_run:
+        log("WOULD start leg %s of %s.%s as %d shards (%s of %d tasks):"
+            % (leg, it["wave"], it["cand"], n, "+".join(str(s["tasks"]) for s in shards), len(tasks)))
+        for c in cmdline:
+            log("   " + c)
+        return False
+    for c, s in zip(cmdline, shards):
+        r = sh(c)
+        sys.stdout.write(r.stdout)
+        if r.returncode != 0:
+            log("shard %s failed to launch: %s" % (s["name"], (r.stderr or r.stdout).strip()[:300]))
+            return False
+    it["shards"] = shards
+    it.setdefault("started", time.strftime("%Y-%m-%dT%H:%M:%S"))
+    it["attempt"] = it.get("attempt", 1)
+    for s in shards:
+        free.remove(s["url"])
+    log("started leg %s of %s.%s: %d shards x conc %d over %s"
+        % (leg, it["wave"], it["cand"], n, a.conc, ", ".join(s["url"].split("//")[-1].split(".")[0] for s in shards)))
+    return True
+
+
+def admit(free):
     while len(items(R)) < a.max_inflight and items(Q) and free:
         th = threads_used()
         if th > a.pid_guard:
@@ -183,53 +265,14 @@ def admit(job):
             return
         p = items(Q)[0]
         it = read(p)
-        n = min(a.shards, len(free))
-        tasks = it["tasks"]
-        if not tasks:
+        if not any(l["tasks"] for l in legs_of(it)):
             log("candidate %s.%s has no tasks; dropping" % (it["wave"], it["cand"]))
             os.remove(p)
             continue
-        n = min(n, len(tasks))
-        shards = []
-        for i in range(n):
-            part = tasks[i::n]
-            name = "%s_%s_s%d" % (it["wave"], it["cand"], i)
-            if it.get("attempt", 1) > 1:
-                name += "_r%d" % it["attempt"]
-            lst = "%s/runs/%s.tasks" % (E, name)
-            url = free[i]
-            if not a.dry_run:
-                with open(lst, "w") as f:
-                    f.write("\n".join(part) + "\n")
-            shards.append({"name": name, "url": url, "tasks": len(part), "list": lst})
-        cmdline = ["bash %s/gepa_run.sh %s %s %s %s %d %d"
-                   % (G, s["name"], s["url"], it["tree"], s["list"], a.conc, it.get("k", 1)) for s in shards]
-        if a.dry_run:
-            log("WOULD admit %s.%s as %d shards (%s of %d tasks):"
-                % (it["wave"], it["cand"], n, "+".join(str(s["tasks"]) for s in shards), len(tasks)))
-            for c in cmdline:
-                log("   " + c)
+        if not start_leg(it, free):
             return
-        ok = True
-        for c, s in zip(cmdline, shards):
-            r = sh(c)
-            sys.stdout.write(r.stdout)
-            if r.returncode != 0:
-                log("shard %s failed to launch: %s" % (s["name"], (r.stderr or r.stdout).strip()[:300]))
-                ok = False
-                break
-        if not ok:
-            log("candidate %s.%s left queued after a launch failure" % (it["wave"], it["cand"]))
-            return
-        it["shards"] = shards
-        it["started"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        it["attempt"] = it.get("attempt", 1)
         os.remove(p)
         write("%s/%s.%s.json" % (R, it["wave"], it["cand"]), it)
-        for s in shards:
-            free.remove(s["url"])
-        log("admitted %s.%s: %d shards x conc %d over %s"
-            % (it["wave"], it["cand"], n, a.conc, ", ".join(s["url"].split("//")[-1].split(".")[0] for s in shards)))
 
 
 peak = a.max_inflight * a.shards * a.conc
@@ -244,8 +287,10 @@ while True:
         if not job:
             log("no RUNNING gepa_serve job; waiting (queued: %d)" % len(items(Q)))
         else:
-            reap()
-            admit(job)
+            live = endpoints(job)
+            free = [u for u in live if u not in busy_endpoints()]
+            reap(free)
+            admit(free)
     except Exception as e:  # a controller that dies leaves the servers idle; never let one bad pass kill it
         log("pass failed: %s: %s" % (type(e).__name__, e))
     if a.once:

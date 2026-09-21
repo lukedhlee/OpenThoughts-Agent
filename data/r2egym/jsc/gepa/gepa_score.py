@@ -3,7 +3,7 @@
 front, and the paired comparisons the selection and the gate run on.
 
 Reads the probe's trials (see gepa_feat.iter_trials for the layout) and writes
-  experiments/gepa/<wave>/scores.csv   one row per (task, candidate)
+  experiments/gepa/<wave>/scores.csv   one row per (task, candidate) -- the DEV leg, the one selection runs on
   experiments/gepa/<wave>/summary.md   per-candidate pass rate, paired delta vs ctl and vs the parent, every axis,
                                        and the Pareto-front win counts
 The summary is written BEFORE the next reflection -- that is the rule the loop runs on, so a reflection is never
@@ -28,7 +28,7 @@ Python 3.9 / stdlib (Jupiter login node; one process, OMP_NUM_THREADS=1).
 """
 import argparse, collections, csv, glob, json, os, random, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gepa_feat import AXES, iter_trials, resolve_runs, trial_features  # noqa: E402
+from gepa_feat import AXES, iter_trials, read_split, resolve_runs, trial_features  # noqa: E402
 
 E = "/e/fscratch/reformo/lee27/experiments"
 ap = argparse.ArgumentParser()
@@ -37,6 +37,10 @@ ap.add_argument("--runs", default=None,
                 help="glob of run dirs; by default the queue's done/<wave>.*.json run_dirs, else the gepa_jobs "
                      "shards, else the fallback probe run under experiments/")
 ap.add_argument("--out", default=None, help="output dir (default experiments/gepa/<wave>)")
+ap.add_argument("--leg", default="dev", choices=["dev", "feedback", "test", "all"],
+                help="which leg of the wave to score. A wave rolls out feedback AND dev; scoring them together "
+                     "would mix the set the session reads with the set selection runs on. 'dev' (the default) is "
+                     "the selection leg; 'feedback' writes feedback_scores.csv / feedback_summary.md")
 ap.add_argument("--ctl", default="ctl", help="the control arm's candidate id")
 ap.add_argument("--parent", default=None, help="also compare every candidate against this one (the cheap gate)")
 ap.add_argument("--boot", type=int, default=2000)
@@ -60,14 +64,22 @@ os.makedirs(out, exist_ok=True)
 rng = random.Random(a.seed)
 
 # ---------------------------------------------------------------- read trials
+keep = None if a.leg == "all" else read_split(a.leg)
+if keep is not None and not keep:
+    sys.exit("split list for leg %r is missing or empty -- run gepa_split.py first" % a.leg)
 cells = collections.defaultdict(list)
-n = 0
+n = skipped = 0
 for task, cand, td in iter_trials(runs):
+    if keep is not None and task not in keep:
+        skipped += 1
+        continue
     f = trial_features(td)
     cells[(task, cand)].append(f)
     n += 1
     if a.progress and n % a.progress == 0:
         print("  %d trials..." % n, file=sys.stderr)
+if skipped:
+    print("leg %s: skipped %d trials belonging to another leg of this wave" % (a.leg, skipped), file=sys.stderr)
 if not cells:
     sys.exit("no trials found under %s" % ", ".join(runs))
 cands = sorted({c for _, c in cells})
@@ -141,9 +153,10 @@ def ci(d):
 
 
 # ---------------------------------------------------------------- write
+pre = "" if a.leg in ("dev", "all") else a.leg + "_"
 fields = (["task", "cand", "trials", "scored", "dropped", "parse_errors", "pass", "reward"]
           + AXES + COUNTERS + ["on_front", "exception_types"])
-with open("%s/scores.csv" % out, "w", newline="") as fh:
+with open("%s/%sscores.csv" % (out, pre), "w", newline="") as fh:
     w = csv.DictWriter(fh, fieldnames=fields)
     w.writeheader()
     for t in tasks:
@@ -162,7 +175,7 @@ def emit(s=""):
     L.append(s)
 
 
-emit("# GEPA wave %s\n" % a.wave)
+emit("# GEPA wave %s, %s leg\n" % (a.wave, a.leg))
 emit("runs: %s" % ", ".join(runs))
 emit("%d trials, %d tasks, arms %s\n" % (n, len(tasks), ",".join(cands)))
 emit("| cand | tasks | scored | dropped | pass | d vs %s | 95%% CI | w/l | front wins | sole |" % a.ctl)
@@ -269,6 +282,6 @@ for c in cands:
     dr = sum(rows[(t, c)]["dropped"] for t in ts)
     pe = sum(rows[(t, c)]["parse_errors"] for t in ts)
     emit("  %-8s %d/%d dropped (%.1f %%), %d unparseable" % (c, dr, tot, 100.0 * dr / max(1, tot), pe))
-open("%s/summary.md" % out, "w").write("\n".join(L) + "\n")
+open("%s/%ssummary.md" % (out, pre), "w").write("\n".join(L) + "\n")
 print("\n".join(L))
-print("\nwrote %s/scores.csv and %s/summary.md" % (out, out))
+print("\nwrote %s/%sscores.csv and %s/%ssummary.md" % (out, pre, out, pre))

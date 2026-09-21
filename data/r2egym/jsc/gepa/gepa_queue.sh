@@ -46,11 +46,19 @@ arms = man["arms"] if not cand else [cand]
 bad = [c for c in arms if c not in man["arms"]]
 if bad:
     sys.exit("%s is not an arm of wave %s (arms: %s)" % (bad[0], wave, ",".join(man["arms"])))
+# A candidate runs as ORDERED LEGS. feedback first: it is 64 tasks against dev's 500, it finishes quickly, and it is
+# the only thing the session is allowed to read -- so reflection can start while the dev leg is still running.
+splits = man.get("splits") or {man.get("split", "dev"): man["tasks"]}
+order = [s for s in ("feedback", "dev_mini", "dev", "test") if s in splits] + \
+        [s for s in splits if s not in ("feedback", "dev_mini", "dev", "test")]
 for c in arms:
-    dirs = ["%s-p%s" % (t, c) for t in man["tasks"]]
-    missing = [d for d in dirs if not os.path.isdir(os.path.join(tree, d))]
-    if missing:
-        sys.exit("%d task dirs missing under %s, e.g. %s" % (len(missing), tree, missing[:2]))
+    legs = []
+    for s in order:
+        dirs = ["%s-p%s" % (t, c) for t in splits[s]]
+        missing = [d for d in dirs if not os.path.isdir(os.path.join(tree, d))]
+        if missing:
+            sys.exit("%d task dirs missing under %s, e.g. %s" % (len(missing), tree, missing[:2]))
+        legs.append({"leg": s, "tasks": dirs})
     for state in ("running", "done"):
         if os.path.exists("%s/%s/%s.%s.json" % (E, state, wave, c)):
             print("skip %s.%s: already %s" % (wave, c, state)); break
@@ -58,10 +66,10 @@ for c in arms:
         p = "%s/queue/%s.%s.json" % (E, wave, c)
         if os.path.exists(p):
             print("skip %s.%s: already queued" % (wave, c)); continue
-        json.dump({"wave": wave, "cand": c, "tree": tree, "tasks": dirs, "k": int(k),
+        json.dump({"wave": wave, "cand": c, "tree": tree, "legs": legs, "leg": 0, "k": int(k),
                    "split": man.get("split"), "attempt": 1,
                    "enqueued": time.strftime("%Y-%m-%dT%H:%M:%S")}, open(p, "w"), indent=1)
-        print("queued %s.%s: %d tasks, k=%s" % (wave, c, len(dirs), k))
+        print("queued %s.%s: %s, k=%s" % (wave, c, " then ".join("%s %d" % (l["leg"], len(l["tasks"])) for l in legs), k))
 PY
   ;;
 drop)
@@ -82,13 +90,16 @@ list)
       python3 - "$f" <<'PY'
 import json, sys
 it = json.load(open(sys.argv[1]))
+legs = it.get("legs") or [{"leg": it.get("split", "?"), "tasks": it.get("tasks", [])}]
+cur = it.get("leg", 0)
 extra = ""
 if it.get("shards"):
     extra = "  shards %d  %s" % (len(it["shards"]), ",".join(s["name"] for s in it["shards"]))
 if it.get("status"):
     extra += "  status %s  trials %s" % (it["status"], it.get("trials"))
-print("  %-10s %-8s tasks %-5d k=%s  attempt %s%s" % (
-    it["wave"], it["cand"], len(it["tasks"]), it.get("k"), it.get("attempt"), extra))
+print("  %-10s %-8s legs %-24s on %-9s k=%s  attempt %s%s" % (
+    it["wave"], it["cand"], "+".join("%s:%d" % (l["leg"], len(l["tasks"])) for l in legs),
+    legs[cur]["leg"] if cur < len(legs) else "-", it.get("k"), it.get("attempt"), extra))
 PY
     done
   done

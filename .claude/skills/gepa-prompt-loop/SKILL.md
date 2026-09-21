@@ -4,10 +4,11 @@ description: >-
   Run a GEPA-shaped prompt-evolution loop for Snowball on R2E-Gym, agentically — THIS session is the
   reflection LLM, there is no GEPA framework. A population of general terminal-agent guidance blocks
   (≤ 400 tokens, procedure only) is appended to each task's instruction.md as a strict suffix; each
-  candidate is scored by a Daytona probe of the Stage-3 base on a 500-task dev split; selection is a
-  per-task Pareto front over pass plus eight deterministic behaviour axes; the session reads the
-  losing traces and writes children. Use when asked to evolve / optimise / search the agent prompt,
-  run a GEPA wave, reflect on a candidate's dev traces, or gate a child block. Scripts:
+  candidate is scored on a 500-task dev split that is SCORES-ONLY, and reflection reads a separate
+  64-task feedback sample drawn from train; selection is a per-task Pareto front over pass plus eight
+  deterministic behaviour axes. Compute is one standing serve job plus a candidate queue. Use when
+  asked to evolve / optimise / search the agent prompt, run a GEPA wave, reflect on a candidate's
+  feedback traces, or gate a child block. Scripts:
   data/r2egym/jsc/gepa/. Reference: ai_memory/active/snowball-r2egym/research/2026-09-21_gepa_agentic_loop.md.
 ---
 
@@ -38,11 +39,22 @@ conventions. The behaviour detectors and their provenance → `data/r2egym/jsc/g
   do not wait for a reflection step.
 - **Report node-hours burned in every status line.** `gepa_serve.sh status` prints it. A standing
   allocation is invisible unless you say what it has cost.
-- **Dev is open, test is sealed.** The session may read ANY dev trace, as many as it likes. The test
-  split is scored exactly once, by `gepa_final.sh`, at the end. Looking at a test trace, or scoring
-  the test set twice, destroys the only held-out number the loop produces.
-- **TB2 is never touched by this loop.** Terminal-Bench 2 stays the external check on whether any of
-  this transferred. A block tuned against TB2 tells us nothing.
+- **Dev is scores-only. You never read a dev trace.** Selection runs on dev numbers — per-task reward,
+  the behaviour axes, the Pareto front, paired wins and losses — and `gepa_score.py` gives you all of
+  them. The trajectories are closed. Reading the traces of the very tasks selection scores is how a
+  prompt gets fitted to 500 particular tasks instead of to the job. `gepa_dump.py` and `gepa_worst.py`
+  refuse a dev id, exit 2.
+- **Reflection reads the feedback sample, and nothing else.** `split_feedback.txt` is 64 **train**
+  tasks, stratified like `dev_mini`. Every candidate is rolled out on it (k=1) alongside dev, and it
+  is the only trace the session ever opens. Nothing selects on train, so reading it costs no
+  generalisation.
+- **Test is sealed.** Scored exactly once, by `gepa_final.sh`. `gepa_tree.py` refuses to build a tree
+  over it without `FINAL=1`, which only `gepa_final.sh` sets.
+- **SWE-bench and Terminal-Bench 2 are outside the loop entirely.** Never rolled out by it, and their
+  traces and per-task results are off limits to the session — not "prefer not to", off limits. They
+  are the final base-vs-prompt comparison, run on Luke's go after the loop ends. A block tuned against
+  the thing that is supposed to judge it tells us nothing. What the session is allowed to carry from
+  them is the general prior in §2.1, which names behaviours and no tasks.
 - **Blocks are ≤ 400 tokens and general procedure only.** Never a task id, repo name, file name, test
   name or dataset name. `gepa_tree.py` lints this and refuses to build the tree if a block fails.
   The point is a procedure that would help on any terminal task, not knowledge about these tasks.
@@ -68,12 +80,35 @@ conventions. The behaviour detectors and their provenance → `data/r2egym/jsc/g
 | **candidate** | one guidance block, ≤ 400 tokens, appended to `instruction.md` behind `\n\n---\nWorking guidance:\n` |
 | **control** | the same task with nothing appended (`-pctl`); every wave carries it |
 | **score** | per task: the verifier reward, plus eight deterministic behaviour features from the trajectory |
-| **selection** | per-task Pareto front over (pass, the eight axes); parents sampled by how many tasks they win |
-| **reflection** | this session reads the parent's worst dev traces and writes 2–3 children with the lesson added |
-| **cheap gate** | child vs parent on `dev_mini` (32 tasks), paired wins plus axis deltas — pass rate alone cannot decide at this n |
+| **dev (500)** | SCORES ONLY. Selection runs on its numbers; its trajectories are closed to the session |
+| **feedback (64)** | train tasks, rolled out for every candidate. The only traces the session ever reads |
+| **selection** | per-task Pareto front over (pass, the eight axes) on DEV; parents sampled by how many tasks they win |
+| **reflection** | this session reads the parent's worst FEEDBACK traces and writes 2–3 children with the lesson added |
+| **cheap gate** | child vs parent on `dev_mini` (32 tasks), paired wins plus the predicted axis — pass rate alone cannot decide at this n |
 | **full eval** | an accepted child is re-scored on all 500 dev tasks and entered in the ledger |
 | **final** | the best block and the control, once, on the 500-task test split, paired, plus the OOD-repo check |
 | **the compute** | one standing serve job (8 nodes, one vLLM server each) plus a login-node queue. A candidate is N `harbor run`s against those servers on Daytona, never its own Slurm job |
+
+## 2.1 Prior knowledge: the failure modes, as behaviours
+
+Carried over from the behaviour work on other suites. **Deliberately general.** No task names, no repo
+names, no per-task numbers, and no claim about which suite showed what — those results are off limits
+to this loop (§1), and a block that encoded them would be fitting to the judge. Treat this as a list
+of things worth writing a procedure against, not as evidence:
+
+- declaring the task done without ever checking the stated outcome from the outside;
+- spending the budget on repetition: the same command again, a wedged screen, turns lost to responses
+  the harness rejects;
+- edit, break, restore, retry — churning with in-place stream edits and multi-line heredocs instead of
+  one exact replacement;
+- reverting a correct fix after misreading the evidence;
+- deleting or emptying the inputs the task was given;
+- opening with a large batch of commands and wedging the terminal before anything has been read.
+
+Every seed block in `seed_blocks.json` targets one of these. When a reflection finds a new one, it
+belongs here as a behaviour, phrased the same way.
+
+## 2.2 The axes
 
 The eight axes, all oriented so higher is better: `self_check`, `ran_test_after_edit`, `in_place`,
 `no_sed_patch`, `no_repeat3`, `no_json_reject`, `no_input_delete`, `no_ctx_death`. Seven are binary
@@ -88,9 +123,13 @@ schema-level rejections count).
 Constraints: the surviving v2 `idval` tasks are forced into dev, `oodval` + `heldout` into test.
 
 ```
-train 1476   dev 500 (127 forced)   test 500 (258 forced)   dev_mini 32
--> experiments/gepa/split_{train,dev,test,dev_mini}.txt, split.tsv, split_strata.md
+train 1476   dev 500 (127 forced)   test 500 (258 forced)   dev_mini 32   feedback 64
+-> experiments/gepa/split_{train,dev,test,dev_mini,feedback}.txt, split.tsv, split_strata.md
 ```
+
+`feedback` is 64 **train** tasks, stratified the same way and disjoint from dev and test by
+construction. It is the reading set: the only trajectories the session ever opens. Dev supplies
+numbers, feedback supplies traces, and the two never overlap.
 
 Re-run it only to rebuild from scratch; it overwrites the lists and every ledger number becomes
 incomparable. **Test's base pass@8 (0.223) is higher than dev's (0.173)** because the forced
@@ -119,15 +158,17 @@ queued.
 ### 4.1 Seed the population (wave `w0`)
 
 ```bash
-python3 gepa_tree.py --wave w0 --candidates seed_blocks.json --split dev
+python3 gepa_tree.py --wave w0 --candidates seed_blocks.json --split feedback,dev
 bash gepa_queue.sh add-all w0 1           # control + c000..c003, no new go needed
 bash gepa_queue.sh list
 ```
 
-The runner admits `MAX_INFLIGHT=2` candidates at a time, splits each into `SHARDS_PER_CAND=4`
-`harbor run`s (one per server, concurrency 32 each), and moves each finished candidate to `done/`
-with its run dirs. Peak load is 2 × 4 × 32 = 256 concurrent Daytona sandboxes, well under the
-~1,000-per-user ceiling; the runner refuses a layout that would exceed `SANDBOX_CAP`.
+Each candidate runs as two ordered **legs**: `feedback` (64 train tasks) then `dev` (500). Feedback
+lands first because it is small and it is the only thing you may read, so reflection can start while
+the dev leg is still running. The runner admits `MAX_INFLIGHT=2` candidates, splits the current leg
+into `SHARDS_PER_CAND=4` `harbor run`s (one per server, concurrency 32 each), and starts the next leg
+on the endpoints the finished one just freed. Peak load is 2 × 4 × 32 = 256 concurrent Daytona
+sandboxes, well under the ~1,000-per-user ceiling; the runner refuses a layout exceeding `SANDBOX_CAP`.
 
 `seed_blocks.json` is the seed population: `c000` is **block A of P2O wave 0 verbatim**, the only
 block with a confirmed paired lift (+0.144 [+0.096, +0.194] on dev120, 2026-09-13); `c001`–`c003`
@@ -141,11 +182,15 @@ Score each candidate **as it finishes**, while the others are still running. Do 
 whole wave.
 
 ```bash
-python3 gepa_score.py w0
+python3 gepa_score.py w0 --leg feedback    # feedback_scores.csv + feedback_summary.md, what reflection ranks on
+python3 gepa_score.py w0                   # the DEV leg: scores.csv + summary.md, what selection runs on
 python3 gepa_ledger.py add --wave w0 --all --parent c000 \
   --candidates /e/fscratch/reformo/lee27/experiments/gepa/w0/cands.json \
   --scores /e/fscratch/reformo/lee27/experiments/gepa/w0/scores.csv --accepted
 ```
+
+The two legs are scored separately and never merged. The ledger records the **dev** numbers; the
+feedback numbers exist only to point reflection at the right traces.
 
 Read `experiments/gepa/w0/summary.md` before anything else. **Check the dropped-sample rate per arm
 first** — if one arm dropped far more trials than another, the wave is not paired and its deltas are
@@ -165,19 +210,23 @@ stays in the gene pool even if its mean is unremarkable.
 ### 4.4 Reflect (this is the session's job)
 
 ```bash
-python3 gepa_worst.py w0 c000 10                 # the tasks to read, ranked, with the dump commands
-python3 gepa_dump.py w0 c000 <task>              # one readable transcript
-python3 gepa_dump.py w0 ctl <task>               # the control on the same task, for the contrast
+python3 gepa_worst.py w0 c000 10                 # the FEEDBACK tasks to read, ranked, with dump commands
+python3 gepa_dump.py w0 c000 <feedback task>     # one readable transcript
+python3 gepa_dump.py w0 ctl <feedback task>      # the control on the same task, for the contrast
 ```
 
-Read at least six traces, and always read the control on the same task. Then write 2–3 children into
-a new `<wave>_cands.json` — the parent's block **plus one lesson**, never a rewrite. The reflection
-meta-prompt is §5.
+All of this is feedback-set only; a dev or test id is refused. Read at least six traces, and always
+read the control on the same task. Then write 2–3 children into a new `<wave>_cands.json` — the
+parent's block **plus one lesson**, never a rewrite. The reflection meta-prompt is §5.
+
+The split of roles is the point: you form the hypothesis from feedback traces, and dev tells you
+whether it was right. If a candidate looks better in the feedback traces but dev's numbers disagree,
+**dev wins** — that is exactly the disagreement the two sets exist to surface.
 
 ### 4.5 Cheap gate on `dev_mini`
 
 ```bash
-python3 gepa_tree.py --wave w1g --candidates .../w1_cands.json --split dev_mini
+python3 gepa_tree.py --wave w1g --candidates .../w1_cands.json --split feedback,dev_mini
 bash gepa_queue.sh add-all w1g 1                 # no new go; keep the queue two deep
 python3 gepa_score.py w1g --parent c000 \
   --gate-axis-name c010=self_check --gate-axis-name c011=no_repeat3
@@ -199,7 +248,7 @@ name the predicted axis or judge the child on paired wins.
 ### 4.6 Full dev eval of the accepted children
 
 ```bash
-python3 gepa_tree.py --wave w1 --candidates .../w1_accepted.json --split dev
+python3 gepa_tree.py --wave w1 --candidates .../w1_accepted.json --split feedback,dev
 bash gepa_queue.sh add-all w1 1
 python3 gepa_score.py w1 --parent c000
 python3 gepa_ledger.py add --wave w1 --all --parent c000 --candidates .../w1/cands.json --scores .../w1/scores.csv --accepted
@@ -221,10 +270,12 @@ bash gepa_serve.sh down                          # release the nodes when the lo
 
 When the session reflects, it does exactly this:
 
-**Read.** `gepa_worst.py <wave> <parent> 10`, then `gepa_dump.py` on at least six of those tasks, and
-the control's trace on the same tasks. Look for the *mechanism* of the loss, not the outcome: which
-turn did the run go wrong, what did the model believe at that turn, and what in the screen output it
-had already seen should have told it otherwise.
+**Read — feedback only.** `gepa_worst.py <wave> <parent> 10` ranks feedback tasks; `gepa_dump.py` on
+at least six of them, plus the control's trace on the same tasks. Look for the *mechanism* of the
+loss, not the outcome: which turn did the run go wrong, what did the model believe at that turn, and
+what in the screen output it had already seen should have told it otherwise. Dev's numbers are
+available and dev's traces are not; if you catch yourself wanting a particular dev trace to explain a
+number, that is the fitting this rule exists to prevent.
 
 **Write.** Two or three children. Each one is **the parent's block with one lesson added or one
 clause sharpened**. Say in one sentence, in the wave note, which trace taught the lesson and what
@@ -237,7 +288,9 @@ clause changes how the model works without changing pass@8). Any claim about the
 lengthening past 400 tokens — if the lesson does not fit, drop a weaker clause to make room.
 
 **Forbidden in the reflection.** Writing a child from memory of what the parent said. Writing a child
-without reading a trace. Reading a test trace. Concluding from pass rate alone on `dev_mini`.
+without reading a trace. Reading a dev or test trace, or working around the refusal with
+`--allow-closed`. Reading a SWE-bench or Terminal-Bench 2 trace or per-task result. Concluding from
+pass rate alone on `dev_mini`.
 
 ## 6. Selection and stop rules
 
@@ -269,13 +322,15 @@ used to pay it over and over.
 
 | work | attempts | node-hours (eval only) |
 |---|---|---|
-| `dev_mini` gate, parent + 2 children + ctl | 128 | 1.3 |
-| dev-500, one candidate | 500 | 5.0 |
-| dev-500, 3 candidates + ctl | 2,000 | 20.0 |
+| feedback leg, one candidate | 64 | 0.7 |
+| dev leg, one candidate | 500 | 5.0 |
+| **one candidate, both legs** | **564** | **5.7** |
+| `dev_mini` gate, parent + 2 children + ctl (feedback + dev_mini) | 384 | 3.8 |
+| a 4-arm dev wave, both legs | 2,256 | 22.6 |
 | final test-500, best + ctl | 1,000 | 10.0 |
 | **the serve job itself** | — | **4.0 once**, then 8 per wall-hour held |
 
-Marginal cost of one more candidate on dev at k=1 is **5 node-hours**. Raise `k` only to settle a
+Marginal cost of one more candidate is **5.7 node-hours** for both legs. Raise `k` only to settle a
 comparison the axes already call close: `k=2` doubles the bill for about a 1.4× tightening of the interval.
 
 The figure that actually governs spend is now **wall-clock held**, not attempts: 8 nodes cost 8 node-hours

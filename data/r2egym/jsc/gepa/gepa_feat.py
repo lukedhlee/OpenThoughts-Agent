@@ -23,7 +23,7 @@ float() is guarded and the failure is recorded rather than swallowed.
 
 Python 3.9 / stdlib (Jupiter login node).
 """
-import glob, json, os, re, statistics as st
+import glob, json, os, re, statistics as st, sys
 
 # ---------------------------------------------------------------- terminus-2 message parser (p2o_adherence.py)
 def parse_response(msg):
@@ -442,6 +442,33 @@ def iter_trials(run_dirs):
 def mean(xs):
     xs = [x for x in xs if x is not None]
     return st.mean(xs) if xs else None
+
+
+def read_split(name, E="/e/fscratch/reformo/lee27/experiments/gepa"):
+    p = "%s/split_%s.txt" % (E, name)
+    if not os.path.exists(p):
+        return set()
+    return {l.strip() for l in open(p) if l.strip() and not l.startswith("#")}
+
+
+def refuse_closed_task(task, E="/e/fscratch/reformo/lee27/experiments/gepa"):
+    """Exit 2 if `task` belongs to a split whose TRAJECTORIES the session may not read.
+
+    Dev is scores-only and test is sealed (Luke, 2026-09-21). The session sees dev's per-task reward, behaviour
+    axes, Pareto front and paired wins -- numbers -- and never a dev trace, because reading the traces of the very
+    tasks selection scores is how a prompt gets fitted to those 500 tasks instead of to the job. Reflection reads
+    the feedback sample, which is drawn from train and which nothing selects on.
+
+    This is a mechanical refusal on purpose: an intention in a skill file is not a control."""
+    for s in ("dev", "test"):
+        if task in read_split(s, E):
+            sys.stderr.write(
+                "REFUSED: %s is in the %s split, whose trajectories are closed to this session.\n"
+                "  dev is scores-only (gepa_score.py gives you its numbers); test is sealed until gepa_final.sh.\n"
+                "  Read the feedback sample instead -- it is train-set, and it is what reflection is for:\n"
+                "    python3 gepa_worst.py <wave> <cand>        # ranks feedback tasks\n"
+                "    python3 gepa_dump.py  <wave> <cand> <feedback task>\n" % (task, s))
+            sys.exit(2)
 
 
 def resolve_runs(wave, override=None, E="/e/fscratch/reformo/lee27/experiments/gepa",

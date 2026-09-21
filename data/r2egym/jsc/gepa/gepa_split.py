@@ -3,9 +3,16 @@
 
 The prompt-evolution loop needs three disjoint task sets over the SAME tree the probes run on
 (/e/fscratch/reformo/lee27/tasks/r2egym-tt-daytona, 2,476 task dirs):
-  dev   500  open to the reflection LLM: it may read any dev trace, and every candidate is scored here
-  test  500  touched exactly once, by the final paired run of the winning block vs the control
-  train rest the pool left for RL / future data work; the loop never evaluates on it
+  dev      500  SCORES ONLY. Every candidate is scored here and selection runs on these numbers, but the session
+                never reads a dev trajectory -- see the rule below.
+  test     500  touched exactly once, by the final paired run of the winning block vs the control
+  feedback  64  a stratified sample of TRAIN tasks. This is the only trace the reflection step ever reads.
+  train    rest the pool left for RL / future data work, minus the feedback sample
+
+Why feedback exists (Luke, 2026-09-21): reading the traces of the same tasks you select on is how a prompt gets
+fitted to 500 particular tasks instead of to the job. So the loop splits the two roles. Dev gives numbers and
+decides which candidate survives; feedback gives the session something to actually read, and it is drawn from
+train, which nothing selects on. gepa_dump.py and gepa_worst.py refuse any dev or test id outright.
 
 Facts this split rests on (verified 2026-09-20 on Jupiter):
   - the daytona tree has NO environment/workspace/metadata.json (that is the r2egym-tt-raw shape). The repo name is
@@ -22,7 +29,7 @@ CORRECT that skew: each cell's target is the tree's proportion of the 500, the f
 remainder is drawn by largest remainder clipped to availability. Where a forced set already overshoots a cell the cell
 gets no free picks and the overshoot is absorbed elsewhere -- report that residual, do not pretend it is gone.
 
-Writes experiments/gepa/split_{train,dev,test,dev_mini}.txt, split.tsv and split_strata.md.
+Writes experiments/gepa/split_{train,dev,test,dev_mini,feedback}.txt, split.tsv and split_strata.md.
 Python 3.9 / stdlib (Jupiter login node). Read-only on every input; writes only under --out.
 """
 import argparse, collections, csv, glob, json, os, random, sys
@@ -38,6 +45,8 @@ ap.add_argument("--force-test", default=E + "/tt_v2_oodval.txt," + E + "/tt_v2_h
 ap.add_argument("--dev", type=int, default=500)
 ap.add_argument("--test", type=int, default=500)
 ap.add_argument("--dev-mini", type=int, default=32, help="cheap-gate subset of dev, stratified the same way")
+ap.add_argument("--feedback", type=int, default=64,
+                help="TRAIN tasks sampled for the reflection step to read; stratified like dev_mini")
 ap.add_argument("--seed", type=int, default=20260921)
 ap.add_argument("--out", default=E + "/gepa")
 ap.add_argument("--dry-run", action="store_true", help="print the strata and write nothing")
@@ -174,12 +183,21 @@ for t in dev:
     dev_pool[cell(t)].append(t)
 dev_mini = strat_alloc(dev_pool, {c: float(len(v)) for c, v in dev_pool.items()}, a.dev_mini)
 
+# the feedback sample: TRAIN tasks, stratified the same way. Drawn from train so that nothing the session reads is
+# ever a task the selection rule scored it on.
+train_pool = collections.defaultdict(list)
+for t in train:
+    train_pool[cell(t)].append(t)
+feedback = strat_alloc(train_pool, {c: float(len(v)) for c, v in train_pool.items()}, a.feedback)
+
 sets = [("train", train), ("dev", dev), ("test", test)]
 allt = [t for _, v in sets for t in v]
 assert len(allt) == len(set(allt)), "splits overlap"
 assert set(allt) == set(tasks), "splits do not cover the tree (%d vs %d)" % (len(set(allt)), len(tasks))
 assert set(force_dev) <= set(dev) and set(force_test) <= set(test), "a forced task did not land in its split"
 assert set(dev_mini) <= set(dev), "dev_mini escaped dev"
+assert set(feedback) <= set(train), "the feedback sample escaped train"
+assert not (set(feedback) & (set(dev) | set(test))), "the feedback sample overlaps a scored split"
 if len(dev) != a.dev or len(test) != a.test:
     print("WARNING: dev %d / test %d (asked %d / %d) -- a cell ran out of tasks" % (len(dev), len(test), a.dev, a.test))
 
@@ -196,13 +214,13 @@ emit("# GEPA split (seed %d, tree %s)\n" % (a.seed, a.tree))
 emit("| set | tasks | forced | %s |" % " | ".join(BUCKETS))
 emit("|---|---|---|%s" % ("---|" * len(BUCKETS)))
 forced_of = {"train": set(), "dev": set(force_dev), "test": set(force_test)}
-for n, v in sets + [("dev_mini", dev_mini)]:
+for n, v in sets + [("dev_mini", dev_mini), ("feedback", feedback)]:
     b = collections.Counter(bucket(t) for t in v)
     emit("| %s | %d | %d | %s |" % (n, len(v), len(forced_of.get(n, set()) & set(v)), " | ".join(str(b[x]) for x in BUCKETS)))
 repos = [r for r, _ in collections.Counter(repo.values()).most_common()]
 emit("\n| set | %s |" % " | ".join(repos))
 emit("|---|%s" % ("---|" * len(repos)))
-for n, v in sets + [("dev_mini", dev_mini)] + [("tree", tasks)]:
+for n, v in sets + [("dev_mini", dev_mini), ("feedback", feedback)] + [("tree", tasks)]:
     c = collections.Counter(repo[t] for t in v)
     emit("| %s | %s |" % (n, " | ".join(str(c[r]) for r in repos)))
 emit("\n| set | ttd60k | tt60k | none |")
@@ -228,14 +246,14 @@ if a.dry_run:
     print("\n--dry-run: wrote nothing")
     sys.exit(0)
 os.makedirs(a.out, exist_ok=True)
-for n, v in sets + [("dev_mini", dev_mini)]:
+for n, v in sets + [("dev_mini", dev_mini), ("feedback", feedback)]:
     open("%s/split_%s.txt" % (a.out, n), "w").write("\n".join(v) + "\n")
 with open("%s/split.tsv" % a.out, "w") as f:
-    f.write("task\tset\trepo\tsucc\tsucc_src\tbucket\tforced\tdev_mini\n")
+    f.write("task\tset\trepo\tsucc\tsucc_src\tbucket\tforced\tdev_mini\tfeedback\n")
     for n, v in sets:
         for t in v:
-            f.write("%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\n" % (
+            f.write("%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n" % (
                 t, n, repo[t], "" if succ[t] is None else succ[t], src[t], bucket(t),
-                int(t in forced_of[n]), int(t in set(dev_mini))))
+                int(t in forced_of[n]), int(t in set(dev_mini)), int(t in set(feedback))))
 open("%s/split_strata.md" % a.out, "w").write("\n".join(lines) + "\n")
-print("\nwrote %s/split_{train,dev,test,dev_mini}.txt, split.tsv, split_strata.md" % a.out)
+print("\nwrote %s/split_{train,dev,test,dev_mini,feedback}.txt, split.tsv, split_strata.md" % a.out)

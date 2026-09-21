@@ -24,7 +24,7 @@ if [ "$PHASE" = build ]; then
   CAND=${2:?the winning candidate id}; CANDS=${3:?the cands.json holding its block text}
   for s in queue running done; do
     if [ "$(ls -1 "$E/$s/$WAVE."*.json 2>/dev/null | wc -l)" -gt 0 ]; then
-      echo "wave $WAVE already has $s entries -- the test set is scored ONCE. Read $E/$WAVE/summary.md, or start"
+      echo "wave $WAVE already has $s entries -- the test set is scored ONCE. Read $E/$WAVE/test_summary.md, or start"
       echo "a new test split if a second honest number is really needed."
       exit 1
     fi
@@ -38,7 +38,8 @@ assert cand in d["blocks"], "%s is not in %s" % (cand, src)
 json.dump({"delim": d["delim"], "blocks": {cand: d["blocks"][cand]}}, open(dst, "w"), indent=1)
 print("final candidate %s written to %s" % (cand, dst))
 PY
-  $PY $G/gepa_tree.py --wave "$WAVE" --candidates "$E/${WAVE}_cands.json" --split test --verify 40 || exit 1
+  # FINAL=1 is the only thing that lets a tree be built over the test split (gepa_tree.py refuses otherwise).
+  FINAL=1 $PY $G/gepa_tree.py --wave "$WAVE" --candidates "$E/${WAVE}_cands.json" --split test --verify 40 || exit 1
   NT=$(wc -l < "$E/split_test.txt")
   echo
   echo "FINAL: $NT test tasks x 2 arms ($CAND and ctl) x k=$K = $((NT * 2 * K)) attempts on the standing serve job."
@@ -57,9 +58,9 @@ fi
 
 if [ "$PHASE" = readout ]; then
   CTL=${CTL:-ctl}
-  $PY $G/gepa_score.py "$WAVE" --strata "$E/split.tsv" --ctl "$CTL" || exit 1
+  $PY $G/gepa_score.py "$WAVE" --leg test --strata "$E/split.tsv" --ctl "$CTL" || exit 1
   echo
-  echo "Read $E/$WAVE/summary.md. The headline is the paired pass delta vs $CTL with its bootstrap 95 % interval,"
+  echo "Read $E/$WAVE/test_summary.md. The headline is the paired pass delta vs $CTL with its bootstrap 95 % interval,"
   echo "on $(wc -l < "$E/split_test.txt") tasks scored once. The OOD-repo row is the transfer check: a block that only"
   echo "helps ID repos is a band-specific trick, not a procedure, and should be reported as one."
   exit 0
