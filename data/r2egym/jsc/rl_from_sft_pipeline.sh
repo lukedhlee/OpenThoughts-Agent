@@ -6,7 +6,7 @@
 #      r2egym-tt-v2-train-basecurr-x16 tree, lr 5e-7 after a 3-step warmup, staleness 2, GRPO + sequence_mean), max_steps 24,
 #      a 24-node JUWELS fleet brought up once the arm is on nodes and released by job id when it leaves the queue;
 #      the arm is cancelled once raw checkpoint 24 is on disk and quiet (own job, max_steps reached)
-#   C  export: export_hf.sbatch of global_step_24 (1 node, ~4 min)
+#   C  export: export_hf.sbatch of the final checkpoint (max_steps, or $D/max_steps written by band_swap.sh; 1 node, ~4 min)
 #   R  readout: TRIALS x (serve_snowball.sbatch 6 h + eval_chain.sh) on the step-24 export, tags <TAG>t<i>; waits for the
 #      final_*.txt files, then prints them
 # Markers in $D let a re-run resume where it stopped. Usage (login02, inside tmux):
@@ -21,6 +21,7 @@ SOCK=$HOME/.ssh/cm_juwels/bridge; JW="ssh -o BatchMode=yes -o ConnectTimeout=10 
 PORT=${PORT:-9930}; BRIDGE=http://10.128.1.2:$PORT
 FLEET_DIR=/p/project1/synthlaion/lee27/fleet; WORKER=$FLEET_DIR/refresh_sparse_worker.py; FLOG=/p/scratch/synthlaion/lee27/dc_agent_eval/logs
 export OMP_NUM_THREADS=1
+ms(){ cat $D/max_steps 2>/dev/null || echo ${MAX_STEPS:-24}; }   # band_swap.sh rewrites $D/max_steps once the learnable band is sized
 log(){ echo "$(date '+%F %T') $*" | tee -a $LOG; }
 status(){ curl -s -m 5 http://127.0.0.1:$PORT/status; }
 workers_alive(){ status | grep -q '"workers_alive": true'; }
@@ -62,9 +63,10 @@ while [ ! -f $D/B_DONE ]; do
   if [ ! -f $D/fleet_B ] && [ ! -f $D/fleet_B.released ] && job_started $(cat $D/job_B); then
     log "ARM B $(cat $D/job_B) is on nodes; bringing its fleet up"; fleet_submit B 24 05:30:00 || log "fleet B submit failed, retrying next poll"
   fi
-  if [ ! -f $D/B_TRAINED ] && [ "$(cat $E/$ARM/$ARM/checkpoints/latest_ckpt_global_step.txt 2>/dev/null)" = "24" ] \
-     && [ -f $E/$ARM/$ARM/checkpoints/global_step_24/trainer_state.pt ] && [ -z "$(find $E/$ARM/$ARM/checkpoints/global_step_24 -mmin -2 2>/dev/null | head -1)" ]; then
-    touch $D/B_TRAINED; log "ARM B checkpoint 24 complete and quiet; cancelling $(cat $D/job_B)"; scancel $(cat $D/job_B)
+  MS=$(ms)
+  if [ ! -f $D/B_TRAINED ] && [ "$(cat $E/$ARM/$ARM/checkpoints/latest_ckpt_global_step.txt 2>/dev/null)" = "$MS" ] \
+     && [ -f $E/$ARM/$ARM/checkpoints/global_step_$MS/trainer_state.pt ] && [ -z "$(find $E/$ARM/$ARM/checkpoints/global_step_$MS -mmin -2 2>/dev/null | head -1)" ]; then
+    touch $D/B_TRAINED; log "ARM B checkpoint $MS complete and quiet; cancelling $(cat $D/job_B)"; scancel $(cat $D/job_B)
   fi
   if job_gone $(cat $D/job_B); then
     fleet_release B
@@ -82,15 +84,15 @@ while [ ! -f $D/B_DONE ]; do
   (( $(date +%s) % 600 < 60 )) && snapshot
   sleep 60
 done
-# ---------- C: export checkpoint 24 ----------
-CK=$E/$ARM/$ARM/checkpoints; EXPORT=$E/exports/${ARM}_step24/model
+# ---------- C: export the final checkpoint ----------
+MS=$(ms); CK=$E/$ARM/$ARM/checkpoints; EXPORT=$E/exports/${ARM}_step$MS/model
 if [ ! -f $D/C_EXPORTED ]; then
   latest=$(cat $CK/latest_ckpt_global_step.txt 2>/dev/null)
-  if [ "$latest" != "24" ] || [ ! -f $CK/global_step_24/trainer_state.pt ]; then
-    log "ARM ended without checkpoint 24 (latest=$latest); nothing exported"; touch $D/FAILED; exit 1
+  if [ "$latest" != "$MS" ] || [ ! -f $CK/global_step_$MS/trainer_state.pt ]; then
+    log "ARM ended without checkpoint $MS (latest=$latest); nothing exported"; touch $D/FAILED; exit 1
   fi
   if [ ! -f $EXPORT/model.safetensors.index.json ]; then
-    J=$(cd $C && sbatch --parsable --export=ALL,RUN=$ARM,STEP=24 export_hf.sbatch) || { log "export sbatch failed"; exit 1; }
+    J=$(cd $C && sbatch --parsable --export=ALL,RUN=$ARM,STEP=$MS export_hf.sbatch) || { log "export sbatch failed"; exit 1; }
     log "EXPORT $J"; while ! job_gone $J; do sleep 20; done
     grep -E "tensor-name set|done$" $E/exports/logs/snowball_export_hf_$J.out | tail -2 | tee -a $LOG
   fi
