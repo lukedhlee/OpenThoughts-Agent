@@ -28,12 +28,14 @@ Python 3.9 / stdlib (Jupiter login node; one process, OMP_NUM_THREADS=1).
 """
 import argparse, collections, csv, glob, json, os, random, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gepa_feat import AXES, iter_trials, trial_features  # noqa: E402
+from gepa_feat import AXES, iter_trials, resolve_runs, trial_features  # noqa: E402
 
 E = "/e/fscratch/reformo/lee27/experiments"
 ap = argparse.ArgumentParser()
 ap.add_argument("wave")
-ap.add_argument("--runs", default=None, help="glob of probe run dirs (default experiments/gepa<wave>_s*)")
+ap.add_argument("--runs", default=None,
+                help="glob of run dirs; by default the queue's done/<wave>.*.json run_dirs, else the gepa_jobs "
+                     "shards, else the fallback probe run under experiments/")
 ap.add_argument("--out", default=None, help="output dir (default experiments/gepa/<wave>)")
 ap.add_argument("--ctl", default="ctl", help="the control arm's candidate id")
 ap.add_argument("--parent", default=None, help="also compare every candidate against this one (the cheap gate)")
@@ -49,9 +51,10 @@ ap.add_argument("--strata", default=None, help="split.tsv: adds the paired delta
 ap.add_argument("--ood-repos", default="tornado,scrapy", help="--strata: the repos held out of the v2 training band")
 ap.add_argument("--progress", type=int, default=250)
 a = ap.parse_args()
-runs = sorted(glob.glob(a.runs if a.runs else "%s/gepa%s_s*" % (E, a.wave)))
+runs = resolve_runs(a.wave, a.runs)
 if not runs:
-    sys.exit("no run dirs match %s" % (a.runs or "%s/gepa%s_s*" % (E, a.wave)))
+    sys.exit("no run dirs for wave %s (looked in the queue's done/ records, gepa_jobs/%s_*_s*, and "
+             "experiments/gepa%s_s*); pass --runs to point at them explicitly" % (a.wave, a.wave, a.wave))
 out = a.out or "%s/gepa/%s" % (E, a.wave)
 os.makedirs(out, exist_ok=True)
 rng = random.Random(a.seed)

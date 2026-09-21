@@ -210,12 +210,37 @@ def exception_type(att):
     return ""
 
 
+PROSE_SPLIT = re.compile(r"^\s*analysis\s*:\s*(.*?)(?:\n\s*plan\s*:\s*(.*))?$", re.I | re.S)
+
+
 def turns_of(att):
-    """[(i, analysis, plan, [keystrokes], task_complete, had_think, observation_text)] over the agent steps."""
+    """[(i, analysis, plan, [keystrokes], task_complete, had_think, observation_text)] over the agent steps.
+
+    TWO trajectory shapes exist and they do not look alike. Getting this wrong is silent: the wrong branch finds no
+    commands and every behaviour feature reads zero.
+
+      * `harbor run` (the serve + queue path, and the tb2_jobs runs): the parsed response is recorded as
+        `step["tool_calls"]` -- `bash_command` carries `arguments.keystrokes`, `mark_task_complete` ends the run --
+        and `step["message"]` is rendered PROSE ("Analysis: ... Plan: ..."), with no JSON in it at all.
+      * the SkyRL probe job (gepa_wave.sh, and the p2o runs): no `tool_calls` key whatsoever; the raw terminus-2
+        JSON sits inside `step["message"]`, behind an optional think span.
+
+    Both normalise to the same tuple here, so everything downstream is shape-agnostic.
+    """
     d = json.load(open(os.path.join(att, "agent", "trajectory.json")))
     out = []
     for i, s in enumerate([x for x in (d.get("steps") or []) if x.get("source") == "agent"]):
-        an, pl, cmds, tc, th = parse_response(s.get("message") or "")
+        msg = s.get("message") or ""
+        tcs = s.get("tool_calls")
+        if tcs:
+            cmds = [(t.get("arguments") or {}).get("keystrokes") or ""
+                    for t in tcs if t.get("function_name") == "bash_command"]
+            tc = any(t.get("function_name") == "mark_task_complete" for t in tcs)
+            th = "<|start_think|>" in msg or bool(s.get("reasoning_content"))
+            m = PROSE_SPLIT.match(msg)
+            an, pl = (m.group(1) or "", m.group(2) or "") if m else (msg, "")
+        else:
+            an, pl, cmds, tc, th = parse_response(msg)
         o = s.get("observation") or {}
         try:
             obs = "\n".join(x.get("content", "") for x in (o.get("results") or []))
@@ -378,19 +403,32 @@ def trial_features(trial_dir):
 
 # ---------------------------------------------------------------- trial discovery
 def iter_trials(run_dirs):
-    """Yield (task, cand, trial_dir) for every probe trial under the given run dirs.
+    """Yield (task, cand, trial_dir) for every trial under the given run dirs. Two layouts are supported.
 
-    Probe trials live at <run>/<run>/trace_jobs/eval_sessions/<session>/<task>-p<cand>__<hash>/; the sibling
-    <run>/<run>/trace_jobs/<task>__<hash>/ dirs are TRAINING rollouts and are excluded by requiring eval_sessions."""
+    1. `harbor run` (the standing serve job + queue, gepa_runner.py): FLAT --
+       <jobs_dir>/<run name>/<task>-p<cand>__<id>/attempts/<k>/
+       This is the tb2_jobs shape; a candidate's run dirs are its shards, so pass them all and they merge.
+
+    2. the SkyRL probe job (gepa_wave.sh, the fallback launcher): NESTED --
+       <run>/<run>/trace_jobs/eval_sessions/<session>/<task>-p<cand>__<id>/attempts/<k>/
+       The sibling <run>/<run>/trace_jobs/<task>__<id>/ dirs there are TRAINING rollouts, not probe trials, and are
+       excluded by requiring the eval_sessions level. A flat glob is therefore only attempted when no nested hit
+       exists, so a probe run can never leak its training rollouts into a score.
+    """
     seen = set()
     for r in run_dirs:
-        pats = [os.path.join(r, os.path.basename(r.rstrip("/")), "trace_jobs", "eval_sessions", "*", "*__*"),
-                os.path.join(r, "trace_jobs", "eval_sessions", "*", "*__*")]
+        r = r.rstrip("/")
+        nested = [os.path.join(r, os.path.basename(r), "trace_jobs", "eval_sessions", "*", "*__*"),
+                  os.path.join(r, "trace_jobs", "eval_sessions", "*", "*__*")]
         hits = []
-        for p in pats:
+        for p in nested:
             hits += glob.glob(p)
-        if not hits:  # last resort, the p2o_adherence.py recursive form
+        if not hits:
             hits = glob.glob(os.path.join(r, "**", "eval_sessions", "*", "*__*"), recursive=True)
+        if not hits:
+            # harbor-run layout: trial dirs sit directly under the run dir. Require an attempts/ child so a stray
+            # sibling directory cannot be mistaken for a trial.
+            hits = [d for d in glob.glob(os.path.join(r, "*__*")) if os.path.isdir(os.path.join(d, "attempts"))]
         for td in sorted(hits):
             if td in seen:
                 continue
@@ -404,3 +442,28 @@ def iter_trials(run_dirs):
 def mean(xs):
     xs = [x for x in xs if x is not None]
     return st.mean(xs) if xs else None
+
+
+def resolve_runs(wave, override=None, E="/e/fscratch/reformo/lee27/experiments/gepa",
+                 EXP="/e/fscratch/reformo/lee27/experiments",
+                 JOBS="/e/data1/mmlaion/lee27/experiments/gepa_jobs"):
+    """Where a wave's trials are, whichever launcher produced them.
+
+    Preference order: an explicit --runs glob; the run dirs the queue recorded in done/<wave>.*.json (exact, and it
+    picks up every shard of every candidate); then the two directory conventions, harbor-run shards under gepa_jobs
+    and the fallback probe run under experiments/. Returns a sorted, de-duplicated list."""
+    import json as _json
+    if override:
+        return sorted(glob.glob(override))
+    out = []
+    for p in sorted(glob.glob("%s/done/%s.*.json" % (E, wave))):
+        try:
+            it = _json.load(open(p))
+        except Exception:
+            continue
+        out += [d for d in it.get("run_dirs", []) if os.path.isdir(d)]
+    if out:
+        return sorted(set(out))
+    out = [d for d in glob.glob("%s/%s_*_s*" % (JOBS, wave)) if os.path.isdir(d)]
+    out += [d for d in glob.glob("%s/gepa%s_s*" % (EXP, wave)) if os.path.isdir(d)]
+    return sorted(set(out))

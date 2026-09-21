@@ -11,9 +11,11 @@ description: >-
   data/r2egym/jsc/gepa/. Reference: ai_memory/active/snowball-r2egym/research/2026-09-21_gepa_agentic_loop.md.
 ---
 
-> ⚠ **Every wave costs GPU node-hours. Print the cost line, show it to Luke, wait for the go, and only
-> then submit.** `gepa_wave.sh` and `gepa_final.sh` never submit without `SUBMIT=1`. This is the one
-> rule that has no exception.
+> ⚠ **The loop runs on ONE standing serve job and a candidate queue.** State its cost line once, at
+> session start, and wait for the go. After that, enqueueing candidates needs no new go — the
+> allocation is already paid for and the queue only decides whether it idles. What you owe instead is
+> a node-hours-burned figure in **every** status line. `gepa_serve.sh` never submits without
+> `SUBMIT=1`, and the test set never runs without `CONFIRM=1`.
 
 # gepa-prompt-loop
 
@@ -29,9 +31,13 @@ conventions. The behaviour detectors and their provenance → `data/r2egym/jsc/g
 
 ## 1. Hard rules
 
-- **Cost line before every submission.** One sentence: estimated GPU node-hours and what we want from
-  the wave. `gepa_wave.sh` prints it. Show it, get the go, then `SUBMIT=1`. No exceptions for "small"
-  waves, probes or re-runs.
+- **One cost line, at session start, for the serve job.** `gepa_serve.sh up` prints it: nodes × wall.
+  Show it, get the go, then `SUBMIT=1`. Enqueueing a candidate afterwards is free of a new go.
+- **Never let the servers idle.** Keep **at least two candidates queued at all times**. Score and read
+  finished candidates while the next ones run. The whole point of the standing job is that the GPUs
+  do not wait for a reflection step.
+- **Report node-hours burned in every status line.** `gepa_serve.sh status` prints it. A standing
+  allocation is invisible unless you say what it has cost.
 - **Dev is open, test is sealed.** The session may read ANY dev trace, as many as it likes. The test
   split is scored exactly once, by `gepa_final.sh`, at the end. Looking at a test trace, or scoring
   the test set twice, destroys the only held-out number the loop produces.
@@ -49,6 +55,11 @@ conventions. The behaviour detectors and their provenance → `data/r2egym/jsc/g
 - **Standing cluster rules still apply.** Login node only for the scripts (no `find`, no `du`,
   `OMP_NUM_THREADS=1`, ≤ 4 python processes). Local clone is ground truth; `code/snowball` on Jupiter
   is a plain copy, so changes go out with `gepa_sync.sh --go`, not `git pull`.
+- **The runner lives on the login node and so do the harbor runs.** Each shard is a tmux running
+  `harbor` at concurrency 32; several at once is hundreds of threads against a 4,096 pid ceiling that
+  was hit once and took Jupiter down for everyone. `gepa_runner.py` refuses to admit while the thread
+  count is above `PID_GUARD`. Do not raise `SHARDS_PER_CAND`, `CONC` or `MAX_INFLIGHT` to route
+  around that message — the guard is the thing standing between this loop and an outage.
 
 ## 2. What the loop is
 
@@ -62,6 +73,7 @@ conventions. The behaviour detectors and their provenance → `data/r2egym/jsc/g
 | **cheap gate** | child vs parent on `dev_mini` (32 tasks), paired wins plus axis deltas — pass rate alone cannot decide at this n |
 | **full eval** | an accepted child is re-scored on all 500 dev tasks and entered in the ledger |
 | **final** | the best block and the control, once, on the 500-task test split, paired, plus the OOD-repo check |
+| **the compute** | one standing serve job (8 nodes, one vLLM server each) plus a login-node queue. A candidate is N `harbor run`s against those servers on Daytona, never its own Slurm job |
 
 The eight axes, all oriented so higher is better: `self_check`, `ran_test_after_edit`, `in_place`,
 `no_sed_patch`, `no_repeat3`, `no_json_reject`, `no_input_delete`, `no_ctx_death`. Seven are binary
@@ -87,22 +99,46 @@ verdict: the final run is paired block-vs-control on the same tasks.
 
 ## 4. The loop, step by step
 
-### 4.1 Seed the population (wave `w0`)
+### 4.0 Bring the servers up, once
 
 ```bash
 ssh jupiter
 export OMP_NUM_THREADS=1; cd /e/project1/transfernetx/lee27/code/snowball/gepa
-python3 gepa_tree.py --wave w0 --candidates seed_blocks.json --split dev
-bash gepa_wave.sh w0 1 8            # prints the COST line; submits nothing
+bash gepa_serve.sh up                     # prints the COST line; submits nothing
+#   -> show it to Luke, get the go, then:
+SUBMIT=1 bash gepa_serve.sh up            # 8 nodes, one vLLM server each, EAGLE-3 draft
+bash gepa_queue.sh start                  # the runner tmux on the login node
+bash gepa_serve.sh status                 # endpoints up, queue depth, node-hours burned
 ```
+
+The serve job self-cancels after `IDLE_MIN=20` minutes with an empty queue, so an abandoned session
+releases its nodes by itself. That is also the failure mode to watch: **let the queue run dry for
+20 minutes and the servers are gone**, and the next candidate pays the engine load again. Keep two
+queued.
+
+### 4.1 Seed the population (wave `w0`)
+
+```bash
+python3 gepa_tree.py --wave w0 --candidates seed_blocks.json --split dev
+bash gepa_queue.sh add-all w0 1           # control + c000..c003, no new go needed
+bash gepa_queue.sh list
+```
+
+The runner admits `MAX_INFLIGHT=2` candidates at a time, splits each into `SHARDS_PER_CAND=4`
+`harbor run`s (one per server, concurrency 32 each), and moves each finished candidate to `done/`
+with its run dirs. Peak load is 2 × 4 × 32 = 256 concurrent Daytona sandboxes, well under the
+~1,000-per-user ceiling; the runner refuses a layout that would exceed `SANDBOX_CAP`.
 
 `seed_blocks.json` is the seed population: `c000` is **block A of P2O wave 0 verbatim**, the only
 block with a confirmed paired lift (+0.144 [+0.096, +0.194] on dev120, 2026-09-13); `c001`–`c003`
 each target one thing the wave-0 traces showed missing — checking the stated deliverable before
 declaring done, a small first command batch and a time-boxed hypothesis, and never deleting inputs
-or reverting blind. Show the cost line, get the go, then `SUBMIT=1 bash gepa_wave.sh w0 1 8`.
+or reverting blind.
 
 ### 4.2 Score the wave
+
+Score each candidate **as it finishes**, while the others are still running. Do not wait for the
+whole wave.
 
 ```bash
 python3 gepa_score.py w0
@@ -142,7 +178,7 @@ meta-prompt is §5.
 
 ```bash
 python3 gepa_tree.py --wave w1g --candidates .../w1_cands.json --split dev_mini
-bash gepa_wave.sh w1g 1 8                        # COST line -> go -> SUBMIT=1
+bash gepa_queue.sh add-all w1g 1                 # no new go; keep the queue two deep
 python3 gepa_score.py w1g --parent c000 \
   --gate-axis-name c010=self_check --gate-axis-name c011=no_repeat3
 ```
@@ -164,19 +200,21 @@ name the predicted axis or judge the child on paired wins.
 
 ```bash
 python3 gepa_tree.py --wave w1 --candidates .../w1_accepted.json --split dev
-bash gepa_wave.sh w1 1 8                         # COST line -> go -> SUBMIT=1
+bash gepa_queue.sh add-all w1 1
 python3 gepa_score.py w1 --parent c000
 python3 gepa_ledger.py add --wave w1 --all --parent c000 --candidates .../w1/cands.json --scores .../w1/scores.csv --accepted
 ```
 
-Then back to §4.3 for the next wave.
+Then back to §4.3 for the next wave. Build and enqueue the **next** wave's gate before reading this
+one's traces, so the servers have work while you read.
 
 ### 4.7 Final, once
 
 ```bash
 bash gepa_final.sh build <best cand> /e/fscratch/reformo/lee27/experiments/gepa/<wave>/cands.json
-#   COST line -> go -> SUBMIT=1 bash gepa_final.sh build ...
+#   -> confirm with Luke, then: CONFIRM=1 bash gepa_final.sh build ...
 bash gepa_final.sh readout
+bash gepa_serve.sh down                          # release the nodes when the loop is over
 ```
 
 ## 5. The reflection meta-prompt
@@ -225,23 +263,28 @@ Measured off the two P2O probes on this exact layout (2026-09-20), not assumed:
 - **plus ≈ 0.5 h × nodes of engine startup** before the first trial — `p2oAc_s0` elapsed 1:48 against
   1:19 of eval. On 8 nodes that is a flat **4 node-hours per job**.
 
-| wave | attempts | eval | + startup | total node-h | wall on 8 nodes |
-|---|---|---|---|---|---|
-| `dev_mini` gate, parent + 2 children + ctl | 128 | 1.3 | 4.0 | **5.3** | ~40 min |
-| dev-500, 1 candidate + ctl | 1,000 | 10.0 | 4.0 | **14.0** | ~1.8 h |
-| dev-500, 3 candidates + ctl | 2,000 | 20.0 | 4.0 | **24.0** | ~3.0 h |
-| final test-500, best + ctl | 1,000 | 10.0 | 4.0 | **14.0** | ~1.8 h |
+**On the standing serve job the startup is paid once, at session start, not per candidate.** That is the
+whole reason for the redesign: it is 4 node-hours each time, and a loop that reflects between candidates
+used to pay it over and over.
 
-Marginal cost of one extra candidate on dev at k=1: **5 node-hours** (500 attempts); the control and the
-startup are shared across the wave.
+| work | attempts | node-hours (eval only) |
+|---|---|---|
+| `dev_mini` gate, parent + 2 children + ctl | 128 | 1.3 |
+| dev-500, one candidate | 500 | 5.0 |
+| dev-500, 3 candidates + ctl | 2,000 | 20.0 |
+| final test-500, best + ctl | 1,000 | 10.0 |
+| **the serve job itself** | — | **4.0 once**, then 8 per wall-hour held |
 
-Two consequences. **Startup dominates small waves** — the 128-attempt gate is only ~2.6× cheaper than a
-full two-arm dev wave, not 20× — so a wave must carry every candidate at once and never be split into one
-job per candidate. And **raise `k` only to settle a comparison the axes already call close**: `k=2` doubles
-the eval half of the bill for about a 1.4× tightening of the interval.
+Marginal cost of one more candidate on dev at k=1 is **5 node-hours**. Raise `k` only to settle a
+comparison the axes already call close: `k=2` doubles the bill for about a 1.4× tightening of the interval.
 
-> An earlier draft of this loop used 200 attempts/node-hour. That is wrong by about 2× and it under-quoted
-> every wave. Quote from this table.
+The figure that actually governs spend is now **wall-clock held**, not attempts: 8 nodes cost 8 node-hours
+for every hour the job is up, busy or not. So an idle queue is pure waste, and `gepa_serve.sh status` prints
+the running total. Quote that number, not an estimate.
+
+> Two earlier figures in this loop's history were wrong and are worth not repeating: 200 attempts per
+> node-hour (it is ~100), and "one probe job per wave is fine" (the per-job engine load made it the
+> dominant cost). Quote from this section.
 
 ## 8. Readout format
 
@@ -256,12 +299,18 @@ a band-specific trick, not a procedure, and should be reported as one.
 
 - scripts → `data/r2egym/jsc/gepa/` (mirror to Jupiter with `bash data/r2egym/jsc/gepa/gepa_sync.sh --go`;
   `code/snowball` is **not** a git checkout, `git pull` does nothing for it)
-- split + ledger + waves → `/e/fscratch/reformo/lee27/experiments/gepa/`
-- wave trees → `/e/fscratch/reformo/lee27/tasks/gepa-<wave>/`, probe runs → `experiments/gepa<wave>_s0`
+- split + ledger + queue + waves → `/e/fscratch/reformo/lee27/experiments/gepa/`
+  (`queue/`, `running/`, `done/`, `runs.jsonl`, `endpoints/`, `logs/runner.log`)
+- wave trees → `/e/fscratch/reformo/lee27/tasks/gepa-<wave>/`
+- harbor run dirs → `/e/data1/mmlaion/lee27/experiments/gepa_jobs/<wave>_<cand>_s<i>/`
+- the serving stack, reused not rewritten → `data/tb2/jupiter/serve_snowball.sbatch` (the per-node server),
+  `run_tb2.sh` (the harbor-run preflight and tmux convention), `rst_policy.yaml` (the policy shape)
+- the setup-files-hook harbor, which R2E-Gym Daytona tasks need → `code/harbor-hook/src`
 - the suffix method and the byte-identity check → `data/r2egym/jsc/p2o/p2o_trees.py`
-- the probe recipe → `data/r2egym/jsc/make_tt_wave.py` (`--daytona`) then the cluster's
-  `code/snowball/draftify_probe.sh` (EAGLE-3; policy 2026-09-12 is that every job uses the draft, so
-  numbers from a no-draft probe are not paired with anything here)
+- the FALLBACK launcher (one SkyRL probe job per wave) → `gepa_wave.sh`, plus
+  `data/r2egym/jsc/make_tt_wave.py --daytona` and the cluster's `code/snowball/draftify_probe.sh`
+  (EAGLE-3; policy 2026-09-12 is that every job uses the draft, so numbers from a no-draft run are not
+  paired with anything here)
 - detector provenance → `p2o/p2o_adherence.py` (message parser), `behaviour_scans_20260919/swe_evals/scan.py`
   (write targets, repeats, rm, warnings), `behaviour_scans_20260919/tb2_why/selfcheck.py` (self-check)
 - note → `ai_memory/active/snowball-r2egym/research/2026-09-21_gepa_agentic_loop.md`

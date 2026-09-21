@@ -1,0 +1,66 @@
+# gepa_policy.yaml — the harbor policy for one GEPA candidate shard, run from a Jupiter login node against the
+# standing serve job on the Daytona backend. Adapted by diff from data/tb2/jupiter/rst_policy.yaml.
+#
+# Kept from the TB2/SWE eval policy: terminus-2, Daytona with auto_snapshot (the eval org forbids per-sandbox
+# declarative builds, so the prebuilt harbor__<envhash>__snapshot must resolve), the v0.1 retry list, quiet,
+# release_trial_payloads_in_memory, and skip_special_tokens=false (Snowball's think delimiters are special tokens
+# and the whole parity contract depends on them surviving the round trip).
+#
+# Changed, and why -- this loop is not a benchmark run, it is the band's own serving contract:
+#   max_input_tokens 61440 / max_output_tokens 4096   the pool60k contract the band was trained and probed under,
+#                                                     not TB2 v0.1's 32,768 / 8,192
+#   enable_summarize: false                           pool60k runs with summarization off; leaving it on changes
+#                                                     what the agent sees mid-episode and would confound a prompt
+#                                                     comparison with a context-management difference
+#
+# Expect a LOT of context death, and do not read it as a bug. With summarization off, the control arm of the
+# p2o6all probe ended ~72 % of its trials on ContextLengthExceededError at exactly these budgets, and a 32,768-token
+# SWE run with summarization off ended 100 % of the trials sampled that way. That is why `no_ctx_death` is one of
+# the eight Pareto axes: at this contract it is the single biggest thing a guidance block can move, and block A
+# moved it +0.17 in the fixture.
+#   n_concurrent_trials: __CONC__                     set per shard by gepa_runner.py to the server's seat count
+#   tasks: filled in by gepa_run.sh                   one shard of ONE candidate's dirs, never a whole tree
+#
+# gepa_run.sh fills __JOB_NAME__, __API_BASE__, __CONC__, __ATTEMPTS__ and the task list.
+job_name: __JOB_NAME__
+jobs_dir: /e/data1/mmlaion/lee27/experiments/gepa_jobs
+n_attempts: __ATTEMPTS__
+n_concurrent_trials: __CONC__
+timeout_multiplier: 1.0
+quiet: true
+release_trial_payloads_in_memory: true
+retry:
+  max_retries: 10
+  include_exceptions:
+    - InternalServerError
+    - APIConnectionError
+    - APITimeoutError
+    - ArtifactUploadTimeoutError
+    - ArtifactWriterBacklogError
+    - CancelledError
+    - ContextManagementInfrastructureError
+    - LLMRequestTimeoutError
+    - SandboxBuildFailedError
+    - TrialTimeoutError
+  exclude_exceptions: []
+  wait_multiplier: 2.0
+  min_wait_sec: 1.0
+  max_wait_sec: 60.0
+environment:
+  type: daytona
+  force_build: false
+  kwargs:
+    auto_snapshot: true
+agents:
+  - name: terminus-2
+    model_name: hosted_vllm/snowball
+    kwargs:
+      api_base: __API_BASE__
+      enable_summarize: false
+      model_info:
+        max_input_tokens: 61440
+        max_output_tokens: 4096
+        input_cost_per_token: 0.0
+        output_cost_per_token: 0.0
+      extra_body:
+        skip_special_tokens: false

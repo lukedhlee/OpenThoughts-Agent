@@ -1,6 +1,17 @@
 #!/bin/bash
-# gepa_wave.sh <wave> [k=1] [nodes=8] — on Jupiter: turn one GEPA wave tree (tasks/gepa-<wave>, built by gepa_tree.py)
-# into a Daytona pass@k probe job, print the COST LINE, and submit only with SUBMIT=1.
+# gepa_wave.sh <wave> [k=1] [nodes=8] — FALLBACK LAUNCHER. One self-contained SkyRL probe job per wave.
+#
+# ⚠ NOT the default path. The loop runs on a STANDING serve job plus a candidate queue: gepa_serve.sh up, then
+# gepa_queue.sh add. The reason is measured (2026-09-20): a probe job spends ~0.5 h x nodes loading the 67B MoE
+# before its first trial, about 4 node-hours on 8 nodes, and this launcher pays that again for every wave while the
+# session reflects between them. The serve job pays it once and the GPUs stay busy.
+#
+# Use this only when the serve + queue path is unavailable: no free multi-node allocation to hold, a harbor/Daytona
+# problem that the SkyRL generator path routes around, or a one-off replay of an older wave under the exact probe
+# recipe the earlier numbers were produced with. It is kept working and tested for those cases.
+#
+# On Jupiter: turn one GEPA wave tree (tasks/gepa-<wave>, built by gepa_tree.py) into a Daytona pass@k probe job,
+# print the COST LINE, and submit only with SUBMIT=1.
 #
 # One job per wave, one shard: every candidate of a task sits in the same shard, so every candidate meets the same
 # sandbox and engine load (the p2o6all_s0 shape). The recipe is the screens' recipe, not a new one:

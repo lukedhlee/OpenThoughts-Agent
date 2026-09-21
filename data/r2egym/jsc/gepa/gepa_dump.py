@@ -15,7 +15,7 @@ Python 3.9 / stdlib (Jupiter login node).
 """
 import argparse, glob, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gepa_feat import AXES, iter_trials, last_attempt, trial_features, turns_of  # noqa: E402
+from gepa_feat import AXES, iter_trials, last_attempt, resolve_runs, trial_features, turns_of  # noqa: E402
 
 E = "/e/fscratch/reformo/lee27/experiments"
 ap = argparse.ArgumentParser()
@@ -28,9 +28,9 @@ ap.add_argument("--turns", default=None, help="turn range, e.g. 0:10 or 12:")
 ap.add_argument("--trial", type=int, default=0, help="which trial of this (task, cand), when k > 1")
 ap.add_argument("--plan", action="store_true", help="also print the plan field (analysis only by default)")
 a = ap.parse_args()
-runs = sorted(glob.glob(a.runs if a.runs else "%s/gepa%s_s*" % (E, a.wave)))
+runs = resolve_runs(a.wave, a.runs)
 if not runs:
-    sys.exit("no run dirs match %s" % (a.runs or "%s/gepa%s_s*" % (E, a.wave)))
+    sys.exit("no run dirs for wave %s; pass --runs to point at them explicitly" % a.wave)
 
 hits = [td for t, c, td in iter_trials(runs) if t == a.task and c == a.cand]
 if not hits:
