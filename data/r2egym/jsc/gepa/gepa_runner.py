@@ -22,9 +22,11 @@ into ledger.json would make `gepa_ledger.py front` lie. So the runner records ru
 candidates once they have numbers.
 
 Admission control, in order:
-  * at most MAX_INFLIGHT candidates at once (Daytona: ~1,000 sandboxes per user, 5 creates/s -- the ceiling here is
-    MAX_INFLIGHT x SHARDS x CONC concurrent trials, printed at startup and asserted against SANDBOX_CAP);
-  * at most one shard per live endpoint, so no two harbor runs share a server's seats;
+  * at most MAX_INFLIGHT candidates at once;
+  * at most one shard per live endpoint, so no two harbor runs share a server's seats. That invariant is what
+    bounds Daytona: concurrent sandboxes can never exceed live_endpoints x CONC, checked every pass against
+    SANDBOX_CAP (~1,000 per user, 5 creates/s). Shards per candidate are AUTO by default -- the live endpoint
+    count divided between the in-flight candidates -- so a 1-node pilot and an 8-node job need no reconfiguring;
   * a login-node THREAD guard. 2026-09-03 a torch import on the login node hit the 4,096 pid ceiling and took
     Jupiter down for everyone. Each harbor run is worth hundreds of threads at conc 32, so the runner refuses to
     admit another candidate while the user's thread count is above PID_GUARD.
@@ -41,8 +43,10 @@ G = os.environ.get("GEPA_CODE", "/e/project1/transfernetx/lee27/code/snowball/ge
 JOBS = os.environ.get("GEPA_JOBS", "/e/data1/mmlaion/lee27/experiments/gepa_jobs")
 ap = argparse.ArgumentParser()
 ap.add_argument("--max-inflight", type=int, default=int(os.environ.get("MAX_INFLIGHT", "2")))
-ap.add_argument("--shards", type=int, default=int(os.environ.get("SHARDS_PER_CAND", "4")),
-                help="harbor runs per candidate; each takes one server")
+ap.add_argument("--shards", type=int, default=int(os.environ.get("SHARDS_PER_CAND", "0")),
+                help="harbor runs per candidate, each taking one server. 0 (the default) = AUTO: read the live "
+                     "endpoint count and give each in-flight candidate its share, so a 1-node pilot uses 1 shard "
+                     "and an 8-node job uses 4. Set a number only to hold a candidate below its share.")
 ap.add_argument("--conc", type=int, default=int(os.environ.get("CONC", "32")),
                 help="concurrent trials per shard; must not exceed the server's --max-num-seqs")
 ap.add_argument("--sandbox-cap", type=int, default=int(os.environ.get("SANDBOX_CAP", "900")),
@@ -141,13 +145,13 @@ def legs_of(it):
     return it.get("legs") or [{"leg": it.get("split", "dev"), "tasks": it.get("tasks", [])}]
 
 
-def reap(free):
+def reap(free, nlive):
     """Finish whatever shards are done. A candidate whose leg completes starts its NEXT leg immediately, reusing the
     endpoints that leg just freed, so the servers never wait for the whole candidate."""
     for p in items(R):
         it = read(p)
         if not it.get("shards"):  # mid-candidate, waiting for endpoints to start the next leg
-            if free and start_leg(it, free):
+            if free and start_leg(it, free, nlive):
                 write(p, it)
             continue
         states = [(s, shard_state(s["name"])) for s in it["shards"]]
@@ -186,7 +190,7 @@ def reap(free):
 
         it["leg"] = it.get("leg", 0) + 1
         if it["leg"] < len(legs):
-            start_leg(it, free)       # may be a no-op if nothing is free; the next pass retries
+            start_leg(it, free, nlive)   # may be a no-op if nothing is free; the next pass retries
             write(p, it)
             continue
 
@@ -211,7 +215,15 @@ def busy_endpoints():
     return used
 
 
-def start_leg(it, free):
+def shards_for(nlive):
+    """How many servers one candidate may take. AUTO (--shards 0) splits the live endpoints between the in-flight
+    candidates, so a 1-node pilot runs 1 shard and an 8-node job runs 4 -- nothing assumes a node count."""
+    if a.shards > 0:
+        return a.shards
+    return max(1, nlive // max(1, a.max_inflight))
+
+
+def start_leg(it, free, nlive):
     """Launch the current leg's shards over `free` endpoints (mutated). True if it started."""
     legs = legs_of(it)
     i = it.get("leg", 0)
@@ -220,7 +232,7 @@ def start_leg(it, free):
     leg, tasks = legs[i]["leg"], legs[i]["tasks"]
     if not tasks:
         return False
-    n = min(a.shards, len(free), len(tasks))
+    n = min(shards_for(nlive), len(free), len(tasks))
     shards = []
     for j in range(n):
         part = tasks[j::n]
@@ -256,7 +268,7 @@ def start_leg(it, free):
     return True
 
 
-def admit(free):
+def admit(free, nlive):
     while len(items(R)) < a.max_inflight and items(Q) and free:
         th = threads_used()
         if th > a.pid_guard:
@@ -269,18 +281,25 @@ def admit(free):
             log("candidate %s.%s has no tasks; dropping" % (it["wave"], it["cand"]))
             os.remove(p)
             continue
-        if not start_leg(it, free):
+        if not start_leg(it, free, nlive):
             return
         os.remove(p)
         write("%s/%s.%s.json" % (R, it["wave"], it["cand"]), it)
 
 
-peak = a.max_inflight * a.shards * a.conc
-if peak > a.sandbox_cap:
-    sys.exit("layout would hold up to %d concurrent Daytona sandboxes (%d inflight x %d shards x conc %d), above the "
-             "cap %d -- lower MAX_INFLIGHT, SHARDS_PER_CAND or CONC" % (peak, a.max_inflight, a.shards, a.conc, a.sandbox_cap))
-log("runner up: max_inflight %d, %d shards/candidate, conc %d -> peak %d concurrent sandboxes; pid guard %d"
-    % (a.max_inflight, a.shards, a.conc, peak, a.pid_guard))
+# The real invariant is one shard per endpoint, so concurrent sandboxes can never exceed live_endpoints x conc --
+# tighter and more honest than max_inflight x shards x conc, which over-counts whenever fewer servers are up.
+def check_cap(nlive):
+    peak = nlive * a.conc
+    if peak > a.sandbox_cap:
+        sys.exit("%d live servers x conc %d = up to %d concurrent Daytona sandboxes, above the cap %d -- lower CONC "
+                 "or serve fewer nodes" % (nlive, a.conc, peak, a.sandbox_cap))
+    return peak
+
+
+log("runner up: max_inflight %d, shards/candidate %s, conc %d; peak sandboxes = live servers x %d, cap %d; pid guard %d"
+    % (a.max_inflight, ("auto (live servers / max_inflight)" if a.shards <= 0 else a.shards),
+       a.conc, a.conc, a.sandbox_cap, a.pid_guard))
 while True:
     try:
         job = serve_job()
@@ -288,9 +307,10 @@ while True:
             log("no RUNNING gepa_serve job; waiting (queued: %d)" % len(items(Q)))
         else:
             live = endpoints(job)
+            check_cap(len(live))
             free = [u for u in live if u not in busy_endpoints()]
-            reap(free)
-            admit(free)
+            reap(free, len(live))
+            admit(free, len(live))
     except Exception as e:  # a controller that dies leaves the servers idle; never let one bad pass kill it
         log("pass failed: %s: %s" % (type(e).__name__, e))
     if a.once:

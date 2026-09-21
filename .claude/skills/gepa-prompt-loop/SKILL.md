@@ -138,7 +138,46 @@ verdict: the final run is paired block-vs-control on the same tasks.
 
 ## 4. The loop, step by step
 
-### 4.0 Bring the servers up, once
+### 4.0a Pilot — the first live action, before any of this has ever run
+
+Nothing below §4.0a has executed against a live server. The serve job has never started, no `harbor
+run` has ever gone against a GEPA tree, and the runner's reap path has only run over an empty set.
+**Do not open with 8 held nodes.** Prove the chain end to end on one.
+
+```bash
+ssh jupiter
+export OMP_NUM_THREADS=1; cd /e/project1/transfernetx/lee27/code/snowball/gepa
+NODES=1 HOURS=6 bash gepa_serve.sh up          # cost line: 1 node x up to 6 h
+#   -> show it, get the go, then:
+SUBMIT=1 NODES=1 HOURS=6 bash gepa_serve.sh up
+bash gepa_serve.sh status                       # wait for 1 of 1 endpoints
+bash gepa_queue.sh start
+
+python3 gepa_tree.py --wave w0p --candidates seed_blocks.json --split feedback,dev_mini
+bash gepa_queue.sh add-all w0p 1                # ctl + c000..c003
+```
+
+**Cost.** 5 arms × 96 tasks (64 feedback + 32 dev_mini) = **480 attempts ≈ 4.8 node-hours**, plus
+~0.5 node-hours of engine load. On **one** node that is node-hours = wall-hours, so **about 5 hours**,
+inside the 6-hour wall with little to spare. If it looks like overrunning, cut to `ctl` + `c000` (192
+attempts, ~2 hours) and pilot with two arms. The runner needs no reconfiguring: shards per candidate
+are auto, so one live endpoint means one shard.
+
+**What the pilot has to prove**, in order, before §4.0 applies:
+
+1. the serve job comes up and publishes its endpoint file;
+2. `gepa_run.sh`'s preflight passes against a real server — served name, think markers, Daytona key;
+3. a `harbor run` completes on the R2E-Gym Daytona tasks, which have never gone through this harbor
+   path: the `setup_files/setup.sh` hook, snapshot resolution under `auto_snapshot`, the verifier;
+4. the runner **reaps** — `RUN_DONE exit=` parsed, the candidate moved to `done/`, `runs.jsonl`
+   appended — and then starts the second leg on the freed endpoint;
+5. `gepa_score.py w0p --leg feedback` and `--leg dev_mini` produce sane numbers, and
+   `gepa_ledger.py add` records the candidates;
+6. `gepa_worst.py` / `gepa_dump.py` open a feedback trace and refuse a dev id.
+
+Only when all six hold does the 8-node job in §4.0 make sense. If the pilot dies, it cost one node.
+
+### 4.0 Bring the servers up, once (only after the pilot passes)
 
 ```bash
 ssh jupiter
@@ -288,9 +327,9 @@ clause changes how the model works without changing pass@8). Any claim about the
 lengthening past 400 tokens — if the lesson does not fit, drop a weaker clause to make room.
 
 **Forbidden in the reflection.** Writing a child from memory of what the parent said. Writing a child
-without reading a trace. Reading a dev or test trace, or working around the refusal with
-`--allow-closed`. Reading a SWE-bench or Terminal-Bench 2 trace or per-task result. Concluding from
-pass rate alone on `dev_mini`.
+without reading a trace. Reading a dev or test trace, or trying to get at one some other way —
+there is no override, by design. Reading a SWE-bench or Terminal-Bench 2 trace or per-task result.
+Concluding from pass rate alone on `dev_mini`.
 
 ## 6. Selection and stop rules
 

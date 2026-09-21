@@ -6,14 +6,14 @@ reader needs to see WHY the run went the way it did: per turn the think flag, th
 the commands it sent, and the tail of the screen it got back. Ends with the reward, the exception and the behaviour
 vector so the reflection is looking at the same numbers the scorer used.
 
-FEEDBACK TASKS ONLY. A dev or test task id is refused, exit 2 (gepa_feat.refuse_closed_task). Dev is scores-only --
-the session gets its rewards, axes, front and paired wins from gepa_score.py and never its traces -- and test is
-sealed until gepa_final.sh. Reading the traces of the tasks selection scores is how a prompt gets fitted to those
-500 tasks instead of to the job, so the reading set is drawn from train and nothing selects on it.
---allow-closed exists for auditing an OLD fixture run (p2oAc_s0 and the like) and never for a live wave.
+FEEDBACK TASKS ONLY. A dev or test task id is refused, exit 2 (gepa_feat.refuse_closed_task), and there is NO
+override -- not a flag, not an env var. Dev is scores-only: the session gets its rewards, axes, front and paired
+wins from gepa_score.py and never its traces. Test is sealed until gepa_final.sh. Reading the traces of the tasks
+selection scores is how a prompt gets fitted to those 500 tasks instead of to the job, so the reading set is drawn
+from train and nothing selects on it. To re-check the scorer against an old probe, replay it with
+`gepa_score.py <name> --runs <dir> --leg all`, which reads numbers and prints no trajectory.
 
   gepa_dump.py w1 c012 <feedback task>
-  gepa_dump.py fixture A r2egym-v1-00009 --runs /e/.../p2o6all_s0 --allow-closed
   gepa_dump.py w1 c012 <feedback task> --screen 40 --turns 12:20
 Python 3.9 / stdlib (Jupiter login node).
 """
@@ -32,11 +32,8 @@ ap.add_argument("--screen", type=int, default=25, help="lines of screen output p
 ap.add_argument("--turns", default=None, help="turn range, e.g. 0:10 or 12:")
 ap.add_argument("--trial", type=int, default=0, help="which trial of this (task, cand), when k > 1")
 ap.add_argument("--plan", action="store_true", help="also print the plan field (analysis only by default)")
-ap.add_argument("--allow-closed", action="store_true",
-                help="audit an OLD fixture run whose ids happen to sit in dev/test; never for a live wave")
 a = ap.parse_args()
-if not a.allow_closed:
-    refuse_closed_task(a.task)
+refuse_closed_task(a.task)   # unconditional: dev and test trajectories are closed, with no override
 runs = resolve_runs(a.wave, a.runs)
 if not runs:
     sys.exit("no run dirs for wave %s; pass --runs to point at them explicitly" % a.wave)

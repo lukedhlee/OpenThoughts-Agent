@@ -1,10 +1,15 @@
 #!/bin/bash
 # gepa_serve.sh — bring up (or report on) the standing GEPA serve job. Prints the cost line; submits only with SUBMIT=1.
 #
-#   bash gepa_serve.sh                 # status: the job, its endpoints, the queue, node-hours burned so far
-#   bash gepa_serve.sh up              # dry run: validate model + draft + code, print the COST line, submit nothing
-#   SUBMIT=1 bash gepa_serve.sh up     # submit
-#   bash gepa_serve.sh down            # scancel the serve job (the queue is left alone)
+#   bash gepa_serve.sh                        # status: the job, its endpoints, the queue, node-hours burned so far
+#   bash gepa_serve.sh up                     # dry run: validate model + draft + code, print the COST line, submit nothing
+#   SUBMIT=1 bash gepa_serve.sh up            # submit
+#   SUBMIT=1 NODES=1 HOURS=6 ... up           # the PILOT -- one node, the first live action (SKILL.md 4.0a)
+#   bash gepa_serve.sh down                   # scancel the serve job (the queue is left alone)
+#
+# NODES is honoured end to end: `sbatch -N` overrides the template's #SBATCH --nodes, the sbatch sruns exactly
+# SLURM_NNODES server tasks, and gepa_runner.py sizes shards from the LIVE ENDPOINT COUNT rather than a constant.
+# So the 1-node pilot and the 8-node loop are the same code with a different NODES.
 #
 # The serve job's cost line is stated ONCE, at session start: nodes x expected hours. After that every enqueue is
 # free of a new go -- the allocation is already paid for and the queue only decides whether it idles. What the
@@ -65,6 +70,10 @@ echo "COST: standing GEPA serve job = $NODES nodes x up to $HOURS h wall = up to
 echo "      self-cancelling after $IDLE_MIN idle minutes; we want one warm server pool so candidates run back to back"
 echo "      while the session reflects, instead of paying ~4 node-hours of engine load per candidate."
 echo "      Actual spend is whatever the loop uses before the queue empties -- 'gepa_serve.sh status' prints it."
+if [ "$NODES" = 1 ]; then
+  echo "      PILOT layout (SKILL.md 4.0a): one node proves serve -> harbor run -> score -> ledger and the reap path"
+  echo "      before 8 nodes are held. On one node, node-hours equal wall-hours."
+fi
 echo "model:  $MODEL"
 echo "draft:  $DRAFT (EAGLE-3, 3 speculative tokens)"
 echo "sbatch: $G/gepa_serve.sbatch"
