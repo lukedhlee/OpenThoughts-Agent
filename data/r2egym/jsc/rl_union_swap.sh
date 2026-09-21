@@ -10,7 +10,7 @@ E=/e/fscratch/reformo/lee27/experiments; T=/e/fscratch/reformo/lee27/tasks; C=/e
 SFT=/e/data1/mmlaion/lee27/snowball-sft/experiments/snowball-ota-sft/ota3_if_rstsucc/lr1e-4-sched2
 UNION=${UNION:-screen_ota3d517_union_20260921_learnable_x16}; LOG=$E/rl_union/swap.log; mkdir -p $E/rl_union
 log(){ echo "$(date '+%F %T') $*" | tee -a $LOG; }
-A=$T/${TRAIN_SCREEN}_learnable_x16; [ -d $A ] || { log "missing $A"; exit 1; }
+A=$T/${TRAIN_SCREEN}_learnable_x16; [ -d $A ] || log "note: $A absent for now (top-up running?)"
 ARMS="rl_d517u:snowball_ttband_ota3d517u_a:export-step517-hf-bf16:rld517u rl_d1034u:snowball_ttband_ota3d1034u_a:export-step1034-hf-bf16:rld1034u"
 # 1. submit both arms now on the placeholder band, then hold them
 for spec in $ARMS; do IFS=: read n arm ex tag <<< "$spec"; mkdir -p $E/$n
@@ -26,6 +26,14 @@ log "waiting for LEARNABLE TREE of $REST_SCREEN"
 for i in $(seq 1 240); do grep -q "LEARNABLE TREE" $E/$REST_SCREEN/controller.log 2>/dev/null && break; sleep 300; done   # up to 20 h
 grep -q "LEARNABLE TREE" $E/$REST_SCREEN/controller.log 2>/dev/null || { log "no learnable tree after 20 h; arms left on hold"; exit 1; }
 B=$T/${REST_SCREEN}_learnable_x16; [ -d $B ] || { log "missing $B"; exit 1; }
+# 2b. the train-pool screen may have been restarted with a higher cap (marker "restarted by operator" in its controller.log):
+#     then wait for a LEARNABLE TREE line written AFTER that marker (the cap-4 tree was moved aside as *_cap4)
+TL=$E/$TRAIN_SCREEN/controller.log
+if grep -q "restarted by operator" $TL 2>/dev/null; then
+  log "train-pool screen was restarted with a higher cap; waiting for its new LEARNABLE TREE"
+  for i in $(seq 1 240); do sed -n "$(grep -n "restarted by operator" $TL | tail -1 | cut -d: -f1),\$p" $TL | grep -q "LEARNABLE TREE" && [ -d $A ] && break; sleep 300; done
+  sed -n "$(grep -n "restarted by operator" $TL | tail -1 | cut -d: -f1),\$p" $TL | grep -q "LEARNABLE TREE" && [ -d $A ] || { log "train-pool top-up never finished; arms left on hold"; exit 1; }
+fi
 # 3. union tree (dirs of symlinks <task>__rN -> r2egym-daytona-v3/<task>)
 if [ ! -d $T/$UNION ]; then
   mkdir -p $T/$UNION.tmp && cp -P $A/* $T/$UNION.tmp/ && cp -Pn $B/* $T/$UNION.tmp/ && mv $T/$UNION.tmp $T/$UNION || { log "union build failed"; exit 1; }
