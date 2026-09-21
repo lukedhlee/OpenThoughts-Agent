@@ -12,7 +12,7 @@
 # Markers in $D let a re-run resume where it stopped. Usage (login02, inside tmux):
 #   NAME=rl_d517 ARM=snowball_ota3d517_rl_a MODEL=<hf export dir> TAG=rld517 TRIALS=3 bash rl_from_sft_pipeline.sh
 set -uo pipefail
-NAME=${NAME:?}; ARM=${ARM:?}; MODEL=${MODEL:?}; TAG=${TAG:?}; TRIALS=${TRIALS:-3}
+NAME=${NAME:?}; ARM=${ARM:?}; MODEL=${MODEL:?}; TAG=${TAG:?}; TRIALS=${TRIALS:-3}; MAX_STEPS=${MAX_STEPS:-24}   # MAX_STEPS: the clone arg and the ms() default
 TRAIN_TREE=${TRAIN_TREE:-r2egym-tt-v2-train-basecurr-x16}; ARM_WALL=${ARM_WALL:-08:00:00}; ACCOUNT=${ACCOUNT:-laionize}
 E=/e/fscratch/reformo/lee27/experiments; T=/e/fscratch/reformo/lee27/tasks; C=/e/project1/transfernetx/lee27/code/snowball
 W=/e/project1/transfernetx/lee27/code/tb2; TB=$E/tb2
@@ -49,7 +49,7 @@ $JW "true" || { log "JUWELS master $SOCK dead"; exit 1; }
 if [ ! -f $D/B_DONE ] && [ ! -f $D/job_B ]; then
   if [ ! -f $E/$ARM/sbatch/${ARM}_rl.sbatch ]; then
     NODES=20 SPEC=1 TRAIN_TREE=$TRAIN_TREE MODEL=$MODEL BRIDGE=$BRIDGE bash $C/clone_newstack_arm.sh $ARM 0 \
-      "++terminal_bench_config.harbor.n_concurrent_trials=768" "trainer.max_steps=24" \
+      "++terminal_bench_config.harbor.n_concurrent_trials=768" "trainer.max_steps=${MAX_STEPS:-24}" \
       "trainer.policy.optimizer_config.num_warmup_steps=3" 2>&1 | tee -a $LOG
     [ -f $E/$ARM/sbatch/${ARM}_rl.sbatch ] || { log "arm build failed"; exit 1; }
     # the clone hard-codes 12 h on reformo: 12 h jobs are deferred by a hidden reservation and reformo's fairshare has collapsed
