@@ -362,7 +362,12 @@ def report(names):
     for name in names:
         vals, _, _ = outcomes(name)
         for task, vs in vals.items():
-            assert len(vs) <= 8, (name, task, len(vs))
+            if len(vs) > 8:
+                # Daytona rounds: a task listed twice in the pool (or re-run by harbor's retry pass) carries extra samples;
+                # the round classifier only asks "solved at least once" / "CAP attempts without a solve", so keep them.
+                if not DAYTONA:
+                    raise AssertionError((name, task, len(vs)))
+                log(f'NOTE {name} {task}: {len(vs)} results, keeping all')
             allvals[task].extend(vs)
     candidates = []
     drops = []
@@ -472,7 +477,7 @@ def run_daytona():
             wait_probe(name, probe, len(todo) * ROUND_ATTEMPTS)
             probe = None
         vals = report(names)
-        learnable = sorted(t for t in manifest if classify(vals[t]) == 'candidate')
+        learnable = sorted({t for t in manifest if classify(vals[t]) == 'candidate'})
         (D / 'learnable_tasks.txt').write_text(''.join(t + '\n' for t in learnable))
         tree = T / (NAME + '_learnable_x16')
         tree.mkdir(exist_ok=False)
