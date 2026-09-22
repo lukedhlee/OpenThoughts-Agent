@@ -23,6 +23,7 @@ squeue -h -j $JOB -o %T | grep -q RUNNING || { echo "serve job $JOB is not RUNNI
 [ -d $JOBS/$NAME ] && { echo "$JOBS/$NAME exists; pick a new name or resume"; exit 1; }
 mkdir -p $JOBS $W/runs
 # 1. the server answers from here, with the served name and the think markers intact
+for i in $(seq 1 30); do curl -sf --max-time 20 $URL/models | grep -q '"snowball"' && break; sleep 10; done   # a just-started server can miss the first /models (09-22 race)
 curl -sf --max-time 20 $URL/models | grep -q '"snowball"' || { echo "no model 'snowball' at $URL"; exit 1; }
 curl -sf --max-time 300 $URL/chat/completions -H 'Content-Type: application/json' \
   -d '{"model":"snowball","messages":[{"role":"user","content":"Print hello in bash."}],"max_tokens":300,"skip_special_tokens":false}' \
