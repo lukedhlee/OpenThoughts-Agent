@@ -31,6 +31,9 @@ fleet_submit(){ # <label> <nodes> <wall>: sbatch on JUWELS through the login-nod
   [[ "$id" =~ ^[0-9]+$ ]] || { log "FLEET $label submit FAILED: $id"; return 1; }
   echo $id > $D/fleet_$label; log "FLEET $label $id ($nodes nodes x 32 workers, wall $wall)"
 }
+fleet_left_min(){ # minutes of wall left on fleet <label>, empty when it is not in the queue
+  local id l; id=$(cat $D/fleet_$1 2>/dev/null) || return 0; l=$($JW "squeue -h -j $id -o %L" 2>/dev/null | tr -d ' '); [ -n "$l" ] || return 0
+  python3 -c "import sys; t=sys.argv[1]; d,_,h=t.rpartition('-'); p=[int(x) for x in h.split(':')]; p=[0]*(3-len(p))+p; print(int(d or 0)*1440+p[0]*60+p[1])" "$l"; }
 fleet_release(){ local id; id=$(cat $D/fleet_$1 2>/dev/null) || return 0; [ -n "$id" ] || return 0; $JW "scancel $id" && { mv $D/fleet_$1 $D/fleet_$1.released; log "RELEASE fleet $1 $id"; } || log "RELEASE fleet $1 $id FAILED (retry next poll)"; }
 job_gone(){ # true only when squeue answered without the job AND sacct shows a terminal state (a slurmctld hiccup returns empty output)
   local out rc; out=$(squeue -h -j "$1" -o %T 2>&1); rc=$?
@@ -63,13 +66,17 @@ while [ ! -f $D/B_DONE ]; do
   if [ ! -f $D/fleet_B ] && [ ! -f $D/fleet_B.released ] && job_started $(cat $D/job_B); then
     log "ARM B $(cat $D/job_B) is on nodes; bringing its fleet up"; fleet_submit B 24 05:30:00 || log "fleet B submit failed, retrying next poll"
   fi
+  # a 30-step arm outlives one 05:30 fleet (09-21): renew once with a 03:00 fleet when the running one has under 45 min left
+  if [ -f $D/fleet_B ] && [ ! -f $D/fleet_B2 ] && [ ! -f $D/B_TRAINED ]; then
+    left=$(fleet_left_min B); if [ -n "$left" ] && [ "$left" -lt 45 ]; then log "fleet B has $left min left; renewing"; fleet_submit B2 24 03:00:00 || log "fleet B2 submit failed, retrying next poll"; fi
+  fi
   MS=$(ms)
   if [ ! -f $D/B_TRAINED ] && [ "$(cat $E/$ARM/$ARM/checkpoints/latest_ckpt_global_step.txt 2>/dev/null)" = "$MS" ] \
      && [ -f $E/$ARM/$ARM/checkpoints/global_step_$MS/trainer_state.pt ] && [ -z "$(find $E/$ARM/$ARM/checkpoints/global_step_$MS -mmin -2 2>/dev/null | head -1)" ]; then
     touch $D/B_TRAINED; log "ARM B checkpoint $MS complete and quiet; cancelling $(cat $D/job_B)"; scancel $(cat $D/job_B)
   fi
   if job_gone $(cat $D/job_B); then
-    fleet_release B
+    fleet_release B; fleet_release B2
     st=$(sacct -j $(cat $D/job_B) -n -o State%30,Elapsed,NNodes -X | head -1)
     # an arm Slurm kills before it writes a log (node-boot failure, 09-16) is resubmitted, at most twice in total
     if [ ! -f $D/B_TRAINED ] && [ -z "$(ls $E/$ARM/logs/*_$(cat $D/job_B).out 2>/dev/null)" ] && [ $(ls $D/job_B.* 2>/dev/null | wc -l) -lt 2 ]; then
