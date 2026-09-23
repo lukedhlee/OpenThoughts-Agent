@@ -7,6 +7,7 @@
 # at 0.90 utilization the KV cache leaves ~2 GiB and the worker OOMs (job 1867356). Hence 4,096-token chunks + 0.85.
 #
 #   MODEL=<hf export dir> NAME=<tag> sbatch heldout_nll.sbatch
+# Longer rows (the 65,536-token bespoke stages): HELDOUT_MAX_LEN=65536 HELDOUT_MAX_MODEL_LEN=66560 HELDOUT_MAX_POS=131072.
 #
 #SBATCH --job-name=heldout_nll
 #SBATCH --time=00:45:00
@@ -42,7 +43,7 @@ echo "HELDOUT_START node=$(hostname) job=$SLURM_JOB_ID model=$MODEL name=$NAME"
 SLOG=$S/logs/heldout_serve_$SLURM_JOB_ID.log
 $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name model --port 8000 \
     --tensor-parallel-size 1 --data-parallel-size 4 --enable-expert-parallel \
-    --max-model-len 34816 --hf-overrides '{"max_position_embeddings": 65536, "max_seq_len": 65536}' \
+    --max-model-len ${HELDOUT_MAX_MODEL_LEN:-34816} --hf-overrides "{\"max_position_embeddings\": ${HELDOUT_MAX_POS:-65536}, \"max_seq_len\": ${HELDOUT_MAX_POS:-65536}}" \
     --max-num-seqs 16 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.85 --max-logprobs 1 \
     --chat-template "$MODEL/chat_template.jinja" > $SLOG 2>&1 &
 SPID=$!
@@ -58,5 +59,5 @@ curl -s localhost:8000/v1/completions -H 'Content-Type: application/json' \
   -d '{"model":"model","prompt":[128000, 9906, 1917],"max_tokens":1,"temperature":0,"prompt_logprobs":0}' \
   | $PY -c 'import sys,json; c=json.load(sys.stdin)["choices"][0]; print("smoke prompt_logprobs:", c.get("prompt_logprobs"))' || echo "smoke parse failed"
 $PY "$SCRIPT" --tokenizer-dir "$MODEL" --parquet "$PARQUET" --url http://localhost:8000 --served model \
-  --out "$S/logs/heldout_nll_${NAME}.json" --concurrency 16 || { echo "scorer failed"; exit 2; }
+  --out "$S/logs/heldout_nll_${NAME}.json" --concurrency 16 --max-len ${HELDOUT_MAX_LEN:-32768} || { echo "scorer failed"; exit 2; }
 echo "HELDOUT_DONE $S/logs/heldout_nll_${NAME}.json"

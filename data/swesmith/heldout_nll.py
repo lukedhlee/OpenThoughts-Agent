@@ -9,6 +9,11 @@ tokens <|start_think|> / <|end_think|>) and the rest, since the two may move dif
 
     python heldout_nll.py --tokenizer-dir <export dir> --parquet heldout-00000-of-00001.parquet \
         --url http://localhost:8000 --served model --out heldout_nll.json [--limit N] [--concurrency 16]
+
+Grug Datakit 09-21 rows (the bespoke stages) carry turns {role, content, reasoning} and a row-level
+enable_thinking: they are rendered the way the trainer renders them (reasoning -> reasoning_content when
+non-empty, enable_thinking passed to the template) and grouped by enable_thinking in by_slice. Rows without those
+columns render exactly as before; instance_id / result are optional.
 """
 from __future__ import annotations
 
@@ -66,22 +71,32 @@ def main():
     assert tok.convert_tokens_to_ids("<|start_think|>") == START
     # A multi-slice parquet (OTA) carries slice / row_id; the Kimi split has neither, so both are optional.
     have = set(pq.read_schema(args.parquet).names)
-    cols = ["conversations", "instance_id", "result"] + [c for c in ("slice", "row_id") if c in have]
+    cols = ["conversations"] + [c for c in ("instance_id", "result", "slice", "row_id", "enable_thinking") if c in have]
     rows = pq.read_table(args.parquet, columns=cols).to_pylist()
     if args.limit:
         rows = rows[: args.limit]
 
     # ids + assistant mask straight from the template's {% generation %} blocks
     seqs = []
-    for r in rows:
+    for k, r in enumerate(rows):
+        msgs, kw = r["conversations"], {}
+        if "enable_thinking" in r:  # Datakit rows: same mapping as grug_datakit_chat.datakit_row_to_chat
+            msgs = []
+            for m in r["conversations"]:
+                m2 = {a: b for a, b in m.items() if a != "reasoning" and b is not None}
+                if isinstance(m.get("reasoning"), str) and m["reasoning"].strip():
+                    m2["reasoning_content"] = m["reasoning"]
+                msgs.append(m2)
+            kw = {"enable_thinking": bool(r["enable_thinking"])}
         enc = tok.apply_chat_template(
-            r["conversations"], tokenize=True, add_generation_prompt=False, return_dict=True,
-            return_assistant_tokens_mask=True,
+            msgs, tokenize=True, add_generation_prompt=False, return_dict=True,
+            return_assistant_tokens_mask=True, **kw,
         )
         ids, mask = list(enc["input_ids"]), list(enc["assistant_masks"])
         if len(ids) > args.max_len:
             continue
-        seqs.append((r.get("row_id") or r["instance_id"], r.get("slice"), r["result"], ids, mask))
+        sl = r.get("slice") or (f"enable_thinking={bool(r['enable_thinking'])}" if "enable_thinking" in r else None)
+        seqs.append((r.get("row_id") or r.get("instance_id") or f"row{k}", sl, r.get("result"), ids, mask))
     print(f"sequences {len(seqs)} (of {len(rows)} rows), assistant tokens {sum(sum(m) for *_, m in seqs)}", flush=True)
 
     session = requests.Session()

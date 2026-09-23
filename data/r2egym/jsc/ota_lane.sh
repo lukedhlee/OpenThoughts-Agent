@@ -15,7 +15,9 @@ set -uo pipefail
 S=/e/data1/mmlaion/lee27/snowball-sft
 C=/e/project1/transfernetx/lee27/code/snowball
 MOE=/e/project1/transfernetx/lee27/code/marin-sft/experiments/june_tpu_67b_a2b/moe
-TOK=/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888
+# tokenizer for the exports: Stage-3's unless the arm starts from another base (SNOWBALL_HF_BASE, e.g. Grug Datakit
+# 09-21, whose exports also carry that base's config values and templates via SNOWBALL_EXPORT_BASE)
+TOK=${SNOWBALL_TOKENIZER:-/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888}
 : "${LANE:?}" "${CACHE:?}" "${LRS:?}" "${EPOCHS:?}" "${HELDOUT:?}" "${OUT_ROOT:?}"
 TAIL_FRACTION=${TAIL_FRACTION:-0}
 EXPORT_EPOCHS=${EXPORT_EPOCHS:-final}
@@ -72,7 +74,7 @@ for LR in $LRS; do
     [ -d "$CK" ] || { say "no checkpoint $CK; skipping"; continue; }
     if [ -f "$EX/config.json" ]; then jx=""; else
       jx=$(sbatch --parsable -o "$S/logs/snowball-export.%j.log" --account="$SBATCH_ACCOUNT" \
-        --export=ALL,MARIN_ROOT=/e/project1/transfernetx/lee27/code/marin-sft,MARIN_PYTHON=/e/project1/transfernetx/lee27/code/envs/marin-grug-sft/bin/python,SNOWBALL_EXPORT_CHECKPOINT="$CK",SNOWBALL_EXPORT_OUTPUT="$EX",SNOWBALL_EXPORT_TOKENIZER="$TOK" \
+        --export=ALL,MARIN_ROOT=/e/project1/transfernetx/lee27/code/marin-sft,MARIN_PYTHON=/e/project1/transfernetx/lee27/code/envs/marin-grug-sft/bin/python,SNOWBALL_EXPORT_CHECKPOINT="$CK",SNOWBALL_EXPORT_OUTPUT="$EX",SNOWBALL_EXPORT_TOKENIZER="$TOK"${SNOWBALL_HF_BASE:+,SNOWBALL_EXPORT_BASE="$SNOWBALL_HF_BASE"} \
         "$MOE/jupiter_snowball_export.sbatch") || { say "export submit failed for $ARM step $st"; continue; }
       say "EXPORT_SUBMITTED $ARM step $st job $jx -> $EX"
     fi

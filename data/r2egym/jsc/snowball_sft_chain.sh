@@ -22,7 +22,22 @@ C=${CODE_ROOT:-/e/project1/transfernetx/$U/code}
 export MARIN_ROOT=${MARIN_ROOT:-$C/marin-sft}
 export MARIN_PYTHON=${MARIN_PYTHON:-$C/envs/marin-grug-sft/bin/python}
 export SNOWBALL_SCRATCH=$S
-TOK=${SNOWBALL_TOKENIZER:-/e/fscratch/reformo/$U/models/snowball-s3-nemotron-terminal-step1888}
+# Base selection. Unset = Stage-3 (the published nemotron-terminal step-1888 export), exactly as before.
+# SNOWBALL_BASE=grug0921 (or SNOWBALL_HF_BASE=<HF dir>) starts from another Grug checkpoint instead: its dir is the
+# tokenizer, the import reads qk_mult / max_position_embeddings from its config.json into a snowball_base.json
+# sidecar and initialises pending_qb_betas from its router bias, and the export carries its config values,
+# templates and tokenizer files (SNOWBALL_EXPORT_BASE).
+case ${SNOWBALL_BASE:-} in
+  "") ;;
+  grug0921) SNOWBALL_HF_BASE=${SNOWBALL_HF_BASE:-/e/data1/mmlaion/$U/models/grug-datakit-sft-20260921};;
+  *) echo "unknown SNOWBALL_BASE=$SNOWBALL_BASE (known: grug0921; or set SNOWBALL_HF_BASE=<dir>)" >&2; exit 1;;
+esac
+HF_BASE=${SNOWBALL_HF_BASE:-}
+if [ -n "$HF_BASE" ]; then
+  TOK=${SNOWBALL_TOKENIZER:-$HF_BASE}
+else
+  TOK=${SNOWBALL_TOKENIZER:-/e/fscratch/reformo/$U/models/snowball-s3-nemotron-terminal-step1888}
+fi
 EPOCHS=${EPOCHS:-3}
 # The stage selects the marin STAGES entry (dataset pin, step ceiling). r2egym keeps its original paths;
 # any other stage (e.g. kimi_swesmith) gets its own experiment dir and must name its parquet list and the
@@ -35,7 +50,8 @@ PARQUET_LIST=${SNOWBALL_PARQUET_LIST:-$S/data/r2egym_glm47_solved_v1/parquet.lis
 DATASET_ID=${SNOWBALL_DATASET_ID:-DCAgent/g1_clean_hybrid_scaffold_plus_r2eg_gfi_38k_glm47_traces}
 DATASET_REVISION=${SNOWBALL_DATASET_REVISION:-4243a8f5cd39799803a6a0d52457fa0833068566}
 CACHE=${SNOWBALL_CACHE:-$EXP/cache-v1}
-INIT=${SNOWBALL_INIT:-$S/experiments/snowball-r2egym-sft/init-s3-step1888}
+if [ -n "$HF_BASE" ]; then INIT=${SNOWBALL_INIT:-$S/experiments/snowball-base-inits/init-$(basename "$HF_BASE")-step0}
+else INIT=${SNOWBALL_INIT:-$S/experiments/snowball-r2egym-sft/init-s3-step1888}; fi
 RUN_ID=${SNOWBALL_RUN_ID:-snowball-$SFT_STAGE-sft-run1}
 if [ "$SFT_STAGE" = r2egym ]; then OUT=${SNOWBALL_OUTPUT:-$EXP/r2egym-glm47-solved-v1-run1}; else OUT=${SNOWBALL_OUTPUT:-$EXP/$SFT_STAGE-run1}; fi
 MOE=$MARIN_ROOT/experiments/june_tpu_67b_a2b/moe
@@ -81,6 +97,7 @@ done
 # Step markers are per stage so a second dataset never inherits the r2egym chain's "done" state.
 if [ "$SFT_STAGE" = r2egym ]; then MARK=$S/logs; else MARK=$S/logs/$SFT_STAGE; mkdir -p "$MARK"; fi
 say "CHAIN_START stage=$SFT_STAGE steps='$CHAIN_STEPS' epochs=$EPOCHS parquet_list=$PARQUET_LIST marin=$(git -C "$MARIN_ROOT" rev-parse --short HEAD) python=$MARIN_PYTHON scratch=$S"
+[ -n "$HF_BASE" ] && say "BASE $HF_BASE (tokenizer $TOK, init $INIT)"
 STEPS=$(cat "$MARK/.done.run" 2>/dev/null || true)
 
 for step in $CHAIN_STEPS; do
@@ -100,13 +117,24 @@ for step in $CHAIN_STEPS; do
       wait_job "$j" "$S/logs/snowball-env-gate.$j.log" "SNOWBALL_DISTRIBUTED_PROBE_OK" || die "gate job $j"
       touch "$S/logs/.done.gate"; say "gate OK ($j)";;
     import)
+      if [ -n "$HF_BASE" ]; then
+        # a base import is complete only with its sidecar (the trainer and exporter read the base's config from it)
+        if [ -f "$INIT/metadata.json" ] && [ -f "$INIT/snowball_base.json" ]; then say "import: done already ($INIT)"; continue; fi
+        [ -e "$INIT" ] && die "import: $INIT exists without a snowball_base.json sidecar; remove it and rerun"
+        mkdir -p "$(dirname "$INIT")"
+        j=$(submit sbatch -o "$S/logs/snowball-import.%j.log" \
+              --export=ALL,MARIN_ROOT="$MARIN_ROOT",MARIN_PYTHON="$MARIN_PYTHON",SNOWBALL_HF_CHECKPOINT="$HF_BASE",SNOWBALL_INIT="$INIT",SNOWBALL_BASE_CONFIG_FROM_HF=true,SNOWBALL_PENDING_FROM_BIAS=true \
+              "$MOE/jupiter_snowball_import.sbatch") || die "import submit"
+      else
       if [ -f "$INIT/metadata.json" ]; then say "import: done already ($INIT)"; continue; fi
       j=$(submit sbatch -o "$S/logs/snowball-import.%j.log" \
             --export=ALL,MARIN_ROOT="$MARIN_ROOT",MARIN_PYTHON="$MARIN_PYTHON",SNOWBALL_HF_CHECKPOINT="$TOK",SNOWBALL_INIT="$INIT" \
             "$MOE/jupiter_snowball_import.sbatch") || die "import submit"
+      fi
       [ -n "$j" ] || die "import: no job id"
       wait_job "$j" "$S/logs/snowball-import.$j.log" "" || die "import job $j"
       [ -f "$INIT/metadata.json" ] || die "import job $j left no metadata.json in $INIT"
+      [ -z "$HF_BASE" ] || [ -f "$INIT/snowball_base.json" ] || die "import job $j left no snowball_base.json in $INIT"
       say "import OK ($j): $(cat "$INIT/metadata.json")";;
     run)
       if [ -n "$STEPS" ] && [ -d "$OUT/checkpoints/step-$STEPS" ]; then say "run: done already (step-$STEPS)"; continue; fi
@@ -125,7 +153,7 @@ for step in $CHAIN_STEPS; do
       EXPORT=$OUT/export-step$STEPS-hf-bf16
       if [ -f "$EXPORT/config.json" ]; then say "export: done already ($EXPORT)"; continue; fi
       j=$(submit sbatch -o "$S/logs/snowball-export.%j.log" \
-            --export=ALL,MARIN_ROOT="$MARIN_ROOT",MARIN_PYTHON="$MARIN_PYTHON",SNOWBALL_EXPORT_CHECKPOINT="$OUT/checkpoints/step-$STEPS",SNOWBALL_EXPORT_OUTPUT="$EXPORT",SNOWBALL_EXPORT_TOKENIZER="$TOK" \
+            --export=ALL,MARIN_ROOT="$MARIN_ROOT",MARIN_PYTHON="$MARIN_PYTHON",SNOWBALL_EXPORT_CHECKPOINT="$OUT/checkpoints/step-$STEPS",SNOWBALL_EXPORT_OUTPUT="$EXPORT",SNOWBALL_EXPORT_TOKENIZER="$TOK"${HF_BASE:+,SNOWBALL_EXPORT_BASE="$HF_BASE"} \
             "$MOE/jupiter_snowball_export.sbatch") || die "export submit"
       [ -n "$j" ] || die "export: no job id"
       wait_job "$j" "$S/logs/snowball-export.$j.log" "EXPORT_CHECK_OK" || die "export job $j"
