@@ -31,9 +31,12 @@ MOE=/e/project1/transfernetx/lee27/code/marin-sft/experiments/june_tpu_67b_a2b/m
 : "${STAGE:?bespoke_fold_all | bespoke_fold_noglm | bespoke_think_all | bespoke_think_noglm}"
 case $STAGE in bespoke_fold_all|bespoke_fold_noglm|bespoke_think_all|bespoke_think_noglm) ;; *) echo "unknown STAGE=$STAGE" >&2; exit 1;; esac
 VARIANT=${STAGE#bespoke_}
-D=${DATA_DIR:-$S/data/bespoke_v1/$VARIANT}
+# v1 = rows <= 65,536 tokens; v1_48k = the same render filtered to <= 49,152 (16 x 65,536 OOMs on 4 nodes, 09-23)
+DATA_REV=${DATA_REV:-v1}
+RUN=$STAGE${DATA_REV#v1}   # per-rev paths; SNOWBALL_STAGE stays $STAGE (the provenance pin)
+D=${DATA_DIR:-$S/data/bespoke_$DATA_REV/$VARIANT}
 EXP=$S/experiments/snowball-bespoke-sft
-CACHE=$EXP/cache-$STAGE-v1
+CACHE=$EXP/cache-$RUN-v1
 HELDOUT=$D/heldout-00000-of-00001.parquet
 LR=${LR:-3e-5}
 EPOCHS=${EPOCHS:-3}
@@ -56,8 +59,8 @@ export SBATCH_ACCOUNT=${SBATCH_ACCOUNT:-laionize}
 # held-out scoring at the packing length (heldout_nll.sbatch knobs)
 export HELDOUT_MAX_LEN=$SNOWBALL_SEQ_LEN HELDOUT_MAX_MODEL_LEN=$((SNOWBALL_SEQ_LEN + 1024)) HELDOUT_MAX_POS=$((2 * SNOWBALL_SEQ_LEN))
 
-mkdir -p "$S/logs/$STAGE" "$EXP"; LOG=$S/logs/$STAGE/arm.log
-say() { echo "[$(date -u +%FT%TZ)] [$STAGE] $*" | tee -a "$LOG"; }
+mkdir -p "$S/logs/$RUN" "$EXP"; LOG=$S/logs/$RUN/arm.log
+say() { echo "[$(date -u +%FT%TZ)] [$RUN] $*" | tee -a "$LOG"; }
 [ -f "$D/parquet.list" ] || { say "no corpus at $D (parquet.list)"; exit 1; }
 [ -f "$SNOWBALL_HF_BASE/config.json" ] || { say "no 09-21 base at $SNOWBALL_HF_BASE"; exit 1; }
 say "ARM_START lr=$LR epochs=$EPOCHS layout=${SNOWBALL_BATCH}x${SNOWBALL_SEQ_LEN} nodes=$NODES data=$D prep_only=${PREP_ONLY:-0} probe=${PROBE:-0}"
@@ -85,11 +88,11 @@ say "cache $TOK tokens -> $EPOCH_STEPS steps per epoch at $STEP_TOKENS tokens/st
 
 # 2. PROBE: the launcher alone (no chain: a probe leaves no checkpoint), then the max PROBE_MEM over all ranks
 if [ "${PROBE:-0}" = 1 ]; then
-  OUT=$EXP/$STAGE/probe-$(date -u +%Y%m%dT%H%M%S)
+  OUT=$EXP/$RUN/probe-$(date -u +%Y%m%dT%H%M%S)
   mkdir -p "$(dirname "$OUT")"
   out=$(SNOWBALL_SCRATCH=$S MARIN_ROOT=/e/project1/transfernetx/lee27/code/marin-sft \
         MARIN_PYTHON=/e/project1/transfernetx/lee27/code/envs/marin-grug-sft/bin/python \
-        SNOWBALL_CACHE=$CACHE SNOWBALL_OUTPUT=$OUT SNOWBALL_RUN_ID=snowball-$STAGE-probe SNOWBALL_LR=$LR \
+        SNOWBALL_CACHE=$CACHE SNOWBALL_OUTPUT=$OUT SNOWBALL_RUN_ID=snowball-$RUN-probe SNOWBALL_LR=$LR \
         SNOWBALL_PROBE_STEPS=$PROBE_STEPS EPOCHS=$EPOCHS SNOWBALL_WALL=${PROBE_WALL:-00:45:00} \
         bash "$MOE/launch_jupiter_snowball_r2egym.sh" 2>&1); rc=$?
   echo "$out" | tee -a "$LOG"
@@ -108,7 +111,7 @@ if [ "${PROBE:-0}" = 1 ]; then
 fi
 
 # 3. the arm: train (chain run step via the lane), then export + held-out NLL for every kept (epoch-end) checkpoint
-SNOWBALL_RESUME=0 SNOWBALL_SCHEDULE_EPOCHS=$EPOCHS LANE=${LANE:-$STAGE} CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS="$LR" \
-EPOCHS=$EPOCHS EXPORT_EPOCHS=kept HELDOUT=$HELDOUT OUT_ROOT=$EXP/$STAGE SNOWBALL_WALL=${WALL:-03:00:00} \
+SNOWBALL_RESUME=0 SNOWBALL_SCHEDULE_EPOCHS=$EPOCHS LANE=${LANE:-$RUN} CACHE=$CACHE PARQUET_LIST=$D/parquet.list LRS="$LR" \
+EPOCHS=$EPOCHS EXPORT_EPOCHS=kept HELDOUT=$HELDOUT OUT_ROOT=$EXP/$RUN SNOWBALL_WALL=${WALL:-03:00:00} \
 SCORE_TIME=${SCORE_TIME:-01:00:00} bash -l "$C/ota_lane.sh"
 say "ARM_DONE"
