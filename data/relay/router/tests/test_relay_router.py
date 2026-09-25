@@ -50,11 +50,13 @@ class Stack:
     """Fake student + fake teacher + router on a background event loop."""
 
     def __init__(self, tmp, mode='relay', router_args=(), teacher_key='reasoning', student_delay=0.0,
-                 budgets=None, teacher_model='qwen38', strict=True, skip_health=False):
+                 budgets=None, teacher_model='qwen38', strict=True, skip_health=False, teacher_delay=0.0,
+                 two_teachers=False):
         self.tmp = Path(tmp)
         self.mode, self.router_args = mode, list(router_args)
         self.student = fake_openai.FakeServer('student', 'snowball', delay=student_delay)
-        self.teacher = fake_openai.FakeServer('teacher', 'qwen38', reasoning_key=teacher_key)
+        self.teacher = fake_openai.FakeServer('teacher', 'qwen38', reasoning_key=teacher_key, delay=teacher_delay)
+        self.teacher2 = fake_openai.FakeServer('teacher', 'qwen38', delay=teacher_delay) if two_teachers else None
         self.teacher_model, self.strict, self.skip_health = teacher_model, strict, skip_health
         self.budgets = budgets or {}
         self.log_dir = self.tmp / 'router'
@@ -77,6 +79,8 @@ class Stack:
     async def _start(self):
         s_url = await self.student.start()
         t_url = await self.teacher.start()
+        if self.teacher2:
+            t_url += ',' + await self.teacher2.start()
         tasks = [dict(task_id=f'cf-{sc}', instruction=instruction(sc, tag), agent_timeout_sec=self.budgets.get(sc, 1000))
                  for sc in ('selfdone', 'done', 'loop', 'wait', 'budget', 'summ', 'gaveup', 'repair', 'repairs')
                  for tag in [''] + [f'-{i}' for i in range(8)]]
@@ -103,6 +107,8 @@ class Stack:
         await self.router.http.close()
         await self.student.stop()
         await self.teacher.stop()
+        if self.teacher2:
+            await self.teacher2.stop()
 
     def turns(self, sid=None):
         p = self.log_dir / 'turns.jsonl'
@@ -166,13 +172,13 @@ class FakeTerm:
         return 'New Terminal Output:\n\n' + '\n'.join(lines + ['root@box:/app# ']), True
 
 
-def run_agent(stack, scenario, tmp, interleaved=True, tag='', max_turns=40):
+def run_agent(stack, scenario, tmp, interleaved=True, tag='', max_turns=40, **agent_kwargs):
     logs = Path(tmp) / f'agent_{scenario}{tag}'
     logs.mkdir(parents=True, exist_ok=True)
     agent = Terminus2(logs_dir=logs, model_name='hosted_vllm/relay', api_base=stack.url, model_info=MODEL_INFO,
                       extra_body={'skip_special_tokens': False}, interleaved_thinking=interleaved,
                       llm_session_header='X-Harbor-Session-Id', trajectory_config={'raw_content': True},
-                      max_turns=max_turns, enable_episode_logging=False)
+                      max_turns=max_turns, enable_episode_logging=False, **agent_kwargs)
     term = FakeTerm()
     agent._session = term
     ctx = AgentContext()
@@ -592,3 +598,46 @@ def test_repeated_repairs_and_the_teacher_sees_its_repair_reasoning(tmp_path):
         _no_bad_format_in_trace(r, st, 'SCENARIO=repairs.')
         eps = st.router.episodes[r.sid]
         assert eps.n_repairs == 2 and st.router.counts['repairs'] == 2
+
+
+@needs_harbor
+def test_two_teacher_servers_split_episodes_and_pin_each(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    with Stack(tmp_path, mode='teacher', two_teachers=True) as st:
+        assert st.health_ok and set(st.health['endpoints']) == {'teacher0', 'teacher1'}
+        with ThreadPoolExecutor(4) as ex:
+            res = list(ex.map(lambda i: run_agent(st, 'done', tmp_path, tag=f'-{i}'), range(4)))
+        for r in res:
+            tag = r.traj['steps'][0]['message'].split('SCENARIO=')[1].split('.')[0]
+            on = [srv for srv in (st.teacher, st.teacher2)
+                  if any(f'SCENARIO={tag}.' in fake_openai.text_of(b['messages'][0]['content']) for b in srv.requests)]
+            assert len(on) == 1                               # every request of an episode went to one server
+        n1 = len([b for b in st.teacher.requests if 'SCENARIO=' in fake_openai.text_of(b['messages'][0]['content'])])
+        n2 = len([b for b in st.teacher2.requests if 'SCENARIO=' in fake_openai.text_of(b['messages'][0]['content'])])
+        assert n1 > 0 and n2 > 0
+
+
+@needs_harbor
+def test_student_clock_pauses_while_a_repair_is_with_the_teacher(tmp_path):
+    """Two repairs at 0.6 s each would use the student's whole 1.0 s budget; paused, the student goes on to its
+    done claim."""
+    with Stack(tmp_path, router_args=REPAIR + ['--budget-mode', 'on'], budgets={'repairs': 1.0}, teacher_delay=0.6) as st:
+        r = run_agent(st, 'repairs', tmp_path)
+        rows = [x for x in st.turns(r.sid) if x.get('turn') is not None]
+        assert not any(x.get('ending') for x in rows)
+        assert rows[-1]['takeover']['trigger'] == 'done_claim'
+        reps = [x for x in rows if x.get('repair')]
+        assert len(reps) == 2 and all(x['paused_this_turn_sec'] >= 0.6 for x in reps)
+        assert rows[3]['paused_sec'] >= 1.2 and rows[3]['student_clock_sec'] < rows[3]['elapsed_sec'] - 1.2 + 0.01
+        assert st.router.episodes[r.sid].paused_sec >= 1.2
+
+
+@needs_harbor
+def test_summarization_off_context_overflow_ends_the_episode(tmp_path):
+    """Run 3 policy: enable_summarize=false. A nearly full context ends the episode with ContextLengthExceededError
+    (harbor still verifies it); no summarization request ever reaches the router."""
+    with Stack(tmp_path, router_args=REPAIR) as st:
+        r = run_agent(st, 'summ', tmp_path, enable_summarize=False)
+        assert type(r.exc).__name__ == 'ContextLengthExceededError'
+        kinds = {x['request_kind'] for x in st.turns(r.sid)}
+        assert not kinds & {'summary', 'questions', 'answers', 'handoff'}

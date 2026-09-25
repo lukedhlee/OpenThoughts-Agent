@@ -114,7 +114,8 @@ def trials(job_dir):
                 sid = t.get('session_id')
                 steps = [dict(content_sha=sha(s.get('message') if isinstance(s.get('message'), str) else json.dumps(s.get('message'))),
                               model=s.get('model_name'), has_reasoning=bool(s.get('reasoning_content')),
-                              parse_error_obs='Previous response had parsing errors' in json.dumps(s.get('observation') or {}))
+                              parse_error_obs='Previous response had parsing errors' in json.dumps(s.get('observation') or {}),
+                              done=bool(isinstance(s.get('message'), str) and rt.parse_reply(s['message'], 'terminus2')['done']))
                          for s in t.get('steps', []) if s.get('source') == 'agent' and not s.get('is_copied_context')]
             except (OSError, ValueError):
                 pass
@@ -266,7 +267,25 @@ def owner_join(rv, rows):
                 joined_frac=round(matched / steps, 4) if steps else None)
 
 
-def outcome_table(rows):
+def failure_cause(t, ending=None):
+    """Why a verified failure failed, first match wins: context overflow, format loop (half or more of its turns drew a
+    parse-error re-prompt, or the last 5 all did), false done (the episode ended on a confirmed task_complete), timeout
+    (router budget ending or AgentTimeoutError), else tests failed."""
+    steps = t['steps']
+    pe = [s['parse_error_obs'] for s in steps]
+    if t['exc'] == 'ContextLengthExceededError':
+        return 'context_overflow'
+    if steps and (sum(pe) >= len(pe) / 2 or (len(pe) >= 5 and all(pe[-5:]))):
+        return 'format_loop'
+    if ending in ('student_budget', 'teacher_budget') or t['exc'] == 'AgentTimeoutError':
+        return 'timeout'
+    if len(steps) >= 2 and steps[-1]['done'] and steps[-2]['done'] and ending is None:
+        return 'false_done'
+    return 'tests_failed'
+
+
+def outcome_table(rows, endings=None):
+    endings = endings or {}
     n = len(rows)
     scored = [t for t in rows if usable(t)]
     passes = [t for t in scored if is_pass(t)]
@@ -277,6 +296,11 @@ def outcome_table(rows):
                 harness_error_frac=round(sum(t['harness_error'] for t in rows) / n, 4) if n else None,
                 verifier_timeouts=sum(t['verifier_timeout'] for t in rows),
                 censored_by_deadline=sum(t['censored'] for t in rows),
+                context_overflow=sum(1 for t in rows if t['exc'] == 'ContextLengthExceededError'),
+                context_overflow_rate=round(sum(1 for t in rows if t['exc'] == 'ContextLengthExceededError') / n, 4) if n else None,
+                failure_causes=collections.Counter(failure_cause(t, endings.get(t['sid'])) for t in scored if not is_pass(t)),
+                turns_per_episode_p50=q([len(t['steps']) for t in scored], .5),
+                turns_per_episode_p90=q([len(t['steps']) for t in scored], .9),
                 agent_ends=collections.Counter(t['exc'] for t in scored if t['exc']))
 
 
@@ -415,6 +439,8 @@ def repair_view(rv, rows):
     ex = sum(v for k, v in own.items() if k != 'router')
     rejected = sum(len(r.get('repair_rejected_replies') or []) for r in rv['recs'])
     still_bad = sum(1 for r in rv['recs'] if r.get('repair') and r.get('repair_reply_parse_error'))
+    paused = [max((r.get('paused_sec') or 0) for r in e['main'] + e['aux']) + max(
+        (r.get('paused_this_turn_sec') or 0) for r in e['main'][-1:]) for e in eps if e['main']]
     with_teacher = [e for e in eps if any(r['owner'] == 'teacher' for r in e['main'])]
     sc = [by_sid.get(e['sid']) for e in with_teacher]
     sc = [t for t in sc if usable(t)]
@@ -425,6 +451,8 @@ def repair_view(rv, rows):
                 student_share_of_executed_turns=round(own['student'] / ex, 4) if ex else None,
                 repair_returned_to_student=back_to_student, repair_kept_by_teacher=not_back,
                 teacher_repair_replies_rejected_then_retried=rejected, repair_turns_still_unparseable=still_bad,
+                paused_sec_per_episode_mean=round(statistics.mean(paused), 1) if paused else None,
+                paused_sec_per_episode_p90=q(paused, .9),
                 teacher_turns_per_episode_mean=round(statistics.mean(t_turns), 2) if t_turns else None,
                 student_turns_per_episode_mean=round(statistics.mean(s_turns), 2) if s_turns else None,
                 episodes_with_teacher_turns=len(with_teacher), with_teacher_passes=p,
@@ -490,7 +518,7 @@ def main():
     p.add_argument('--json', help='write the readout here too')
     a = p.parse_args()
     name = a.name or os.path.basename(os.path.normpath(a.run_dir))
-    arm_names = [arm for arm in ('relay', 'control', 'relay_keep', 'relay_repair') if os.path.isdir(os.path.join(a.run_dir, f'router_{arm}'))]
+    arm_names = [arm for arm in ('relay', 'control', 'relay_keep', 'relay_repair', 'student_only') if os.path.isdir(os.path.join(a.run_dir, f'router_{arm}'))]
     arms = {}
     for arm in arm_names:
         rv = router_view(os.path.join(a.run_dir, f'router_{arm}'))
@@ -514,7 +542,7 @@ def main():
         else:
             o['would_fire_on_teacher'] = would_fire(rv, rows)
         if rows:
-            o['outcomes'] = outcome_table(rows)
+            o['outcomes'] = outcome_table(rows, {e['sid']: e['ending'] for e in rv['eps'].values()})
             o['owner_join'] = owner_join(rv, rows)
             o['format'] = format_validity(rows)
         out[arm] = o
@@ -545,7 +573,14 @@ def main():
         if rp['repairs']:
             check('H4 relay_repair: after a repair the student resumes (or a trigger / ending takes over), 100 %',
                   rp['repair_kept_by_teacher'] == 0, rp)
-    if a.gate == 'final':
+    if a.gate == 'final' and not ('control' in arms and any(x in arms for x in RELAY_ARMS)):
+        for arm in arm_names:
+            oc = out[arm].get('outcomes') or {}
+            check(f'H1 {arm}: trial harness errors <= 10 %', oc and (oc.get('harness_error_frac') or 0) <= 0.10,
+                  dict(oc.get('harness_errors') or {}))
+            j = out[arm].get('owner_join') or {}
+            check(f'H2 {arm}: owner labels on 100 % of trajectory turns', j.get('joined_frac') == 1.0, j)
+    elif a.gate == 'final':
         for arm in arm_names:
             oc = out[arm].get('outcomes') or {}
             check(f'H1 {arm}: trial harness errors <= 10 %', oc and (oc.get('harness_error_frac') or 0) <= 0.10,

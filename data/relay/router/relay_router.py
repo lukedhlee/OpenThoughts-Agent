@@ -40,7 +40,14 @@ Deadline (--deadline-epoch): after it, every episode is ended at its next reques
 a run stops inside its node-hour cap with its verifiers run and its results written; the readout counts those
 episodes as censored.
 
-Budgets (--budget-mode, relay arm): harbor runs the relay arm with agent_timeout_multiplier ~2 and the router ends
+Teacher endpoints: --teacher-url may be a comma-separated list; each episode is pinned to one (round-robin by
+episode index), for its chat and /tokenize requests alike.
+
+Budgets (--budget-mode, relay arm). The student's clock is the wall time since the episode's first request minus the
+time its repair turns were with the teacher (from the router sending the repair request, retries included, to the
+teacher's answer): repair queueing is infrastructure, not the student's time. The student's own discarded reply still
+counts as its time. Every log line carries paused_sec and student_clock_sec.
+ harbor runs the relay arm with agent_timeout_multiplier ~2 and the router ends
 the episode itself when the student has used 1x the task's agent timeout without a takeover (`student_budget`), or
 the teacher has used 1x from its takeover (`teacher_budget`). It ends an episode by answering the pending request, and
 Terminus-2's confirmation request after it, with `task_complete: true` and no commands (owner `router`, never trained
@@ -181,6 +188,8 @@ class Episode:
         self.lock = asyncio.Lock()
         self.student_think = None
         self.n_repairs = 0
+        self.teacher_idx = 0
+        self.paused_sec = 0.0             # wall time the student's clock was stopped (teacher repair turns in flight)
         self.repair_confirm = False       # the teacher claimed done in a repair turn: it answers that confirmation
 
     def summary(self):
@@ -188,6 +197,7 @@ class Episode:
                     student_think=self.student_think,
                     takeover={k: v for k, v in (self.takeover or {}).items() if k != 'discarded_student_reply'} or None,
                     ending=self.ending, turns=self.sc.turn, n_requests=self.n_requests, repairs=self.n_repairs,
+                    paused_sec=round(self.paused_sec, 1), teacher_endpoint=self.teacher_idx,
                     started=self.t0, last=self.last_t, owners=self.owners)
 
 
@@ -195,7 +205,10 @@ class Router:
     def __init__(self, a):
         self.a = a
         self.mode = a.mode
-        self.urls = {'student': (a.student_url or '').rstrip('/'), 'teacher': (a.teacher_url or '').rstrip('/')}
+        # --teacher-url may list several servers (comma-separated); each episode is pinned to one, round-robin by
+        # episode, so its prefix cache stays on one server and load splits evenly
+        self.urls = {w: [u.strip().rstrip('/') for u in (getattr(a, f'{w}_url') or '').split(',') if u.strip()]
+                     for w in ('student', 'teacher')}
         self.models = {'student': a.student_model, 'teacher': a.teacher_model}
         self.need = {'relay': ('student', 'teacher'), 'teacher': ('teacher',), 'student': ('student',)}[a.mode]
         self.cfg = dict(rt.CALIBRATED_CONFIG)
@@ -265,13 +278,14 @@ class Router:
         """Served names, max_model_len and one real completion per endpoint. Returns (ok, report)."""
         report = {'router_version': ROUTER_VERSION, 'mode': self.mode, 'arm': self.a.arm, 'endpoints': {}}
         ok = True
-        for who in self.need:
-            r = {'url': self.urls[who], 'model': self.models[who]}
-            report['endpoints'][who] = r
+        for who, url, name in [(w, u, w if len(self.urls[w]) == 1 else f'{w}{k}')
+                               for w in self.need for k, u in enumerate(self.urls[w])]:
+            r = {'url': url, 'model': self.models[who]}
+            report['endpoints'][name] = r
             ids, mml = None, None
             for attempt in range(self.a.health_retries):
                 try:
-                    async with self.http.get(self.urls[who] + '/models', timeout=ClientTimeout(total=20)) as resp:
+                    async with self.http.get(url + '/models', timeout=ClientTimeout(total=20)) as resp:
                         data = await resp.json(content_type=None)
                     ids = [m.get('id') for m in data.get('data', [])]
                     mml = next((m.get('max_model_len') for m in data.get('data', []) if m.get('id') == self.models[who]), None)
@@ -291,7 +305,7 @@ class Router:
             if who == 'student':
                 body.setdefault('skip_special_tokens', False)
             try:
-                async with self.http.post(self.urls[who] + '/chat/completions', json=body,
+                async with self.http.post(url + '/chat/completions', json=body,
                                           timeout=ClientTimeout(total=600)) as resp:
                     status, data = resp.status, await resp.json(content_type=None)
             except Exception as e:  # noqa: BLE001
@@ -335,6 +349,7 @@ class Router:
             self.n_episodes += 1
             ep = Episode(sid, self.n_episodes, first, task, 'teacher' if self.mode == 'teacher' else 'student')
             ep.student_think = self.a.student_think
+            ep.teacher_idx = (self.n_episodes - 1) % max(1, len(self.urls['teacher']))
             self.episodes[sid] = ep
             self.by_first.setdefault(ep.first_sha, []).append(sid)
             self.event('episode_start', episode=ep.idx, sid=sid, task=task, student_think=self.a.student_think)
@@ -433,8 +448,10 @@ class Router:
         b['messages'] = messages
         return b
 
-    async def post(self, who, path, body):
-        url = (self.urls[who] + path) if path.startswith('/chat') else (re.sub(r'/v1$', '', self.urls[who]) + path)
+    async def post(self, who, path, body, ep=None):
+        urls = self.urls[who]
+        base = urls[(ep.teacher_idx if (ep is not None and who == 'teacher') else 0) % len(urls)]
+        url = (base + path) if path.startswith('/chat') else (re.sub(r'/v1$', '', base) + path)
         last = None
         for attempt in range(self.a.connect_retries + 1):
             try:
@@ -479,7 +496,7 @@ class Router:
         msgs = self.for_teacher(ep, messages)[0] if who == 'teacher' else self.for_student(ep, messages)[0]
         b = {k: v for k, v in body.items() if not (who == 'teacher' and k in self.teacher_drop)}
         b.update(model=self.models[who], messages=msgs)
-        status, data = await self.post(who, '/tokenize', b)
+        status, data = await self.post(who, '/tokenize', b, ep)
         return web.Response(status=status, body=data, content_type='application/json')
 
     async def h_chat(self, request):
@@ -517,7 +534,8 @@ class Router:
         rec = dict(ts=now, elapsed_sec=round(now - ep.t0, 3), arm=self.a.arm, router_version=ROUTER_VERSION,
                    episode=ep.idx, sid=ep.sid, task_id=(ep.task or {}).get('task_id'), request_kind=kind,
                    n_messages=len(messages), request_sha=sha(json.dumps(messages, sort_keys=True, ensure_ascii=False)),
-                   seq=ep.n_requests, student_think=self.a.student_think)
+                   seq=ep.n_requests, student_think=self.a.student_think, paused_sec=round(ep.paused_sec, 3),
+                   student_clock_sec=round(now - ep.t0 - ep.paused_sec, 3))
         if kind in AUX_KINDS:
             who = ep.owner
             rec.update(turn=None, owner=who)
@@ -560,7 +578,7 @@ class Router:
                 ep.pending = None
         if self.a.budget_mode == 'on' and ep.task and ep.task.get('budget_sec'):
             b = ep.task['budget_sec']
-            if ep.owner == 'student' and self.mode == 'relay' and now - ep.t0 >= self.a.student_budget_frac * b:
+            if ep.owner == 'student' and self.mode in ('relay', 'student') and now - ep.t0 - ep.paused_sec >= self.a.student_budget_frac * b:
                 ep.ending = 'student_budget'
             elif ep.owner == 'teacher' and ep.takeover_t and now - ep.takeover_t >= self.a.teacher_budget_frac * b:
                 ep.ending = 'teacher_budget'
@@ -676,7 +694,7 @@ class Router:
         t1 = time.time()
         attempts = self.a.repair_attempts if (rec.get('repair') and self.parser is not None) else 1
         for attempt in range(attempts):
-            status, data = await self.post(who, '/chat/completions', b)
+            status, data = await self.post(who, '/chat/completions', b, ep)
             if status != 200 or attempt == attempts - 1:
                 break
             c = text_of(json.loads(data)['choices'][0]['message'].get('content'))
@@ -692,6 +710,10 @@ class Router:
             if not pr.error and pr.is_task_complete and rec.get('repair_kind') == 'parse_error':
                 ep.repair_confirm = True
         rec.update(latency_sec=round(time.time() - t1, 3), upstream_status=status)
+        if rec.get('repair') and ep.owner == 'student':
+            # the student's clock stops while its repair turn is with the teacher (queueing is infrastructure)
+            ep.paused_sec += time.time() - t1
+            rec['paused_this_turn_sec'] = round(time.time() - t1, 3)
         if status != 200:
             self.check_fatal(who, status, data)
             rec['upstream_error'] = data[:2000].decode('utf-8', 'replace')

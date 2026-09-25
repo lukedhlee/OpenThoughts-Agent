@@ -1,16 +1,19 @@
 # Relay pilot on CalibForge (Daytona, three shared snapshots): one arm's harbor job. run_pilot.sh renders it twice,
 # once per arm; the arms differ only in job name and api_base (relay router vs control router).
 #
-# Agent = Terminus-2 exactly as the TB2 Eval Policy v0.1 runs Snowball (tb2_marin_policy.yaml: 32,768 input / 8,192
-# output tokens, extra_body skip_special_tokens=false, summarization at its default), plus three settings the relay
-# needs and eval does not:
+# Agent = Terminus-2 as the TB2 Eval Policy v0.1 runs Snowball (tb2_marin_policy.yaml: 8,192 output tokens,
+# extra_body skip_special_tokens=false), with two run-3 changes (Luke 2026-09-25): summarization OFF
+# (enable_summarize: false; a summarized episode is a discontinuous trace we cannot train on) and 65,536 input tokens,
+# the serves' own context, so overflow is rare; an overflow ends the episode as ContextLengthExceededError, which
+# harbor still verifies. Plus three settings the relay needs and eval does not:
 #   interleaved_thinking: true           the teacher's reasoning comes back in its history (harbor re-sends it under
 #                                         reasoning + reasoning_content; lukedhlee/terminus2-relay d006935e)
 #   llm_session_header                    the router tells episodes apart by it (lukedhlee/terminus2-relay 8dfd835a)
 #   trajectory_config.raw_content: true   trajectory.json keeps each raw reply, so router records join by content hash
 # The router drops skip_special_tokens for the teacher. Sandboxes follow the CalibForge gates (gate_nop.yaml).
-# agent_timeout_multiplier 2.1: harbor's hard stop sits above the router's budgets (student 1x, teacher 1x from its
-# takeover, control 1x), so the router, not harbor, ends each episode at the task's own budget in both arms.
+# agent_timeout_multiplier 3.0: harbor's hard stop sits above the router's budgets (student 1x of its own clock, which
+# pauses during repair turns; teacher 1x from its takeover; control 1x), so the router, not harbor, ends each episode
+# at the task's own budget in both arms.
 # Retries cover sandbox and upload infrastructure only. LLM-path errors (router 5xx, connect errors, timeouts) are left
 # out on purpose: the pilot is a harness gate, so they must surface as trial exceptions, not disappear into retries.
 # Harbor = marin-community/harbor lukedhlee/terminus2-relay (the setup-files hook + the two relay commits).
@@ -19,7 +22,7 @@ jobs_dir: __JOBS_DIR__
 n_attempts: 1
 n_concurrent_trials: __CONC__
 timeout_multiplier: 1.0
-agent_timeout_multiplier: 2.1
+agent_timeout_multiplier: 3.0
 quiet: true
 release_trial_payloads_in_memory: true
 retry:
@@ -51,12 +54,13 @@ agents:
   kwargs:
     api_base: __API_BASE__
     model_info:
-      max_input_tokens: 32768
+      max_input_tokens: 65536
       max_output_tokens: 8192
       input_cost_per_token: 0.0
       output_cost_per_token: 0.0
     extra_body:
       skip_special_tokens: false
+    enable_summarize: false
     interleaved_thinking: true
     llm_session_header: X-Harbor-Session-Id
     trajectory_config:

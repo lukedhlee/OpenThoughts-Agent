@@ -1,5 +1,43 @@
 # Relay pilot on 100 CalibForge tasks (Terminus-2)
 
+## Run 3 (Luke's go, 14:40 PT): what changed from run 2 and why
+
+Same two arms (control vs relay_repair), same 100 tasks, same triggers, and the student's thinking stripped from the
+teacher's view.
+
+**Cost.** Hard ceiling 4.0 node-hours: 3 nodes × 80 min on `-A transfernetx`, with Slurm `--time` as the backstop.
+Expected about 3 node-hours, about 60 min of wall time after the servers are up.
+
+**What changed.**
+- **Summarization off, in both arms, for student and teacher** (`enable_summarize: false`). A summarized episode is a
+  discontinuous trace we cannot train on.
+- **65,536 input tokens**, the serves' own context, so overflow stays rare. Output stays at 8,192, as in the TB2
+  policy.
+  - An overflow ends the episode with `ContextLengthExceededError`. Harbor still verifies it.
+  - The readout labels it as its own failure cause, not a harness error, and reports the overflow rate per arm.
+- **Two Qwen servers, one per node.** Each router pins every episode to one server, round-robin by episode, for its
+  chat and `/tokenize` requests alike, which keeps its prefix cache on one server.
+  - Each Qwen node sees at most about 100 agents: 50 control plus up to 50 relay_repair.
+  - Run 2's single Qwen node queued requests for p50 70–92 s.
+- **The student's clock pauses while a repair is with the teacher.**
+  - Student clock = wall time since the episode's first request − the time its repair turns spent with the teacher,
+    from the router sending the repair request (retries included) to the teacher's answer.
+  - The student's own discarded reply still counts as student time.
+  - The teacher's clock after a sticky takeover is wall time since the takeover.
+  - Every log line carries `paused_sec` and `student_clock_sec`, and the readout reports paused seconds per episode.
+  - Harbor's hard stop moves to 3.0× the budget, so the router, not harbor, ends every episode.
+- **The deadline margin is 5 min** before the cap, down from 10.
+- **Stop rule changes, only where these changes require them.**
+  - H3 is judged on agent turns only, as amended after run 2 (39c25def).
+  - Overflow counts as a scored agent end with its own cause.
+  - Everything else is unchanged.
+- **The early gate cannot false-alarm on anything we turned off.** It checks H0, H1 on the router side, H3 on agent
+  turns, and H4.
+  - With summarization off, no summary, questions, answers or handoff requests exist. The only restores in run 2 came
+    from those.
+  - The paused clock, the budgets and overflow are not inputs to any gate check.
+  - It also needs at least 20 turns per arm at 25 min.
+
 **What it tests (run 2, Luke's design of 2026-09-25 13:45 PT).** Whether a student-to-teacher relay produces usable
 SFT data on CalibForge when the student is the 09-21 Datakit SFT with thinking on, served exactly as in its TB2 eval.
 That student often answers in its own `<tool_call>` format, which Terminus-2 rejects (run 1, below). So the relay now

@@ -120,7 +120,7 @@ class FakeServer:
         # 'summ' scenario: report a nearly full context once, at the 4th agent turn, to force Terminus-2's summarization
         if (scenario_of(msgs) == 'summ' and len(msgs) >= 7 and first not in self.summarized
                 and not last.startswith((SUMMARY_PREFIX, QUESTIONS_PREFIX, ANSWERS_PREFIX))):
-            count = 30000
+            count = 32000
         return web.json_response({'count': count, 'max_model_len': self.max_model_len, 'tokens': []})
 
     async def chat(self, request):

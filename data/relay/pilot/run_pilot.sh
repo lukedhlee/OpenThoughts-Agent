@@ -34,12 +34,14 @@ PY=${PY:-$C/envs/snowball-v2/bin/python}; HARBOR=${HARBOR:-$C/envs/snowball-v2/b
 HARBOR_SRC=${HARBOR_SRC:-$C/harbor-terminus2-relay/src}
 HARBOR_SHA=${HARBOR_SHA:-89098635}          # marin-community/harbor lukedhlee/terminus2-relay
 TREE=${TREE:-/e/fscratch/reformo/lee27/tasks/calibforge_relay100}
+NTASKS=${NTASKS:-100}
+RUN_KIND=${RUN_KIND:-pilot}   # pilot: TASKS.txt must be disjoint from the held-out split; heldout: it must BE the split
 KEYF=${KEYF:-/e/fscratch/reformo/lee27/keys/daytona_eval.env}
 E=/e/fscratch/reformo/lee27/experiments/relay/pilot; EP=$E/endpoints
 R=$E/runs/$NAME
 JOBS_ROOT=${JOBS_ROOT:-/e/data1/mmlaion/lee27/experiments/relay_pilot_jobs}   # many small files -> mmlaion
 ARMS=${ARMS:-control relay_repair}
-CONC=${CONC:-100}; CAP_NODE_H=${CAP_NODE_H:-3.0}; NODES=2; DEADLINE_MARGIN=${DEADLINE_MARGIN:-600}
+CONC=${CONC:-100}; CAP_NODE_H=${CAP_NODE_H:-4.0}; NODES=${NODES:-3}; DEADLINE_MARGIN=${DEADLINE_MARGIN:-300}
 EARLY_MIN=${EARLY_MIN:-25}; STALL_MIN=${STALL_MIN:-15}; UP_WAIT=${UP_WAIT:-2400}; MIN_EARLY_TURNS=${MIN_EARLY_TURNS:-20}
 VERIFY_WAIT=${VERIFY_WAIT:-2700}   # after the serve job is released, how long harbor may keep verifying (CPU only)
 PORT0=${PORT0:-$((21000 + RANDOM % 8000))}
@@ -72,8 +74,12 @@ log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_
 
 # ---- 1. pre-flight --------------------------------------------------------------------------------------------------
 [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = "$HARBOR_SHA" ] || { log "harbor at ${HARBOR_SRC%/src} is not $HARBOR_SHA"; scancel $JOB; exit 1; }
-[ -f $TREE/router_tasks.json ] && [ "$(find $TREE -mindepth 1 -maxdepth 1 -type d | wc -l)" = 100 ] || { log "tree $TREE is not the staged 100 (stage_tree.sh)"; scancel $JOB; exit 1; }
-[ -z "$(comm -12 <(sort $TREE/TASKS.txt) <(sort $HERE/calibforge_heldout300.txt))" ] || { log "pilot tasks overlap the held-out split"; scancel $JOB; exit 1; }
+[ -f $TREE/router_tasks.json ] && [ "$(find $TREE -mindepth 1 -maxdepth 1 -type d | wc -l)" = $NTASKS ] || { log "tree $TREE does not hold $NTASKS staged tasks (stage_tree.sh)"; scancel $JOB; exit 1; }
+if [ $RUN_KIND = heldout ]; then
+  diff -q <(sort $TREE/TASKS.txt) <(sort $HERE/calibforge_heldout300.txt) >/dev/null || { log "tree is not the held-out split"; scancel $JOB; exit 1; }
+else
+  [ -z "$(comm -12 <(sort $TREE/TASKS.txt) <(sort $HERE/calibforge_heldout300.txt))" ] || { log "pilot tasks overlap the held-out split"; scancel $JOB; exit 1; }
+fi
 $PY -c "import aiohttp, yaml" || { log "aiohttp/yaml missing in $PY"; scancel $JOB; exit 1; }
 set -a; source $KEYF; set +a
 curl -sf --max-time 20 -H "Authorization: Bearer $DAYTONA_API_KEY" https://app.daytona.io/api/api-keys/current >/dev/null || { log "Daytona key rejected"; scancel $JOB; exit 1; }
@@ -91,7 +97,7 @@ log "pre-flight ok: harbor $HARBOR_SHA, tree $TREE, held-out disjoint, snapshots
 
 # ---- 2. endpoints ---------------------------------------------------------------------------------------------------
 RUNNING_SINCE=""
-while [ ! -f $EP/$JOB.student ] || [ ! -f $EP/$JOB.teacher ]; do
+while [ ! -f $EP/$JOB.student ] || [ ! -f $EP/$JOB.teacher ]; do   # .teacher is empty on a student-only serve
   [ -f $EP/$JOB.DEAD ] && { log "serve job died: $(cat $EP/$JOB.DEAD)"; exit 1; }
   ST=$(squeue -h -j $JOB -o %T 2>/dev/null)
   [ -z "$ST" ] && { log "serve job $JOB gone before its endpoints appeared"; exit 1; }
@@ -108,12 +114,13 @@ log "endpoints student=$SURL teacher=$TURL; job start $(date -d @$JSTART -Is), d
 
 # ---- 3. routers -----------------------------------------------------------------------------------------------------
 for arm in $ARMS; do
-  case $arm in control) M=(--mode teacher);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
+  TARGS=(); [ -n "$TURL" ] && TARGS=(--teacher-url $TURL --teacher-model qwen38)
+  case $arm in control) M=(--mode teacher);; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
     relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py);;
     *) abort "unknown arm $arm";; esac
   $PY $ROUTER "${M[@]}" --arm $arm --port ${PORT[$arm]} --log-dir $R/router_$arm --tasks $TREE/router_tasks.json \
-    --budget-mode on --deadline-epoch $DEADLINE --student-url $SURL --student-model snowball --teacher-url $TURL \
-    --teacher-model qwen38 > $R/router_$arm.log 2>&1 &
+    --budget-mode on --deadline-epoch $DEADLINE --student-url $SURL --student-model snowball "${TARGS[@]}" \
+    > $R/router_$arm.log 2>&1 &
   RPID[$arm]=$!
 done
 for arm in $ARMS; do
