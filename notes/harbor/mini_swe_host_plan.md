@@ -1,9 +1,38 @@
 # mini-swe-agent v2 on the host: Harbor agent spec
 
-2026-09-24 · **status (09-25): Stages 0–3 ✅ harness gates (`lukedhlee/mini-swe-host` @543d611c); relay student 09-21 is off-format in text mode (32 % format errors); Stage 4 needs its own go** · target: marin-community/harbor (remote `upstream` in
+2026-09-24 · **status (09-25 12:30 PT): PARKED by Luke — we stick with Terminus-2. Stages 0–3 ✅ harness gates, tool mode built (`lukedhlee/mini-swe-host` @cdd5b008); no further MSA runs** · target: marin-community/harbor (remote `upstream` in
 `/Users/lukedhlee/harbor`); for Stage 5 only, also MarinSkyRL · worktree `/Users/lukedhlee/harbor-wt-mini-swe-host`
 cut from `upstream/main` (761fb516; executed on 07dd3ef3) · branch `lukedhlee/mini-swe-host` · evidence
 `agent_logs/2026-09-24_mini_swe_host_scoping.md`, execution log `agent_logs/2026-09-25_mini_swe_host_exec.md`
+
+## Parked (Luke, 2026-09-25 12:30 PT): we stick with Terminus-2
+
+The harness works; the relay student does not work in it. Tool mode is the right mode for 09-21 (it was trained on
+mini-swe-agent traces as tool calls, and its format errors drop from 32 % to 12 %), but in tool mode it still never
+submits: all 8 episodes run long (median 44.5 calls) and 6 of 8 hit the 64k context. The deeper mismatch is the
+environment: mini-swe-agent runs every action in a fresh subshell (no `cd`, no env vars, no background process carries
+over), while the terminal tasks we care about (TB2-style, CalibForge) assume a persistent shell, which Terminus-2 gives.
+No further MSA runs; the code stays on `lukedhlee/mini-swe-host` (no PR).
+
+**Four-row readout (8 CalibForge tasks, Daytona, `mini_textbased.yaml` for text / `mini.yaml` for tool):**
+
+| model · mode | format errors / calls | format-error causes | submit | pass | median calls | harness errors | other |
+|---|---|---|---|---|---|---|---|
+| 09-21 · text (job 2021265) | 40 / 125 (32 %) | 11 prose without a block, 9 cut off at the context end, 8 wrong fence (```bash/```json), 5 ended inside reasoning, 6 two blocks, 1 Terminus JSON | 2/8 | 1/8 | 5 | 0 | 6/8 end on 3 format errors in a row |
+| 09-21 · tool (job 2023105) | 45 / 363 (12 %) | 21 cut off at the context end, 11 invalid tool-call JSON, 9 ended inside reasoning, 2 unclosed `<tool_call>`, 1 prose, 1 unknown tool | 0/8 | 0/8 | 44.5 | 0 | 6/8 ContextLengthExceeded (every episode reached ~56–65k prompt tokens), 2/8 RepeatedFormatError; 14 multi-call replies |
+| Qwen3.8 · text (job 2011666) | 8 / 191 (4 %) | 4 cut off at the context end, 3 wrong fence, 1 run-on | 5/8 | 6/8 | 23.5 | 0 | 1 agent timeout, 1 context overflow |
+| Qwen3.8 · tool (job 2024414) | 5 / 161 (3 %) | 5 cut off at the context end | 6/8 | 5/8 | 20.5 | 0 | 1 context overflow; 43 multi-call replies; 0 HTTP errors |
+
+False format errors (harness mistakes) are 0 in all four runs by the readout's independent parser. Tool mode serves:
+09-21 exactly as in its evals with `tools=[bash]`, `tool_choice: "none"` (no tool parser; the agent parses
+`<tool_call>` from the text); Qwen3.8 with `--enable-auto-tool-choice --tool-call-parser qwen3_coder` and
+`VLLM_ENFORCE_STRICT_TOOL_CALLING=0` (the strict structural-tag grammar rejects MTP draft tokens on this build: HTTP 500
+on 28 of 64 calls in cancelled job 2024000). Both tool-mode renders were checked: on CPU against 09-21's template and
+live via `/tokenize` on the 09-21 server (Tools block, re-rendered `<tool_call>`, `<tool_response name="bash">`, prior
+reasoning re-fed).
+
+**Spend:** 2.23 Jupiter node-hours in total: Stages 2–3 0.99, 09-21 text 0.29, 09-21 tool 0.33, Qwen tool 0.62 (0.09
+failed start on `EADDRINUSE`, 0.18 cancelled on the grammar 500s, 0.36 the good run).
 
 ## Execution status (2026-09-25)
 
@@ -13,7 +42,8 @@ cut from `upstream/main` (761fb516; executed on 07dd3ef3) · branch `lukedhlee/m
 | 1 | ✅ DONE | harbor `7f042513`, fixes `05dd2161` + `543d611c` | Requests and messages byte-identical to upstream on all 5 episodes; full unit suite vs baseline: 3,389 existing test ids, 0 outcome changes; 40 new tests pass |
 | 2 | ✅ DONE (run 2) | smoke `0f74fd8d` (= `543d611c` + hook), job 2011666 | Qwen3.8-27B, 8 CalibForge tasks: 0 harness errors; prior reasoning re-rendered inside `<think>` (live `/tokenize`); 8 format errors / 191 calls (4 %), 0 false; 6 command timeouts; submit 5/8, pass 6/8 (sanity); median 23.5 calls; sentinel ended every submit; 1 agent timeout + 1 context overflow, both scored |
 | 3 (stand-in) | ✅ harness gate (run 2) | smoke `bb2994de`/`0f74fd8d`, job 2011566 | **SFT→RL step30, a stand-in, not the relay student.** 8 tasks: 0 harness errors, **0 false format errors** (independent readout); 26 format errors / 45 calls (58 %: 13 Terminus-2 JSON, 7 run-on replies with two blocks, 6 ```bash fences); submit 1/8, pass 0/8; median 4 calls; sentinel ended the submit |
-| 3 (relay student) | ✅ harness gate; model off-format | smoke `0f74fd8d`, job 2021265 | **09-21 Datakit SFT, thinking on, text mode — the result that counts.** 8 tasks: 0 harness errors, 0 false format errors; **40 format errors / 125 calls (32 %)**: 11 prose with no block, 9 cut off (finish_reason=length), 8 wrong fence (```bash/```json, some after `<tool_call>`), 5 ended inside reasoning, 6 two blocks (4 run-on), 1 Terminus-2 JSON; submit 2/8, pass 1/8; median 5 calls; 6/8 end on RepeatedFormatError; sentinel ended both submits; 0.29 node-h |
+| 3 (relay student, tool) | ✅ harness gate; model does not finish | harbor `84b443f3` + `cdd5b008`, smoke `343bc505`, job 2023105 | **09-21, thinking on, tool mode — the target mode for this student.** See the four-row table above: 12 % format errors, 0/8 submits, 6/8 hit the 64k context |
+| 3 (relay student, text) | ✅ harness gate; model off-format | smoke `0f74fd8d`, job 2021265 | **09-21 Datakit SFT, thinking on, text mode (wrong mode for a tool-trained student).** 8 tasks: 0 harness errors, 0 false format errors; **40 format errors / 125 calls (32 %)**: 11 prose with no block, 9 cut off (finish_reason=length), 8 wrong fence (```bash/```json, some after `<tool_call>`), 5 ended inside reasoning, 6 two blocks (4 run-on), 1 Terminus-2 JSON; submit 2/8, pass 1/8; median 5 calls; 6/8 end on RepeatedFormatError; sentinel ended both submits; 0.29 node-h |
 
 **Red runs, fixed and re-gated.** Stage 2 run 1 (job 2011216) re-fed no reasoning: Harbor's `Chat` re-sends it as
 `reasoning_content`, and this vLLM reads an assistant turn's reasoning only from `reasoning`, so Qwen3.8's template
@@ -26,7 +56,9 @@ a hung exec).
 
 **Student correction (Luke, 09-25).** The relay student is the **09-21 Datakit SFT**
 (`open-athena/Grug-67B-A2B-Datakit-SFT-262K-2026.09.21`), not SFT→RL step30. The step30 numbers below (39 % / 58 %
-format errors) are a stand-in; the 09-21 row in the table is the one that counts for the relay student. On 09-21 the
+format errors) are a stand-in; the 09-21 rows are the ones that count for the relay student, and tool mode is the
+target: text mode was a wrong choice for a tool-trained student (Datakit renders the Open-SWE-Traces mini-swe-agent rows
+as structured tool calls with the bash schema in `tools`; `datakit/download/open_swe_traces.py::row_to_chat_doc`). On 09-21 the
 harness is clean (0 harness errors, 0 false format errors) but the model is not on-format in text mode: a third of its
 calls end without exactly one ```` ```mswea_bash_command ```` block, and 6 of 8 episodes die on three format errors in
 a row. Unlike step30 it rarely answers in Terminus-2 JSON (1 of 40); its failures are dropped blocks, runaway
@@ -137,10 +169,22 @@ ours, and each one is checked against the reference in Stage 1.
 
 Critical path: 0 → 1 → 2 → 4. Stage 3 can run beside 2. Stage 5 waits until Snowball RL in this harness is wanted.
 
-Stage 5 note (from Stage 1): upstream v2 drops a reply that fails to parse and sends the next request with two user
-turns in a row, so the agent re-syncs `Chat` and resets the exact-token chain there. Every format error therefore breaks
-the TITO prefix property for the following turn; with Snowball at 58 % format errors that is most turns. Either accept
-those turns as re-rendered, or keep the rejected reply in the history (a deviation from upstream).
+Stage 5 fix list (from the 09-25 CPU TITO audit, `ai_memory/active/snowball-sft/research/2026-09-25_msa_tool_mode_tito.md`,
+check script `data/mini_swe_host/tito_tool_mode_check.py` @b6d4748c). A tool turn does not by itself break TITO; the
+chain breaks only because `Chat.append_tool_results` resets it on purpose and because today's tool mode sends the
+re-rendered history. Needed before exact-token RL in this harness:
+- **H1** `build_continuation_prompt_token_ids` takes a list of follow-up messages (`[*probe_base, *followups]`).
+- **H2** a `Chat` method that continues the exact chain with tool (or tool + user) follow-ups; `append_tool_results`
+  stops resetting when a token chain exists.
+- **H3** a `Chat` rewind for a rejected reply (previous prompt minus the generation prompt + the rendered user turn +
+  generation prompt), keeping upstream's history exactly; the rejected turn goes to `extra`, not the token lists.
+- **A1** `HarborToolModel` uses that chain (turn 1 on the chat path, then H2; after a `FormatError`, H3).
+- **A2** `name: "bash"` on every tool message — done (`cdd5b008`).
+- **A3** parse the call from the sampled text only to drive upstream's action parsing; never feed a re-rendered
+  assistant turn back into the prompt; keep the raw reply and raw arguments in `extra`.
+- **A4** tools rendered without `tool_choice: auto` on parser-less serves — done (`tool_choice: "none"`).
+- **M1** MarinSkyRL: `mini-swe-agent-host` in `harbor_agent_names.py` and `_HARBOR_EVIDENCE_PROFILES`, only after
+  H1–H3 and A1–A3.
 
 ## Global invariants
 
