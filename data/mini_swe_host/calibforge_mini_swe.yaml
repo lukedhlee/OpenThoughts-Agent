@@ -1,0 +1,46 @@
+# mini-swe-agent-host on CalibForge (Daytona, the live 3-snapshot pool) — smoke policy.
+# Rendered by run_smoke.sh (Jupiter login node) or by hand for the Mac dry run: replace __JOB_NAME__, __JOBS_DIR__,
+# __TREE__ (task dir), __MODEL_NAME__, __API_BASE__, __EXTRA_BODY__ (JSON object, {} for none), __INTERLEAVED__
+# (true when the server splits reasoning into reasoning_content and the template re-renders it: Qwen3.8).
+# Needs harbor with the setup-files hook (branch lukedhlee/mini-swe-host-smoke): without it a CalibForge task runs
+# on the bare base and silently scores 0. Upstream mini_textbased.yaml is loaded verbatim; the task workdir (/app)
+# is the command cwd because the config sets none. Sandbox size follows the CalibForge no-op gate (gate_nop.yaml).
+job_name: __JOB_NAME__
+jobs_dir: __JOBS_DIR__
+n_attempts: 1
+n_concurrent_trials: 8
+quiet: true
+timeout_multiplier: 1.0
+retry:
+  max_retries: 3
+  include_exceptions:
+  - DaytonaRateLimitError
+  - EnvironmentStartTimeoutError
+  - DaytonaSandboxStopError
+environment:
+  type: daytona
+  force_build: false
+  delete: true
+  override_cpus: 2
+  override_memory_mb: 4096
+  override_storage_mb: 10240
+  kwargs:
+    auto_snapshot: true
+verifier:
+  override_timeout_sec: 900
+agents:
+- name: mini-swe-agent-host
+  model_name: __MODEL_NAME__
+  override_timeout_sec: 900
+  kwargs:
+    config_file: mini_textbased.yaml
+    api_base: __API_BASE__
+    model_info:
+      max_input_tokens: 65536
+      max_output_tokens: 8192
+      input_cost_per_token: 0.0
+      output_cost_per_token: 0.0
+    extra_body: __EXTRA_BODY__
+    interleaved_thinking: __INTERLEAVED__
+datasets:
+- path: __TREE__
