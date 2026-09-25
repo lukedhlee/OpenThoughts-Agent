@@ -10,6 +10,24 @@
 #             qwen3; no sampler override (Qwen3.8's generation_config).
 set -uo pipefail
 ROLE=${1:?student|teacher}
+# Start-up retry: vLLM's DP workers race for torch.distributed ports and a start can die with EADDRINUSE (run 3's first
+# submission, job 2033358, lost both teacher nodes this way). A server that dies BEFORE its /health answers is started
+# again, up to START_TRIES times; once healthy, it is never restarted (a mid-run death ends the job, as before).
+START_TRIES=${START_TRIES:-3}
+serve() {  # serve <vllm args...>
+  local try rc pid
+  for try in $(seq 1 $START_TRIES); do
+    "$@" & pid=$!
+    while kill -0 $pid 2>/dev/null; do
+      curl -sf --max-time 5 localhost:8000/health >/dev/null && { echo "serve_node: healthy on try $try"; wait $pid; exit $?; }
+      sleep 10
+    done
+    wait $pid; rc=$?
+    echo "serve_node: server exited with $rc before it was healthy (try $try of $START_TRIES)"
+    pkill -u $USER -f "vllm.entrypoints.openai.api_server" 2>/dev/null; sleep 20
+  done
+  exit 1
+}
 module load GCC/14.3.0
 module load nvidia-compilers/25.9-CUDA-13
 C=/e/project1/transfernetx/lee27/code
@@ -33,7 +51,7 @@ case $ROLE in
     [ -f "$DRAFT/model.safetensors" ] || { echo "no draft at $DRAFT"; exit 1; }
     CHAT=(); [ -f "$MODEL/chat_template.jinja" ] && CHAT=(--chat-template "$MODEL/chat_template.jinja")
     GEN='{"temperature":1.0,"top_p":1.0,"top_k":-1}'
-    exec $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name snowball --port 8000 \
+    serve $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name snowball --port 8000 \
       --tensor-parallel-size 1 --data-parallel-size 4 --enable-expert-parallel \
       --max-model-len 65536 --hf-overrides '{"max_position_embeddings": 65536, "max_seq_len": 65536}' \
       --max-num-seqs 32 --gpu-memory-utilization 0.90 \
@@ -44,7 +62,7 @@ case $ROLE in
     MODEL=${TEACHER_MODEL:-/e/data1/mmlaion/lee27/models/Qwen3.8-27B}
     [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
     $PY -c "import torchvision, vllm.model_executor.models.qwen3_5; print('torchvision', torchvision.__version__, 'qwen3_5 import ok')" || { echo "qwen3_5 import failed"; exit 1; }
-    exec $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name qwen38 --port 8000 \
+    serve $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name qwen38 --port 8000 \
       --tensor-parallel-size 1 --data-parallel-size 4 \
       --max-model-len 65536 --gpu-memory-utilization 0.90 --max-num-seqs 96 \
       --enable-prefix-caching --enable-chunked-prefill --no-enable-log-requests \
