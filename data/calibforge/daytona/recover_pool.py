@@ -70,7 +70,7 @@ def prepare(args):
     write_json(out/'manifest.json', dict(version=1, images=rows,
         task_tree=dict(file=archive.name, sha256=sha(archive), tasks=len(tasks))))
     for name in ['recover_pool.py', 'build_snapshots.py', 'gate_nop.yaml', 'build_tree.py', 'pool.py', 'registry.py',
-                 'setup_template.sh', 'snapshot_census.py', 'gate.py', 'fidelity_check.py', 'restore.sh', 'RECOVERY.md',
+                 'setup_template.sh', 'snapshot_census.py', 'gate.py', 'fidelity_check.py', 'restore.sh', 'RECOVERY.md', 'burst_test.py', 'mirror_upload.py',
                  'test_snapshot_recovery.py']:
         shutil.copy2(HERE/name, out/name)
     print(f'Prepared {len(rows)} images / {len(tasks)} tasks at {out}', flush=True)
@@ -202,7 +202,16 @@ def restore(args):
                 if await process.wait():
                     return dict(repo=repo, passed=False, stage='restore', log=str(dest/'restore.log'))
             tree = dest/'tree'; tree.mkdir()
-            (tree/row['task']).symlink_to(bundle/'smoke'/row['task'], target_is_directory=True)
+            if args.mirror_only:
+                # prove the layer mirror alone serves the task: no Docker Hub fallback in this smoke run
+                shutil.copytree(bundle/'smoke'/row['task'], tree/row['task'])
+                sh = tree/row['task']/'setup_files/setup.sh'
+                text = sh.read_text()
+                if 'CF_DOCKERHUB="${CF_DOCKERHUB:-1}"' not in text:
+                    return dict(repo=repo, passed=False, stage='mirror_only', error='setup.sh has no Docker Hub switch')
+                sh.write_text(text.replace('CF_DOCKERHUB="${CF_DOCKERHUB:-1}"', 'CF_DOCKERHUB="${CF_DOCKERHUB:-0}"'))
+            else:
+                (tree/row['task']).symlink_to(bundle/'smoke'/row['task'], target_is_directory=True)
             for agent, expected in [('nop',0.0)]:
                 # JSON is also valid YAML; avoid path interpolation/quoting problems.
                 import yaml
@@ -252,6 +261,7 @@ def main():
     p.add_argument('--key-file',default=str(Path(DEFAULT_KEY_FILE).expanduser()))
     p.add_argument('--parallel',type=int,default=4); p.add_argument('--harbor',default='harbor')
     p.add_argument('--require-registry',action='store_true')
+    p.add_argument('--mirror-only',action='store_true',help='smoke gate with the Docker Hub fallback switched off')
     args = ap.parse_args()
     if args.command == 'restore' and not 1 <= args.parallel <= 5:
         ap.error('parallel must be 1–5')

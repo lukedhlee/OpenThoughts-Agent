@@ -39,6 +39,7 @@ from pool import BASES, dockerfile  # noqa: E402
 from registry import Hub  # noqa: E402
 
 TEMPLATE = (HERE / "setup_template.sh").read_text()
+MIRROR = "https://huggingface.co/datasets/laion/calibforge-daytona-layers/resolve/main/blobs/sha256"
 
 
 def toml_value(v) -> str:
@@ -109,7 +110,8 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--all", action="store_true", help="every task, not only recommended_2500")
     ap.add_argument("--max-delta-gb", type=float, default=1.5)
-    ap.add_argument("--mirrors", default="", help="default CF_MIRRORS baked into setup.sh (space-separated blob URLs)")
+    ap.add_argument("--mirrors", default=MIRROR, help="default CF_MIRRORS baked into setup.sh (space-separated blob base URLs)")
+    ap.add_argument("--no-dockerhub", action="store_true", help="bake CF_DOCKERHUB=0: mirror only, no Docker Hub fallback")
     a = ap.parse_args()
 
     import pandas as pd
@@ -178,6 +180,7 @@ def main() -> int:
         sh.parent.mkdir(parents=True, exist_ok=True)
         layers = "\n".join(f"{x['digest']} {x['size']}" for x in row["delta"])
         sh.write_text(TEMPLATE.replace("@@IMAGE@@", row["image"]).replace("@@MIRRORS@@", a.mirrors)
+                      .replace("@@DOCKERHUB@@", "0" if a.no_dockerhub else "1")
                       .replace("@@LAYERS@@", layers))
         sh.chmod(0o755)
 

@@ -5,14 +5,17 @@
 # restores the dpkg entries of harbor's agent tooling, and deletes its own helper dir. Run by harbor as root
 # before the agent starts (setup-files hook); a non-zero exit fails the trial before the agent runs.
 #
-# Layers come from CF_MIRRORS (blob base URLs, tried in order, empty by default) and then from the Docker Hub blob
-# endpoint. Blob downloads are not metered pulls on Docker Hub (only manifest requests are), and no manifest is read.
+# Layers come from CF_MIRRORS first (blob base URLs tried in order; a blob lives at <base>/<first 2 hex>/<64 hex>, the
+# default is the public HF mirror laion/calibforge-daytona-layers), then from the Docker Hub blob endpoint unless
+# CF_DOCKERHUB=0. Blob downloads are not metered pulls on Docker Hub (only manifest requests are), and no manifest is
+# read. Either way every layer's sha256 is checked against its digest before it is applied.
 set -euo pipefail
 T0=$(date +%s%N)
 CF=/opt/cfdelta
 TASK_IMAGE="@@IMAGE@@"
 REPO="${TASK_IMAGE%@*}"
 CF_MIRRORS="${CF_MIRRORS:-@@MIRRORS@@}"
+CF_DOCKERHUB="${CF_DOCKERHUB:-@@DOCKERHUB@@}"
 # digest compressed-bytes, bottom to top
 LAYERS="@@LAYERS@@"
 DL=$CF/dl   # inside the helper dir: nothing a task layer whites out
@@ -20,23 +23,23 @@ DL=$CF/dl   # inside the helper dir: nothing a task layer whites out
 rm -rf "$DL"; mkdir -p "$DL"
 C=("$CF/curl" -fsSL --cacert "$CF/cacert.pem" --connect-timeout 20 --retry 6 --retry-all-errors --retry-delay 2)
 
-TOKEN=""
 fetch() {  # fetch <digest> <out>
-  local d=$1 out=$2 m
+  local d=$1 out=$2 h=${1#sha256:} m tok
   for m in $CF_MIRRORS; do
-    "${C[@]}" -o "$out" "${m%/}/${d#sha256:}" 2>/dev/null && return 0
+    "${C[@]}" --retry 2 -o "$out" "${m%/}/${h:0:2}/$h" && return 0
+    echo "cfdelta: mirror $m failed for $d" >&2
   done
-  "${C[@]}" -H "Authorization: Bearer $TOKEN" -o "$out" "https://registry-1.docker.io/v2/$REPO/blobs/$d"
+  [ "$CF_DOCKERHUB" = 1 ] || return 1
+  tok=$("${C[@]}" "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$REPO:pull" \
+        | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
+  [ -n "$tok" ] || return 1
+  echo "cfdelta: $d from Docker Hub" >&2
+  "${C[@]}" -H "Authorization: Bearer $tok" -o "$out" "https://registry-1.docker.io/v2/$REPO/blobs/$d"
 }
 
 n=0; pids=()
 while read -r d size; do
   [ -n "$d" ] || continue
-  if [ -z "$TOKEN" ] ; then
-    TOKEN=$("${C[@]}" "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$REPO:pull" \
-            | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
-    [ -n "$TOKEN" ] || { echo "cfdelta: no registry token" >&2; exit 4; }
-  fi
   fetch "$d" "$DL/$n.tgz" & pids+=($!)
   n=$((n+1))
 done <<< "$LAYERS"

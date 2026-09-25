@@ -3,18 +3,27 @@
 2,457 of the 2,500 recommended CalibForge tasks run on Daytona from three snapshots. Each snapshot is the exact base
 image the task images were built on (digest-pinned), plus Harbor's agent tooling. At sandbox start, the task's
 `setup_files/setup.sh` downloads that task's own image layers by digest, checks each sha256, and stacks them onto the
-root filesystem the way a container runtime would. The median sandbox is ready in 8 s and the p90 in 19 s. After a
-purge, one command recreates only the missing snapshots from the published images (about 22 s each), never deletes
-anything, and gates each base with a no-op run.
+root filesystem the way a container runtime would. The layers come from our public HF mirror
+`laion/calibforge-daytona-layers`, and Docker Hub is only a fallback, so the pool no longer depends on AweAI's
+images. The median sandbox is ready in 8–11 s and the p90 in about 20 s. After a purge, one command recreates only
+the missing snapshots from our ghcr images (about 22 s each), never deletes anything, and gates each base with a
+no-op run in which Docker Hub is switched off.
 
 ## One command on this Mac
 
 ```bash
-/Users/lukedhlee/.local/share/otagent/calibforge-recovery/cf1-20260924/restore.sh
+/Users/lukedhlee/.local/share/otagent/calibforge-recovery/cf1-20260925/restore.sh
 ```
 
+If the local bundle is gone, fetch the same bundle from HF first:
+`hf download laion/calibforge-daytona-layers --repo-type dataset --include 'bundle/*' --local-dir <dir>`, then run
+`bash <dir>/bundle/restore.sh`.
+
 - `--repos ubuntu2404,bookworm` restores only those bases.
-- `--require-registry` refuses the Dockerfile fallback.
+- `--require-registry` refuses the Dockerfile fallback. That fallback builds `FROM` Docker Hub bases, so it is the
+  one path that still needs Docker Hub.
+- The smoke gate always runs with `CF_DOCKERHUB=0` (`--mirror-only`, set in `restore.sh`), so a pass shows the
+  rebuild works without Docker Hub.
 - The key comes from `~/.config/otagent/daytona_eval.env`, a copy of Jupiter's `keys/daytona_eval.env` (key `...b61`).
   A key exported in the shell cannot shadow it. Override it with `--key-file`.
 
@@ -32,18 +41,25 @@ The full digests are in the bundle's `manifest.json`.
 
 ## What is where
 
-- **Bundle** (`~/.local/share/otagent/calibforge-recovery/cf1-20260924/`): `task_tree.tar.gz` (2,457 tasks plus
-  `pool.json` and `coverage.tsv`), the baked Dockerfiles, `manifest.json` (digests), one smoke task per base, and
-  copies of every script. It is a local backup.
+- **Bundle** (`~/.local/share/otagent/calibforge-recovery/cf1-20260925/`, with an off-machine copy at
+  `bundle/` in the HF dataset). It holds `task_tree.tar.gz` (2,457 tasks plus `pool.json` and `coverage.tsv`), the
+  baked Dockerfiles, `manifest.json` (digests), one smoke task per base, and copies of every script. The older
+  `cf1-20260924` bundle has the same snapshots, but its trees fetch only from Docker Hub.
 - **Images:** the public repo `lukedhlee/r2egym-daytona-images` holds `calibforge/`, and
   `.github/workflows/publish-calibforge.yml` builds each image on an amd64 runner. The tag is
   `cf1-<recipe sha256[:12]>`, and the workflow refuses a recipe whose checksum differs from `calibforge/images.json`.
   A changed recipe therefore gets a new tag, a new digest and a new snapshot name. It can never silently refill an
   old name. The packages are public, so Daytona pulls them anonymously.
-- **Per-task layers** are not re-hosted. `setup.sh` reads them from Docker Hub's blob endpoint
-  (`aweaiteam/calibforge`), by the digests recorded in the tree. Docker Hub meters manifest requests, not blob
-  downloads, and nothing reads a manifest at sandbox start. `CF_MIRRORS` (blob base URLs, tried first) is the hook
-  for a mirror if that ever changes (CalibForge is CC-BY-4.0, so a public mirror with attribution is allowed).
+- **Per-task layers:** the public HF dataset
+  [`laion/calibforge-daytona-layers`](https://huggingface.co/datasets/laion/calibforge-daytona-layers) holds them
+  at `blobs/sha256/<first 2 hex>/<64 hex>`: 9,835 blobs, 137.1 GB, CC-BY-4.0 with credit to CalibForge (AweAI).
+  - `setup.sh` tries `CF_MIRRORS` first (default: that dataset), then Docker Hub's blob endpoint unless
+    `CF_DOCKERHUB=0`.
+  - Every layer's sha256 is checked against its digest either way.
+  - `mirror_upload.py` rebuilt the mirror by streaming 6 GB batches from Docker Hub (verify, commit, delete); it
+    resumes where it stopped.
+  - `registry_cache.tar.gz` in the dataset holds the manifests and configs that `build_tree.py` needs, so the tree
+    can be rebuilt without Docker Hub too.
 
 ## Rebuild the tree from public sources (bundle lost)
 
@@ -63,11 +79,27 @@ hf download hamishivi/agent-task-calibforge task-data.tar.gz --repo-type dataset
 
 ## Running tasks
 
-Point Harbor at the tree with `environment.kwargs.auto_snapshot: true`. Use the hook-carrying Harbor
+Point Harbor at the tree (built with the default `--mirrors`) with `environment.kwargs.auto_snapshot: true`. Use the hook-carrying Harbor
 (`lukedhlee/snowball-r2egym`, i.e. `PYTHONPATH=/Users/lukedhlee/harbor-wt/snowball-r2egym/src`). Without the
 setup-files hook, a task runs on the bare base and silently scores 0. `task.toml` carries the image's ENV
 differences (for example PATH for `/opt/venv` tasks) and `workdir = "/app"`. Verifiers need internet
 (uv/pytest downloads), which Daytona sandboxes have.
+
+## Mirror gates run on 2026-09-25
+
+- **Mirror-only no-op gate, 25 fresh tasks** (9 ubuntu, 10 tb2verifier, 6 bookworm), using a tree built with
+  `--no-dockerhub`:
+  - 25/25 passed, with no exceptions and reward 0.
+  - 24 have a ctrf report with tests collected, and 1 verifier writes no ctrf.
+  - setup.sh took a median of 6.1 s (p90 15.9 s, max 20.9 s).
+- **Burst test, 200 sandboxes, mirror only** (`burst_test.py`, 85 ubuntu, 108 tb2verifier, 7 bookworm):
+  - The creates took 165 s at 4 per second.
+  - Then all 200 setup.sh runs started together, and 200/200 succeeded with no mirror retries.
+  - setup.sh took p50 5.6 s, p90 12.9 s, max 34.4 s, and the download part took p50 2.6 s (p90 6.7 s).
+  - The burst pulled 13.5 GB from HF in 34 s of wall time.
+  - Every sandbox was deleted afterwards.
+- **Restore on the live pool** from `cf1-20260925` in mirror-only mode: run `20260925-012828`, three passes, and the
+  snapshot IDs were unchanged.
 
 ## Gates run on 2026-09-24
 
