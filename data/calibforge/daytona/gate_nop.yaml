@@ -1,0 +1,35 @@
+# harbor gate for the CalibForge Daytona tree (build_tree.py): nop agent on every task of the tree.
+# Run with the hook-enabled harbor (setup_files/setup.sh is what turns the shared base into the task image):
+#   export PYTHONPATH=/Users/lukedhlee/harbor-wt/snowball-r2egym/src
+#   export DAYTONA_API_KEY=...   # Luke's key (...b61), from ~/.config/otagent/daytona_eval.env, never the shell's
+#   /Users/lukedhlee/harbor/.venv/bin/harbor jobs start --config gate_nop.yaml
+# Replace TREE_DIR and JOBS_DIR. Expect reward 0.0, no exception (a failed setup.sh raises SetupScriptError) and a
+# verifier ctrf report with tests collected on every task; anything else is a broken artifact.
+job_name: calibforge_nop
+jobs_dir: JOBS_DIR
+n_attempts: 1
+n_concurrent_trials: 8
+quiet: false
+timeout_multiplier: 1.0
+retry:
+  max_retries: 3
+  include_exceptions:
+  - DaytonaRateLimitError
+  - EnvironmentStartTimeoutError
+  - DaytonaSandboxStopError
+environment:
+  type: daytona
+  force_build: false
+  delete: true
+  override_cpus: 2
+  override_memory_mb: 4096
+  override_storage_mb: 10240
+  kwargs:
+    auto_snapshot: true      # without it the org rejects the per-sandbox Dockerfile build
+verifier:
+  override_timeout_sec: 900
+agents:
+- name: nop
+  override_timeout_sec: 900
+datasets:
+- path: TREE_DIR
