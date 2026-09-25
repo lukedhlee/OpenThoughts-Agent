@@ -1,4 +1,4 @@
-"""ifeval_gen.py — generate IFEval responses from a running vLLM chat endpoint (runs on the serve node).
+"""ifeval_gen.py — generate IFEval (or IFBench: same row format) responses from a running vLLM chat endpoint (runs on the serve node).
 
     python ifeval_gen.py --url http://localhost:8000/v1 --model snowball --inp ifeval_input_data.jsonl --out <tag>.jsonl
 
@@ -14,7 +14,10 @@ ap.add_argument("--url", required=True); ap.add_argument("--model", default="sno
 ap.add_argument("--inp", required=True); ap.add_argument("--out", required=True)
 ap.add_argument("--max-tokens", type=int, default=8192); ap.add_argument("--conc", type=int, default=32)
 ap.add_argument("--temperature", type=float, default=0.0)
+ap.add_argument("--thinking", choices=["default", "off"], default="default")   # off = chat_template_kwargs enable_thinking=false
 a = ap.parse_args()
+EXTRA = {"skip_special_tokens": False}
+if a.thinking == "off": EXTRA["chat_template_kwargs"] = {"enable_thinking": False}
 
 rows = [json.loads(l) for l in open(a.inp)]
 done = set()
@@ -30,7 +33,7 @@ def one(r):
         try:
             resp = client.chat.completions.create(model=a.model, messages=[{"role": "user", "content": r["prompt"]}],
                 max_tokens=a.max_tokens, temperature=a.temperature,
-                extra_body={"skip_special_tokens": False})
+                extra_body=EXTRA)
             ch = resp.choices[0]
             rec = {"key": r["key"], "prompt": r["prompt"], "response": ch.message.content or "",
                    "reasoning": getattr(ch.message, "reasoning_content", None) or getattr(ch.message, "reasoning", None),

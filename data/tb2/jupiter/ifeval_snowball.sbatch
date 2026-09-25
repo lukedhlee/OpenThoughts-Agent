@@ -5,6 +5,11 @@
 #
 #   MODEL=<hf dir> TAG=<name> sbatch ifeval_snowball.sbatch   -> $IFE/<TAG>.jsonl (score on the Mac: score_ifeval.py)
 #
+# 2026-09-25: also IFBench (allenai/IFBench_test, 300 prompts, $IFE/ifbench_input_data.jsonl from ifbench_prep.py) through
+# the same generator -> $IFE/<TAG>_ifbench.jsonl (score_ifbench.py). SUITES="ifbench ifeval" (default) runs both at once,
+# 32 in flight each (the server has 4 DP ranks x 32 seqs), so start-up is paid once. THINK_OFF=1 adds a second round
+# with chat_template_kwargs enable_thinking=false -> <TAG>_nothink[_ifbench].jsonl (the Grug Datakit /nothink mode).
+#
 # The marin vLLM fork with the adapted EAGLE-3 draft (Luke's 2026-09-12 policy: every job uses the draft), the arm's
 # geometry (TP1 x DP4 x EP4, 65k context), and marin's eval-policy sampler (#8151: temperature 0.7, top_p 1.0,
 # repetition_penalty 1.1) applied server-side, so harbor's terminus-2 sends no sampling parameters of its own.
@@ -14,13 +19,13 @@
 #   MODEL=<hf-format dir> POLICY=marin|trained sbatch serve_snowball.sbatch
 #
 #SBATCH --job-name=ifeval
-#SBATCH --time=03:00:00
+#SBATCH --time=00:30:00   # pass --time on the command line; 12-15 min per suite pair measured 09-19
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH --gres=gpu:4
 #SBATCH -p booster
-#SBATCH --account laionize   # 2026-09-17: reformo is 18 % left and queues ~6 h on fairshare; laionize starts in minutes
+#SBATCH --account transfernetx   # 2026-09-25 IF comparison: charged to transfernetx
 #SBATCH --output=/e/fscratch/reformo/lee27/experiments/ifeval/logs/%x_%j.out
 #SBATCH --exclude=jpbo-031-[01-48],jpbo-011-[01-48],jpbo-038-38,jpbo-004-46,jpbo-065-17,jpbo-074-22,jpbo-074-40,jpbo-048-41,jpbo-091-05,jpbo-044-0[1-5]
 set -uo pipefail
@@ -74,6 +79,17 @@ curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' -
   | $PY -c 'import json,sys; r=json.load(sys.stdin); m=r["choices"][0]["message"]; print("SMOKE finish=%s usage=%s content=%r" % (r["choices"][0]["finish_reason"], r.get("usage"), (m.get("content") or "")[:300]))' | tee -a $SLOG
 trap 'echo "stopping server"; kill $SPID 2>/dev/null' TERM EXIT
 export OMP_NUM_THREADS=1
-$PY $C/tb2/ifeval_gen.py --url http://localhost:8000/v1 --model "$SERVED" --inp $IFE/ifeval_input_data.jsonl --out $OUT \
-    --max-tokens ${MAX_TOKENS:-8192} --conc ${CONC:-32} --temperature ${TEMP:-0} 2>&1 | tee $LOGS/gen_${TAG}_$SLURM_JOB_ID.log
-echo "IFEVAL_DONE $TAG $(wc -l < $OUT) rows"
+gen() {   # gen <suite> <thinking> : one suite's generation, IFEval keeps its 09-19 file names
+  local suite=$1 think=$2 t=$TAG; [ "$think" = off ] && t=${TAG}_nothink
+  local inp=$IFE/ifeval_input_data.jsonl out=$IFE/$t.jsonl
+  [ "$suite" = ifbench ] && { inp=$IFE/ifbench_input_data.jsonl; out=$IFE/${t}_ifbench.jsonl; t=${t}_ifbench; }
+  $PY $C/tb2/ifeval_gen.py --url http://localhost:8000/v1 --model "$SERVED" --inp $inp --out $out --thinking $think \
+      --max-tokens ${MAX_TOKENS:-8192} --conc ${CONC:-32} --temperature ${TEMP:-0} > $LOGS/gen_${t}_$SLURM_JOB_ID.log 2>&1
+  echo "IFEVAL_DONE $t $(wc -l < $out) rows $(date -Is)"
+}
+ROUNDS=default; [ "${THINK_OFF:-0}" = 1 ] && ROUNDS="default off"
+for think in $ROUNDS; do
+  P=(); for suite in ${SUITES:-ifbench ifeval}; do gen $suite $think & P+=($!); done
+  wait "${P[@]}"   # the generators only: a bare wait would also wait on the server
+done
+echo "ALL_DONE $TAG"
