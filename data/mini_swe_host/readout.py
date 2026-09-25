@@ -7,9 +7,11 @@ Per job: trials, harness errors (any trial exception other than the classified a
 context overflows, format errors by cause, false format errors, command timeouts, submit rate, pass rate, median model
 calls, and whether the submit sentinel ended every episode that printed it.
 
-A format error is false when the reply's answer holds exactly one action block, the answer being everything after the
-reasoning span(s) that open the reply (or after the first closing marker when the template opened the span). This is
-computed here from the recorded raw reply, independently of the agent's parser, so a parser bug shows up as a count.
+A format error is false when the reply's answer holds exactly one action block. The answer is the whole content when
+the server's reasoning parser already split the reasoning off (the ATIF step carries reasoning_content); otherwise it is
+everything after the reasoning span(s) that open the reply, or after the first closing marker when the template opened
+the span. This is computed here from the recorded raw reply, independently of the agent's parser, so a parser bug
+shows up as a count.
 """
 
 import collections
@@ -50,8 +52,8 @@ def split_reply(reply: str) -> tuple[str, str, bool]:
     return reasoning, text, False
 
 
-def format_error_cause(reply: str, finish_reason: str | None) -> str:
-    reasoning, answer, unfinished = split_reply(reply)
+def format_error_cause(reply: str, finish_reason: str | None, server_split: bool) -> str:
+    reasoning, answer, unfinished = ("", reply, False) if server_split else split_reply(reply)
     blocks = len(ACTION.findall(answer))
     if blocks == 1:
         return "FALSE (one block in the answer)"
@@ -90,12 +92,23 @@ def main() -> None:
             if m.get("extra", {}).get("interrupt_type") == "FormatError"
         ]
         format_errors = [m for m in messages if m.get("extra", {}).get("interrupt_type") == "FormatError"]
-        causes = [
-            format_error_cause(
-                m["extra"]["model_response"], "length" if "finish_reason=length" in m["content"] else None
-            )
-            for m in format_errors
-        ]
+        atif_path = f"{attempt}/agent/trajectory.json"
+        agent_steps = (
+            [s for s in json.load(open(atif_path))["steps"] if s["source"] == "agent"]
+            if os.path.exists(atif_path) else []
+        )
+        causes, call = [], -1
+        for m in messages[2:]:
+            is_format_error = m.get("extra", {}).get("interrupt_type") == "FormatError"
+            if m["role"] == "assistant" or is_format_error:
+                call += 1
+            if is_format_error:
+                server_split = call < len(agent_steps) and bool(agent_steps[call].get("reasoning_content"))
+                causes.append(format_error_cause(
+                    m["extra"]["model_response"],
+                    "length" if "finish_reason=length" in m["content"] else None,
+                    server_split,
+                ))
         actions = [a["command"] for m in messages if m["role"] == "assistant" for a in m["extra"].get("actions", [])]
         sentinel_actions = [a for a in actions if SUBMIT_SENTINEL in a]
         exit_status = trajectory["info"]["exit_status"] if trajectory else None
