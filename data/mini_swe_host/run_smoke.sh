@@ -40,14 +40,18 @@ if [ $MODEL = scripted ]; then
   SCRIPTED_PID=$!; trap 'kill $SCRIPTED_PID 2>/dev/null' EXIT; sleep 2
   URL=http://127.0.0.1:$PORT/v1
 else
-  URL=""
-  for i in $(seq 1 120); do
+  # Queue time is free: wait while PENDING. Once RUNNING, the server gets 40 min to write its endpoint.
+  URL=""; RUNNING_SINCE=""
+  while [ -z "$URL" ]; do
     [ -f $ENDPOINTS/$JOB ] && { URL=$(cat $ENDPOINTS/$JOB); break; }
     STATE=$(squeue -h -j $JOB -o %T 2>/dev/null)
     [ -z "$STATE" ] && { echo "serve job $JOB is gone before its endpoint appeared"; exit 1; }
+    if [ "$STATE" = RUNNING ]; then
+      RUNNING_SINCE=${RUNNING_SINCE:-$(date +%s)}
+      [ $(( $(date +%s) - RUNNING_SINCE )) -gt 2400 ] && { echo "no endpoint 40 min after start"; cancel_serve; exit 1; }
+    fi
     sleep 30
   done
-  [ -n "$URL" ] || { echo "no endpoint after 60 min"; cancel_serve; exit 1; }
 fi
 echo "endpoint $URL ($(date -Is))"
 curl -sf --max-time 20 $URL/models | grep -q "\"$SERVED\"" || { echo "no model $SERVED at $URL"; cancel_serve; exit 1; }
