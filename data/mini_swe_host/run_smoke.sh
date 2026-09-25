@@ -1,5 +1,5 @@
 #!/bin/bash
-# run_smoke.sh <serve-jobid> <run-name> <qwen38|snowball|scripted>
+# run_smoke.sh <serve-jobid> <run-name> <qwen38|snowball|scripted> [text|tool]
 # Jupiter login node, inside tmux: wait for the serve job's endpoint, run mini-swe-agent-host on the CalibForge smoke
 # tasks on Daytona, check the rendered prompt (Qwen), cancel the serve job the moment harbor exits, then write the
 # readout. "scripted" runs against scripted_openai.py on this login node (no GPU; serve-jobid is ignored).
@@ -10,7 +10,7 @@
 # hook) on PYTHONPATH, with mini-swe-agent 2.4.6 in a --no-deps side dir; the interpreter is snowball-v2's, as for
 # the TB2 evals. Never reuse a run name.
 set -uo pipefail
-JOB=${1:?serve job id}; NAME=${2:?run name}; MODEL=${3:?qwen38|snowball|scripted}
+JOB=${1:?serve job id}; NAME=${2:?run name}; MODEL=${3:?qwen38|snowball|scripted}; MODE=${4:-text}
 C=/e/project1/transfernetx/lee27/code
 HERE=$(cd "$(dirname "$0")" && pwd)
 HARBOR_SRC=${HARBOR_SRC:-$C/harbor-mini-swe-host/src}
@@ -24,13 +24,21 @@ export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1   # login-node
 export PYTHONPATH=$HARBOR_SRC:$MSA
 LOG=$E/logs/run_$NAME.log
 exec > >(tee -a $LOG) 2>&1
-echo "run_smoke $NAME model=$MODEL job=$JOB harbor=$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD) start=$(date -Is)"
+echo "run_smoke $NAME model=$MODEL mode=$MODE job=$JOB harbor=$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD) start=$(date -Is)"
 [ -d $JOBS/$NAME ] && { echo "$JOBS/$NAME exists; pick a new name"; exit 1; }
 case $MODEL in
   qwen38)   ENDPOINTS=$E/endpoints; SERVED=qwen38; EXTRA='{}'; INTERLEAVED=true;;
   snowball) ENDPOINTS=/e/fscratch/reformo/lee27/experiments/tb2/endpoints; SERVED=snowball; EXTRA='{"skip_special_tokens": false}'; INTERLEAVED=false;;
   scripted) SERVED=scripted; EXTRA='{}'; INTERLEAVED=false;;
   *) echo "model must be qwen38, snowball or scripted"; exit 2;;
+esac
+# Tool mode: upstream v2's default (mini.yaml, bash tool schema). None of our serves runs a tool-call parser, so
+# tool_choice "none" makes vLLM render the tools without parsing, and the agent reads <tool_call> blocks itself;
+# prior reasoning is split off client-side and re-sent as reasoning_content.
+case $MODE in
+  text) CONFIG_FILE=mini_textbased.yaml; MODEL_CLASS=litellm_textbased; CALL_KWARGS='{}';;
+  tool) CONFIG_FILE=mini.yaml; MODEL_CLASS=litellm; CALL_KWARGS='{"tool_choice": "none"}'; INTERLEAVED=true;;
+  *) echo "mode must be text or tool"; exit 2;;
 esac
 cancel_serve() { [ $MODEL = scripted ] || { scancel $JOB 2>/dev/null; echo "scancel $JOB $(date -Is)"; }; }
 # 1. wait for the endpoint (the serve job writes it after one real completion)
@@ -59,7 +67,7 @@ set -a; source $KEYF; set +a
 curl -sf --max-time 20 -H "Authorization: Bearer $DAYTONA_API_KEY" https://app.daytona.io/api/api-keys/current >/dev/null || { echo "Daytona key rejected"; cancel_serve; exit 1; }
 # 2. render the policy
 CFG=$E/runs/$NAME.yaml
-sed "s#__JOB_NAME__#$NAME#; s#__JOBS_DIR__#$JOBS#; s#__TREE__#$TASKS#; s#__MODEL_NAME__#hosted_vllm/$SERVED#; s#__API_BASE__#$URL#; s#__EXTRA_BODY__#$EXTRA#; s#__INTERLEAVED__#$INTERLEAVED#" \
+sed "s#__JOB_NAME__#$NAME#; s#__JOBS_DIR__#$JOBS#; s#__TREE__#$TASKS#; s#__MODEL_NAME__#hosted_vllm/$SERVED#; s#__API_BASE__#$URL#; s#__EXTRA_BODY__#$EXTRA#; s#__INTERLEAVED__#$INTERLEAVED#; s#__CONFIG_FILE__#$CONFIG_FILE#; s#__MODEL_CLASS__#$MODEL_CLASS#; s#__LLM_CALL_KWARGS__#$CALL_KWARGS#" \
   $HERE/calibforge_mini_swe.yaml > $CFG
 $PY -c "import yaml; from harbor_config.models.job.config import JobConfig; JobConfig.model_validate(yaml.safe_load(open('$CFG'))); print('config validates')" || { cancel_serve; exit 1; }
 # 3. run

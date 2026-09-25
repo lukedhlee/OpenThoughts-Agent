@@ -1,7 +1,10 @@
 # mini-swe-agent-host on CalibForge (Daytona, the live 3-snapshot pool) — smoke policy.
 # Rendered by run_smoke.sh (Jupiter login node) or by hand for the Mac dry run: replace __JOB_NAME__, __JOBS_DIR__,
 # __TREE__ (task dir), __MODEL_NAME__, __API_BASE__, __EXTRA_BODY__ (JSON object, {} for none), __INTERLEAVED__
-# (true when the server splits reasoning into reasoning_content and the template re-renders it: Qwen3.8).
+# (true when prior reasoning must be re-sent as reasoning_content: Qwen3.8, and any model in tool mode),
+# __CONFIG_FILE__ + __MODEL_CLASS__ (tool mode: mini.yaml + litellm; text mode: mini_textbased.yaml +
+# litellm_textbased), __LLM_CALL_KWARGS__ (JSON; tool mode on a server without a tool parser needs
+# {"tool_choice": "none"} so vLLM renders the tools but does not try to parse calls).
 # Needs harbor with the setup-files hook (branch lukedhlee/mini-swe-host-smoke): without it a CalibForge task runs
 # on the bare base and silently scores 0. Upstream mini_textbased.yaml is loaded verbatim; the task workdir (/app)
 # is the command cwd because the config sets none. Sandbox size follows the CalibForge no-op gate (gate_nop.yaml).
@@ -33,7 +36,9 @@ agents:
   model_name: __MODEL_NAME__
   override_timeout_sec: 900
   kwargs:
-    config_file: mini_textbased.yaml
+    config_file: __CONFIG_FILE__
+    model_class: __MODEL_CLASS__
+    llm_call_kwargs: __LLM_CALL_KWARGS__
     api_base: __API_BASE__
     model_info:
       max_input_tokens: 65536
