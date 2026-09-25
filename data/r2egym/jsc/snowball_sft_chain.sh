@@ -51,7 +51,11 @@ DATASET_ID=${SNOWBALL_DATASET_ID:-DCAgent/g1_clean_hybrid_scaffold_plus_r2eg_gfi
 DATASET_REVISION=${SNOWBALL_DATASET_REVISION:-4243a8f5cd39799803a6a0d52457fa0833068566}
 CACHE=${SNOWBALL_CACHE:-$EXP/cache-v1}
 if [ -n "$HF_BASE" ]; then INIT=${SNOWBALL_INIT:-$S/experiments/snowball-base-inits/init-$(basename "$HF_BASE")-step0}
-else INIT=${SNOWBALL_INIT:-$S/experiments/snowball-r2egym-sft/init-s3-step1888}; fi
+# Stage-3: the router bias is frozen at the base's value by default (marin STAGES, 2026-09-24), which needs an init
+# imported with pending_qb_betas = -bias (+ sidecar). SNOWBALL_FREEZE_ROUTER_BIAS=0 keeps the old zeroed init and the
+# per-batch bias (e.g. resuming a run started before the switch).
+elif [ "${SNOWBALL_FREEZE_ROUTER_BIAS:-1}" = 0 ]; then INIT=${SNOWBALL_INIT:-$S/experiments/snowball-r2egym-sft/init-s3-step1888}
+else INIT=${SNOWBALL_INIT:-$S/experiments/snowball-base-inits/init-s3-step1888-bias-step0}; fi
 RUN_ID=${SNOWBALL_RUN_ID:-snowball-$SFT_STAGE-sft-run1}
 if [ "$SFT_STAGE" = r2egym ]; then OUT=${SNOWBALL_OUTPUT:-$EXP/r2egym-glm47-solved-v1-run1}; else OUT=${SNOWBALL_OUTPUT:-$EXP/$SFT_STAGE-run1}; fi
 MOE=$MARIN_ROOT/experiments/june_tpu_67b_a2b/moe
@@ -117,13 +121,15 @@ for step in $CHAIN_STEPS; do
       wait_job "$j" "$S/logs/snowball-env-gate.$j.log" "SNOWBALL_DISTRIBUTED_PROBE_OK" || die "gate job $j"
       touch "$S/logs/.done.gate"; say "gate OK ($j)";;
     import)
-      if [ -n "$HF_BASE" ]; then
-        # a base import is complete only with its sidecar (the trainer and exporter read the base's config from it)
+      if [ -n "$HF_BASE" ] || [ "${SNOWBALL_FREEZE_ROUTER_BIAS:-1}" != 0 ]; then
+        # a base import (or a Stage-3 import for a frozen router bias) is complete only with its sidecar: the trainer
+        # reads the base's config and the pending_qb_betas_from_router_bias flag from it
+        SRC=${HF_BASE:-$TOK}
         if [ -f "$INIT/metadata.json" ] && [ -f "$INIT/snowball_base.json" ]; then say "import: done already ($INIT)"; continue; fi
         [ -e "$INIT" ] && die "import: $INIT exists without a snowball_base.json sidecar; remove it and rerun"
         mkdir -p "$(dirname "$INIT")"
         j=$(submit sbatch -o "$S/logs/snowball-import.%j.log" \
-              --export=ALL,MARIN_ROOT="$MARIN_ROOT",MARIN_PYTHON="$MARIN_PYTHON",SNOWBALL_HF_CHECKPOINT="$HF_BASE",SNOWBALL_INIT="$INIT",SNOWBALL_BASE_CONFIG_FROM_HF=true,SNOWBALL_PENDING_FROM_BIAS=true \
+              --export=ALL,MARIN_ROOT="$MARIN_ROOT",MARIN_PYTHON="$MARIN_PYTHON",SNOWBALL_HF_CHECKPOINT="$SRC",SNOWBALL_INIT="$INIT",SNOWBALL_BASE_CONFIG_FROM_HF=true,SNOWBALL_PENDING_FROM_BIAS=true \
               "$MOE/jupiter_snowball_import.sbatch") || die "import submit"
       else
       if [ -f "$INIT/metadata.json" ]; then say "import: done already ($INIT)"; continue; fi
@@ -134,7 +140,7 @@ for step in $CHAIN_STEPS; do
       [ -n "$j" ] || die "import: no job id"
       wait_job "$j" "$S/logs/snowball-import.$j.log" "" || die "import job $j"
       [ -f "$INIT/metadata.json" ] || die "import job $j left no metadata.json in $INIT"
-      [ -z "$HF_BASE" ] || [ -f "$INIT/snowball_base.json" ] || die "import job $j left no snowball_base.json in $INIT"
+      { [ -z "$HF_BASE" ] && [ "${SNOWBALL_FREEZE_ROUTER_BIAS:-1}" = 0 ]; } || [ -f "$INIT/snowball_base.json" ] || die "import job $j left no snowball_base.json in $INIT"
       say "import OK ($j): $(cat "$INIT/metadata.json")";;
     run)
       if [ -n "$STEPS" ] && [ -d "$OUT/checkpoints/step-$STEPS" ]; then say "run: done already (step-$STEPS)"; continue; fi

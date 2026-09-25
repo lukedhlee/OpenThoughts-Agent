@@ -11,7 +11,10 @@ export MARIN_ROOT=/e/project1/transfernetx/lee27/code/marin-sft
 export MARIN_PYTHON=/e/project1/transfernetx/lee27/code/envs/marin-grug-sft/bin/python
 export SNOWBALL_SCRATCH=$S SNOWBALL_STAGE=ota
 export SNOWBALL_CACHE=$CACHE
-export SNOWBALL_INIT=$S/experiments/snowball-r2egym-sft/init-s3-step1888
+# the frozen-router-bias init (default since 2026-09-24); SNOWBALL_FREEZE_ROUTER_BIAS=0 + the old zeroed init reproduces
+# the references of the TailSFT arms run before the switch
+if [ "${SNOWBALL_FREEZE_ROUTER_BIAS:-1}" = 0 ]; then export SNOWBALL_INIT=$S/experiments/snowball-r2egym-sft/init-s3-step1888
+else export SNOWBALL_INIT=$S/experiments/snowball-base-inits/init-s3-step1888-bias-step0; fi
 export SNOWBALL_TOKENIZER=/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888
 export SNOWBALL_OUTPUT=${REF_OUT%.npy}-run
 export SNOWBALL_RUN_ID=snowball-ota-tailscore-$(basename "${REF_OUT%.npy}")
