@@ -53,6 +53,10 @@ most about 600 open at once.
 
 Anything else is HOLD: no submission, and a report with the failing check.
 
+**Server start.** vLLM's DP workers race for torch.distributed ports, and a start can die with `EADDRINUSE`. In run 3
+this took 5 of 7 teacher start attempts and cost the first submission (job 2033358). `serve_node.sh` restarts a
+server that dies before `/health`, up to 6 times on a 10-node run. Each retry costs about 2 min.
+
 **Gates while it runs**, as in run 3:
 - death check: DEAD / not RUNNING / 15 min with no traffic → cancel both jobs and clean up;
 - latency gate at 15 min: teacher p50 above 30 s → warning; above 90 s → abort;

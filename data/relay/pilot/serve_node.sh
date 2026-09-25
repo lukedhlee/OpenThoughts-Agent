@@ -13,7 +13,7 @@ ROLE=${1:?student|teacher}
 # Start-up retry: vLLM's DP workers race for torch.distributed ports and a start can die with EADDRINUSE (run 3's first
 # submission, job 2033358, lost both teacher nodes this way). A server that dies BEFORE its /health answers is started
 # again, up to START_TRIES times; once healthy, it is never restarted (a mid-run death ends the job, as before).
-START_TRIES=${START_TRIES:-3}
+START_TRIES=${START_TRIES:-6}
 serve() {  # serve <vllm args...>
   local try rc pid
   for try in $(seq 1 $START_TRIES); do
