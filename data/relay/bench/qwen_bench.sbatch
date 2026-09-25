@@ -26,6 +26,9 @@ module load nvidia-compilers/25.9-CUDA-13
 C=/e/project1/transfernetx/lee27/code
 PY=$C/envs/snowball-v2/bin/python
 export PYTHONPATH=$C/src/marin_vllm_eagle3${PYTHONPATH:+:$PYTHONPATH}   # same vLLM as serve_snowball.sbatch, so a co-located run uses one build
+# vLLM's qwen3_5.py imports qwen3_vl -> transformers' Qwen2-VL image processor -> torchvision, which snowball-v2 lacks.
+# torchvision 0.26.0+cu130 (matches torch 2.11) sits in a side dir (pip --no-deps --target) so the shared env is untouched.
+export PYTHONPATH=$PYTHONPATH:$C/envs/relay-extra
 export PATH=$C/envs/snowball-v2/bin:$PATH
 M=${MODEL:-/e/data1/mmlaion/lee27/models/Qwen3.8-27B}
 B=${BENCH_DIR:-$C/relay/bench}
@@ -54,6 +57,7 @@ export VLLM_CACHE_ROOT=$CACHE/vllm XDG_CACHE_HOME=$CACHE/xdg TRITON_CACHE_DIR=$C
 echo "node=$(hostname) job=$SLURM_JOB_ID model=$M layouts=$LAYOUTS concs=$REPLAY_CONCS budget=$BUDGET gap=$GAP maxlen=$MAXLEN maxtok=$MAXTOK replay=$REPLAY ($(date -Is))"
 nvidia-smi --query-gpu=name,memory.total --format=csv
 $PY -c "import vllm,torch;print('vllm',vllm.__file__,vllm.__version__,'torch',torch.__version__)"
+$PY -c "import torchvision, vllm.model_executor.models.qwen3_5; print('torchvision', torchvision.__version__, 'qwen3_5 import ok')" || { echo "qwen3_5 import failed"; exit 1; }
 
 run_layout() {
   local L=$1 SPEC=()
