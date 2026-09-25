@@ -69,6 +69,7 @@ handles them).
 """
 import argparse
 import asyncio
+import collections
 import gzip
 import hashlib
 import json
@@ -188,7 +189,7 @@ class Episode:
         self.lock = asyncio.Lock()
         self.student_think = None
         self.n_repairs = 0
-        self.teacher_idx = 0
+        self.pinned = {}                  # who -> the server this episode is pinned to
         self.paused_sec = 0.0             # wall time the student's clock was stopped (teacher repair turns in flight)
         self.repair_confirm = False       # the teacher claimed done in a repair turn: it answers that confirmation
 
@@ -197,7 +198,7 @@ class Episode:
                     student_think=self.student_think,
                     takeover={k: v for k, v in (self.takeover or {}).items() if k != 'discarded_student_reply'} or None,
                     ending=self.ending, turns=self.sc.turn, n_requests=self.n_requests, repairs=self.n_repairs,
-                    paused_sec=round(self.paused_sec, 1), teacher_endpoint=self.teacher_idx,
+                    paused_sec=round(self.paused_sec, 1), pinned=dict(self.pinned),
                     started=self.t0, last=self.last_t, owners=self.owners)
 
 
@@ -209,6 +210,9 @@ class Router:
         # episode, so its prefix cache stays on one server and load splits evenly
         self.urls = {w: [u.strip().rstrip('/') for u in (getattr(a, f'{w}_url') or '').split(',') if u.strip()]
                      for w in ('student', 'teacher')}
+        self.inflight = collections.Counter()
+        self.pinned_count = collections.Counter()
+        self.down_until = {}
         self.models = {'student': a.student_model, 'teacher': a.teacher_model}
         self.need = {'relay': ('student', 'teacher'), 'teacher': ('teacher',), 'student': ('student',)}[a.mode]
         self.cfg = dict(rt.CALIBRATED_CONFIG)
@@ -228,7 +232,7 @@ class Router:
         self.fatal = None
         self.max_model_len = None
         self.counts = dict(requests=0, upstream_errors=0, takeovers=0, synthetic=0, no_task_match=0, repairs=0,
-                           repair_reply_rejected=0)
+                           repair_reply_rejected=0, repinned=0)
         os.makedirs(a.log_dir, exist_ok=True)
         os.makedirs(os.path.join(a.log_dir, 'bodies'), exist_ok=True)
         # one os.write per line on an O_APPEND fd: readers (the driver's gates) never see a half-written line
@@ -349,7 +353,6 @@ class Router:
             self.n_episodes += 1
             ep = Episode(sid, self.n_episodes, first, task, 'teacher' if self.mode == 'teacher' else 'student')
             ep.student_think = self.a.student_think
-            ep.teacher_idx = (self.n_episodes - 1) % max(1, len(self.urls['teacher']))
             self.episodes[sid] = ep
             self.by_first.setdefault(ep.first_sha, []).append(sid)
             self.event('episode_start', episode=ep.idx, sid=sid, task=task, student_think=self.a.student_think)
@@ -448,18 +451,54 @@ class Router:
         b['messages'] = messages
         return b
 
+    def active(self, who):
+        now = time.time()
+        up = [u for u in self.urls[who] if self.down_until.get(u, 0) <= now]
+        return up or list(self.urls[who])
+
+    def pick(self, who, ep):
+        """The server for this request: the episode's pinned one while it is listed and up, else the listed server
+        with the fewest pinned episodes (the episode is then re-pinned there)."""
+        act = self.active(who)
+        if ep is not None:
+            cur = ep.pinned.get(who)
+            if cur in act:
+                return cur
+            u = min(act, key=lambda x: (self.pinned_count[x], act.index(x)))
+            if cur is not None:
+                self.pinned_count[cur] -= 1
+                self.counts['repinned'] += 1
+            ep.pinned[who] = u
+            self.pinned_count[u] += 1
+            return u
+        return min(act, key=lambda x: (self.inflight[x], act.index(x)))
+
+    def reload_teacher_urls(self):
+        """--teacher-url-file: the driver edits the list to drain servers before releasing their nodes."""
+        f = self.a.teacher_url_file
+        if not f or not os.path.exists(f):
+            return
+        urls = [u.strip().rstrip('/') for u in open(f).read().replace(',', '\n').split() if u.strip()]
+        if urls and urls != self.urls['teacher']:
+            self.event('teacher_urls', old=self.urls['teacher'], new=urls)
+            self.urls['teacher'] = urls
+
     async def post(self, who, path, body, ep=None):
-        urls = self.urls[who]
-        base = urls[(ep.teacher_idx if (ep is not None and who == 'teacher') else 0) % len(urls)]
-        url = (base + path) if path.startswith('/chat') else (re.sub(r'/v1$', '', base) + path)
         last = None
         for attempt in range(self.a.connect_retries + 1):
+            base = self.pick(who, ep)
+            url = (base + path) if path.startswith('/chat') else (re.sub(r'/v1$', '', base) + path)
+            self.inflight[base] += 1
             try:
                 async with self.http.post(url, json=body) as resp:
                     return resp.status, await resp.read()
             except (ClientConnectionError, ConnectionResetError) as e:   # connect errors, resets, disconnects
                 last = e
+                if len(self.urls[who]) > 1:
+                    self.down_until[base] = time.time() + 60   # fail over: the next attempt re-pins elsewhere
                 await asyncio.sleep(min(30, 2 ** attempt))
+            finally:
+                self.inflight[base] -= 1
         self.counts['upstream_errors'] += 1
         return 502, json.dumps({'error': {'message': f'relay router: {who} unreachable: {last!r}'}}).encode()
 
@@ -479,6 +518,11 @@ class Router:
     async def h_models(self, request):
         return web.json_response({'object': 'list', 'data': [{
             'id': self.a.public_model, 'object': 'model', 'owned_by': 'relay-router', 'max_model_len': self.max_model_len}]})
+
+    async def h_endpoints(self, request):
+        return web.json_response({w: {u: dict(inflight=self.inflight[u], pinned=self.pinned_count[u],
+                                               down=self.down_until.get(u, 0) > time.time()) for u in self.urls[w]}
+                                  for w in ('student', 'teacher')})
 
     async def h_health(self, request):
         return web.json_response({'ok': not self.fatal, 'fatal': self.fatal}, status=503 if self.fatal else 200)
@@ -788,6 +832,7 @@ def build_app(router):
     app = web.Application(client_max_size=256 * 1024 * 1024)
     app.router.add_get('/v1/models', router.h_models)
     app.router.add_get('/health', router.h_health)
+    app.router.add_get('/endpoints', router.h_endpoints)
     app.router.add_post('/tokenize', router.h_tokenize)
     app.router.add_post('/v1/chat/completions', router.h_chat)
     return app
@@ -820,6 +865,8 @@ def parse_args(argv=None):
                         "think spans are removed; the Terminus-2 JSON with its analysis/plan stays) or keep (the spans "
                         "are removed from content and sent as that turn's reasoning, which Qwen3.8's template renders "
                         "inside <think>)")
+    p.add_argument('--teacher-url-file', default=None,
+                   help='file listing the teacher servers; re-read every --status-every s (drain before release)')
     p.add_argument('--repair-on-parse-error', action='store_true',
                    help='parse_error trigger (non-sticky): a student reply that Terminus-2\'s own parser rejects is '
                         'discarded and the teacher answers the same request for one turn; the student keeps the episode')
@@ -890,6 +937,7 @@ async def serve(a, ready_event=None):
             except asyncio.TimeoutError:
                 pass
             router.snapshot()
+            router.reload_teacher_urls()
             print(router.status_line(), flush=True)
     finally:
         router.snapshot()

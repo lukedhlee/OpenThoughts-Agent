@@ -641,3 +641,22 @@ def test_summarization_off_context_overflow_ends_the_episode(tmp_path):
         assert type(r.exc).__name__ == 'ContextLengthExceededError'
         kinds = {x['request_kind'] for x in st.turns(r.sid)}
         assert not kinds & {'summary', 'questions', 'answers', 'handoff'}
+
+
+@needs_harbor
+def test_teacher_failover_and_drain(tmp_path):
+    """A teacher server that dies mid-run: its episodes re-pin to a live one and finish. A server dropped from
+    --teacher-url-file gets no new requests (drain before releasing its node)."""
+    from concurrent.futures import ThreadPoolExecutor
+    f = tmp_path / 'teachers.txt'
+    with Stack(tmp_path, mode='teacher', two_teachers=True, router_args=['--connect-retries', '2']) as st:
+        st.run(st.teacher2.stop())                                   # server 2 dies after the health check
+        with ThreadPoolExecutor(4) as ex:
+            res = list(ex.map(lambda i: run_agent(st, 'done', tmp_path, tag=f'-{i}'), range(4)))
+        assert all(getattr(r.stop, 'value', r.stop) == 'task_complete' for r in res)
+        assert st.router.down_until and st.router.counts['upstream_errors'] == 0   # marked down, nothing lost
+        # drain: only server 1 listed
+        f.write_text(st.router.urls['teacher'][0] + '\n')
+        st.a.teacher_url_file = str(f)
+        st.router.reload_teacher_urls()
+        assert st.router.urls['teacher'] == [st.router.urls['teacher'][0]]

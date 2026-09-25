@@ -522,7 +522,8 @@ def main():
     arms = {}
     for arm in arm_names:
         rv = router_view(os.path.join(a.run_dir, f'router_{arm}'))
-        rows = [] if a.gate == 'early' else trials(os.path.join(a.run_dir, 'jobs', f'{name}_{arm}'))
+        rows = [] if a.gate == 'early' else trials(os.path.join(a.run_dir, 'jobs', f'{name}_{arm}')) + \
+            trials(os.path.join(a.run_dir, 'jobs', f'{name}_{arm}_p2'))     # the full run's phase-2 relay job
         mark_censored(rv, rows)
         arms[arm] = dict(rv=rv, rows=rows)
     out = dict(run=name, gate=a.gate, arms=arm_names)

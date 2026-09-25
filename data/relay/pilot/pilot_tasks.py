@@ -125,6 +125,38 @@ def heldout(a):
     print('budgets   :', sel.budget.value_counts().sort_index().to_dict())
 
 
+def full_pool(a):
+    """The full run's pool: every Daytona-covered task, minus the held-out split, minus tasks whose agent budget is
+    above --max-budget, minus exact duplicate instructions (one copy kept; the router matches episodes to tasks by
+    instruction). Pilot tasks may be in it. Written longest budget first."""
+    cov = [l.split('\t') for l in open(os.path.join(a.tree, 'coverage.tsv')).read().splitlines()[1:]]
+    covered = sorted(r[0] for r in cov if r[-1] == 'covered')
+    held = {l.strip() for l in open(a.heldout) if l.strip()}
+    rows, seen = [], set()
+    n_held = n_budget = n_dup = 0
+    for t in covered:
+        if t in held:
+            n_held += 1
+            continue
+        b = budget_of(a.tree, t)
+        if b > a.max_budget:
+            n_budget += 1
+            continue
+        h = hashlib.sha1(instruction_of(a.tree, t).strip().encode()).hexdigest()
+        if h in seen:
+            n_dup += 1
+            continue
+        seen.add(h)
+        rows.append((t, b))
+    rows.sort(key=lambda r: (-r[1], r[0]))
+    with open(a.out, 'w') as f:
+        for t, _ in rows:
+            f.write(t + '\n')
+    print(f'covered {len(covered)} - held-out {n_held} - budget > {a.max_budget:.0f} s {n_budget} - duplicate '
+          f'instructions {n_dup} = {len(rows)} -> {a.out}')
+    print('budgets:', dict(collections.Counter(b for _, b in rows)))
+
+
 def router_json(a):
     ids = [l.strip() for l in open(a.list) if l.strip()]
     out = []
@@ -156,12 +188,17 @@ def main():
     h.add_argument('--exclude', action='append', default=[], help='task-id list to keep out (repeatable)')
     h.add_argument('--seed', type=int, default=926)
     h.add_argument('--out', required=True)
+    f = sp.add_parser('full-pool')
+    f.add_argument('--tree', required=True)
+    f.add_argument('--heldout', required=True)
+    f.add_argument('--max-budget', type=float, default=1800.0)
+    f.add_argument('--out', required=True)
     r = sp.add_parser('router-json')
     r.add_argument('--tree', required=True)
     r.add_argument('--list', required=True)
     r.add_argument('--out', required=True)
     a = p.parse_args()
-    {'pick': pick, 'heldout': heldout, 'router-json': router_json}[a.cmd](a)
+    {'pick': pick, 'heldout': heldout, 'full-pool': full_pool, 'router-json': router_json}[a.cmd](a)
 
 
 if __name__ == '__main__':

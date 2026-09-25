@@ -29,46 +29,51 @@ PY=$C/envs/snowball-v2/bin/python
 E=/e/fscratch/reformo/lee27/experiments/relay/pilot; EP=$E/endpoints; LOGS=$E/logs; mkdir -p $EP $LOGS
 UP_TIMEOUT=${UP_TIMEOUT:-1800}
 mapfile -t NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
-SN=${NODES[0]}; TNS=("${NODES[@]:1}")
-echo "relay pilot serve job=$SLURM_JOB_ID student=$SN teachers=${TNS[*]} ($(date -Is))"
-srun --nodes=1 --ntasks=1 --overlap --cpu-bind=none --gres=gpu:4 --cpus-per-task=72 -w "$SN" bash $HERE/serve_node.sh student > $LOGS/serve_student_$SLURM_JOB_ID.log 2>&1 &
-SPID=$!
+N_STUDENT=${N_STUDENT:-1}   # the first N_STUDENT nodes serve the student, the rest the teacher (full run: 2 + 4, or 0 + 4)
+SNS=("${NODES[@]:0:$N_STUDENT}"); TNS=("${NODES[@]:$N_STUDENT}")
+echo "relay serve job=$SLURM_JOB_ID students=${SNS[*]} teachers=${TNS[*]} ($(date -Is))"
+SPIDS=(); SURLS=()
+for k in "${!SNS[@]}"; do
+  srun --nodes=1 --ntasks=1 --overlap --cpu-bind=none --gres=gpu:4 --cpus-per-task=72 -w "${SNS[$k]}" bash $HERE/serve_node.sh student > $LOGS/serve_student${k}_$SLURM_JOB_ID.log 2>&1 &
+  SPIDS+=($!); SURLS+=("http://${SNS[$k]}.jupiter.internal:8000/v1")
+done
 TPIDS=(); TURLS=()
 for k in "${!TNS[@]}"; do
   srun --nodes=1 --ntasks=1 --overlap --cpu-bind=none --gres=gpu:4 --cpus-per-task=72 -w "${TNS[$k]}" bash $HERE/serve_node.sh teacher > $LOGS/serve_teacher${k}_$SLURM_JOB_ID.log 2>&1 &
   TPIDS+=($!); TURLS+=("http://${TNS[$k]}.jupiter.internal:8000/v1")
 done
 die() { echo "DEAD: $* ($(date -Is))"; echo "$*" > $EP/$SLURM_JOB_ID.DEAD; rm -f $EP/$SLURM_JOB_ID.student $EP/$SLURM_JOB_ID.teacher
-        kill $SPID "${TPIDS[@]}" 2>/dev/null; scancel $SLURM_JOB_ID; exit 1; }
-SURL="http://$SN.jupiter.internal:8000/v1"
-alive_all() { kill -0 $SPID 2>/dev/null || return 1; for p in "${TPIDS[@]}"; do kill -0 $p 2>/dev/null || return 1; done; }
+        kill "${SPIDS[@]}" "${TPIDS[@]}" 2>/dev/null; scancel $SLURM_JOB_ID; exit 1; }
+alive_all() { for p in "${SPIDS[@]}" "${TPIDS[@]}"; do kill -0 $p 2>/dev/null || return 1; done; }
 t=0
 while :; do
-  alive_all || die "a server exited before all came up (student log: $(tail -2 $LOGS/serve_student_$SLURM_JOB_ID.log | tr '\n' ' '))"
-  up=1; curl -sf --max-time 5 ${SURL%/v1}/health >/dev/null || up=0
-  for u in "${TURLS[@]}"; do curl -sf --max-time 5 ${u%/v1}/health >/dev/null || up=0; done
+  alive_all || die "a server exited before all came up"
+  up=1
+  for u in "${SURLS[@]}" "${TURLS[@]}"; do curl -sf --max-time 5 ${u%/v1}/health >/dev/null || up=0; done
   [ $up = 1 ] && { echo "all servers UP after ${t}s"; break; }
   [ $t -ge $UP_TIMEOUT ] && die "servers not up after ${UP_TIMEOUT}s"
   sleep 10; t=$((t+10))
 done
 # one real completion each, from this node: served name, markers, reasoning split
-SM=$(curl -s --max-time 600 $SURL/chat/completions -H 'Content-Type: application/json' \
-  -d '{"model":"snowball","messages":[{"role":"user","content":"Print hello in bash."}],"max_tokens":400,"skip_special_tokens":false}')
-echo "$SM" | $PY -c 'import json,sys; r=json.load(sys.stdin); c=r["choices"][0]["message"].get("content") or ""; print("STUDENT_SMOKE finish=%s usage=%s think_markers=%s content=%r" % (r["choices"][0]["finish_reason"], r.get("usage"), "<|start_think|>" in c or "<|end_think|>" in c, c[:200]))' \
-  || die "student smoke completion failed: ${SM:0:300}"
+for SURL in "${SURLS[@]}"; do
+  SM=$(curl -s --max-time 600 $SURL/chat/completions -H 'Content-Type: application/json' \
+    -d '{"model":"snowball","messages":[{"role":"user","content":"Print hello in bash."}],"max_tokens":400,"skip_special_tokens":false}')
+  echo "$SM" | $PY -c 'import json,sys; r=json.load(sys.stdin); c=r["choices"][0]["message"].get("content") or ""; print("STUDENT_SMOKE finish=%s usage=%s think_markers=%s content=%r" % (r["choices"][0]["finish_reason"], r.get("usage"), "<|start_think|>" in c or "<|end_think|>" in c, c[:200]))' \
+    || die "student smoke completion failed at $SURL: ${SM:0:300}"
+done
 for TURL in "${TURLS[@]}"; do
   TM=$(curl -s --max-time 600 $TURL/chat/completions -H 'Content-Type: application/json' \
     -d '{"model":"qwen38","messages":[{"role":"user","content":"Print hello in bash. Be brief."}],"max_tokens":2000}')
   echo "$TM" | $PY -c 'import json,sys; r=json.load(sys.stdin); m=r["choices"][0]["message"]; rs=m.get("reasoning") or m.get("reasoning_content") or ""; print("TEACHER_SMOKE finish=%s usage=%s reasoning_chars=%d content=%r" % (r["choices"][0]["finish_reason"], r.get("usage"), len(rs), (m.get("content") or "")[:200])); sys.exit(0 if rs else 3)' \
     || die "teacher smoke completion failed or has no reasoning at $TURL: ${TM:0:300}"
 done
-echo "$SURL" > $EP/$SLURM_JOB_ID.student
+(IFS=,; echo "${SURLS[*]}") > $EP/$SLURM_JOB_ID.student
 (IFS=,; echo "${TURLS[*]}") > $EP/$SLURM_JOB_ID.teacher
 printf 'student_node=%s\nteacher_nodes=%s\nup_s=%s\nup_s2=%s\nstudent_model=%s\nteacher_model=%s\n' \
-  "$SN" "${TNS[*]}" "$t" "$t" "${STUDENT_MODEL:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921}" \
+  "${SNS[*]}" "${TNS[*]}" "$t" "$t" "${STUDENT_MODEL:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921}" \
   "${TEACHER_MODEL:-/e/data1/mmlaion/lee27/models/Qwen3.8-27B}" > $EP/$SLURM_JOB_ID.meta
-echo "ENDPOINTS student=$SURL teachers=${TURLS[*]} ($(date -Is))"
-trap 'echo "wall/term: stopping servers"; kill $SPID "${TPIDS[@]}" 2>/dev/null; rm -f $EP/$SLURM_JOB_ID.student $EP/$SLURM_JOB_ID.teacher' TERM EXIT
+echo "ENDPOINTS students=${SURLS[*]} teachers=${TURLS[*]} ($(date -Is))"
+trap 'echo "wall/term: stopping servers"; kill "${SPIDS[@]}" "${TPIDS[@]}" 2>/dev/null; rm -f $EP/$SLURM_JOB_ID.student $EP/$SLURM_JOB_ID.teacher' TERM EXIT
 # hold; if any server dies mid-run, say so and release every node
 while alive_all; do sleep 30; done
 die "a server exited mid-run"
