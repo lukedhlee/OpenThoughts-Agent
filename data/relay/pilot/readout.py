@@ -29,6 +29,9 @@ import re
 import statistics
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'triggers'))
+import relay_triggers as rt  # noqa: E402
+
 AGENT_ENDS = {'AgentTimeoutError', 'ContextLengthExceededError', 'TurnCapExhaustedError'}
 VERIFIER_TIMEOUT = 'VerifierTimeoutError'
 RELAY_ARMS = ('relay', 'relay_keep')
@@ -264,6 +267,32 @@ def outcome_table(rows):
                 agent_ends=collections.Counter(t['exc'] for t in scored if t['exc']))
 
 
+def takeover_guards(e, t):
+    """Per takeover episode: g1 teacher false-done (its first task_complete within 2 teacher turns of the takeover,
+    no verification command in the teacher turns before that claim, and the task fails), g2 context exceeded after
+    the takeover, and the teacher's cost (turns, completion and prompt tokens)."""
+    t0 = e['takeover']['turn']
+    teacher = sorted((r for r in e['main'] if r.get('owner') == 'teacher' and r.get('turn') is not None
+                      and r['turn'] >= t0 and r.get('upstream_status') == 200), key=lambda r: r['turn'])
+    verified, claim_at = False, None
+    for i, r in enumerate(teacher[:2]):
+        content = (((r.get('response') or {}).get('choices') or [{}])[0].get('message') or {}).get('content') or ''
+        pr = rt.parse_reply(content, 'terminus2')
+        if pr['done']:
+            claim_at = i
+            break
+        for k, _ in pr['cmds']:
+            if rt.is_check(k) and not rt.is_modify(k):
+                verified = True
+    failed = usable(t) and not is_pass(t)
+    ctx = (t is not None and t['exc'] == 'ContextLengthExceededError') or any(
+        is_context_error(r) for r in e['main'] + e['aux'] if (r.get('turn') or t0) >= t0 and r.get('owner') == 'teacher')
+    usage = [(r.get('usage') or {}) for r in teacher]
+    return dict(g1_false_done=bool(claim_at is not None and not verified and failed), g2_context_exceeded=bool(ctx),
+                teacher_turns=len(teacher), completion_tokens=sum(u.get('completion_tokens') or 0 for u in usage),
+                prompt_tokens=sum(u.get('prompt_tokens') or 0 for u in usage))
+
+
 def relay_takeovers(rv, rows):
     by_sid = {t['sid']: t for t in rows if t['sid']}
     eps = list(rv['eps'].values())
@@ -304,6 +333,20 @@ def relay_takeovers(rv, rows):
     out['recovery_by_task'] = {t['task']: int(is_pass(t)) for _, t in sp}
     out['takeover_passes'] = p
     out['takeover_real_failures'] = len(sp) - p
+    # guards and cost over takeover episodes with an outcome (usable, or ended by context overflow)
+    gl = [(takeover_guards(e, t), t) for items in trig.values() for e, t in items
+          if usable(t) or (t is not None and t['exc'] == 'ContextLengthExceededError')]
+    n_g = len(gl)
+    rec_n = sum(1 for _, t in gl if usable(t) and is_pass(t))
+    out['guards'] = dict(n=n_g, g1_false_done=sum(g['g1_false_done'] for g, _ in gl),
+                         g2_context_exceeded=sum(g['g2_context_exceeded'] for g, _ in gl),
+                         g1_rate=round(sum(g['g1_false_done'] for g, _ in gl) / n_g, 4) if n_g else None,
+                         g2_rate=round(sum(g['g2_context_exceeded'] for g, _ in gl) / n_g, 4) if n_g else None)
+    out['cost_per_recovery'] = dict(
+        recoveries=rec_n,
+        teacher_turns=round(sum(g['teacher_turns'] for g, _ in gl) / rec_n, 1) if rec_n else None,
+        teacher_completion_tokens=round(sum(g['completion_tokens'] for g, _ in gl) / rec_n) if rec_n else None,
+        teacher_prompt_tokens=round(sum(g['prompt_tokens'] for g, _ in gl) / rec_n) if rec_n else None)
     sc_none = [(e, t) for e, t in none if usable(t)]
     out['no_takeover'] = dict(n=len(none), endings=collections.Counter(e['ending'] or 'none' for e, _ in none),
                               passes=sum(1 for _, t in sc_none if is_pass(t)), scored=len(sc_none))
@@ -460,11 +503,23 @@ def main():
                                   control_per_episode=round(kc / max(1, ctl.get('trials', 1)), 4))
         out['projection'] = proj
         if 'relay_keep' in arms:
-            sk = strip_vs_keep(tk, out['relay_keep']['takeovers'])
+            kt = out['relay_keep']['takeovers']
+            sk = strip_vs_keep(tk, kt)
+            d, ci = sk['keep_minus_strip'], sk['keep_minus_strip_ci95_newcombe']
+            g1d = ((kt['guards']['g1_rate'] or 0) - (tk['guards']['g1_rate'] or 0)) if tk['guards']['n'] and kt['guards']['n'] else None
+            g2d = ((kt['guards']['g2_rate'] or 0) - (tk['guards']['g2_rate'] or 0)) if tk['guards']['n'] and kt['guards']['n'] else None
+            conds = dict(diff_ge_15pts=d is not None and d >= 0.15, ci_excludes_0=bool(ci and ci[0] > 0),
+                         g1_not_worse_by_5pts=g1d is not None and g1d <= 0.05,
+                         g2_not_worse_by_5pts=g2d is not None and g2d <= 0.05)
+            sk.update(guard_diff_keep_minus_strip=dict(g1=None if g1d is None else round(g1d, 4),
+                                                       g2=None if g2d is None else round(g2d, 4)),
+                      guards=dict(strip=tk['guards'], keep=kt['guards']),
+                      cost_per_recovery=dict(strip=tk['cost_per_recovery'], keep=kt['cost_per_recovery']),
+                      rule_conditions=conds)
             out['strip_vs_keep'] = sk
-            ci = sk['paired_ci95_bootstrap']
-            out['strip_vs_keep_rule'] = ('keep becomes the default' if ci and ci[0] > 0 else
-                                         'strip stays the default (keep did not beat it with a paired CI above 0)')
+            out['strip_vs_keep_rule'] = ('KEEP: recovery +%.1f pts, CI %s excludes 0, guards within 5 pts' % (100 * d, ci)
+                                         if all(conds.values()) else
+                                         'STRIP (default): keep did not meet %s' % [k for k, v in conds.items() if not v])
         out['science_checks'] = sci
         out['verdict'] = ('HARNESS FAIL: fix and re-run the pilot, no scaling' if not harness_ok else
                           'SCALE: every check passed; size the 2,000-kept run from the projection (cost line + go first)'
@@ -480,8 +535,9 @@ def main():
     if out.get('strip_vs_keep'):
         sk = out['strip_vs_keep']
         print(f"strip vs keep: recovery {sk['strip']['recovery']} {sk['strip']['ci95']} vs {sk['keep']['recovery']} "
-              f"{sk['keep']['ci95']}; paired over {sk['paired_tasks']} tasks {sk['paired_mean_diff']} "
-              f"{sk['paired_ci95_bootstrap']} -> {out['strip_vs_keep_rule']}", file=sys.stderr)
+              f"{sk['keep']['ci95']}, keep - strip {sk['keep_minus_strip']} {sk['keep_minus_strip_ci95_newcombe']}; "
+              f"paired over {sk['paired_tasks']} tasks {sk['paired_mean_diff']} {sk['paired_ci95_bootstrap']}; "
+              f"guards keep - strip {sk['guard_diff_keep_minus_strip']} -> {out['strip_vs_keep_rule']}", file=sys.stderr)
     if out.get('verdict'):
         print('VERDICT: ' + out['verdict'], file=sys.stderr)
     sys.exit(0 if all(c['ok'] for c in checks) else 1)

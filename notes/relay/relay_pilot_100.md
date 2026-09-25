@@ -57,9 +57,26 @@ If all five hold, the next wave runs the relay variant (strip or keep, per the r
 any submission. If any check fails, there is no scale-up: the readout names the failing check and the variant it
 points to (K-turn relay, earlier triggers, a different pool).
 
-*Strip vs keep.* Keep becomes the default only if its recovery beats strip on the tasks where both arms took over,
-with the paired bootstrap 95 % CI above 0. Otherwise strip stays. The readout also reports each arm's Wilson CI and
-Newcombe's interval for the unpaired difference.
+*Strip vs keep (pre-registered 2026-09-25 13:25 PT, before the job started).*
+- **Primary metric.** Recovery after takeover, P(verified pass | takeover), in each relay arm, with a Wilson CI. The
+  difference is keep − strip, with Newcombe's 95 % interval. The readout also reports the task-paired version, a
+  bootstrap over the tasks where both arms took over.
+- **Keep is chosen only if all four hold:**
+  - recovery_keep − recovery_strip ≥ +15 points;
+  - the 95 % CI of that difference excludes 0;
+  - keep does not worsen guard g1 by more than 5 points;
+  - keep does not worsen guard g2 by more than 5 points.
+- **Otherwise strip stays**, the default.
+- **The guards**, as rates over takeover episodes:
+  - g1, teacher false-done: the teacher's first `task_complete` comes within 2 of its turns after the takeover, with
+    no verification command in its turns before it, and the task fails. A verification command is a test runner,
+    script or build run that does not edit files (`is_check` and not `is_modify` in `relay_triggers.py`).
+  - g2, context exceeded after the takeover.
+- **Cost as a tie-breaker, not a decider.** Teacher turns and tokens (completion and prompt) per recovery, for both
+  arms.
+- **The pilot can only detect differences of about 15 points or more.** With roughly 50–70 takeovers per arm, the
+  95 % interval on a difference in recovery is about ±15–18 points wide. A smaller real difference will read as
+  "strip".
 
 ## How to launch (Jupiter login node, in tmux)
 

@@ -498,3 +498,24 @@ def test_deadline_ends_episodes(tmp_path):
         assert status == 200 and json.loads(resp['choices'][0]['message']['content'])['task_complete'] is True
         assert st.turns('s1')[0]['ending'] == 'deadline' and st.turns('s1')[0]['owner'] == 'router'
         assert not st.teacher.requests[1:]      # only the health smoke reached the teacher
+
+
+def test_readout_false_done_guard():
+    """g1: the teacher's first task_complete within 2 of its turns, no verification command before it, task failed."""
+    sys.path.insert(0, str(HERE.parent.parent / 'pilot'))
+    import readout
+
+    def rec(turn, cmds, done):
+        c = json.dumps(dict(analysis='a', plan='p', task_complete=done, commands=[dict(keystrokes=k) for k in cmds]))
+        return dict(owner='teacher', turn=turn, upstream_status=200, usage={'completion_tokens': 10, 'prompt_tokens': 100},
+                    response={'choices': [{'message': {'content': c}}]})
+    fail = dict(harness_error=False, verifier_timeout=False, censored=False, reward=0.0, exc=None)
+    ok = dict(fail, reward=1.0)
+    ep = lambda recs: dict(takeover=dict(turn=5), main=recs, aux=[])  # noqa: E731
+    g = readout.takeover_guards(ep([rec(5, [], True), rec(6, [], True)]), fail)          # rubber stamp, fails
+    assert g['g1_false_done'] and not g['g2_context_exceeded'] and g['teacher_turns'] == 2
+    assert not readout.takeover_guards(ep([rec(5, ['python -m pytest tests/\n'], False), rec(6, [], True)]), fail)['g1_false_done']
+    assert not readout.takeover_guards(ep([rec(5, [], True)]), ok)['g1_false_done']        # confirmed and passed
+    assert not readout.takeover_guards(ep([rec(5, ['ls\n'], False), rec(6, ['cat x\n'], False), rec(7, [], True)]),
+                                       fail)['g1_false_done']                              # claim outside 2 turns
+    assert readout.takeover_guards(ep([rec(5, ['cat out.txt\n'], False), rec(6, [], True)]), fail)['g1_false_done']
