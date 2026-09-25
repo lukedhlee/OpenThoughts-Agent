@@ -340,3 +340,60 @@ CalibForge agents.**
   - Paired over 27 tasks: difference 0.00, CI [−0.19, +0.19].
 
 **Spend.** 1.084 node-hours. With run 1, the pilot total is 1.35 of Luke's 3.0.
+
+## Run 3 readout (job 2033522, 15:43–16:48 PT; the first submission 2033358 died at start-up)
+
+**Verdict: the harness gate passed. Two scale-up checks failed (S3, S5), so under the launch rule the full run is on
+HOLD.**
+- **Harness (H0–H5), all passed.**
+  - Owner labels joined 100 % in both arms.
+  - Harbor re-fed the teacher's reasoning on agent turns: 3,894 of 3,894 in control and 1,892 of 1,892 in
+    relay_repair.
+  - Every repair returned to the student (491 of 491).
+  - The executed relay trace was 99.1 % valid format.
+  - Harness errors: TmuxBatchProtocolError on 3 control trials and 9 relay trials.
+- **Scale-up checks.**
+  - S1 passed: control pass rate 0.557, CI [0.46, 0.65].
+  - S2 passed: the student owned 57.6 % of executed turns.
+  - **S3 failed: sticky takeover rate 0.28** (all 28 were done_claim).
+  - S4 passed: recovery after takeover 0.70, CI [0.52, 0.84].
+  - **S5 failed: at done_claim takeovers the teacher ran a command before confirming in only 12 of 28 (0.43).**
+  - S6 passed: 39.7 and 33.6 node-hours per arm at the pilot's layout.
+- **The relay passes less often than control.**
+  - relay_repair 0.451, CI [0.35, 0.55], against control 0.557.
+  - Paired over 89 tasks: −0.09, CI [−0.19, +0.01]. Relay-only 7 tasks, control-only 15.
+- **Context overflow: 44 % of relay episodes, against 11 % in control.** It is 33 of relay's 50 failures.
+  - Relay episodes average 5.3 repairs, and each repair's reasoning goes into the student's history.
+  - The teacher writes p50 1,063 and p90 9,071 completion tokens a turn.
+  - Likely cause, not verified: those inlined repair turns fill the 64k context.
+- **The teacher was slow even on two nodes.**
+  - Latency p50 33 s (control) and 40 s (relay), p90 about 290–350 s. That is above the 30 s flag.
+  - The student's clock paused a mean 760 s per episode.
+- **Other numbers.**
+  - Repairs: 528, mean 5.3 per episode, p90 9. 42 teacher repair replies were retried, and 22 still failed to parse.
+  - Failure causes. Control: timeout 23, false done 12, overflow 8. Relay: overflow 33, false done 11, timeout 5,
+    tests failed 1.
+  - Kept traces in the pilot: relay 82, control 97.
+
+**Full-run decision (`full_decide.py`): HOLD.**
+- S3 and S5 failed.
+- Recomputed for the 10-node layout from run 3's episode times, it projects 50.3 node-hours and a 7.3 h wall. That is
+  over the 0.85 × 35 limit, and the ceiling leaves the core job only 4.5 h.
+- The full-run kit is staged and was not submitted: the 2,043-task tree, `ota-relay-full` @ 600a42b7, and
+  `run_full.sh`.
+
+**Spend.**
+- Run 3: 0.263 node-hours (2033358, start-up failure) + 3.257 (2033522).
+- Pilot total: 4.87 node-hours (runs 1–3). The held-out reference, below, is 1.29 more.
+
+## Held-out reference: 09-21 alone on the 300 held-out tasks ("before" for the SFT arms)
+
+Job 2033360, 1 node, 15:33–16:51 PT, 1.29 node-hours. Settings are run 3's student: thinking on, summarization off,
+64k, strict parser, no teacher.
+- **Pass rate 14 / 290 scored = 0.048, 95 % CI [0.029, 0.079].**
+  - 8 harness errors: TmuxBatchProtocolError 4, TmuxSessionEndedError 3, DaytonaBadGatewayError 1.
+  - 2 verifier timeouts.
+- **Format.** 27,236 of 30,006 turns drew a parse-error re-prompt, so only 9.2 % of turns were valid format.
+- **Failure causes:** format loop 179, context overflow 63, timeout 28, false done 6.
+- **Overflow rate:** 21 %.
+- **Turns per episode:** p50 57, p90 258.
