@@ -27,11 +27,12 @@ def main() -> None:
             break
     else:
         sys.exit("no episode with a parsed first reply")
+    # What the agent sends: reasoning under both keys (vLLM reads only `reasoning`).
     request_messages = []
     for m in messages[:4]:
         view = {"role": m["role"], "content": m["content"]}
         if m.get("reasoning_content"):
-            view["reasoning_content"] = m["reasoning_content"]
+            view["reasoning_content"] = view["reasoning"] = m["reasoning_content"]
         request_messages.append(view)
     root = api_base.rstrip("/").removesuffix("/v1")
     reply = post(f"{root}/tokenize", {"model": served, "messages": request_messages, "add_generation_prompt": True})
