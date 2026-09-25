@@ -72,7 +72,7 @@ import sys
 import time
 import uuid
 
-from aiohttp import ClientConnectorError, ClientSession, ClientTimeout, ServerDisconnectedError, TCPConnector, web
+from aiohttp import ClientConnectionError, ClientSession, ClientTimeout, TCPConnector, web
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'triggers'))
@@ -440,7 +440,7 @@ class Router:
             try:
                 async with self.http.post(url, json=body) as resp:
                     return resp.status, await resp.read()
-            except (ClientConnectorError, ServerDisconnectedError, ConnectionResetError) as e:
+            except (ClientConnectionError, ConnectionResetError) as e:   # connect errors, resets, disconnects
                 last = e
                 await asyncio.sleep(min(30, 2 ** attempt))
         self.counts['upstream_errors'] += 1

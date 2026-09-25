@@ -268,3 +268,37 @@ harness fault.
 for student requests only (the TB2 nothink policy)? Then the relay_keep arm has nothing to keep, so the pilot drops to
 2 arms at the 3 node-hour ceiling. The alternative is to keep thinking on and add a format-failure takeover trigger,
 but that trigger is uncalibrated, and its relay data would teach recovery from format loops.
+
+## Run 2: job 2030212, stopped by its early gate at 25 min (2026-09-25 13:57–14:29 PT)
+
+**The gate stopped the run on a false alarm, but the run showed the real problem: one Qwen node cannot serve 200
+CalibForge agents.**
+- **The false alarm.** H3 counted 21 teacher turns the router had restored. All 21 were in Terminus-2's
+  summarization requests (answers 19, summary 1, handoff 1). At this harbor base those requests rebuild history
+  without reasoning; upstream #223 fixed it later. On agent turns, harbor re-fed 2,236 of 2,236 in control and 648 of
+  648 in relay_repair. H3 is now judged on agent turns only (39c25def).
+- **The teacher queue.** Teacher latency per request was p50 70 s (control) and 92 s (relay_repair), p90 about 330 s.
+  Some requests waited 19 min.
+  - Budgets are wall-clock, so this biases both arms.
+  - In relay_repair the teacher's repair time also counts against the student's budget. 31 episodes ended at the
+    student budget within 25 min.
+- **The repair mechanism itself worked.**
+  - 376 repairs in 98 episodes: mean 3.8, p90 7. Every episode needed at least one.
+  - The student resumed after all 327 repairs that had a next turn.
+  - The student owned 58 % of executed turns.
+  - The executed trace was 99.5 % valid format. The 5 remaining parse errors are from 13 teacher repair replies that
+    failed the parser twice.
+  - 917 of 917 student replies kept their think markers.
+  - Owner labels joined 100 % in both arms.
+  - 6 done_claim takeovers, 5 of 5 recovered where scored.
+- **Other failures, all from the cancel or infrastructure.**
+  - Relay_repair's 8 teacher 500s and its FATAL are all from the cancel at 14:28:39 PT. vLLM rejected the queued
+    requests at shutdown, and a connection reset reached the router's catch-all. Every aiohttp connection error is now
+    an upstream error, not fatal.
+  - TmuxBatchProtocolError hit 3 trials per arm, which is harness infrastructure.
+- **Partial numbers.** Only 40 and 41 trials were scored, and they skew to short budgets, so they are not results.
+  - Control: 23/40 passed.
+  - Relay_repair: 22/41 passed.
+  - Paired over 27 tasks: difference 0.00, CI [−0.19, +0.19].
+
+**Spend.** 1.084 node-hours. With run 1, the pilot total is 1.35 of Luke's 3.0.
