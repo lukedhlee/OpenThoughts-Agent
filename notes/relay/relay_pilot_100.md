@@ -43,7 +43,9 @@ scale-up.
 - H2: 100 % of trajectory agent turns join a router record. The join is by content hash, and the served model must
   match the record's owner.
 - H3: at least 95 % of teacher replies carry reasoning. Harbor re-feeds 100 % of the teacher's earlier turns with
-  their reasoning, and the router restores none.
+  their reasoning on main-chat agent requests, and the router restores none there.
+  - Amended after run 2's abort: summarization requests are counted separately, because at this harbor base they
+    rebuild history without reasoning (upstream #223 fixed it later) and the router restores it.
 - H4: after every repair, the student answers the next request, unless a sticky trigger or an ending takes over at
   that request.
 - H5: the executed relay_repair trace is at least 99 % valid format, measured as trajectory turns not followed by a

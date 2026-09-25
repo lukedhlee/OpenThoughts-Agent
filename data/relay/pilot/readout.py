@@ -197,11 +197,15 @@ def harness_router(rv):
 def reasoning_view(rv):
     t = [r for r in rv['recs'] if r.get('owner') == 'teacher' and r.get('upstream_status') == 200]
     main = [r for r in t if r.get('turn') is not None]
-    ref = collections.Counter()
+    # H3 is judged on main-chat agent requests. Terminus-2's summarization requests (summary / questions / answers and
+    # the handoff that follows) rebuild history messages without reasoning at this harbor base (upstream #223 fixed
+    # it later); the router restores those from its own record, counted separately.
+    ref, aux = collections.Counter(), collections.Counter()
     for r in t:
+        tgt = aux if r.get('request_kind') in ('summary', 'questions', 'answers', 'handoff') else ref
         for k, v in (r.get('refeed') or {}).items():
             if isinstance(v, int):
-                ref[k] += v
+                tgt[k] += v
     need = ref['prior_teacher_turns'] - ref['teacher_turns_without_reasoning']
     comp = [((r.get('usage') or {}).get('completion_tokens')) for r in main]
     return dict(teacher_replies=len(main), with_reasoning=sum(1 for r in main if r.get('teacher_reasoning_chars')),
@@ -211,6 +215,8 @@ def reasoning_view(rv):
                 refed_reasoning_content_only=ref['reasoning_content_only'], restored_by_router=ref['reasoning_restored'],
                 prior_turns_that_had_no_reasoning=ref['teacher_turns_without_reasoning'],
                 refed_by_harbor_frac=round(ref['reasoning_key_from_harbor'] / need, 4) if need > 0 else None,
+                summarization_requests_restored=aux['reasoning_restored'],
+                summarization_requests_prior_teacher_turns=aux['prior_teacher_turns'],
                 student_think_spans_stripped=ref['think_stripped'],
                 student_think_sent_as_reasoning=ref['student_think_as_reasoning'],
                 completion_tokens_p50=q(comp, .5), completion_tokens_p90=q(comp, .9),
@@ -527,7 +533,7 @@ def main():
             check(f'H3 {arm}: teacher replies carry reasoning (>= 95 %)', (r['reasoning_frac'] or 0) >= 0.95,
                   f"{r['with_reasoning']}/{r['teacher_replies']}, </think> in content {r['think_close_in_content']}")
         if r['prior_teacher_turns']:
-            check(f'H3 {arm}: prior teacher reasoning re-fed by harbor (100 %, none restored)',
+            check(f'H3 {arm}: prior teacher reasoning re-fed by harbor on agent turns (100 %, none restored)',
                   r['refed_by_harbor_frac'] == 1.0 and r['restored_by_router'] == 0,
                   f"by harbor {r['refed_by_harbor']}, restored {r['restored_by_router']}, prior {r['prior_teacher_turns']}")
         if arm in RELAY_ARMS:
