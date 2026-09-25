@@ -10,6 +10,8 @@
 # serve_snowball.sbatch, and holds the server until the wall or scancel.
 #
 #   sbatch -A transfernetx --time=00:55:00 serve_qwen38.sbatch
+#   TOOL_PARSER=qwen3_coder sbatch ...   # tool mode: Qwen3.8's template writes <tool_call><function=…><parameter=…>,
+#                                        # the qwen3_coder parser's format; adds --enable-auto-tool-choice
 #
 #SBATCH --job-name=msa_qwen38
 #SBATCH --time=00:55:00
@@ -40,7 +42,8 @@ export VLLM_ALLREDUCE_USE_SYMM_MEM=0
 CACHE=/e/fscratch/reformo/lee27/cache; mkdir -p $CACHE/vllm $CACHE/xdg $CACHE/triton $CACHE/inductor $CACHE/flashinfer $CACHE/tmp
 export VLLM_CACHE_ROOT=$CACHE/vllm XDG_CACHE_HOME=$CACHE/xdg TRITON_CACHE_DIR=$CACHE/triton TORCHINDUCTOR_CACHE_DIR=$CACHE/inductor FLASHINFER_WORKSPACE_BASE=$CACHE/flashinfer TMPDIR=$CACHE/tmp
 [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
-echo "node=$(hostname) job=$SLURM_JOB_ID model=$MODEL ($(date -Is))"
+TOOLS=(); [ -n "${TOOL_PARSER:-}" ] && TOOLS=(--enable-auto-tool-choice --tool-call-parser "$TOOL_PARSER")
+echo "node=$(hostname) job=$SLURM_JOB_ID model=$MODEL tool_parser=${TOOL_PARSER:-none} ($(date -Is))"
 $PY -c "import torchvision, vllm.model_executor.models.qwen3_5; print('torchvision', torchvision.__version__, 'qwen3_5 import ok')" || { echo "qwen3_5 import failed"; exit 1; }
 SLOG=$LOGS/serve_$SLURM_JOB_ID.log
 $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name $SERVED --port 8000 \
@@ -48,7 +51,7 @@ $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name $
     --max-model-len 65536 --gpu-memory-utilization 0.90 --max-num-seqs 96 \
     --enable-prefix-caching --enable-chunked-prefill --no-enable-log-requests \
     --speculative-config '{"method":"mtp","num_speculative_tokens":2}' \
-    --reasoning-parser qwen3 > $SLOG 2>&1 &
+    --reasoning-parser qwen3 "${TOOLS[@]}" > $SLOG 2>&1 &
 SPID=$!
 for i in $(seq 1 120); do
   curl -sf localhost:8000/health >/dev/null && { echo "UP after $((i*10))s"; break; }

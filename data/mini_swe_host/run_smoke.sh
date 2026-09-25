@@ -37,7 +37,10 @@ esac
 # prior reasoning is split off client-side and re-sent as reasoning_content.
 case $MODE in
   text) CONFIG_FILE=mini_textbased.yaml; MODEL_CLASS=litellm_textbased; CALL_KWARGS='{}';;
-  tool) CONFIG_FILE=mini.yaml; MODEL_CLASS=litellm; CALL_KWARGS='{"tool_choice": "none"}'; INTERLEAVED=true;;
+  tool) CONFIG_FILE=mini.yaml; MODEL_CLASS=litellm; INTERLEAVED=true
+        # qwen38 is served with a tool parser (TOOL_PARSER=qwen3_coder), so the server parses calls under the default
+        # "auto"; the Snowball/Grug serve has none.
+        if [ $MODEL = qwen38 ]; then CALL_KWARGS='{}'; else CALL_KWARGS='{"tool_choice": "none"}'; fi;;
   *) echo "mode must be text or tool"; exit 2;;
 esac
 cancel_serve() { [ $MODEL = scripted ] || { scancel $JOB 2>/dev/null; echo "scancel $JOB $(date -Is)"; }; }
