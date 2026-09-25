@@ -12,6 +12,12 @@ who answers each request:
     own "Are you sure?" confirmation request, and the teacher answers it. Nothing is discarded.
   * Any other enabled decision trigger discards the student's reply (it is saved in the log as preference data) and the
     teacher answers the same request.
+  * parse_error (--repair-on-parse-error, the relay_repair arm): the student's reply is run through Terminus-2's own
+    parser (harbor terminus_json_plain_parser.py, loaded from its file) before harbor sees it. On a hard parse error
+    (warnings pass) the reply is discarded (logged), the teacher answers the same request for ONE turn, and the
+    student keeps the episode: no "fix your JSON" re-prompt enters the trace. If the teacher's repair turn claims
+    done, it also answers Terminus-2's confirmation. The student then sees the repair turn rendered as the SFT
+    converter renders teacher turns for 09-21: <|start_think|>{teacher reasoning}<|end_think|>{content}.
   * --mode teacher (control arm): the teacher answers everything; triggers are computed on its own turns and logged as
     `would_fire` only. --mode student: the reverse, for debugging.
 
@@ -134,6 +140,22 @@ def request_kind(messages):
     return 'initial' if len(messages) == 1 else 'main'
 
 
+def load_terminus_parser(path=None):
+    """Terminus-2's own JSON parser (harbor terminus_json_plain_parser.py, stdlib-only), loaded from its file so the
+    router applies exactly the harness's accept/reject decision. Searches sys.path when no path is given."""
+    import hashlib as _h
+    import importlib.util
+    rel = os.path.join('harbor', 'agents', 'terminus_2', 'terminus_json_plain_parser.py')
+    cands = [path] if path else [os.path.join(p, rel) for p in sys.path if p]
+    for c in cands:
+        if c and os.path.isfile(c):
+            spec = importlib.util.spec_from_file_location('terminus_json_plain_parser', c)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod.TerminusJSONPlainParser(), c, _h.sha256(open(c, 'rb').read()).hexdigest()[:16]
+    raise SystemExit(f'Terminus-2 parser not found ({path or "on sys.path"}); pass --terminus-parser')
+
+
 def openai_error(status, message, etype='relay_router_error'):
     return web.json_response({'error': {'message': message, 'type': etype, 'code': status}}, status=status)
 
@@ -158,12 +180,14 @@ class Episode:
         self.owners = []                  # (turn, owner) per main-chat reply returned
         self.lock = asyncio.Lock()
         self.student_think = None
+        self.n_repairs = 0
+        self.repair_confirm = False       # the teacher claimed done in a repair turn: it answers that confirmation
 
     def summary(self):
         return dict(episode=self.idx, sid=self.sid, task_id=(self.task or {}).get('task_id'), owner=self.owner,
                     student_think=self.student_think,
                     takeover={k: v for k, v in (self.takeover or {}).items() if k != 'discarded_student_reply'} or None,
-                    ending=self.ending, turns=self.sc.turn, n_requests=self.n_requests,
+                    ending=self.ending, turns=self.sc.turn, n_requests=self.n_requests, repairs=self.n_repairs,
                     started=self.t0, last=self.last_t, owners=self.owners)
 
 
@@ -182,16 +206,21 @@ class Router:
         self.teacher_extra = json.loads(a.teacher_extra) if a.teacher_extra else {}
         self.student_extra = json.loads(a.student_extra) if a.student_extra else {}
         self.tasks = self._load_tasks(a.tasks)
+        self.parser = self.parser_path = self.parser_sha = None
+        if a.repair_on_parse_error:
+            self.parser, self.parser_path, self.parser_sha = load_terminus_parser(a.terminus_parser)
         self.episodes = {}
         self.by_first = {}
         self.n_episodes = 0
         self.fatal = None
         self.max_model_len = None
-        self.counts = dict(requests=0, upstream_errors=0, takeovers=0, synthetic=0, no_task_match=0)
+        self.counts = dict(requests=0, upstream_errors=0, takeovers=0, synthetic=0, no_task_match=0, repairs=0,
+                           repair_reply_rejected=0)
         os.makedirs(a.log_dir, exist_ok=True)
         os.makedirs(os.path.join(a.log_dir, 'bodies'), exist_ok=True)
-        self._turns = open(os.path.join(a.log_dir, 'turns.jsonl'), 'a', buffering=1)
-        self._events = open(os.path.join(a.log_dir, 'events.jsonl'), 'a', buffering=1)
+        # one os.write per line on an O_APPEND fd: readers (the driver's gates) never see a half-written line
+        self._turns = os.open(os.path.join(a.log_dir, 'turns.jsonl'), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        self._events = os.open(os.path.join(a.log_dir, 'events.jsonl'), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
         self.http = None
 
     # ---- setup -------------------------------------------------------------------------------------------------
@@ -217,7 +246,7 @@ class Router:
         return None
 
     def event(self, _event, **kw):
-        self._events.write(json.dumps(dict(ts=time.time(), event=_event, arm=self.a.arm, **kw)) + '\n')
+        os.write(self._events, (json.dumps(dict(ts=time.time(), event=_event, arm=self.a.arm, **kw)) + '\n').encode())
 
     def set_fatal(self, reason):
         if self.fatal:
@@ -372,6 +401,27 @@ class Router:
             out.append(m2)
         return out, stats
 
+    def for_student(self, ep, messages):
+        """The student sees its own turns unchanged. A teacher turn in its history (a parse_error repair) is rendered
+        the way the SFT converter renders teacher turns for 09-21: the teacher's reasoning inside 09-21's think
+        markers, then the content, no newlines around the span, no separate reasoning field."""
+        stats = dict(teacher_turns_inline=0, teacher_turns_without_reasoning=0)
+        out = []
+        for m in messages:
+            if m.get('role') != 'assistant' or not ep:
+                out.append(m)
+                continue
+            content = text_of(m.get('content'))
+            rec = ep.replies.get(sha(content))
+            m2 = {k: v for k, v in m.items() if k not in ('reasoning', 'reasoning_content')}
+            if rec and rec['owner'] == 'teacher':
+                r = (m.get('reasoning') or m.get('reasoning_content') or rec.get('reasoning') or '').strip()
+                m2['content'] = (f'<|start_think|>{r}<|end_think|>' if r else '') + content.strip()
+                stats['teacher_turns_inline'] += 1
+                stats['teacher_turns_without_reasoning'] += not r
+            out.append(m2)
+        return out, stats
+
     def upstream_body(self, who, body, messages):
         if who == 'teacher':
             b = {k: v for k, v in body.items() if k not in self.teacher_drop}
@@ -426,7 +476,7 @@ class Router:
             status, data = await self.post(who, '/tokenize', dict(body, model=self.models[who]))
             return web.Response(status=status, body=data, content_type='application/json')
         ep, who = self.owner_for_tokenize(messages)
-        msgs = self.for_teacher(ep, messages)[0] if who == 'teacher' else messages
+        msgs = self.for_teacher(ep, messages)[0] if who == 'teacher' else self.for_student(ep, messages)[0]
         b = {k: v for k, v in body.items() if not (who == 'teacher' and k in self.teacher_drop)}
         b.update(model=self.models[who], messages=msgs)
         status, data = await self.post(who, '/tokenize', b)
@@ -520,6 +570,13 @@ class Router:
                 self.event('ending', episode=ep.idx, sid=ep.sid, ending=ep.ending, turn=t, elapsed_sec=now - ep.t0)
                 return self.synthetic(ep, rec)
 
+        # the teacher claimed done in a repair turn: it answers Terminus-2's confirmation, then the student resumes
+        if ep.repair_confirm and ep.owner == 'student':
+            if not retry:
+                ep.repair_confirm = False
+            if kind == 'confirm':
+                rec.update(owner='teacher', repair=True, repair_kind='confirm')
+                return await self.answer(ep, 'teacher', body, messages, rec, main=True)
         # environment triggers act on the request, before the student is asked
         if ep.owner == 'student' and self.mode == 'relay' and not retry:
             env = [f for f in ep.sc.current_fires(None, self.cfg) if f['kind'] == 'environment']
@@ -555,7 +612,9 @@ class Router:
 
     async def answer_student(self, ep, body, messages, rec, t, now):
         rec['owner'] = 'student'
-        b = self.upstream_body('student', body, messages)
+        msgs, sstats = self.for_student(ep, messages)
+        rec['student_view'] = sstats
+        b = self.upstream_body('student', body, msgs)
         rec['sent_body'] = self.write_body(ep, rec['seq'], 'student', b)
         t1 = time.time()
         status, data = await self.post('student', '/chat/completions', b)
@@ -567,11 +626,28 @@ class Router:
             return web.Response(status=status, body=data, content_type='application/json')
         resp = json.loads(data)
         content = text_of(resp['choices'][0]['message'].get('content'))
+        if self.parser is not None and self.mode == 'relay':
+            pr = self.parser.parse_response(content)
+            if pr.error:
+                # parse_error (non-sticky repair): Terminus-2 would reject this reply; it never reaches harbor. The
+                # teacher answers the same request, one turn, and the student keeps the episode.
+                ep.n_repairs += 1
+                self.counts['repairs'] += 1
+                rec.update(repair=True, repair_kind='parse_error', repair_reason=pr.error[:500], owner='teacher',
+                           discarded_student_reply=resp, discarded_usage=resp.get('usage'),
+                           student_latency_sec=rec.pop('latency_sec'), student_sent_body=rec.pop('sent_body'))
+                self.event('repair', episode=ep.idx, sid=ep.sid, turn=t, reason=pr.error[:200])
+                return await self.answer(ep, 'teacher', body, messages, rec, main=True)
         rec['logged'] = self.logged_signals(ep, content)
         dec = [] if self.mode != 'relay' else [f for f in ep.sc.current_fires(content, self.cfg) if f['kind'] == 'decision']
         if self.mode == 'student':
             rec['would_fire'] = [dict(trigger=f['trigger'], reason=f.get('reason'))
                                  for f in ep.sc.current_fires(content, self.cfg)]
+        if (self.mode == 'relay' and 'done_claim' in self.cfg['enabled'] and not any(f['trigger'] == 'done_claim' for f in dec)
+                and rt.parse_reply(content, 'terminus2')['done']):
+            # the scanner fires done_claim only on the episode's first task_complete; a teacher repair turn may have
+            # claimed first, so judge the student's own claim directly
+            dec.append(dict(trigger='done_claim', kind='decision', turn=t, reason='task_complete: true (student)'))
         done = [f for f in dec if f['trigger'] == 'done_claim']
         other = [f for f in dec if f['trigger'] != 'done_claim']
         if other:
@@ -593,11 +669,28 @@ class Router:
             msgs, stats = self.for_teacher(ep, messages)
             rec['refeed'] = stats
         else:
-            msgs = messages
+            msgs, stats = self.for_student(ep, messages)
+            rec['student_view'] = stats
         b = self.upstream_body(who, body, msgs)
         rec['sent_body'] = self.write_body(ep, rec['seq'], who, b)
         t1 = time.time()
-        status, data = await self.post(who, '/chat/completions', b)
+        attempts = self.a.repair_attempts if (rec.get('repair') and self.parser is not None) else 1
+        for attempt in range(attempts):
+            status, data = await self.post(who, '/chat/completions', b)
+            if status != 200 or attempt == attempts - 1:
+                break
+            c = text_of(json.loads(data)['choices'][0]['message'].get('content'))
+            perr = self.parser.parse_response(c).error
+            if not perr:
+                break
+            self.counts['repair_reply_rejected'] += 1
+            rec.setdefault('repair_rejected_replies', []).append(json.loads(data))
+        if rec.get('repair') and self.parser is not None and status == 200:
+            c = text_of(json.loads(data)['choices'][0]['message'].get('content'))
+            pr = self.parser.parse_response(c)
+            rec['repair_reply_parse_error'] = pr.error[:300] if pr.error else None
+            if not pr.error and pr.is_task_complete and rec.get('repair_kind') == 'parse_error':
+                ep.repair_confirm = True
         rec.update(latency_sec=round(time.time() - t1, 3), upstream_status=status)
         if status != 200:
             self.check_fatal(who, status, data)
@@ -648,7 +741,7 @@ class Router:
         return self.finish(ep, 'router', resp, rec, rec.get('turn'), main=True)
 
     def log(self, rec):
-        self._turns.write(json.dumps(rec, ensure_ascii=False) + '\n')
+        os.write(self._turns, (json.dumps(rec, ensure_ascii=False) + '\n').encode())
 
     def snapshot(self):
         path = os.path.join(self.a.log_dir, 'episodes.json')
@@ -705,6 +798,13 @@ def parse_args(argv=None):
                         "think spans are removed; the Terminus-2 JSON with its analysis/plan stays) or keep (the spans "
                         "are removed from content and sent as that turn's reasoning, which Qwen3.8's template renders "
                         "inside <think>)")
+    p.add_argument('--repair-on-parse-error', action='store_true',
+                   help='parse_error trigger (non-sticky): a student reply that Terminus-2\'s own parser rejects is '
+                        'discarded and the teacher answers the same request for one turn; the student keeps the episode')
+    p.add_argument('--terminus-parser', default=None,
+                   help='path of harbor terminus_json_plain_parser.py (default: found on sys.path / PYTHONPATH)')
+    p.add_argument('--repair-attempts', type=int, default=2,
+                   help='teacher attempts per repair turn when its own reply fails the parser')
     p.add_argument('--deadline-epoch', type=float, default=None,
                    help='wall-clock time (unix) after which every episode is ended at its next request (ending '
                         "'deadline'), so the run finishes with its results inside the node-hour cap")
@@ -734,7 +834,8 @@ async def serve(a, ready_event=None):
     await router.start_http()
     router.event('start', argv=sys.argv, version=ROUTER_VERSION, mode=a.mode, takeover=router.cfg['enabled'],
                  budget_mode=a.budget_mode, tasks=len(router.tasks), student_think=a.student_think,
-                 deadline_epoch=a.deadline_epoch)
+                 deadline_epoch=a.deadline_epoch, repair_on_parse_error=a.repair_on_parse_error,
+                 terminus_parser=router.parser_path, terminus_parser_sha256=router.parser_sha)
     if not a.skip_health:
         ok, report = await router.health_check()
         print(json.dumps(report, indent=1), flush=True)

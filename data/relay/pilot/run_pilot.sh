@@ -2,10 +2,11 @@
 # run_pilot.sh <serve-jobid> <run-name> [smoke]
 # Jupiter login node, inside tmux. Drives one relay pilot on the two servers serve_relay.sbatch started.
 #
-# Arms (ARMS, default all three), each its own router and harbor job on the same 100 CalibForge tasks:
-#   control     teacher from scratch (router --mode teacher)                                  = the baseline
-#   relay       student -> teacher, the student's thinking stripped from the teacher's view    = relay_strip
-#   relay_keep  student -> teacher, the student's thinking kept as that turn's reasoning       (--student-think keep)
+# Arms (ARMS, default "control relay_repair"), each its own router and harbor job on the same 100 CalibForge tasks:
+#   control       teacher from scratch (router --mode teacher)                                 = the baseline
+#   relay_repair  student -> teacher: parse_error repairs (non-sticky, one teacher turn) plus the sticky takeovers
+#                 done_claim / loop / no_progress_wait; the student's thinking stripped from the teacher's view
+#   relay         sticky takeovers only, thinking stripped;  relay_keep  the same, thinking kept (--student-think keep)
 #
 #   1. pre-flight (no GPU time spent yet): harbor clone at the pinned commit, task tree + router task file, Daytona key,
 #      the three CalibForge snapshots ACTIVE (a missing one would make harbor build a new snapshot into a 39/40 org),
@@ -37,8 +38,8 @@ KEYF=${KEYF:-/e/fscratch/reformo/lee27/keys/daytona_eval.env}
 E=/e/fscratch/reformo/lee27/experiments/relay/pilot; EP=$E/endpoints
 R=$E/runs/$NAME
 JOBS_ROOT=${JOBS_ROOT:-/e/data1/mmlaion/lee27/experiments/relay_pilot_jobs}   # many small files -> mmlaion
-ARMS=${ARMS:-control relay relay_keep}
-CONC=${CONC:-50}; CAP_NODE_H=${CAP_NODE_H:-4.0}; NODES=2; DEADLINE_MARGIN=${DEADLINE_MARGIN:-600}
+ARMS=${ARMS:-control relay_repair}
+CONC=${CONC:-100}; CAP_NODE_H=${CAP_NODE_H:-3.0}; NODES=2; DEADLINE_MARGIN=${DEADLINE_MARGIN:-600}
 EARLY_MIN=${EARLY_MIN:-25}; STALL_MIN=${STALL_MIN:-15}; UP_WAIT=${UP_WAIT:-2400}; MIN_EARLY_TURNS=${MIN_EARLY_TURNS:-20}
 VERIFY_WAIT=${VERIFY_WAIT:-2700}   # after the serve job is released, how long harbor may keep verifying (CPU only)
 PORT0=${PORT0:-$((21000 + RANDOM % 8000))}
@@ -108,6 +109,7 @@ log "endpoints student=$SURL teacher=$TURL; job start $(date -d @$JSTART -Is), d
 # ---- 3. routers -----------------------------------------------------------------------------------------------------
 for arm in $ARMS; do
   case $arm in control) M=(--mode teacher);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
+    relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py);;
     *) abort "unknown arm $arm";; esac
   $PY $ROUTER "${M[@]}" --arm $arm --port ${PORT[$arm]} --log-dir $R/router_$arm --tasks $TREE/router_tasks.json \
     --budget-mode on --deadline-epoch $DEADLINE --student-url $SURL --student-model snowball --teacher-url $TURL \

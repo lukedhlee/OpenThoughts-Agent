@@ -78,7 +78,7 @@ class Stack:
         s_url = await self.student.start()
         t_url = await self.teacher.start()
         tasks = [dict(task_id=f'cf-{sc}', instruction=instruction(sc, tag), agent_timeout_sec=self.budgets.get(sc, 1000))
-                 for sc in ('selfdone', 'done', 'loop', 'wait', 'budget', 'summ', 'gaveup')
+                 for sc in ('selfdone', 'done', 'loop', 'wait', 'budget', 'summ', 'gaveup', 'repair', 'repairs')
                  for tag in [''] + [f'-{i}' for i in range(8)]]
         tf = self.tmp / 'tasks.json'
         tf.write_text(json.dumps(tasks))
@@ -106,7 +106,12 @@ class Stack:
 
     def turns(self, sid=None):
         p = self.log_dir / 'turns.jsonl'
-        rows = [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+        rows = []
+        for l in (p.read_text().splitlines() if p.exists() else []):
+            try:
+                rows.append(json.loads(l))
+            except json.JSONDecodeError:   # a concurrent episode's line being written
+                pass
         return [r for r in rows if sid is None or r['sid'] == sid]
 
     def teacher_bodies(self, first_contains):
@@ -519,3 +524,64 @@ def test_readout_false_done_guard():
     assert not readout.takeover_guards(ep([rec(5, ['ls\n'], False), rec(6, ['cat x\n'], False), rec(7, [], True)]),
                                        fail)['g1_false_done']                              # claim outside 2 turns
     assert readout.takeover_guards(ep([rec(5, ['cat out.txt\n'], False), rec(6, [], True)]), fail)['g1_false_done']
+
+
+REPAIR = ['--repair-on-parse-error']
+
+
+def _student_bodies(st, tag):
+    return [b for b in st.student.requests if tag in fake_openai.text_of(b['messages'][0].get('content'))]
+
+
+def _no_bad_format_in_trace(r, st, tag):
+    """The discarded reply never reached harbor: not in the trajectory, no parse-error re-prompt anywhere."""
+    raw = json.dumps(r.traj)
+    assert 'BADFORMAT' not in raw
+    assert 'Previous response had parsing errors' not in raw
+    for b in _student_bodies(st, tag) + st.teacher_bodies(tag):
+        assert not any('BADFORMAT' in fake_openai.text_of(m.get('content')) for m in b['messages'])
+        assert not any('Previous response had parsing errors' in fake_openai.text_of(m.get('content')) for m in b['messages'])
+
+
+@needs_harbor
+def test_repair_then_the_student_resumes_then_done_claim_takes_over(tmp_path):
+    with Stack(tmp_path, router_args=REPAIR) as st:
+        r = run_agent(st, 'repair', tmp_path)
+        rows = [x for x in st.turns(r.sid) if x.get('turn') is not None]
+        assert [x['owner'] for x in rows] == ['student', 'teacher', 'student', 'student', 'teacher']
+        rep = rows[1]
+        assert rep['repair'] and rep['repair_kind'] == 'parse_error' and 'Missing required fields' in rep['repair_reason']
+        assert 'BADFORMAT' in rep['discarded_student_reply']['choices'][0]['message']['content']
+        assert not rep.get('takeover') and rep['repair_reply_parse_error'] is None
+        assert rows[4]['takeover']['trigger'] == 'done_claim' and rows[4]['request_kind'] == 'confirm'
+        _no_bad_format_in_trace(r, st, 'SCENARIO=repair.')
+        # every executed turn parsed: the trajectory holds 5 agent steps, one per router record, owners by model
+        assert [s['model_name'] for s in agent_steps(r.traj)] == ['snowball', 'qwen38', 'snowball', 'snowball', 'qwen38']
+        # the student sees the repair turn as 09-21's SFT renders a teacher turn: reasoning inside its think markers
+        after = _student_bodies(st, 'SCENARIO=repair.')[2]['messages']
+        tm = [m for m in after if m['role'] == 'assistant' and 'teacher-step 0' in m['content']]
+        assert len(tm) == 1 and tm[0]['content'].startswith('<|start_think|>teacher reasoning 0<|end_think|>{"analysis": "teacher-step 0')
+        assert 'reasoning' not in tm[0] and 'reasoning_content' not in tm[0]
+        assert rows[2]['student_view'] == {'teacher_turns_inline': 1, 'teacher_turns_without_reasoning': 0}
+        # the teacher's repair request is the same request the student failed
+        tb = st.teacher_bodies('SCENARIO=repair.')[0]['messages']
+        sb = _student_bodies(st, 'SCENARIO=repair.')[1]['messages']
+        assert len(tb) == len(sb) and tb[-1]['content'] == sb[-1]['content']
+        assert getattr(r.stop, 'value', r.stop) == 'task_complete'
+
+
+@needs_harbor
+def test_repeated_repairs_and_the_teacher_sees_its_repair_reasoning(tmp_path):
+    with Stack(tmp_path, router_args=REPAIR) as st:
+        r = run_agent(st, 'repairs', tmp_path)
+        rows = [x for x in st.turns(r.sid) if x.get('turn') is not None]
+        assert [x['owner'] for x in rows] == ['student', 'teacher', 'teacher', 'student', 'student', 'teacher']
+        assert [bool(x.get('repair')) for x in rows] == [False, True, True, False, False, False]
+        assert rows[5]['takeover']['trigger'] == 'done_claim'
+        # the second repair request re-feeds the first repair's reasoning (harbor, under both keys)
+        second = st.teacher_bodies('SCENARIO=repairs.')[1]['messages']
+        prior = [m for m in second if m['role'] == 'assistant' and 'teacher-step 0' in m['content']]
+        assert prior[0]['reasoning'] == 'teacher reasoning 0' and rows[2]['refeed']['reasoning_key_from_harbor'] == 1
+        _no_bad_format_in_trace(r, st, 'SCENARIO=repairs.')
+        eps = st.router.episodes[r.sid]
+        assert eps.n_repairs == 2 and st.router.counts['repairs'] == 2

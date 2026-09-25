@@ -2,7 +2,7 @@
 # serve_relay.sbatch — the relay pilot's two model servers in one 2-node Jupiter allocation: the student (09-21 Datakit
 # SFT, as its thinking-on TB2 evals served it) on the first node, the teacher (Qwen3.8-27B) on the second. The login-node
 # driver run_pilot.sh does everything else (routers, harbor on Daytona, gates, readout) and scancels this job when the
-# run ends; --time is the hard node-hour ceiling (2 nodes x 2 h = 4 node-h; Luke's cap for the 3-arm pilot).
+# run ends; --time is the hard node-hour ceiling (2 nodes x 1.5 h = 3 node-h; Luke's cap for the 2-arm pilot).
 #
 #   sbatch serve_relay.sbatch            # then, on the login node: bash run_pilot.sh <jobid> <run-name>
 #
@@ -12,7 +12,7 @@
 # the job writes <jobid>.DEAD and cancels itself; if they are not both up within UP_TIMEOUT s, the same.
 #
 #SBATCH --job-name=relay_pilot
-#SBATCH --time=02:00:00
+#SBATCH --time=01:30:00
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72

@@ -36,12 +36,15 @@ def text_of(c):
     return c or ''
 
 
+DEFAULT_SCENARIO = ['selfdone']
+
+
 def scenario_of(messages):
     for m in messages:
         mm = re.search(r'SCENARIO=(\w+)', text_of(m.get('content')))
         if mm:
             return mm.group(1)
-    return 'selfdone'
+    return DEFAULT_SCENARIO[0]
 
 
 def student_json(scenario, n):
@@ -58,6 +61,14 @@ def student_json(scenario, n):
         return t2('build', ['make build\n']) if n == 0 else t2(f'wait {n}', [])
     if scenario in ('budget', 'summ'):   # varied work, never done
         return t2(f'step {n}', [f'echo step-{n}\n'])
+    bad = (f'<|start_think|>BADFORMAT {n}: I will call the tool.<|end_think|>'
+           '<tool_call>{"keystrokes": "ls -la\\n", "duration": 0.1}</tool_call>')
+    if scenario == 'repair':        # one unparseable reply, then valid work and a done claim
+        return [t2('look', ['ls -la\n']), bad, t2('write', ['echo hi > out.txt\n']), t2('I am done', [], True),
+                t2('confirm', [], True)][min(n, 4)]
+    if scenario == 'repairs':       # two unparseable replies in a row
+        return [t2('look', ['ls -la\n']), bad, bad, t2('write', ['echo hi > out.txt\n']), t2('I am done', [], True),
+                t2('confirm', [], True)][min(n, 5)]
     if scenario == 'gaveup':        # gives up in words at its 3rd reply (gave_up is a decision trigger when enabled)
         if n == 2:
             return t2('The requirement is impossible without internet, so we cannot solve the task as specified.',
@@ -133,7 +144,8 @@ class FakeServer:
             content = f'{self.role} answers: out.txt holds ok.'
         elif self.role == 'student':
             n = sum(1 for m in msgs if m.get('role') == 'assistant' and '"analysis"' in text_of(m.get('content')))
-            content = f'<|start_think|>student thinking {n}<|end_think|>' + student_json(scenario_of(msgs), n)
+            j = student_json(scenario_of(msgs), n)
+            content = j if j.startswith('<|start_think|>') else f'<|start_think|>student thinking {n}<|end_think|>' + j
         else:
             k = sum(1 for m in msgs if m.get('role') == 'assistant' and 'teacher-step' in text_of(m.get('content')))
             content = teacher_json(k, last)
@@ -171,7 +183,9 @@ def main():
     p.add_argument('--model', required=True)
     p.add_argument('--port', type=int, required=True)
     p.add_argument('--reasoning-key', default='reasoning')
+    p.add_argument('--scenario', default='selfdone', help='student script for conversations without a SCENARIO= tag')
     a = p.parse_args()
+    DEFAULT_SCENARIO[0] = a.scenario
     srv = FakeServer(a.role, a.model, a.reasoning_key)
     web.run_app(srv.app(), host='127.0.0.1', port=a.port, access_log=None)
 

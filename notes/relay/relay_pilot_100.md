@@ -1,82 +1,83 @@
 # Relay pilot on 100 CalibForge tasks (Terminus-2)
 
-**What it tests.** Whether a student-to-teacher relay produces usable SFT data on CalibForge. The student is the 09-21
-Datakit SFT, served as in its thinking-on TB2 evals. When a calibrated trigger fires, Qwen3.8-27B takes over the live
-sandbox for the rest of the episode. The triggers are done_claim, exact-repeat loop and no-progress wait. The pilot
-first checks that the harness records what we need: an owner label on every turn, the teacher's reasoning kept and
-re-fed, and no harness errors. It then measures the numbers that decide whether to scale to 2,000 kept traces per arm:
-how often the teacher takes over, how often it recovers, and what a kept trace costs.
+**What it tests (run 2, Luke's design of 2026-09-25 13:45 PT).** Whether a student-to-teacher relay produces usable
+SFT data on CalibForge when the student is the 09-21 Datakit SFT with thinking on, served exactly as in its TB2 eval.
+That student often answers in its own `<tool_call>` format, which Terminus-2 rejects (run 1, below). So the relay now
+has two kinds of hand-off:
+- **Repair (`parse_error`, non-sticky).** Before harbor sees a student reply, the router runs Terminus-2's own parser
+  on it (harbor's `terminus_json_plain_parser.py`, loaded from the harness's own file). If it would be rejected, the
+  reply is discarded and logged, the teacher answers the same request for one full turn, and the student keeps the
+  episode. No "fix your JSON" re-prompt enters the trace.
+- **Takeover (sticky).** done_claim, the exact-repeat loop and the no-progress wait hand the rest of the episode to the
+  teacher, as before.
 
-It runs three arms on the same 100 tasks, one rollout each, all in one 2-node allocation:
-- **control**: the teacher from scratch. This is the baseline and the ceiling for recovery.
-- **relay** (relay_strip): the student's think spans are removed from the history the teacher sees. Its Terminus-2
-  JSON, including analysis and plan, stays. This is the design's default.
-- **relay_keep**: the student's think spans are sent as each earlier student turn's reasoning, so Qwen3.8's template
-  shows them inside `<think>`.
+Two arms, same 100 tasks, one rollout each, one 2-node allocation:
+- **control**: Qwen3.8-27B from scratch. This is the baseline.
+- **relay_repair**: the student with repairs and takeovers. The student's thinking is stripped from what the teacher
+  sees.
 
-**Cost.** The ceiling is 4.0 node-hours on `-A transfernetx`: 2 GH200 nodes × 2 h, with Slurm `--time` as the
-backstop. I expect about 3.2 node-hours and about 1.6 h of wall time after the job starts. Queue time is extra.
-- Three mechanisms hold the cap:
-  - After a deadline set 10 min before the cap, the router ends every episode at its next request.
-  - The driver releases both nodes once the LLM traffic stops.
-  - Harbor then finishes its verifiers on the login node with no GPU.
-- The expected figure comes from these inputs:
-  - The servers take about 8 min to come up. Snowball measured 200–330 s. The Qwen serve is the same layout as the
-    bench.
-  - After that, about 85–95 min of episodes at 50 concurrent per arm, longest budgets first.
-  - A relay episode lasts at most 2× its task budget: the student gets 1×, then the teacher gets its own 1×.
-  - Of the 100 tasks, 60 have budgets ≤ 900 s and 37 have 1,800 s.
-- Daytona sandboxes are free under the deal. At most 150 are open at once.
+A repair turn in the student's later history is shown to the student the way the SFT data will render a teacher turn
+for 09-21: `<|start_think|>{teacher reasoning}<|end_think|>{teacher content}`, with no newlines around the span and no
+separate reasoning field. The router logs it per turn (`student_view`).
 
-**Stop rule, written 2026-09-25 before any result.**
+**Cost.** The ceiling is 3.0 node-hours on `-A transfernetx`: 2 GH200 nodes × 1.5 h, with Slurm `--time` as the
+backstop. I expect about 2.6 node-hours, which is about 75 min of wall time plus about 5 min of server start-up.
+Queue time is extra.
+- Each arm runs as one wave: 100 concurrent per arm, 200 Daytona sandboxes.
+- A relay episode lasts at most 2× its task budget, and 37 of the 100 tasks have a 1,800 s budget.
+- The router's deadline is 10 min before the cap. After it, every episode ends at its next request, so the run
+  finishes with its verifiers run. The readout counts those episodes as censored.
+- One Qwen node serves up to about 200 agents here. That is past the bench's sweet spot of 128 at short contexts, so
+  expect queueing on the teacher. The readout reports latency by owner.
 
-*Harness gate.* Every check must hold in every arm. If any fails, we fix the harness and re-run the pilot, with no
+**Stop rule, rewritten 2026-09-25 before run 2 started.**
+
+*Harness gate.* Every check must hold in both arms. If any fails, we fix the harness and re-run the pilot, with no
 scale-up.
-- H0: at least 90 % of student replies keep their think markers.
+- H0: at least 90 % of student replies, discarded ones included, carry 09-21's think markers. This shows
+  skip_special_tokens=false is working.
 - H1, router side: the router stays clean. No FATAL, and no upstream error other than a context-length 400. No
   detector errors. Every episode matches its task, and every upstream call has its body logged.
-- H1, trial side: at most 10 % of trials end in a harness error.
-  - Verifier timeouts are counted separately. One pilot task's verifier hangs on an unsolved sandbox.
-  - Episodes cut by the deadline are also counted separately.
+- H1, trial side: at most 10 % of trials end in a harness error. Verifier timeouts and deadline-censored episodes are
+  counted separately.
 - H2: 100 % of trajectory agent turns join a router record. The join is by content hash, and the served model must
   match the record's owner.
 - H3: at least 95 % of teacher replies carry reasoning. Harbor re-feeds 100 % of the teacher's earlier turns with
   their reasoning, and the router restores none.
+- H4: after every repair, the student answers the next request, unless a sticky trigger or an ending takes over at
+  that request.
+- H5: the executed relay_repair trace is at least 99 % valid format, measured as trajectory turns not followed by a
+  parse-error re-prompt. What remains would be teacher replies that failed the parser twice.
 
-*Scale-up to 2,000 kept traces per arm (1:1 pass:fail).* These use relay_strip against control and count only if the
-harness gate passed. All five must hold.
+*Scale-up to 2,000 kept traces per arm (1:1 pass:fail).* These count only if the harness gate passed. All six must
+hold.
 - S1: the control pass rate is between 0.25 and 0.75.
-- S2: the relay takeover rate is at least 0.40.
-- S3: recovery, P(pass | takeover), is at least 0.20.
-- S4: at done_claim takeovers, the teacher runs at least one command before confirming in at least 50 % of cases. A
-  rubber-stamp confirmation teaches nothing.
-- S5: at the pilot's measured yield and node-hours per episode, 2,000 kept traces cost at most 60 node-hours per arm.
+- S2: the student owns at least 50 % of the executed relay_repair turns. Below that, the trace is mostly the
+  teacher's, and the arm is a noisier copy of control.
+- S3: the sticky takeover rate is at least 0.30 of relay_repair episodes.
+- S4: recovery after a sticky takeover, P(pass | takeover), is at least 0.20.
+- S5: at done_claim takeovers, the teacher runs at least one command before confirming in at least 50 % of cases.
+- S6: at the pilot's measured yield and node-hours per episode, 2,000 kept traces cost at most 60 node-hours per arm.
+  - A kept relay_repair trace is an episode with at least one teacher turn (repair or takeover): its passes, plus as
+    many real failures.
+  - For control it is passes plus as many real failures.
 
-If all five hold, the next wave runs the relay variant (strip or keep, per the rule below) and control, each sized to
-2,000 kept traces from the pilot's yields. S5 caps each at 60 node-hours, and it goes to Luke with a cost line before
-any submission. If any check fails, there is no scale-up: the readout names the failing check and the variant it
-points to (K-turn relay, earlier triggers, a different pool).
+If all six hold, the next wave runs relay_repair and control, each sized to 2,000 kept traces. It goes to Luke with a
+cost line before any submission. If any check fails, there is no scale-up, and the readout names the failing check.
 
-*Strip vs keep (pre-registered: committed 6b66c082 at 13:16:50 PT, 48 s after serve job 2028189 started at 13:16:02 PT; neither server was up and no episode had run).*
-- **Primary metric.** Recovery after takeover, P(verified pass | takeover), in each relay arm, with a Wilson CI. The
-  difference is keep − strip, with Newcombe's 95 % interval. The readout also reports the task-paired version, a
-  bootstrap over the tasks where both arms took over.
-- **Keep is chosen only if all four hold:**
-  - recovery_keep − recovery_strip ≥ +15 points;
-  - the 95 % CI of that difference excludes 0;
-  - keep does not worsen guard g1 by more than 5 points;
-  - keep does not worsen guard g2 by more than 5 points.
-- **Otherwise strip stays**, the default.
-- **The guards**, as rates over takeover episodes:
-  - g1, teacher false-done: the teacher's first `task_complete` comes within 2 of its turns after the takeover, with
-    no verification command in its turns before it, and the task fails. A verification command is a test runner,
-    script or build run that does not edit files (`is_check` and not `is_modify` in `relay_triggers.py`).
-  - g2, context exceeded after the takeover.
-- **Cost as a tie-breaker, not a decider.** Teacher turns and tokens (completion and prompt) per recovery, for both
-  arms.
-- **The pilot can only detect differences of about 15 points or more.** With roughly 50–70 takeovers per arm, the
-  95 % interval on a difference in recovery is about ±15–18 points wide. A smaller real difference will read as
-  "strip".
+*Reported, not deciding.*
+- The relay_repair pass rate against control, paired by task, with a bootstrap CI and the both / relay-only /
+  control-only / neither table.
+- Repairs per episode, and the share of executed turns by student, repair and sticky teacher.
+- Teacher and student turns per episode.
+- Teacher repair replies that failed the parser.
+- Takeovers by trigger, with recovery and CIs.
+- Kept traces per node-hour.
+
+With 100 tasks, a paired difference in pass rate smaller than about 12–15 points is not distinguishable from zero.
+
+The strip-vs-keep comparison of run 1 is dropped from this run. The code still supports it (`--student-think keep`,
+arm `relay_keep`).
 
 ## How to launch (Jupiter login node, in tmux)
 
@@ -90,13 +91,13 @@ git -C $C/OpenThoughts-Agent worktree add --detach $C/ota-relay FETCH_HEAD
 P=$C/ota-relay/data/relay/pilot
 # tasks: the 100 from the public bundle (sha256-pinned), plus the router's task file
 bash $P/stage_tree.sh                                             # -> /e/fscratch/reformo/lee27/tasks/calibforge_relay100
-# servers (2 nodes, 2 h wall = the 4 node-h ceiling), then the driver
+# servers (2 nodes, 1.5 h wall = the 3 node-h ceiling), then the driver
 mkdir -p /e/fscratch/reformo/lee27/experiments/relay/pilot/logs
 JOB=$(RELAY_PILOT_DIR=$P sbatch --parsable --export=ALL $P/serve_relay.sbatch)
-tmux new -d -s relay_pilot "bash $P/run_pilot.sh $JOB relay_pilot_20260925"
+tmux new -d -s relay_pilot "bash $P/run_pilot.sh $JOB relay_repair_20260925"
 ```
 
-Everything a run writes is in `/e/fscratch/reformo/lee27/experiments/relay/pilot/runs/<name>/`:
+Arms are set by `ARMS` (default `control relay_repair`). Everything a run writes is in `/e/fscratch/reformo/lee27/experiments/relay/pilot/runs/<name>/`:
 - `driver.log`
 - `router_<arm>/`: `turns.jsonl`, `events.jsonl`, `bodies/`, `health.json`
 - `early_gate.*`, `readout.json` and `readout.txt`
@@ -120,7 +121,7 @@ If the run is interrupted, clean up the sandboxes left behind by id with `python
    - If either server dies, the job writes `DEAD` and cancels itself.
 3. **Routers.** One per arm. Each checks both served names and one completion, and exits 3 on a mismatch. A failed
    check cancels the job.
-4. **Harbor.** One job per arm, 50 concurrent, longest agent budget first.
+4. **Harbor.** One job per arm, 100 concurrent (one wave), longest agent budget first.
 5. **Watch.** Every 60 s the driver checks:
    - router FATAL, the serve job DEAD or gone, and 15 min with no traffic → cancel and clean up;
    - at 25 min, the **early gate** (`readout.py --gate early`): H0, H1 router side and H3 on the logs so far, plus at
@@ -185,31 +186,53 @@ strip vs keep, and the verdict under the rule above.
   - The held-out eval split, `calibforge_heldout300.txt`, has 300 tasks under the same stratification, with all
     budgets included. It is disjoint from the 100, from the smoke tasks, and from their instruction texts. Never
     generate relay or SFT data from it.
+- **parse_error repair, the details.**
+  - The check is Terminus-2's own parser, `TerminusJSONPlainParser.parse_response` on the raw reply, as
+    `_handle_llm_interaction` calls it. It is loaded from the harbor clone's file, and its sha256 is logged in the
+    router's start event. The parser file is identical at the v0.1 pin.
+  - Only `result.error` triggers a repair. Warnings pass through, as in the eval.
+  - A repair turn is a full teacher turn (analysis, plan, commands). If the teacher's own reply fails the parser, it
+    is asked once more (`--repair-attempts 2`); a second failure is returned and counted.
+  - If a repair turn claims done, the teacher also answers Terminus-2's confirmation, and then the student resumes.
+  - The student's own done claim is judged directly, not by the scanner's "first claim in the episode" rule, because a
+    teacher repair turn may have claimed first.
+  - Discarded replies stay in the router log (`discarded_student_reply`) for the readout and as preference pairs.
 - **Retries** cover sandbox and upload infrastructure only. LLM-path errors are left to surface as trial exceptions.
 - **Known effects to read the numbers against.**
   - With Qwen's reasoning re-fed under the 32k input cap, summarization will fire often. The readout counts it.
   - Terminus-2's "Extra text detected before JSON object" warning appears after every student turn, as it does in the
-    TB2 eval. The teacher sees these warnings in both relay arms.
-  - At 50 concurrent per arm, one Qwen node serves up to about 150 agents with long contexts. The KV cache, not decode
+    TB2 eval. The teacher sees these warnings.
+  - The student never sees its own rejected replies or the "fix your JSON" prompts it would get in the eval. That is
+    the point of the repair, and it is a deliberate departure from the eval's distribution.
+  - At 100 concurrent per arm, one Qwen node serves up to about 200 agents with long contexts. The KV cache, not decode
     speed, is the limit, so expect queueing. The readout reports latency by owner.
 
 ## Tests run before launch (2026-09-25)
 
-- **CPU.** `data/relay/router/tests` has 20 tests: real Terminus-2 from the harbor branch, a fake tmux session, and
-  scripted fake servers.
-  - It covers no trigger, where the student completes; the student budget; done_claim; the exact-repeat loop;
-    no-progress wait; teacher reasoning re-fed (three variants, plus the rendered Qwen3.8 prompt); concurrent
-    episodes; summarization mid-episode; a discarding decision trigger; the control arm; strip vs keep rendering; the
-    deadline; and the health-check and FATAL paths.
-  - The rendered hand-off prompts for strip and keep are in `data/relay/router/tests/rendered/`.
-  - The trigger tests pass, and so do the harbor unit tests on the branch (200 in `tests/unit/agents/terminus_2` and
-    `tests/unit/llms`).
-- **Wiring on real Daytona.** `wiring_check.sh` ran with fake models, 2 tasks × 3 arms, on real sandboxes.
-  - Every harness check passed.
-  - Owner labels joined 14/14, 8/8 and 14/14 trajectory turns.
-  - All teacher reasoning was re-fed by harbor.
-  - The keep arm sent the student's thinking as reasoning.
+- **CPU.** `data/relay/router/tests` has 23 tests, all passing, five runs in a row. They drive real Terminus-2 from
+  the harbor branch, with a fake tmux session and scripted fake servers.
+  - Run 2 adds:
+    - a repair, after which the student resumes and a later done_claim takes over sticky;
+    - two repairs in a row, where the teacher's second repair request re-feeds the first repair's reasoning;
+    - the discarded reply never reaches harbor: it is not in `trajectory.json` or any later request, and there is no
+      parse-error re-prompt anywhere;
+    - the executed trace parses 100 %;
+    - the student sees the repair turn as `<|start_think|>teacher reasoning<|end_think|>{json}` with no reasoning
+      field;
+    - the teacher answers the exact request the student failed.
+  - Earlier tests cover no trigger, the budget, done_claim, the loop, no-progress wait, reasoning re-feed, concurrent
+    episodes, summarization, a sticky decision trigger, the control arm, strip/keep rendering, the deadline, the
+    health-check and FATAL paths, and the false-done guard.
+  - The trigger tests pass, and so do the 200 harbor unit tests on the branch.
+- **Wiring on real Daytona.** `wiring_check.sh` ran control plus relay_repair, with a fake student that sends one
+  unparseable reply, on 2 CalibForge tasks (4 sandboxes).
+  - H0–H5 all passed.
+  - There were 2 repairs, and both returned to the student.
+  - The executed trace was 100 % valid format.
+  - Owner labels joined 10 of 10 turns.
+  - BADFORMAT appears in the router log only, in 0 of 4 trajectories.
   - No sandboxes were left behind.
+  - The science checks fail there by construction, since fake models solve nothing.
 
 ## Run 1: job 2028189, cancelled after 8 min (2026-09-25)
 
@@ -238,7 +261,8 @@ harness fault.
 
 **Spend.** 0.267 node-hours (481 s × 2 nodes).
 
-**Decision for Luke.** Relaunch with the student in thinking-off mode, `chat_template_kwargs.enable_thinking=false`
+**What Luke decided (13:45 PT).** Keep thinking on, as in the eval, and repair format failures with one teacher turn
+(run 2, above). The option I had put to him was to relaunch with the student in thinking-off mode, `chat_template_kwargs.enable_thinking=false`
 for student requests only (the TB2 nothink policy)? Then the relay_keep arm has nothing to keep, so the pilot drops to
 2 arms at the 3 node-hour ceiling. The alternative is to keep thinking on and add a format-failure takeover trigger,
 but that trigger is uncalibrated, and its relay data would teach recovery from format loops.

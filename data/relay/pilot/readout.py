@@ -34,7 +34,7 @@ import relay_triggers as rt  # noqa: E402
 
 AGENT_ENDS = {'AgentTimeoutError', 'ContextLengthExceededError', 'TurnCapExhaustedError'}
 VERIFIER_TIMEOUT = 'VerifierTimeoutError'
-RELAY_ARMS = ('relay', 'relay_keep')
+RELAY_ARMS = ('relay', 'relay_keep', 'relay_repair')
 SERVED = {'student': 'snowball', 'teacher': 'qwen38', 'router': 'relay-router'}
 TAIL_BYTES = 4 << 20
 
@@ -113,7 +113,8 @@ def trials(job_dir):
                 t = json.load(open(trajs[-1]))
                 sid = t.get('session_id')
                 steps = [dict(content_sha=sha(s.get('message') if isinstance(s.get('message'), str) else json.dumps(s.get('message'))),
-                              model=s.get('model_name'), has_reasoning=bool(s.get('reasoning_content')))
+                              model=s.get('model_name'), has_reasoning=bool(s.get('reasoning_content')),
+                              parse_error_obs='Previous response had parsing errors' in json.dumps(s.get('observation') or {}))
                          for s in t.get('steps', []) if s.get('source') == 'agent' and not s.get('is_copied_context')]
             except (OSError, ValueError):
                 pass
@@ -218,7 +219,13 @@ def reasoning_view(rv):
 
 def student_view(rv):
     s = [r for r in rv['recs'] if r.get('owner') == 'student' and r.get('turn') is not None and r.get('upstream_status') == 200]
-    marks = sum(1 for r in s if '<|end_think|>' in (((r.get('response') or {}).get('choices') or [{}])[0].get('message') or {}).get('content', ''))
+    def c(r):
+        return (((r.get('response') or {}).get('choices') or [{}])[0].get('message') or {}).get('content') or ''
+    # served with skip_special_tokens=false, a reply keeps 09-21's think markers; one marker at least (an unclosed
+    # span is a format failure, not a stripped one)
+    s = s + [dict(response=r['discarded_student_reply']) for r in rv['recs'] if r.get('repair_kind') == 'parse_error'
+             and r.get('discarded_student_reply')]
+    marks = sum(1 for r in s if '<|start_think|>' in c(r) or '<|end_think|>' in c(r))
     return dict(student_replies=len(s), with_think_markers=marks, think_marker_frac=round(marks / len(s), 4) if s else None)
 
 
@@ -373,6 +380,74 @@ def kept(passes, fails):
     return passes + min(passes, fails)
 
 
+def repair_view(rv, rows):
+    """relay_repair: repairs, who executed the turns, the repair round trip, sticky takeovers, format validity."""
+    by_sid = {t['sid']: t for t in rows if t['sid']}
+    eps = list(rv['eps'].values())
+    rep_per_ep = [sum(1 for r in e['main'] if r.get('repair_kind') == 'parse_error') for e in eps]
+    own = collections.Counter()
+    back_to_student = not_back = 0
+    t_turns, s_turns = [], []
+    for e in eps:
+        main = sorted((r for r in e['main'] if r.get('upstream_status') in (200, None)), key=lambda r: (r['turn'], r['seq']))
+        seen = {}
+        for r in main:
+            seen[r['turn']] = r          # a retried request keeps its last record
+        main = [seen[k] for k in sorted(seen)]
+        for i, r in enumerate(main):
+            kind = 'router' if r['owner'] == 'router' else 'student' if r['owner'] == 'student' else \
+                'teacher_repair' if r.get('repair') else 'teacher_sticky'
+            own[kind] += 1
+            if r.get('repair_kind') == 'parse_error' and i + 1 < len(main):
+                nxt = main[i + 1]
+                if nxt['owner'] == 'student' or nxt.get('repair') or nxt.get('takeover') or nxt['owner'] == 'router':
+                    back_to_student += 1
+                else:
+                    not_back += 1
+        t_turns.append(sum(1 for r in main if r['owner'] == 'teacher'))
+        s_turns.append(sum(1 for r in main if r['owner'] == 'student'))
+    ex = sum(v for k, v in own.items() if k != 'router')
+    rejected = sum(len(r.get('repair_rejected_replies') or []) for r in rv['recs'])
+    still_bad = sum(1 for r in rv['recs'] if r.get('repair') and r.get('repair_reply_parse_error'))
+    with_teacher = [e for e in eps if any(r['owner'] == 'teacher' for r in e['main'])]
+    sc = [by_sid.get(e['sid']) for e in with_teacher]
+    sc = [t for t in sc if usable(t)]
+    p = sum(1 for t in sc if is_pass(t))
+    return dict(episodes=len(eps), repairs=sum(rep_per_ep), repairs_per_episode_mean=round(sum(rep_per_ep) / len(eps), 3) if eps else None,
+                repairs_per_episode_p50=q(rep_per_ep, .5), repairs_per_episode_p90=q(rep_per_ep, .9),
+                episodes_with_repair=sum(1 for x in rep_per_ep if x), executed_turns=dict(own),
+                student_share_of_executed_turns=round(own['student'] / ex, 4) if ex else None,
+                repair_returned_to_student=back_to_student, repair_kept_by_teacher=not_back,
+                teacher_repair_replies_rejected_then_retried=rejected, repair_turns_still_unparseable=still_bad,
+                teacher_turns_per_episode_mean=round(statistics.mean(t_turns), 2) if t_turns else None,
+                student_turns_per_episode_mean=round(statistics.mean(s_turns), 2) if s_turns else None,
+                episodes_with_teacher_turns=len(with_teacher), with_teacher_passes=p,
+                with_teacher_real_failures=len(sc) - p)
+
+
+def format_validity(rows):
+    steps = [s for t in rows for s in t['steps']]
+    bad = sum(1 for s in steps if s['parse_error_obs'])
+    return dict(agent_steps=len(steps), followed_by_parse_error=bad,
+                valid_format_rate=round(1 - bad / len(steps), 4) if steps else None)
+
+
+def paired_pass(ctl_rows, rel_rows, seed=20260925, n_boot=10000):
+    import random
+    c = {t['task']: int(is_pass(t)) for t in ctl_rows if usable(t)}
+    r = {t['task']: int(is_pass(t)) for t in rel_rows if usable(t)}
+    both = sorted(set(c) & set(r))
+    d = [r[t] - c[t] for t in both]
+    ci = None
+    if d:
+        rng = random.Random(seed)
+        ms = sorted(sum(rng.choice(d) for _ in d) / len(d) for _ in range(n_boot))
+        ci = [round(ms[int(0.025 * n_boot)], 4), round(ms[int(0.975 * n_boot) - 1], 4)]
+    return dict(tasks=len(both), relay_minus_control=round(sum(d) / len(d), 4) if d else None, ci95_bootstrap=ci,
+                both_pass=sum(1 for t in both if c[t] and r[t]), relay_only=sum(1 for t in both if r[t] and not c[t]),
+                control_only=sum(1 for t in both if c[t] and not r[t]), neither=sum(1 for t in both if not c[t] and not r[t]))
+
+
 def strip_vs_keep(strip, keep, seed=20260925, n_boot=10000):
     """Recovery after takeover, stripped vs kept student thinking. Unpaired: each arm's recovery with a Wilson CI and
     the difference with Newcombe's interval. Paired: tasks with a takeover (and a usable outcome) in both arms, the
@@ -409,7 +484,7 @@ def main():
     p.add_argument('--json', help='write the readout here too')
     a = p.parse_args()
     name = a.name or os.path.basename(os.path.normpath(a.run_dir))
-    arm_names = [arm for arm in ('relay', 'control', 'relay_keep') if os.path.isdir(os.path.join(a.run_dir, f'router_{arm}'))]
+    arm_names = [arm for arm in ('relay', 'control', 'relay_keep', 'relay_repair') if os.path.isdir(os.path.join(a.run_dir, f'router_{arm}'))]
     arms = {}
     for arm in arm_names:
         rv = router_view(os.path.join(a.run_dir, f'router_{arm}'))
@@ -428,11 +503,14 @@ def main():
         if arm in RELAY_ARMS:
             o['student'] = student_view(rv)
             o['takeovers'] = relay_takeovers(rv, rows)
+            if arm == 'relay_repair':
+                o['repair'] = repair_view(rv, rows)
         else:
             o['would_fire_on_teacher'] = would_fire(rv, rows)
         if rows:
             o['outcomes'] = outcome_table(rows)
             o['owner_join'] = owner_join(rv, rows)
+            o['format'] = format_validity(rows)
         out[arm] = o
 
     checks = []
@@ -456,6 +534,11 @@ def main():
             s_ = out[arm]['student']
             if s_.get('student_replies'):
                 check(f'H0 {arm}: student replies keep their think markers (>= 90 %)', (s_['think_marker_frac'] or 0) >= 0.9, s_)
+    if 'relay_repair' in out:
+        rp = out['relay_repair']['repair']
+        if rp['repairs']:
+            check('H4 relay_repair: after a repair the student resumes (or a trigger / ending takes over), 100 %',
+                  rp['repair_kept_by_teacher'] == 0, rp)
     if a.gate == 'final':
         for arm in arm_names:
             oc = out[arm].get('outcomes') or {}
@@ -465,9 +548,15 @@ def main():
             check(f'H2 {arm}: owner labels on 100 % of trajectory turns',
                   j.get('joined_frac') == 1.0 and j.get('model_consistent') == j.get('agent_steps') and not j.get('trials_with_steps_but_no_sid'), j)
         harness_ok = all(c['ok'] for c in checks)
+        rel_arm = 'relay_repair' if 'relay_repair' in arms else 'relay'
+        if rel_arm == 'relay_repair':
+            fv = out['relay_repair'].get('format') or {}
+            check('H5 relay_repair: executed trace valid-format rate >= 99 % (every student failure intercepted)',
+                  (fv.get('valid_format_rate') or 0) >= 0.99, fv)
+            harness_ok = all(c['ok'] for c in checks)
         ctl = out['control'].get('outcomes') or {}
-        rel = out['relay'].get('outcomes') or {}
-        tk = out['relay']['takeovers']
+        rel = out[rel_arm].get('outcomes') or {}
+        tk = out[rel_arm]['takeovers']
         node_h = a.node_hours
         meta = os.path.join(a.run_dir, 'run.meta')
         if node_h is None and os.path.exists(meta):
@@ -480,13 +569,23 @@ def main():
             sci.append(dict(check=n_, ok=bool(ok), detail=detail))
         scheck('S1 control pass rate in [0.25, 0.75]', ctl.get('pass_rate') is not None and 0.25 <= ctl['pass_rate'] <= 0.75,
                [ctl.get('pass_rate'), ctl.get('pass_rate_ci95')])
-        scheck('S2 relay takeover rate >= 0.40', (tk.get('takeover_rate') or 0) >= 0.40, tk.get('takeover_rate'))
-        scheck('S3 recovery P(pass | takeover) >= 0.20', (tk.get('recovery') or 0) >= 0.20,
+        if rel_arm == 'relay_repair':
+            rp = out['relay_repair']['repair']
+            scheck('S2 the student owns >= 50 % of executed turns in relay_repair', (rp['student_share_of_executed_turns'] or 0) >= 0.5,
+                   rp['student_share_of_executed_turns'])
+            scheck('S3 sticky takeover rate >= 0.30', (tk.get('takeover_rate') or 0) >= 0.30, tk.get('takeover_rate'))
+        else:
+            scheck('S2 relay takeover rate >= 0.40', (tk.get('takeover_rate') or 0) >= 0.40, tk.get('takeover_rate'))
+        scheck('S4 recovery P(pass | sticky takeover) >= 0.20', (tk.get('recovery') or 0) >= 0.20,
                [tk.get('recovery'), tk.get('recovery_ci95')])
         dc = tk['by_trigger'].get('done_claim') or {}
-        scheck('S4 done_claim: teacher runs a command before confirming in >= 50 %',
+        scheck('S5 done_claim: teacher runs a command before confirming in >= 50 %',
                (dc.get('teacher_worked_frac') or 0) >= 0.5, dc.get('teacher_worked_frac'))
-        kr = kept(tk.get('takeover_passes', 0), tk.get('takeover_real_failures', 0))
+        if rel_arm == 'relay_repair':
+            rp = out['relay_repair']['repair']
+            kr = kept(rp['with_teacher_passes'], rp['with_teacher_real_failures'])
+        else:
+            kr = kept(tk.get('takeover_passes', 0), tk.get('takeover_real_failures', 0))
         kc = kept(ctl.get('passes', 0), ctl.get('real_failures', 0))
         n_eps = sum((out[arm].get('outcomes') or {}).get('trials', 0) for arm in arm_names)
         proj = {}
@@ -497,11 +596,13 @@ def main():
             proj = dict(node_h_per_episode=round(nh_per_ep, 4), relay_episodes_for_2000_kept=round(n_r),
                         control_episodes_for_2000_kept=round(n_c), relay_node_h=round(n_r * nh_per_ep, 1),
                         control_node_h=round(n_c * nh_per_ep, 1))
-        scheck('S5 projected node-h for 2,000 kept traces <= 60 per arm', proj and proj['relay_node_h'] <= 60
+        scheck('S6 projected node-h for 2,000 kept traces <= 60 per arm', proj and proj['relay_node_h'] <= 60
                and proj['control_node_h'] <= 60, proj or 'no yield or no node-hours')
         out['kept_traces'] = dict(relay=kr, control=kc, relay_per_episode=round(kr / max(1, rel.get('trials', 1)), 4),
-                                  control_per_episode=round(kc / max(1, ctl.get('trials', 1)), 4))
+                                  control_per_episode=round(kc / max(1, ctl.get('trials', 1)), 4),
+                                  per_node_hour=round((kr + kc) / node_h, 2) if node_h else None)
         out['projection'] = proj
+        out['paired_pass_relay_vs_control'] = paired_pass(arms['control']['rows'], arms[rel_arm]['rows'])
         if 'relay_keep' in arms:
             kt = out['relay_keep']['takeovers']
             sk = strip_vs_keep(tk, kt)

@@ -4,7 +4,8 @@
 # both routers exactly as run_pilot.sh starts them (health checks included), relay_pilot.yaml rendered per arm, harbor
 # (lukedhlee/terminus2-relay) running Terminus-2 on CalibForge sandboxes, then readout.py --gate final. Checks the
 # parts the unit tests fake: the harbor config, the setup-files hook, trajectory raw_content + session_id joining the
-# router log, and the readout. Arms: control, relay (strip), relay_keep. Sandboxes: n-tasks x 3 arms, deleted by harbor
+# router log, and the readout. Arms (ARMS): control, relay_repair; the fake student follows SCENARIO (default
+# repair: one unparseable reply, repaired, then a done claim). Sandboxes: n-tasks x arms, deleted by harbor
 # at the end of each trial (cleanup_sandboxes.py lists any left behind).
 #
 #   PYTHONPATH=<harbor lukedhlee/terminus2-relay>/src bash wiring_check.sh <tree> 2 <out-dir>
@@ -18,17 +19,19 @@ NAME=$(basename "$OUT")
 [ -e "$OUT" ] && { echo "$OUT exists"; exit 1; }
 mkdir -p $OUT/jobs
 P=$((22000 + RANDOM % 8000))
-$PY $HERE/../router/tests/fake_openai.py --role student --model snowball --port $P > $OUT/fake_student.log 2>&1 & F1=$!
+$PY $HERE/../router/tests/fake_openai.py --role student --model snowball --port $P --scenario ${SCENARIO:-repair} > $OUT/fake_student.log 2>&1 & F1=$!
 $PY $HERE/../router/tests/fake_openai.py --role teacher --model qwen38 --port $((P+1)) > $OUT/fake_teacher.log 2>&1 & F2=$!
 trap 'kill $F1 $F2 ${RPIDS:-} 2>/dev/null' EXIT
 sleep 3
 [ -f "$TREE/TASKS.txt" ] && head -$N "$TREE/TASKS.txt" > $OUT/TASKS.txt || ls "$TREE" | grep calibforge | head -$N > $OUT/TASKS.txt
 $PY $HERE/pilot_tasks.py router-json --tree $TREE --list $OUT/TASKS.txt --out $OUT/router_tasks.json
-ARMS="control relay relay_keep"
-port_of() { case $1 in control) echo $((P+2));; relay) echo $((P+3));; relay_keep) echo $((P+4));; esac; }   # bash 3.2-safe
+ARMS=${ARMS:-control relay_repair}
+PARSER=$(dirname $($PY -c "import harbor, os; print(os.path.dirname(harbor.__file__))"))/harbor/agents/terminus_2/terminus_json_plain_parser.py
+port_of() { case $1 in control) echo $((P+2));; relay) echo $((P+3));; relay_keep) echo $((P+4));; relay_repair) echo $((P+5));; esac; }   # bash 3.2-safe
 RPIDS=""
 for arm in $ARMS; do
-  case $arm in control) M=(--mode teacher);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);; esac
+  case $arm in control) M=(--mode teacher);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
+    relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $PARSER);; esac
   port=$(port_of $arm)
   $PY $HERE/../router/relay_router.py "${M[@]}" --arm $arm --port $port --log-dir $OUT/router_$arm \
     --tasks $OUT/router_tasks.json --budget-mode on --student-url http://127.0.0.1:$P/v1 --student-model snowball \
