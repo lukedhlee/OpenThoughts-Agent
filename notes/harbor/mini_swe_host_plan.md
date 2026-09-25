@@ -1,6 +1,6 @@
 # mini-swe-agent v2 on the host: Harbor agent spec
 
-2026-09-24 · **status (09-25): Stages 0–3 ✅ (`lukedhlee/mini-swe-host` @543d611c); Stage 4 needs its own go** · target: marin-community/harbor (remote `upstream` in
+2026-09-24 · **status (09-25): Stages 0–3 ✅ harness gates (`lukedhlee/mini-swe-host` @543d611c); relay student 09-21 is off-format in text mode (32 % format errors); Stage 4 needs its own go** · target: marin-community/harbor (remote `upstream` in
 `/Users/lukedhlee/harbor`); for Stage 5 only, also MarinSkyRL · worktree `/Users/lukedhlee/harbor-wt-mini-swe-host`
 cut from `upstream/main` (761fb516; executed on 07dd3ef3) · branch `lukedhlee/mini-swe-host` · evidence
 `agent_logs/2026-09-24_mini_swe_host_scoping.md`, execution log `agent_logs/2026-09-25_mini_swe_host_exec.md`
@@ -12,7 +12,8 @@ cut from `upstream/main` (761fb516; executed on 07dd3ef3) · branch `lukedhlee/m
 | 0 | ✅ DONE | harbor `38c6c548` | Replay of unmodified upstream 2.4.6 on 5 scripted episodes (submit ×2 configs, format error ×3 incl. a truncated reply, format-error recovery, step limit): 11/11, deterministic, every request = message list so far |
 | 1 | ✅ DONE | harbor `7f042513`, fixes `05dd2161` + `543d611c` | Requests and messages byte-identical to upstream on all 5 episodes; full unit suite vs baseline: 3,389 existing test ids, 0 outcome changes; 40 new tests pass |
 | 2 | ✅ DONE (run 2) | smoke `0f74fd8d` (= `543d611c` + hook), job 2011666 | Qwen3.8-27B, 8 CalibForge tasks: 0 harness errors; prior reasoning re-rendered inside `<think>` (live `/tokenize`); 8 format errors / 191 calls (4 %), 0 false; 6 command timeouts; submit 5/8, pass 6/8 (sanity); median 23.5 calls; sentinel ended every submit; 1 agent timeout + 1 context overflow, both scored |
-| 3 | ✅ DONE (run 2) | smoke `bb2994de`/`0f74fd8d`, job 2011566 | Snowball step30, 8 tasks: 0 harness errors, **0 false format errors** (independent readout); 26 format errors / 45 calls (58 %: 13 Terminus-2 JSON, 7 run-on replies with two blocks, 6 ```bash fences); submit 1/8, pass 0/8; median 4 calls; sentinel ended the submit |
+| 3 (stand-in) | ✅ harness gate (run 2) | smoke `bb2994de`/`0f74fd8d`, job 2011566 | **SFT→RL step30, a stand-in, not the relay student.** 8 tasks: 0 harness errors, **0 false format errors** (independent readout); 26 format errors / 45 calls (58 %: 13 Terminus-2 JSON, 7 run-on replies with two blocks, 6 ```bash fences); submit 1/8, pass 0/8; median 4 calls; sentinel ended the submit |
+| 3 (relay student) | ✅ harness gate; model off-format | smoke `0f74fd8d`, job 2021265 | **09-21 Datakit SFT, thinking on, text mode — the result that counts.** 8 tasks: 0 harness errors, 0 false format errors; **40 format errors / 125 calls (32 %)**: 11 prose with no block, 9 cut off (finish_reason=length), 8 wrong fence (```bash/```json, some after `<tool_call>`), 5 ended inside reasoning, 6 two blocks (4 run-on), 1 Terminus-2 JSON; submit 2/8, pass 1/8; median 5 calls; 6/8 end on RepeatedFormatError; sentinel ended both submits; 0.29 node-h |
 
 **Red runs, fixed and re-gated.** Stage 2 run 1 (job 2011216) re-fed no reasoning: Harbor's `Chat` re-sends it as
 `reasoning_content`, and this vLLM reads an assistant turn's reasoning only from `reasoning`, so Qwen3.8's template
@@ -23,13 +24,23 @@ Opus review's findings (reasoning replies broke the history check when `interlea
 overflow escaped as an unscored error; non-transient errors went through upstream's 10-attempt backoff; no hard cap on
 a hung exec).
 
-**What the smokes say about the models (not the harness).** Snowball step30 is off-format in mini-swe-agent's text
+**Student correction (Luke, 09-25).** The relay student is the **09-21 Datakit SFT**
+(`open-athena/Grug-67B-A2B-Datakit-SFT-262K-2026.09.21`), not SFT→RL step30. The step30 numbers below (39 % / 58 %
+format errors) are a stand-in; the 09-21 row in the table is the one that counts for the relay student. On 09-21 the
+harness is clean (0 harness errors, 0 false format errors) but the model is not on-format in text mode: a third of its
+calls end without exactly one ```` ```mswea_bash_command ```` block, and 6 of 8 episodes die on three format errors in
+a row. Unlike step30 it rarely answers in Terminus-2 JSON (1 of 40); its failures are dropped blocks, runaway
+reasoning, and wrong fences. Which mode it learned from Datakit's Open-SWE-Traces rendering was not checked (Luke
+dropped that step), and tool mode was not run.
+
+**What the smokes say about the models (not the harness).** Snowball step30 (stand-in) is off-format in mini-swe-agent's text
 mode: it answers in Terminus-2 JSON or a ```bash fence and dies on 3 consecutive format errors within ~4 calls in 7 of
 8 episodes, and it sometimes runs on past its answer into a hallucinated next turn (`</assistant><user>…`). Relay
 rollouts in this harness with this student would mostly relay on format errors. Qwen3.8 follows the format (4 %
 format errors, most from replies that reasoned into the 64k context) and occasionally runs on too.
 
-**Spend:** 0.99 Jupiter node-hours of the 2.5 cap (18.0 + 10.1 + 9.2 + 21.9 min, one node each, `transfernetx`).
+**Spend:** 0.99 Jupiter node-hours of the 2.5 cap (18.0 + 10.1 + 9.2 + 21.9 min, one node each, `transfernetx`),
+plus 0.29 of a separate 0.5 cap for the 09-21 re-run (17.5 min): 1.28 node-h in total.
 Not checked: TB2 through this agent (running TB2 tasks could make `auto_snapshot` create a snapshot, and the org has
 one free slot), and a SWE-pool smoke with `swebench_backticks.yaml` (no SWE snapshots on Daytona yet; covered by the
 Stage 0/1 replay only).
