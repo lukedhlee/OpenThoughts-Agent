@@ -210,3 +210,35 @@ strip vs keep, and the verdict under the rule above.
   - All teacher reasoning was re-fed by harbor.
   - The keep arm sent the student's thinking as reasoning.
   - No sandboxes were left behind.
+
+## Run 1: job 2028189, cancelled after 8 min (2026-09-25)
+
+**I cancelled it because the thinking-on student cannot drive Terminus-2.** That is the eval's behaviour too, not a
+harness fault.
+- About 90 % of the student's replies in both relay arms were Datakit-style `<tool_call>{"keystrokes": …}` blocks,
+  which Terminus-2 rejects. Of 191 relay-arm requests at the time of the check, 165 were parse-error re-prompts.
+- In parse-error turns nothing runs, so loop and no-progress wait cannot fire. done_claim rarely comes. The relay arms
+  would mostly have produced student timeouts with no hand-off.
+- The 09-21 thinking-on TB2 eval (`grugdk0921think_t1_v01_20260923`, the serve this pilot copies) shows the same:
+  - 67 % of its 14,420 agent turns contain `<tool_call>`, and 81 % draw a parse-error re-prompt.
+  - Only 11 of 89 episodes stay under 20 % parse errors.
+  - Our first prompt is byte-identical to the eval's apart from the task text.
+- The thinking-off eval (`grugdk0921nt_t1_v01_20260922`) is much cleaner:
+  - 19 % `<tool_call>`, 38 % parse errors;
+  - 69 of 89 episodes under 20 % parse errors.
+  - Datakit trained Terminus rows under `/nothink` only (`pipeline_findings.md`).
+
+**What worked before the cancel.**
+- Both servers came up in 270 s and 300 s with the right served names and smokes.
+- All three routers passed their health checks.
+- 59 episodes started, with 473 requests logged: 258 relay, 161 relay_keep, 54 control.
+- Control's teacher replies carried reasoning, and harbor re-fed 38 of 38 earlier teacher turns.
+- No router errors until the cancel. The 58 502s all come after it, when the servers died mid-request.
+- The abort path released the nodes, stopped harbor, and left 0 sandboxes behind (150 trials checked).
+
+**Spend.** 0.267 node-hours (481 s × 2 nodes).
+
+**Decision for Luke.** Relaunch with the student in thinking-off mode, `chat_template_kwargs.enable_thinking=false`
+for student requests only (the TB2 nothink policy)? Then the relay_keep arm has nothing to keep, so the pilot drops to
+2 arms at the 3 node-hour ceiling. The alternative is to keep thinking on and add a format-failure takeover trigger,
+but that trigger is uncalibrated, and its relay data would teach recovery from format loops.
