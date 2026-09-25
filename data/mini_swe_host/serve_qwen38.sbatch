@@ -43,6 +43,10 @@ CACHE=/e/fscratch/reformo/lee27/cache; mkdir -p $CACHE/vllm $CACHE/xdg $CACHE/tr
 export VLLM_CACHE_ROOT=$CACHE/vllm XDG_CACHE_HOME=$CACHE/xdg TRITON_CACHE_DIR=$CACHE/triton TORCHINDUCTOR_CACHE_DIR=$CACHE/inductor FLASHINFER_WORKSPACE_BASE=$CACHE/flashinfer TMPDIR=$CACHE/tmp
 [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
 TOOLS=(); [ -n "${TOOL_PARSER:-}" ] && TOOLS=(--enable-auto-tool-choice --tool-call-parser "$TOOL_PARSER")
+# Strict tool calling (the default) constrains "auto" tool calls with the parser's structural-tag grammar; on this build
+# the grammar rejects MTP draft tokens ("grammar rejected tokens ... Terminating request", HTTP 500 on 28 of 64 calls,
+# job 2024000). Parse-only tool calling keeps the served text unconstrained, like the text-mode runs.
+export VLLM_ENFORCE_STRICT_TOOL_CALLING=0
 echo "node=$(hostname) job=$SLURM_JOB_ID model=$MODEL tool_parser=${TOOL_PARSER:-none} ($(date -Is))"
 $PY -c "import torchvision, vllm.model_executor.models.qwen3_5; print('torchvision', torchvision.__version__, 'qwen3_5 import ok')" || { echo "qwen3_5 import failed"; exit 1; }
 SLOG=$LOGS/serve_$SLURM_JOB_ID.log
