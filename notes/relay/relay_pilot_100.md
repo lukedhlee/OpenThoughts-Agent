@@ -57,7 +57,7 @@ If all five hold, the next wave runs the relay variant (strip or keep, per the r
 any submission. If any check fails, there is no scale-up: the readout names the failing check and the variant it
 points to (K-turn relay, earlier triggers, a different pool).
 
-*Strip vs keep (pre-registered 2026-09-25 13:25 PT, before the job started).*
+*Strip vs keep (pre-registered: committed 6b66c082 at 13:16:50 PT, 48 s after serve job 2028189 started at 13:16:02 PT; neither server was up and no episode had run).*
 - **Primary metric.** Recovery after takeover, P(verified pass | takeover), in each relay arm, with a Wilson CI. The
   difference is keep − strip, with Newcombe's 95 % interval. The readout also reports the task-paired version, a
   bootstrap over the tasks where both arms took over.
