@@ -4,11 +4,15 @@
     PYTHONPATH=<harbor clone>/src:<mini-swe-agent 2.4.6 dir> python readout.py <jobs_dir>/<job_name>
 
 Per job: trials, harness errors (any trial exception other than the classified agent ends), agent timeouts,
-context overflows, format errors (and false ones: a rejected reply whose answer, think spans removed, holds exactly
-one action block), command timeouts, submit rate, pass rate, median model calls, and whether the submit sentinel
-ended every episode that printed it. Think-span counts show what the parser had to strip.
+context overflows, format errors by cause, false format errors, command timeouts, submit rate, pass rate, median model
+calls, and whether the submit sentinel ended every episode that printed it.
+
+A format error is false when the reply's answer holds exactly one action block, the answer being everything after the
+reasoning span(s) that open the reply (or after the first closing marker when the template opened the span). This is
+computed here from the recorded raw reply, independently of the agent's parser, so a parser bug shows up as a count.
 """
 
+import collections
 import glob
 import json
 import os
@@ -16,12 +20,53 @@ import re
 import statistics
 import sys
 
-os.environ.setdefault("MSWEA_SILENT_STARTUP", "1")
-from harbor.agents.mini_swe_agent_host.adapters import SUBMIT_SENTINEL, strip_think_spans  # noqa: E402
-
+SUBMIT_SENTINEL = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
 ACTION = re.compile(r"```mswea_bash_command\s*\n(.*?)\n```", re.DOTALL)
-THINK_MARKERS = ("<think>", "</think>", "<|start_think|>", "<|end_think|>")
+MARKERS = (("<think>", "</think>"), ("<|start_think|>", "<|end_think|>"))
+THINK_MARKERS = tuple(m for pair in MARKERS for m in pair)
 AGENT_ENDS = {"AgentTimeoutError", "ContextLengthExceededError", "TurnCapExhaustedError"}
+
+
+def split_reply(reply: str) -> tuple[str, str, bool]:
+    """(reasoning, answer, ended_inside_reasoning) for a raw reply."""
+    reasoning, text, leading = "", reply, False
+    while True:
+        stripped = text.lstrip()
+        for open_marker, close_marker in MARKERS:
+            if stripped.startswith(open_marker):
+                inner, closed, rest = stripped[len(open_marker):].partition(close_marker)
+                reasoning += inner
+                if not closed:
+                    return reasoning, "", True
+                text, leading = rest, True
+                break
+        else:
+            break
+    if not leading:
+        for _, close_marker in MARKERS:
+            inner, closed, rest = text.partition(close_marker)
+            if closed:
+                return inner, rest, False
+    return reasoning, text, False
+
+
+def format_error_cause(reply: str, finish_reason: str | None) -> str:
+    reasoning, answer, unfinished = split_reply(reply)
+    blocks = len(ACTION.findall(answer))
+    if blocks == 1:
+        return "FALSE (one block in the answer)"
+    if finish_reason == "length":
+        return "truncated at the output limit"
+    if unfinished:
+        return "reply ended inside reasoning"
+    if blocks > 1:
+        stray = any(close in answer for _, close in MARKERS)
+        return "several blocks (run-on past a stray end marker)" if stray else "several blocks"
+    if re.search(r'"(keystrokes|commands|analysis)"\s*:', answer):
+        return "Terminus-2 JSON instead of a block"
+    if "```" in answer:
+        return "other fence (```bash etc.)"
+    return "no block"
 
 
 def trial_rows(job_dir: str):
@@ -45,9 +90,11 @@ def main() -> None:
             if m.get("extra", {}).get("interrupt_type") == "FormatError"
         ]
         format_errors = [m for m in messages if m.get("extra", {}).get("interrupt_type") == "FormatError"]
-        false_format_errors = [
-            m for m in format_errors
-            if len(ACTION.findall(strip_think_spans(m["extra"]["model_response"]))) == 1
+        causes = [
+            format_error_cause(
+                m["extra"]["model_response"], "length" if "finish_reason=length" in m["content"] else None
+            )
+            for m in format_errors
         ]
         actions = [a["command"] for m in messages if m["role"] == "assistant" for a in m["extra"].get("actions", [])]
         sentinel_actions = [a for a in actions if SUBMIT_SENTINEL in a]
@@ -60,15 +107,14 @@ def main() -> None:
             "exit_status": exit_status,
             "model_calls": len(replies),
             "format_errors": len(format_errors),
-            "false_format_errors": len(false_format_errors),
+            "format_error_causes": causes,
+            "false_format_errors": sum(1 for c in causes if c.startswith("FALSE")),
             "command_timeouts": sum(
                 1 for m in messages
                 if m["role"] == "user" and "timed out after" in (m.get("extra", {}).get("exception_info") or "")
             ),
             "think_replies": sum(1 for r in replies if any(k in r for k in THINK_MARKERS)),
-            "think_quoted_blocks": sum(
-                1 for r in replies if len(ACTION.findall(r)) > len(ACTION.findall(strip_think_spans(r)))
-            ),
+            "think_quoted_blocks": sum(1 for r in replies if ACTION.search(split_reply(r)[0])),
             "sentinel_actions": len(sentinel_actions),
             "ended_by_sentinel": ended_by_sentinel,
         })
@@ -84,6 +130,7 @@ def main() -> None:
         "format_errors": sum(r["format_errors"] for r in rows),
         "format_error_rate_per_call": round(sum(r["format_errors"] for r in rows) / total_calls, 4) if total_calls else None,
         "false_format_errors": sum(r["false_format_errors"] for r in rows),
+        "format_error_causes": dict(collections.Counter(c for r in rows for c in r["format_error_causes"]).most_common()),
         "command_timeouts": sum(r["command_timeouts"] for r in rows),
         "submit_rate": round(sum(1 for r in rows if r["exit_status"] == "Submitted") / n, 3) if n else None,
         "pass_rate": round(sum(1 for r in rows if (r["reward"] or 0) >= 1.0) / n, 3) if n else None,
