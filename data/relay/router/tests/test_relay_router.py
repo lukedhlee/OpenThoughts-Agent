@@ -185,7 +185,14 @@ def run_agent(stack, scenario, tmp, interleaved=True, tag='', max_turns=40):
         return None
 
     exc = asyncio.run(go())
-    traj = json.loads((logs / 'trajectory.json').read_text())
+    tp = logs / 'trajectory.json'
+    import time
+    for _ in range(100):          # harbor writes the final trajectory from a background writer (slow on GPFS)
+        if tp.exists():
+            break
+        time.sleep(0.1)
+    assert tp.exists(), f'no trajectory for {scenario}{tag}: agent raised {exc!r}; files {sorted(p.name for p in logs.iterdir())}'
+    traj = json.loads(tp.read_text())
     return SimpleNamespace(agent=agent, traj=traj, sid=traj['session_id'], term=term, exc=exc,
                            stop=agent._stop_reason, ctx=ctx)
 
