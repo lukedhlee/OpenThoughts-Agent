@@ -70,7 +70,7 @@ def main():
                autofixes=sum(1 for x in rv['recs'] if x.get('autofix')),
                repairs=(o.get('repair') or {}).get('repairs'),
                teacher_cut_at_cap=o['reasoning'].get('teacher_replies_cut_at_cap'),
-               router_cap_retry_400=sum(1 for t in rows if t['exc'] == 'RouterCapRetry400'))
+               cap_retry_400_overflows=sum(1 for t in rows if t.get('cap_retry_400')))
     print(json.dumps(out, indent=1))
     sys.exit(0 if out['decision'] == 'PASS' else 2)
 

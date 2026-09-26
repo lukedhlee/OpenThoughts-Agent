@@ -111,9 +111,11 @@ paired with run 3's control. Expected about 2.4 node-hours; hard ceiling 3.0 (`-
   contains at least N input tokens". That N is only a lower bound, so the retry failed again with a context 400.
   Harbor then ended the episode as a context overflow.
 - **The fix.** Retry without `max_tokens`. What the context has left is below the cap anyway.
-- **How the running check run is scored.** Its router has the bug, so its episodes ended by that 400 are harness
-  errors (`RouterCapRetry400`): they count against the harness gate's ≤ 10 % and are excluded from C2's overflow
-  rate. There were 17 such teacher requests at 18:43 PT.
+- ~~How the running check run is scored: episodes ended by that 400 are harness errors (`RouterCapRetry400`).~~
+  **Withdrawn at 19:30 PT.** Every one of those episodes was at a prompt of at least 49,154 tokens, at the context's
+  edge. Harbor recorded them as ContextLengthExceededError, and they are scored as overflow, a model failure.
+  Treating them as harness errors dropped them from C2's denominator and hid the overflow rate. They are now only
+  labelled `cap_retry_400`.
 - The thresholds are unchanged. The baseline and relay routers start with the fix.
 
 **PASS** → the 12-node full run launches at once from the staged kit: ceiling 42 node-hours, with the in-run overflow
