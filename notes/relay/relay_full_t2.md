@@ -59,6 +59,17 @@ episodes). 4 × 09-21 + 4 × Qwen (one server per GPU, 128k), 192 concurrent (12
 **In-run stop rule** (`stop_rule.py`, checked every 15 min from 300 scored relay episodes on): cancel if overflow is
 above 30 % of scored episodes, valid format below 98 %, or harness errors above 10 % of finished trials.
 
+**Attempt 1 stopped by the KV gate at 15:29 PT; relaunched at 9 episodes per Qwen GPU.**
+- `relay_full_relay_20260926` (job 2077230, ecffa68b, 192 concurrent) ran 25 min. Latency was fine (teacher p50
+  14–18 s), and no engine died. But the load was uneven: 3–5 of the 16 Qwen engines sat at KV 0.90–0.99 with 1–6
+  requests waiting, while others were at 0.1–0.5. One engine stayed saturated for 5 min, and the gate cancelled the
+  run. The cause is the context_budget takeovers: they hand the teacher whole 32k–57k episodes (157 fires in the first
+  25 min), and `--balance active` counts episodes, not their size.
+- Cost 4.42 node-hours. About 250 scored episodes finished; they stay on disk and join the relaunch's at the readout.
+- **Relaunch** `relay_full_relay2_20260926` (job 2077750, 90c03166): the same settings at **144 concurrent (9 per Qwen
+  GPU)**, plus `--failover-5xx`, so a crashed engine's 500s go to another server (baseline 6's failure). Cap 25.5
+  node-hours (`--time` 3 h 11), so both attempts stay within 30.
+
 ## Context-budget check (Luke 2026-09-26 12:50 PT): pass rule pre-registered, not submitted
 
 **Why.** In the last relay check 09-21 wandered slowly: about 21 turns per episode against about 9 for Qwen alone.
