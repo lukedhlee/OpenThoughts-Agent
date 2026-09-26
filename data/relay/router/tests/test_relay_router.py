@@ -1250,6 +1250,7 @@ def test_verify_note_on_the_done_claim_takeover_only(tmp_path):
                        for b in _student_bodies(st, 'SCENARIO=done.') for m in b['messages'])
         assert rr.VERIFY_NOTE not in json.dumps(r.traj)
         assert sum(1 for x in rows if x.get('verify_note')) == 1 and st.router.counts['verify_notes'] == 1
+        assert st.router.note_text == rr.VERIFY_NOTE                      # relay keeps the replay's exact text
     (tmp_path / 'b').mkdir()
     with Stack(tmp_path / 'b', router_args=REPAIR) as st:                  # off by default
         r = run_agent(st, 'done', tmp_path, tag='-0')
@@ -1266,7 +1267,10 @@ def test_verify_note_in_control_on_terminus_confirmation(tmp_path):
         assert conf and all(x.get('verify_note') for x in conf)
         assert not any(x.get('verify_note') for x in rows if x['request_kind'] != 'confirm')
         tb = [b for b in st.teacher_bodies('SCENARIO=done.') if rr.CONFIRM_MARK in b['messages'][-1]['content']]
-        assert tb and all(b['messages'][-1]['content'].endswith('\n\n' + rr.VERIFY_NOTE) for b in tb)
+        # control: the claim is Qwen's own, so the note drops the "another agent" framing
+        assert tb and all(b['messages'][-1]['content'].endswith('\n\n' + rr.VERIFY_NOTE_OWN) for b in tb)
+        assert not any('another agent' in fake_openai.text_of(m.get('content')) for b in tb for m in b['messages'])
+        assert st.router.note_text == rr.VERIFY_NOTE_OWN
 
 
 def test_verify_note_text_is_the_replays():
@@ -1275,3 +1279,7 @@ def test_verify_note_text_is_the_replays():
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     assert rr.VERIFY_NOTE == m.NOTE
+    # control's own-claim note: the replay's text with only the framing removed, the rest byte-identical
+    assert rr.VERIFY_NOTE_OWN == ("Note: the claim that the task is complete may be wrong. Before confirming, run "
+                                  "commands that check the task's key requirements (outputs, files, tests).")
+    assert m.NOTE.endswith(rr.VERIFY_NOTE_OWN[len('Note: the claim'):])

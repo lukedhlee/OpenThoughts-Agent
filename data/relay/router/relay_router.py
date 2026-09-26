@@ -48,9 +48,10 @@ who answers each request:
     teacher_unparseable_passed. Per record: teacher_guard = {attempts, outcome, parse_errors}. Summarization replies
     are not checked (they are free text).
   * Verify note (--verify-note, off by default; Luke 2026-09-26): the teacher's request that asks it to confirm a
-    completion claim gets a note appended to Terminus-2's "Are you sure?" message (VERIFY_NOTE, the exact text of the
-    verify-note replay): in relay on the done_claim takeover's confirmation request, in --mode teacher on every
-    Terminus-2 confirmation request. Only the teacher's body changes: harbor's history, the student's view and the
+    completion claim gets a note appended to Terminus-2's "Are you sure?" message (relay: VERIFY_NOTE, the exact text of
+    the verify-note replay; --mode teacher: VERIFY_NOTE_OWN, the same text without the "another agent" framing, since
+    there the claim is the teacher's own; coordinator 2026-09-26; the rest byte-identical): in relay on the done_claim
+    takeover's confirmation request, in --mode teacher on every Terminus-2 confirmation request. Only the teacher's body changes: harbor's history, the student's view and the
     training rows keep Terminus-2's own message. Logged as verify_note=True.
 
 Episode identity: the X-Harbor-Session-Id header that Terminus-2 sends with `llm_session_header` set (harbor branch
@@ -142,6 +143,8 @@ SYNTHETIC_DONE = json.dumps({'analysis': '', 'plan': '', 'commands': [], 'task_c
 # the verify-note replay's text (data/relay/verify_note/replay.py NOTE), appended after a blank line
 VERIFY_NOTE = ("Note: another agent did the previous work, and its claim that the task is complete may be wrong. Before "
                "confirming, run commands that check the task's key requirements (outputs, files, tests).")
+# --mode teacher: the claim is the teacher's own, so the note drops the "another agent" framing (rest byte-identical)
+VERIFY_NOTE_OWN = VERIFY_NOTE.replace('another agent did the previous work, and its claim', 'the claim', 1)
 
 
 def sha(s):
@@ -268,6 +271,7 @@ class Router:
         self.student_extra = json.loads(a.student_extra) if a.student_extra else {}
         self.tasks = self._load_tasks(a.tasks)
         self.tok = rcap.load_tokenizer(a.student_tokenizer) if a.student_tokenizer else None
+        self.note_text = VERIFY_NOTE if a.mode == 'relay' else VERIFY_NOTE_OWN
         self.parser = self.parser_path = self.parser_sha = None
         if a.repair_on_parse_error or a.teacher_format_guard:
             self.parser, self.parser_path, self.parser_sha = load_terminus_parser(a.terminus_parser)
@@ -912,7 +916,7 @@ class Router:
             if rec.get('verify_note'):
                 last = msgs[-1]
                 if last.get('role') == 'user' and CONFIRM_MARK in text_of(last.get('content')):
-                    msgs = msgs[:-1] + [dict(last, content=text_of(last.get('content')) + '\n\n' + VERIFY_NOTE)]
+                    msgs = msgs[:-1] + [dict(last, content=text_of(last.get('content')) + '\n\n' + self.note_text)]
                     self.counts['verify_notes'] += 1
                 else:
                     rec['verify_note'] = False
@@ -1204,7 +1208,7 @@ async def serve(a, ready_event=None):
                  student_row_max_tokens=a.student_row_max_tokens, student_row_reserve=a.student_row_reserve,
                  terminus_parser=router.parser_path, terminus_parser_sha256=router.parser_sha,
                  teacher_format_guard=a.teacher_format_guard, teacher_resamples=a.teacher_resamples,
-                 verify_note=a.verify_note, verify_note_text=VERIFY_NOTE if a.verify_note else None)
+                 verify_note=a.verify_note, verify_note_text=router.note_text if a.verify_note else None)
     if not a.skip_health:
         ok, report = await router.health_check()
         print(json.dumps(report, indent=1), flush=True)
