@@ -50,7 +50,8 @@ BALANCE=${BALANCE:-pinned}; STAGGER_SEC=${STAGGER_SEC:-0}   # STAGGER_SEC>0: the
 GATE_MIN=${GATE_MIN:-0}; GATE_LAT=${GATE_LAT:-30}; GATE_KV=${GATE_KV:-0.90}   # GATE_MIN>0: from then on, cancel on latency / KV saturation
 TEACHER_GUARD=${TEACHER_GUARD:-1}  # 1: every Qwen agent turn is checked with Terminus-2's parser (autofix, else resample, else pass), every arm
 TEACHER_RESAMPLES=${TEACHER_RESAMPLES:-2}
-VERIFY_NOTE=${VERIFY_NOTE:-0}      # 1: the verification note on Qwen's confirmation request (relay: done_claim takeover; control: every one)
+FAILOVER_5XX=${FAILOVER_5XX:-1}    # 1: an upstream 5xx (a crashed engine) fails over to another server like a connection error
+VERIFY_NOTE=${VERIFY_NOTE:-0}      # 1: the verification note on Qwen's confirmation request (relay: done_claim takeover; control: the first)
 [ $CLOCK = wall ] && AGENT_MULT=1.0 || AGENT_MULT=8.0
 OVF_AFTER=${OVF_AFTER:-0}; OVF_MAX=${OVF_MAX:-0.20}   # relay backstop: cancel when overflow > OVF_MAX after OVF_AFTER episodes (0 = off)
 STOP_AFTER=${STOP_AFTER:-0}; STOP_OVF=${STOP_OVF:-0.30}; STOP_FMT=${STOP_FMT:-0.98}; STOP_HERR=${STOP_HERR:-0.10}; STOP_EVERY=${STOP_EVERY:-900}
@@ -92,7 +93,7 @@ cleanup_sandboxes() {
   [ ${#jobs[@]} -gt 0 ] && $PY $HERE/cleanup_sandboxes.py --key-file $KEYF --delete "${jobs[@]}" 2>&1 | tail -3
 }
 abort() { log "ABORT: $*"; echo "$*" > $R/ABORT; stop_harbor; stop_routers; release_serve "abort"; cleanup_sandboxes; write_meta; exit 1; }
-log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE max_input=$MAX_INPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR"
+log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE failover_5xx=$FAILOVER_5XX max_input=$MAX_INPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR"
 
 # ---- 1. pre-flight --------------------------------------------------------------------------------------------------
 [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = "$HARBOR_SHA" ] || { log "harbor at ${HARBOR_SRC%/src} is not $HARBOR_SHA"; scancel $JOB; exit 1; }
@@ -154,7 +155,7 @@ for arm in $ARMS; do
     *) abort "unknown CLOCK $CLOCK";; esac
   $PY $ROUTER "${M[@]}" --arm $arm --port ${PORT[$arm]} --log-dir $R/router_$arm --tasks $TREE/router_tasks.json \
     "${CARGS[@]}" --balance $BALANCE \
-    --engine-metrics --deadline-epoch $DEADLINE "${SARGS[@]}" "${TARGS[@]}" \
+    --engine-metrics --deadline-epoch $DEADLINE "${SARGS[@]}" "${TARGS[@]}" $([ "$FAILOVER_5XX" = 1 ] && echo --failover-5xx) \
     > $R/router_$arm.log 2>&1 &
   RPID[$arm]=$!
 done

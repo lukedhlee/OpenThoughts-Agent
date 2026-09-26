@@ -706,3 +706,32 @@ on) was cancelled after 29 min and 3.86 node-hours, with its run dir kept
 **Relaunched** as `relay_full_baseline6_20260926` (job 2077047), same command, on ac025a7a, ceiling 11.7 node-hours.
 The babysitter checks confirmations per episode (expected at most 2 for nearly all) and the share of first
 confirmations where Qwen runs commands before confirming.
+
+## Baseline 6 stopped by the early gate after an engine crash; top-up 6b on the tasks it did not score (2026-09-26 15:12 PT)
+
+**What happened.** Baseline 6 (job 2077047, ac025a7a) ran cleanly for 25 min: the verify note sat on first
+confirmations only (97 % of episodes at 2 or fewer confirmations, Qwen ran commands first at 81 % of first
+confirmations), and the format guard held Qwen's first-sample parse failures at about 2.5 %. Then one Qwen engine
+crashed at about 15:05 PT. Its API server stayed up and answered "EngineCore encountered an issue" 500s. Harbor
+re-sent 4 of those requests (they got a 200 on another server) but not the 5th; that trial ended, and the early
+gate's H1 aborted the run at 15:12:42 PT on the one unrecovered 500. 4.41 node-hours; 403 of 2,043 tasks scored
+(268 passes); 400 trials were cancelled in flight.
+
+**Fix (router `--failover-5xx`, `FAILOVER_5XX=1` by default in `run_pilot.sh`).** An upstream 5xx is now handled
+like a connection error: that server is marked down for 5 min and the same request goes to another server, so a
+crashed engine costs no request and never reaches harbor or H1. Model-facing settings are unchanged.
+
+**Episode order was not shuffled.** `run_pilot.sh` orders tasks longest agent budget first, then splits them
+alternately into the two staggered halves. So a run cut early has scored mostly the long-budget tasks that happened
+to finish quickly; the tasks it did not reach are the shorter-budget ones. The cut therefore biases which tasks were
+done, which is why the top-up covers every task without a scored trial rather than a sample.
+
+**Top-up 6b** (`relay_full_baseline6b_20260926`): exactly the 1,640 tasks with no scored trial in baseline 6
+(never started, cancelled, or harness error), identical settings (8 Qwen nodes per-GPU, 50 agents per node, 64k,
+32k reply cap, CLOCK=wall, TEACHER_GUARD=1, VERIFY_NOTE=1) plus the 5xx failover. Ceiling 15.3 node-hours, about
+1.3 × the projected 11–12.
+
+**One baseline arm from 6 + 6b.** `merge_runs.py --out runs/relay_full_baseline6m_20260926 run6 run6b` builds a run
+dir of symlinks: per task the first scored trial (6 first, then 6b), a task scored nowhere keeps 6b's trial, the
+router records follow the kept sessions, node-hours add up, and `MERGED.json` lists the source of every task.
+`readout.py`, `select_kept.py` and `render.py` read the merged dir as one run; no task is counted twice.

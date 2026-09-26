@@ -106,6 +106,7 @@ class FakeServer:
         self.script = []                         # teacher: contents for its next agent-turn replies (None = the default)
         self.summarized = set()
         self.fail_model = None      # set to make chat answer 404 (a served-name change mid-run)
+        self.engine_dead = False    # set to make chat answer vLLM's EngineCore 500 (a crashed engine, API server up)
         self.runner = None
         self.url = None
 
@@ -144,6 +145,10 @@ class FakeServer:
     async def chat(self, request):
         body = await request.json()
         self.requests.append(body)
+        if self.engine_dead and 'Print hello' not in text_of(body['messages'][-1].get('content')):
+            return web.json_response({'error': {'message': 'EngineCore encountered an issue. See stack trace (above) '
+                                                           'for the root cause.', 'type': 'InternalServerError',
+                                                'code': 500}}, status=500)
         if self.fail_model or body.get('model') != self.model:
             return web.json_response({'error': {'message': f"The model `{body.get('model')}` does not exist.",
                                                 'type': 'NotFoundError', 'code': 404}}, status=404)

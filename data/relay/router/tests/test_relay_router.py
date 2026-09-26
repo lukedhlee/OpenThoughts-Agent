@@ -1288,3 +1288,67 @@ def test_verify_note_text_is_the_replays():
     assert rr.VERIFY_NOTE_OWN == ("Note: the claim that the task is complete may be wrong. Before confirming, run "
                                   "commands that check the task's key requirements (outputs, files, tests).")
     assert m.NOTE.endswith(rr.VERIFY_NOTE_OWN[len('Note: the claim'):])
+
+
+@needs_harbor
+def test_failover_5xx_moves_a_dead_engines_request_to_another_server(tmp_path):
+    """--failover-5xx: a crashed engine whose API server still answers "EngineCore encountered an issue" 500s costs no
+    request: the router marks it down and sends the request to the other server; nothing reaches harbor or the log
+    as an upstream error, so H1 stays clean. Without the flag the 500 reaches harbor as before."""
+    sys.path.insert(0, str(HERE.parent.parent / 'pilot'))
+    import readout
+    with Stack(tmp_path, mode='teacher', two_teachers=True, router_args=['--failover-5xx', '--connect-retries', '2']) as st:
+        st.teacher.engine_dead = True
+        r = run_agent(st, 'done', tmp_path)
+        rows = _main_rows(st, r.sid)
+        assert all(x['upstream_status'] == 200 for x in rows) and getattr(r.stop, 'value', r.stop) == 'task_complete'
+        assert st.router.counts['upstream_5xx_failover'] >= 1
+        h = readout.harness_router(readout.router_view(str(st.log_dir)))
+        assert not h['upstream_errors'] and not h['upstream_errors_unrecovered']
+    (tmp_path / 'b').mkdir()
+    with Stack(tmp_path / 'b', mode='teacher', two_teachers=True) as st:
+        st.teacher.engine_dead = True
+        st.teacher2.engine_dead = True
+        r = run_agent(st, 'done', tmp_path, tag='-0')
+        assert any(x.get('upstream_status') == 500 for x in st.turns(r.sid))
+        assert st.router.counts['upstream_5xx_failover'] == 0
+
+
+def test_merge_runs_counts_every_task_once(tmp_path):
+    """merge_runs.py (baseline 6 + its top-up 6b): per task the first scored trial; a task scored nowhere keeps the
+    top-up's trial; router records follow the kept sessions; node-hours add up."""
+    import subprocess
+    sys.path.insert(0, str(HERE.parent.parent / 'pilot'))
+    import readout
+    runs = tmp_path / 'runs'
+
+    def run(name, trials, nh):
+        d = runs / name
+        (d / 'router_control').mkdir(parents=True)
+        with open(d / 'router_control' / 'turns.jsonl', 'w') as f:
+            for half, trial, task, reward, exc in trials:
+                sid = f'{name}-{trial}'
+                td = d / 'jobs' / f'{name}_control{half}' / trial
+                _result(td, task, reward, exc)
+                (td / 'agent').mkdir()
+                (td / 'agent' / 'trajectory.json').write_text(json.dumps(dict(session_id=sid, steps=[])))
+                f.write(json.dumps(dict(ts=1.0, sid=sid, task_id=task, turn=1, seq=1, owner='teacher',
+                                        upstream_status=200, sent_body='b#1', request_kind='initial')) + '\n')
+        (d / 'run.meta').write_text(f'nodes=8\nnode_hours={nh}\n')
+        return str(d)
+    r6 = run('b6', [('', 't1', 'cf-a', 1.0, None), ('_p2', 't2', 'cf-b', None, 'CancelledError'),
+                    ('', 't3', 'cf-c', 0.0, 'ContextLengthExceededError'), ('_p2', 't4', 'cf-d', None, 'CancelledError')], 4.4)
+    r6b = run('b6b', [('', 'u2', 'cf-b', 1.0, None), ('_p2', 'u4', 'cf-d', None, 'EnvironmentStartTimeoutError')], 9.0)
+    out = runs / 'b6m'
+    res = subprocess.run([sys.executable, str(HERE.parent.parent / 'pilot' / 'merge_runs.py'), '--out', str(out),
+                          r6, r6b], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    m = json.loads((out / 'MERGED.json').read_text())
+    assert m['tasks'] == 4 and m['scored_tasks'] == 3 and not m['scored_twice'] and m['node_hours'] == 13.4
+    assert {k: v['run'] for k, v in m['per_task'].items()} == {'cf-a': 'b6', 'cf-b': 'b6b', 'cf-c': 'b6', 'cf-d': 'b6b'}
+    rows = readout.arm_trials(str(out), 'b6m', 'control')
+    readout.mark_censored(readout.router_view(str(out / 'router_control')), rows)
+    assert sorted(t['task'] for t in rows) == ['cf-a', 'cf-b', 'cf-c', 'cf-d']
+    assert sum(readout.usable(t) for t in rows) == 3 and sum(t['harness_error'] for t in rows) == 1
+    rv = readout.router_view(str(out / 'router_control'))
+    assert set(rv['eps']) == {t['sid'] for t in rows}

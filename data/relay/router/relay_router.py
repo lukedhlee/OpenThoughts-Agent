@@ -284,7 +284,8 @@ class Router:
         self.counts = dict(requests=0, upstream_errors=0, takeovers=0, synthetic=0, no_task_match=0, repairs=0,
                            repair_reply_rejected=0, repinned=0, autofixes=0, teacher_cut_at_cap=0,
                            view_count_errors=0, context_hard_ends=0, teacher_checked=0, teacher_parse_errors=0,
-                           teacher_autofix=0, teacher_resample=0, teacher_unparseable_passed=0, verify_notes=0)
+                           teacher_autofix=0, teacher_resample=0, teacher_unparseable_passed=0, verify_notes=0,
+                           upstream_5xx_failover=0)
         os.makedirs(a.log_dir, exist_ok=True)
         os.makedirs(os.path.join(a.log_dir, 'bodies'), exist_ok=True)
         # one os.write per line on an O_APPEND fd: readers (the driver's gates) never see a half-written line
@@ -593,7 +594,21 @@ class Router:
             self.inflight[base] += 1
             try:
                 async with self.http.post(url, json=body) as resp:
-                    return resp.status, await resp.read()
+                    status, data = resp.status, await resp.read()
+                if status < 500 or not self.a.failover_5xx:
+                    return status, data
+                # a 5xx is the server's fault, not the request's (2026-09-26: a crashed vLLM engine answered
+                # "EngineCore encountered an issue" 500s while its API server stayed up; harbor did not always
+                # retry, and the lost request stopped two baselines at the early gate): fail over like a
+                # connection error; the last 5xx is returned if every attempt fails
+                last = f'HTTP {status}: {data[:200].decode("utf-8", "replace")}'
+                self.counts['upstream_5xx_failover'] += 1
+                self.event('upstream_5xx', who=who, url=base, status=status, attempt=attempt, error=last[:300])
+                if len(self.urls[who]) > 1:
+                    self.down_until[base] = time.time() + 300
+                if attempt == self.a.connect_retries:
+                    return status, data
+                await asyncio.sleep(min(30, 2 ** attempt))
             except (ClientConnectionError, ConnectionResetError) as e:   # connect errors, resets, disconnects
                 last = e
                 if len(self.urls[who]) > 1:
@@ -1191,6 +1206,9 @@ def parse_args(argv=None):
     p.add_argument('--health-wait', type=float, default=10.0)
     p.add_argument('--health-max-tokens', type=int, default=2000)
     p.add_argument('--connect-retries', type=int, default=4)
+    p.add_argument('--failover-5xx', action='store_true',
+                   help='treat an upstream 5xx like a connection error: mark that server down for 5 min and retry the '
+                        'request on another (up to --connect-retries); a crashed engine then costs no request')
     p.add_argument('--upstream-connections', type=int, default=1024)
     p.add_argument('--upstream-read-timeout', type=float, default=3600.0)
     p.add_argument('--status-every', type=float, default=60.0)
