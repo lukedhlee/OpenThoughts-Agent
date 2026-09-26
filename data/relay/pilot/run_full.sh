@@ -41,6 +41,9 @@ CAP_NODE_H=${CAP_NODE_H:-42}; TEACHER_MAX_TOKENS=${TEACHER_MAX_TOKENS:-16384}; D
 EARLY_MIN=${EARLY_MIN:-25}; LAT_MIN=${LAT_MIN:-15}; LAT_WARN=${LAT_WARN:-30}; LAT_ABORT=${LAT_ABORT:-90}
 STALL_MIN=${STALL_MIN:-15}; UP_WAIT=${UP_WAIT:-2400}; VERIFY_WAIT=${VERIFY_WAIT:-2700}; DRAIN_WAIT=${DRAIN_WAIT:-600}
 PORT0=${PORT0:-$((21000 + RANDOM % 8000))}; PB=$PORT0; PR=$((PORT0 + 1))
+TEACHER_GUARD=${TEACHER_GUARD:-1}; TEACHER_RESAMPLES=${TEACHER_RESAMPLES:-2}; VERIFY_NOTE=${VERIFY_NOTE:-0}   # as run_pilot.sh
+PARSER=$HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py
+QARGS=(); [ "$TEACHER_GUARD" = 1 ] && QARGS+=(--teacher-format-guard --teacher-resamples $TEACHER_RESAMPLES); [ "$VERIFY_NOTE" = 1 ] && QARGS+=(--verify-note)
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 [ -d $R ] && { echo "$R exists"; exit 1; }
 mkdir -p $R $JOBS_ROOT; ln -s $JOBS_ROOT $R/jobs
@@ -95,10 +98,10 @@ log "students=$SURL teachers=$(tr '\n' ' ' < $TFILE) deadline=$(date -d @$DEADLI
 TALL=$(paste -sd, $TFILE)
 $PY $ROUTER --mode teacher --arm control --port $PB --log-dir $R/router_control --tasks $TREE/router_tasks.json \
   --budget-mode on --deadline-epoch $DEADLINE --teacher-url $TALL --teacher-model qwen38 --teacher-url-file $TFILE \
-  --teacher-max-tokens $TEACHER_MAX_TOKENS > $R/router_control.log 2>&1 & RB=$!
+  --teacher-max-tokens $TEACHER_MAX_TOKENS --terminus-parser $PARSER "${QARGS[@]}" > $R/router_control.log 2>&1 & RB=$!
 $PY $ROUTER --mode relay --arm relay_repair --student-think strip --repair-on-parse-error --autofix \
   --student-tokenizer ${STUDENT_TOKENIZER:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921/tokenizer.json} \
-  --terminus-parser $HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py --port $PR \
+  --terminus-parser $PARSER "${QARGS[@]}" --port $PR \
   --log-dir $R/router_relay_repair --tasks $TREE/router_tasks.json --budget-mode on --deadline-epoch $DEADLINE \
   --student-url $SURL --student-model snowball --teacher-url $TALL --teacher-model qwen38 --teacher-url-file $TFILE \
   --teacher-max-tokens $TEACHER_MAX_TOKENS > $R/router_relay_repair.log 2>&1 & RR=$!

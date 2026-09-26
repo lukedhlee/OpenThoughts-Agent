@@ -37,6 +37,21 @@ who answers each request:
     a harness error. Logged as owner 'router', ending 'context_hard_end', upstream_status 400, plus an event.
   * --mode teacher (control arm): the teacher answers everything; triggers are computed on its own turns and logged as
     `would_fire` only. --mode student: the reverse, for debugging.
+  * Teacher format guard (--teacher-format-guard, 2026-09-26; both arms alike): every teacher reply that goes to harbor
+    as an agent turn (sticky-owned turns, repair turns, confirmations, every turn in --mode teacher) is checked with
+    the same Terminus-2 parser as the student's. A reply it rejects goes through the same format autofix as the
+    student's (Qwen's reasoning kept verbatim; the record carries autofix=True, autofix_kind, autofix_reason and
+    original_teacher_reply, so sft/render.py trains only the rewritten action). If autofix cannot recover it, the same
+    request is sent again, up to --teacher-resamples more times (each resample is checked and autofixed the same way);
+    the replies resampled away are logged under teacher_resampled_replies and never reach harbor or a training row.
+    If none parses, the last reply is passed through as served (harbor re-prompts as usual) and logged
+    teacher_unparseable_passed. Per record: teacher_guard = {attempts, outcome, parse_errors}. Summarization replies
+    are not checked (they are free text).
+  * Verify note (--verify-note, off by default; Luke 2026-09-26): the teacher's request that asks it to confirm a
+    completion claim gets a note appended to Terminus-2's "Are you sure?" message (VERIFY_NOTE, the exact text of the
+    verify-note replay): in relay on the done_claim takeover's confirmation request, in --mode teacher on every
+    Terminus-2 confirmation request. Only the teacher's body changes: harbor's history, the student's view and the
+    training rows keep Terminus-2's own message. Logged as verify_note=True.
 
 Episode identity: the X-Harbor-Session-Id header that Terminus-2 sends with `llm_session_header` set (harbor branch
 lukedhlee/terminus2-relay). It is per trial attempt and equals trajectory.json's session_id. `/tokenize` calls carry no
@@ -110,7 +125,7 @@ sys.path.insert(0, HERE)
 import autofix as af  # noqa: E402
 import reasoning_cap as rcap  # noqa: E402
 
-ROUTER_VERSION = 'relay-router/1 (2026-09-26 context_budget)'
+ROUTER_VERSION = 'relay-router/1 (2026-09-26 teacher format guard, verify note)'
 SESSION_HEADER = 'X-Harbor-Session-Id'
 
 # Terminus-2 prompt openings (harbor terminus_2.py; stable across the v0.1 pin and lukedhlee/terminus2-relay)
@@ -124,6 +139,9 @@ AUX_KINDS = ('summary', 'questions', 'answers')
 THINK_SPAN_RE = re.compile(r'<\|start_think\|>.*?<\|end_think\|>|<think>.*?</think>', re.S)
 OPEN_THINK_RE = re.compile(r'(?:<\|start_think\|>|<think>).*\Z', re.S)   # an unterminated span runs to the end
 SYNTHETIC_DONE = json.dumps({'analysis': '', 'plan': '', 'commands': [], 'task_complete': True})
+# the verify-note replay's text (data/relay/verify_note/replay.py NOTE), appended after a blank line
+VERIFY_NOTE = ("Note: another agent did the previous work, and its claim that the task is complete may be wrong. Before "
+               "confirming, run commands that check the task's key requirements (outputs, files, tests).")
 
 
 def sha(s):
@@ -217,6 +235,7 @@ class Episode:
         self.paused_sec = 0.0             # wall time the episode's clock was stopped (model calls in flight)
         self.paused_at_takeover = 0.0
         self.repair_confirm = False       # the teacher claimed done in a repair turn: it answers that confirmation
+        self.note_turn = None             # --verify-note: the turn of the done_claim takeover's confirmation request
 
     def summary(self):
         return dict(episode=self.idx, sid=self.sid, task_id=(self.task or {}).get('task_id'), owner=self.owner,
@@ -250,7 +269,7 @@ class Router:
         self.tasks = self._load_tasks(a.tasks)
         self.tok = rcap.load_tokenizer(a.student_tokenizer) if a.student_tokenizer else None
         self.parser = self.parser_path = self.parser_sha = None
-        if a.repair_on_parse_error:
+        if a.repair_on_parse_error or a.teacher_format_guard:
             self.parser, self.parser_path, self.parser_sha = load_terminus_parser(a.terminus_parser)
         self.episodes = {}
         self.by_first = {}
@@ -259,7 +278,8 @@ class Router:
         self.max_model_len = None
         self.counts = dict(requests=0, upstream_errors=0, takeovers=0, synthetic=0, no_task_match=0, repairs=0,
                            repair_reply_rejected=0, repinned=0, autofixes=0, teacher_cut_at_cap=0,
-                           view_count_errors=0, context_hard_ends=0)
+                           view_count_errors=0, context_hard_ends=0, teacher_checked=0, teacher_parse_errors=0,
+                           teacher_autofix=0, teacher_resample=0, teacher_unparseable_passed=0, verify_notes=0)
         os.makedirs(a.log_dir, exist_ok=True)
         os.makedirs(os.path.join(a.log_dir, 'bodies'), exist_ok=True)
         # one os.write per line on an O_APPEND fd: readers (the driver's gates) never see a half-written line
@@ -694,6 +714,7 @@ class Router:
             if kind == 'confirm':
                 self.take_over(ep, ep.pending, t, now)
                 rec['takeover'] = self.takeover_rec(ep)
+                ep.note_turn = t
             elif not retry:
                 # Terminus-2 did not accept the claim (e.g. its parser rejected the reply): no confirmation turn
                 self.event('done_claim_dropped', episode=ep.idx, sid=ep.sid, turn=t, request_kind=kind)
@@ -748,6 +769,8 @@ class Router:
                            takeover_trigger=ep.takeover['trigger'])
                 return self.hard_end(ep, rec, t, n)
         rec['owner'] = 'teacher'
+        if self.a.verify_note and kind == 'confirm' and (self.mode == 'teacher' or ep.note_turn == t):
+            rec['verify_note'] = True     # the teacher confirms a claim: the done_claim takeover's, or any in control
         return await self.answer(ep, 'teacher', body, messages, rec, main=True)
 
     async def count_student_view(self, ep, body, messages, rec):
@@ -886,13 +909,25 @@ class Router:
         if who == 'teacher':
             msgs, stats = self.for_teacher(ep, messages)
             rec['refeed'] = stats
+            if rec.get('verify_note'):
+                last = msgs[-1]
+                if last.get('role') == 'user' and CONFIRM_MARK in text_of(last.get('content')):
+                    msgs = msgs[:-1] + [dict(last, content=text_of(last.get('content')) + '\n\n' + VERIFY_NOTE)]
+                    self.counts['verify_notes'] += 1
+                else:
+                    rec['verify_note'] = False
         else:
             msgs, stats = self.for_student(ep, messages)
             rec['student_view'] = stats
         b = self.upstream_body(who, body, msgs)
         rec['sent_body'] = self.write_body(ep, rec['seq'], who, b)
         t1 = time.time()
-        attempts = self.a.repair_attempts if (rec.get('repair') and self.parser is not None) else 1
+        guard = who == 'teacher' and main and self.a.teacher_format_guard and self.parser is not None
+        if guard:
+            status, data = await self.guarded_teacher(ep, b, rec)
+            attempts = 0
+        else:
+            attempts = self.a.repair_attempts if (rec.get('repair') and self.parser is not None) else 1
         for attempt in range(attempts):
             status, data = await self.post(who, '/chat/completions', b, ep)
             if status == 400 and who == 'teacher' and b.get('max_tokens') and b'maximum context length' in data:
@@ -950,6 +985,60 @@ class Router:
         elif main:
             rec['logged'] = self.logged_signals(ep, text_of(msg.get('content')))
         return self.finish(ep, who, resp, rec, t, main=main)
+
+    async def teacher_call(self, ep, b, rec):
+        status, data = await self.post('teacher', '/chat/completions', b, ep)
+        if status == 400 and b.get('max_tokens') and b'maximum context length' in data:
+            # as in answer(): the cap did not fit what the context has left; ask again without max_tokens
+            b = {k: v for k, v in b.items() if k != 'max_tokens'}
+            rec['teacher_max_tokens_dropped'] = True
+            status, data = await self.post('teacher', '/chat/completions', b, ep)
+        return status, data, b
+
+    async def guarded_teacher(self, ep, b, rec):
+        """--teacher-format-guard: the teacher's reply as harbor will get it. Terminus-2's parser accepts it -> as
+        served; else format autofix (the reasoning untouched, the content rewritten) -> the rewrite; else the same
+        request again, up to --teacher-resamples times. None parses -> the last reply, as served. Returns
+        (status, body bytes) like post()."""
+        g = dict(attempts=0, outcome=None, parse_errors=[])
+        rec['teacher_guard'] = g
+        status = data = None
+        for attempt in range(1 + self.a.teacher_resamples):
+            status, data, b = await self.teacher_call(ep, b, rec)
+            g['attempts'] += 1
+            if status != 200:
+                g['outcome'] = f'http_{status}'
+                return status, data
+            resp = json.loads(data)
+            ch = resp['choices'][0]
+            content = text_of(ch['message'].get('content'))
+            self.counts['teacher_checked'] += attempt == 0
+            err = self.parser.parse_response(content).error
+            if not err:
+                g['outcome'] = 'ok' if attempt == 0 else 'resampled_ok'
+                return status, data
+            self.counts['teacher_parse_errors'] += 1
+            g['parse_errors'].append(err[:200])
+            fx = af.autofix(content, ch.get('finish_reason'), self.parser)
+            if isinstance(fx, af.Fix):
+                # the same convention as the student's autofix: the action rewritten, the reasoning kept verbatim;
+                # sft/render.py trains the rewritten content only
+                rec.update(autofix=True, autofix_kind=fx.kind, autofix_reason=err[:300],
+                           original_teacher_reply=json.loads(json.dumps(resp)))
+                ch['message']['content'] = fx.content
+                self.counts['teacher_autofix'] += 1
+                g['outcome'] = 'autofix' if attempt == 0 else 'resampled_autofix'
+                return status, json.dumps(resp).encode()
+            g.setdefault('unfixable', []).append(fx.reason[:120])
+            if attempt < self.a.teacher_resamples:
+                self.counts['teacher_resample'] += 1
+                rec.setdefault('teacher_resampled_replies', []).append(resp)
+        self.counts['teacher_unparseable_passed'] += 1
+        rec['teacher_unparseable_passed'] = True
+        g['outcome'] = 'unparseable_passed'
+        self.event('teacher_unparseable_passed', episode=ep.idx, sid=ep.sid, turn=rec.get('turn'),
+                   errors=g['parse_errors'])
+        return status, data
 
     def finish(self, ep, who, resp, rec, t, main):
         msg = resp['choices'][0]['message']
@@ -1061,7 +1150,16 @@ def parse_args(argv=None):
     p.add_argument('--terminus-parser', default=None,
                    help='path of harbor terminus_json_plain_parser.py (default: found on sys.path / PYTHONPATH)')
     p.add_argument('--repair-attempts', type=int, default=2,
-                   help='teacher attempts per repair turn when its own reply fails the parser')
+                   help='teacher attempts per repair turn when its own reply fails the parser (without the guard)')
+    p.add_argument('--teacher-format-guard', action='store_true',
+                   help="check every teacher agent turn with Terminus-2's parser before harbor sees it: autofix, else "
+                        "resample (--teacher-resamples), else pass through as served; needs --terminus-parser or harbor "
+                        "on sys.path. Replaces --repair-attempts on repair turns.")
+    p.add_argument('--teacher-resamples', type=int, default=2,
+                   help='--teacher-format-guard: extra teacher samples of the same request when autofix cannot recover')
+    p.add_argument('--verify-note', action='store_true',
+                   help="append VERIFY_NOTE to the teacher's confirmation request (relay: the done_claim takeover's; "
+                        "--mode teacher: every one)")
     p.add_argument('--context-budget-tokens', type=int, default=None,
                    help='context_budget takeover (sticky): the teacher takes the episode once the student view of a '
                         'request (counted on the student /tokenize) reaches this many tokens; off by default (32000 '
@@ -1104,7 +1202,9 @@ async def serve(a, ready_event=None):
                  deadline_epoch=a.deadline_epoch, repair_on_parse_error=a.repair_on_parse_error,
                  context_budget_tokens=a.context_budget_tokens, context_budget_min_turn=a.context_budget_min_turn,
                  student_row_max_tokens=a.student_row_max_tokens, student_row_reserve=a.student_row_reserve,
-                 terminus_parser=router.parser_path, terminus_parser_sha256=router.parser_sha)
+                 terminus_parser=router.parser_path, terminus_parser_sha256=router.parser_sha,
+                 teacher_format_guard=a.teacher_format_guard, teacher_resamples=a.teacher_resamples,
+                 verify_note=a.verify_note, verify_note_text=VERIFY_NOTE if a.verify_note else None)
     if not a.skip_health:
         ok, report = await router.health_check()
         print(json.dumps(report, indent=1), flush=True)

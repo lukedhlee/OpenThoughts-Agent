@@ -103,6 +103,7 @@ class FakeServer:
         self.requests = []          # chat bodies
         self.tokenize_requests = []
         self.count_fn = None                     # messages -> /tokenize count (the context_budget tests)
+        self.script = []                         # teacher: contents for its next agent-turn replies (None = the default)
         self.summarized = set()
         self.fail_model = None      # set to make chat answer 404 (a served-name change mid-run)
         self.runner = None
@@ -174,6 +175,9 @@ class FakeServer:
         else:
             k = sum(1 for m in msgs if m.get('role') == 'assistant' and 'teacher-step' in text_of(m.get('content')))
             content = teacher_json(k, last)
+            if self.script and 'Print hello' not in last:
+                item = self.script.pop(0)
+                content = content if item is None else item
             reasoning = f'teacher reasoning {k}' + ''.join(f'. Sentence {j} of step {k} is here'
                                                             for j in range(self.long_reasoning)) + ('.' if self.long_reasoning else '')
         msg = {'role': 'assistant', 'content': content}

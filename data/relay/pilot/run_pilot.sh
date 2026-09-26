@@ -22,6 +22,9 @@
 #      its verifiers on the login node; the node-hour cap also cancels it (Slurm's --time is the backstop)
 #   6. harbor done -> stop routers, cancel the serve job if still up, remove leftover sandboxes of these jobs (by id),
 #      write run.meta, run the final readout
+# Qwen's replies (every arm with a teacher): TEACHER_GUARD=1 (default) checks each agent turn with Terminus-2's parser
+# (autofix, else up to TEACHER_RESAMPLES more samples, else passed through); VERIFY_NOTE=1 adds the verification note
+# to Qwen's confirmation request (relay_router.py --teacher-format-guard / --verify-note).
 # "smoke": 4 tasks per arm (shortest budgets), 4 concurrent, early gate at 10 min.
 #
 #   tmux new -d -s relay_<name> "bash run_pilot.sh <jobid> <name>"
@@ -45,6 +48,9 @@ CTX_BUDGET=${CTX_BUDGET:-}        # relay arms: context_budget takeover at this 
 ROW_MAX=${ROW_MAX:-}; ROW_RESERVE=${ROW_RESERVE:-8192}   # relay arms: hard end once 09-21's view > ROW_MAX - ROW_RESERVE after a takeover
 BALANCE=${BALANCE:-pinned}; STAGGER_SEC=${STAGGER_SEC:-0}   # STAGGER_SEC>0: the task list is split in two harbor jobs started that far apart
 GATE_MIN=${GATE_MIN:-0}; GATE_LAT=${GATE_LAT:-30}; GATE_KV=${GATE_KV:-0.90}   # GATE_MIN>0: from then on, cancel on latency / KV saturation
+TEACHER_GUARD=${TEACHER_GUARD:-1}  # 1: every Qwen agent turn is checked with Terminus-2's parser (autofix, else resample, else pass), every arm
+TEACHER_RESAMPLES=${TEACHER_RESAMPLES:-2}
+VERIFY_NOTE=${VERIFY_NOTE:-0}      # 1: the verification note on Qwen's confirmation request (relay: done_claim takeover; control: every one)
 [ $CLOCK = wall ] && AGENT_MULT=1.0 || AGENT_MULT=8.0
 OVF_AFTER=${OVF_AFTER:-0}; OVF_MAX=${OVF_MAX:-0.20}   # relay backstop: cancel when overflow > OVF_MAX after OVF_AFTER episodes (0 = off)
 RUN_KIND=${RUN_KIND:-pilot}
@@ -83,7 +89,7 @@ cleanup_sandboxes() {
   [ ${#jobs[@]} -gt 0 ] && $PY $HERE/cleanup_sandboxes.py --key-file $KEYF --delete "${jobs[@]}" 2>&1 | tail -3
 }
 abort() { log "ABORT: $*"; echo "$*" > $R/ABORT; stop_harbor; stop_routers; release_serve "abort"; cleanup_sandboxes; write_meta; exit 1; }
-log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off}"
+log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE"
 
 # ---- 1. pre-flight --------------------------------------------------------------------------------------------------
 [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = "$HARBOR_SHA" ] || { log "harbor at ${HARBOR_SRC%/src} is not $HARBOR_SHA"; scancel $JOB; exit 1; }
@@ -126,12 +132,16 @@ DEADLINE=$(awk -v s=$JSTART -v c=$CAP_NODE_H -v n=$NODES -v m=$DEADLINE_MARGIN '
 log "endpoints student=$SURL teacher=$TURL; job start $(date -d @$JSTART -Is), deadline $(date -d @$DEADLINE -Is)"
 
 # ---- 3. routers -----------------------------------------------------------------------------------------------------
+PARSER=$HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py
 for arm in $ARMS; do
   TARGS=(); [ -n "$TURL" ] && TARGS=(--teacher-url $TURL --teacher-model qwen38 --teacher-max-tokens $TEACHER_MAX_TOKENS)
+  if [ -n "$TURL" ] && [ "$TEACHER_GUARD" = 1 ]; then TARGS+=(--teacher-format-guard --teacher-resamples $TEACHER_RESAMPLES)
+    case $arm in relay_repair) ;; *) TARGS+=(--terminus-parser $PARSER);; esac; fi   # relay_repair passes the parser below
+  [ -n "$TURL" ] && [ "$VERIFY_NOTE" = 1 ] && TARGS+=(--verify-note)
   [ "$MAX_INPUT" != 65536 ] && TARGS+=(--report-max-model-len $MAX_INPUT)
   SARGS=(); [ -n "$SURL" ] && SARGS=(--student-url $SURL --student-model snowball)   # empty on a teacher-only serve
   case $arm in control) M=(--mode teacher);; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
-    relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py
+    relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $PARSER
                   --autofix --student-tokenizer $STUDENT_TOKENIZER);;
     *) abort "unknown arm $arm";; esac
   case $arm in relay*)
@@ -254,7 +264,7 @@ PY
       OV=$($PY - $JOBS_ROOT/${NAME}_$arm $OVF_AFTER $HERE <<'PY'
 import glob, sys
 sys.path.insert(0, sys.argv[3]); import readout
-out = [readout.read_outcome(p) for p in glob.glob(f'{sys.argv[1]}/*/result.json')]
+out = [readout.read_outcome(p) for d in (sys.argv[1], sys.argv[1] + '_p2') for p in glob.glob(f'{d}/*/result.json')]
 n = len(out)
 if n < int(sys.argv[2]): print('wait'); sys.exit()
 print('%d %.4f' % (n, sum(1 for _, _, e in out if e == 'ContextLengthExceededError') / n))

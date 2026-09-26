@@ -404,3 +404,47 @@ Job 2033360, 1 node, 15:33–16:51 PT, 1.29 node-hours. Settings are run 3's stu
 - S3's 0.28 counts as a pass, inside noise. The gate is now ≥ 0.25, with a target of 0.30.
 - Under the amended rule, run 3 passes S1–S4 and S6.
 - Next steps are in `notes/relay/relay_full_t2.md` ("Changes after run 3").
+
+## Fixes before the context-budget rerun (2026-09-26 evening): pass rule unchanged, written before any submit
+
+**What changed.** The context-budget check (`relay_ctxb_20260926`) failed on three things that were the kit's, not
+the relay's. All three are fixed, Qwen's replies now get the same format check as the student's, and the verify note
+can be switched on. The pass rule is not touched.
+- **H1 no longer counts the router's own answers as missing bodies.** The 17 `bodies_missing` were exactly the 17
+  context hard ends: the router answers those itself, so nothing was sent upstream. Records with owner `router`
+  (hard ends, deadline and budget endings) are now exempt. Retried upstream errors stay exempt as in 0f2199cc.
+- **Every reader takes both staggered harbor halves** (`<name>_<arm>` and `<name>_<arm>_p2`): `check_decide.py`
+  (C2 and the paired pass), `sft/render.py`, `select_kept.py` and `relay_plan.py`, through `readout.arm_trials`.
+  On `relay_ctxb_20260926` check_decide now gives C2 = 17 / 89, the babysitter's merged number.
+- **Teacher format guard** (`--teacher-format-guard`, `TEACHER_GUARD=1` by default in `run_pilot.sh` and
+  `run_full.sh`, every arm with Qwen, so both arms are treated alike). The check run's 68 invalid steps were all
+  Qwen's: the router never ran Terminus-2's parser on Qwen's replies. Now every Qwen agent turn is checked with the
+  same parser before harbor sees it.
+  - A rejected reply goes through the student's format autofix. Qwen's reasoning is kept verbatim and only the
+    action is rewritten. The record carries the student autofix fields (`autofix`, `autofix_kind`,
+    `original_teacher_reply`), so `render.py` trains the rewritten action and masks the reasoning.
+  - If autofix cannot recover it, the same request is sampled again, up to 2 more times. Replies resampled away are
+    logged (`teacher_resampled_replies`) and never reach harbor or a training row.
+  - If no sample parses, the last one goes to harbor as served, and harbor re-prompts as before
+    (`teacher_unparseable_passed`).
+  - The readout reports it per arm (`teacher_format`: outcomes, first-sample failure rate by turn kind). The format
+    rate is also split by model (`format.by_model`). C3 is still measured on what reaches harbor.
+- **Autofix now reads Qwen's own tool-call shapes:** keys without the outer braces, an unclosed object, XML
+  `<function=…>` calls, and one object split in two. It also refuses a rewrite that would silently drop a command
+  (`json_command_lost`). The old code ran a subset of the student's commands in 10 of the check run's 477 rejected
+  student replies; those now go to a teacher repair.
+- **Verify note** (`--verify-note`, `VERIFY_NOTE=1`, off by default). The replay's exact note is appended to Qwen's
+  confirmation request: in relay on the done_claim takeover, in control on every Terminus-2 confirmation. Only
+  Qwen's request changes. Harbor's history, the student's view and the training rows keep Terminus-2's own message.
+  Adopted for both arms (coordinator, 2026-09-26).
+- Tests: 65 pass (53 before, plus 12 new), locally and on the Jupiter login node.
+
+**Pass rule of the rerun: unchanged, `check_decide.py --rule ctxbudget`.** It PASSES only if all five hold:
+- **C1, harness gate:** H0–H4 of the readout.
+- **C2:** relay context overflow, hard ends included, in at most 20 % of scored relay episodes.
+- **C3:** the executed trace is at least 98 % valid format.
+- **C4:** the student owns at least 50 % of executed turns.
+- **C5:** recovery after a sticky takeover (every trigger, context_budget included) is at least 0.20.
+
+Informational: the teacher-format outcomes, the verify-note count, the context_budget view, Qwen context 400s and
+the pass rate paired against run 3's control.

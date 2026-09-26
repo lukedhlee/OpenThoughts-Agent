@@ -1004,3 +1004,274 @@ def test_count_failure_leaves_the_student_in_charge(tmp_path):
         n = st.run(st.router.count_student_view(ep, {'model': 'relay'}, [{'role': 'user', 'content': 'hi'}], rec))
         assert n is None and rec['student_view_tokens'] is None and rec['student_view_tokens_error'].startswith('HTTP 500')
         assert st.router.counts['view_count_errors'] == 1
+
+
+# ---- 2026-09-26 fixes: H1 on router-answered records, both staggered halves, teacher format guard, verify note ----
+
+def test_h1_ignores_router_answered_records_without_a_body():
+    """A context_hard_end 400 (or a deadline / budget ending) is answered by the router itself: no body was sent, so it
+    is not a missing body. A real upstream record without its body still is."""
+    sys.path.insert(0, str(HERE.parent.parent / 'pilot'))
+    import readout
+    recs = [dict(sid='a', turn=1, seq=1, owner='student', upstream_status=200, sent_body='bodies/ep00001.jsonl.gz#1'),
+            dict(sid='a', turn=2, seq=2, owner='router', ending='context_hard_end', upstream_status=400,
+                 upstream_error="This model's maximum context length is 65536 tokens."),
+            dict(sid='b', turn=1, seq=1, owner='router', ending='deadline', upstream_status=None)]
+    rv = dict(recs=recs, eps={}, fatal=False, fatal_text=None)
+    h = readout.harness_router(rv)
+    assert h['bodies_missing'] == 0 and not h['upstream_errors_unrecovered'] and h['context_length_400'] == 1
+    rv['recs'].append(dict(sid='c', turn=1, seq=1, owner='teacher', upstream_status=200))
+    assert readout.harness_router(rv)['bodies_missing'] == 1
+    # the recovered-upstream-error rule of 0f2199cc still holds
+    rv['recs'] += [dict(sid='d', turn=3, owner='teacher', upstream_status=500, sent_body='x'),
+                   dict(sid='d', turn=3, owner='teacher', upstream_status=200, sent_body='x')]
+    h = readout.harness_router(rv)
+    assert h['upstream_errors'] == {500: 1} and not h['upstream_errors_unrecovered']
+
+
+def _result(d, task, reward, exc=None):
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, 'result.json'), 'w') as f:
+        json.dump(dict(task_name=task, verifier_result=None if reward is None else dict(rewards=dict(reward=reward)),
+                       exception_info=dict(exception_type=exc) if exc else None), f)
+
+
+def test_check_decide_and_readers_merge_both_staggered_halves(tmp_path):
+    """check_decide.py (C2 and the paired pass), select_kept.py, render.py and relay_plan.py read <name>_<arm> and
+    <name>_<arm>_p2, as readout.py does; before 2026-09-26 check_decide saw only the first half."""
+    import subprocess
+    sys.path.insert(0, str(HERE.parent.parent / 'pilot'))
+    import readout
+    name, r3 = 'chk', 'r3'
+    run, run3 = tmp_path / name, tmp_path / r3
+    jobs = run / 'jobs'
+    _result(jobs / f'{name}_relay_repair' / 't1', 'cf-a', 1.0)
+    _result(jobs / f'{name}_relay_repair' / 't2', 'cf-b', 0.0)
+    _result(jobs / f'{name}_relay_repair_p2' / 't3', 'cf-c', 0.0, 'ContextLengthExceededError')
+    _result(jobs / f'{name}_relay_repair_p2' / 't4', 'cf-d', 1.0)
+    _result(run3 / 'jobs' / f'{r3}_control' / 'u1', 'cf-d', 0.0)
+    (run / 'router_relay_repair').mkdir(parents=True)
+    (run3 / 'router_control').mkdir(parents=True)
+    with open(run / 'router_relay_repair' / 'turns.jsonl', 'w') as f:
+        for k in range(4):
+            f.write(json.dumps(dict(ts=1.0 + k, sid=f's{k}', task_id='cf-x', turn=1, seq=1, owner='student',
+                                    upstream_status=200, sent_body='b#1', request_kind='initial', latency_sec=1.0)) + '\n')
+    assert len(readout.arm_trials(str(run), name, 'relay_repair')) == 4
+    assert [os.path.basename(d) for d in readout.arm_job_dirs(str(run), name, 'relay_repair')] == \
+        [f'{name}_relay_repair', f'{name}_relay_repair_p2']
+    out = subprocess.run([sys.executable, str(HERE.parent.parent / 'pilot' / 'check_decide.py'), '--check', str(run),
+                          '--run3', str(run3), '--rule', 'ctxbudget'], capture_output=True, text=True)
+    d = json.loads(out.stdout)
+    c2 = next(c for c in d['checks'] if c['check'].startswith('C2'))
+    assert c2['detail']['scored'] == 4 and c2['detail']['overflow'] == 1
+    assert d['paired_pass_vs_run3_control']['tasks'] == 1 and d['paired_pass_vs_run3_control']['relay_only'] == 1
+    import select_kept
+    assert len(readout.arm_trials(str(run), name, 'relay_repair')) == 4 and 'arm_trials' in open(select_kept.__file__).read()
+
+
+# Qwen3.8's own tool-call shapes (the verify-note replay's unparseable replies)
+QWEN_BARE = ('Let me verify before confirming. teacher-step 0\n\n<tool_call>\n"analysis": "teacher-step 0 checks first", '
+             '"plan": "look", "commands": [{"keystrokes": "cat out.txt\\n", "duration": 0.1}]}\n</tool_call>')
+QWEN_UNFIXABLE = 'teacher-step UNPARSEABLE: the previous work looks right to me and I would confirm it.'
+
+
+def _parser():
+    return rr.load_terminus_parser()[0]
+
+
+@needs_harbor
+def test_autofix_recovers_qwen_tool_call_shapes():
+    import autofix as af
+    p = _parser()
+    cases = {
+        'bare_keys': ('I will check.\n<tool_call>\n"commands"\n: [{"keystrokes": "ls -la\\n", "duration": 0.5}]\n</tool_call>',
+                      ['ls -la\n'], None),
+        'bare_after_function': ('Check.\n<tool_call>\n<function=analysis": "a", "plan": "p", "commands": [{"keystrokes": '
+                                '"ls\\n", "duration": 0.1}], "task_complete": false }', ['ls\n'], False),
+        'unclosed': ('Verify.\n<tool_call>\n{"commands": [\n {"keystrokes": "make\\n", "duration": 1.0},\n'
+                     ' {"keystrokes": "./a\\n", "duration": 1.0}\n]\n</parameter>\n</function>', ['make\n', './a\n'], None),
+        'unclosed_body': ('\n\n{"analysis": "ok", "plan": "run", "commands": [{"keystrokes": "pytest -q\\n", "duration": 15.0}]\n'
+                          '</|end_think|>', ['pytest -q\n'], None),
+        'xml': ('Run it.\n<tool_call>\n<function=keystrokes>\npython3 /app/validate.py\n</parameter>\n<parameter name="duration">3.0\n'
+                '</parameter>\n</function>\n</tool_call>', ['python3 /app/validate.py\n'], None),
+        'split': ('Check first.\n\n{"analysis": "looks right"}\n\n{"plan": "verify", "commands": [{"keystrokes": "ls\\n", '
+                  '"duration": 0.1}], "task_complete": true}', ['ls\n'], True),
+    }
+    for name, (content, cmds, done) in cases.items():
+        fx = af.autofix(content, 'stop', p)
+        assert isinstance(fx, af.Fix), (name, fx)
+        res = p.parse_response(fx.content)
+        assert not res.error and [c.keystrokes for c in res.commands] == cmds, name
+        if done is not None:
+            assert res.is_task_complete == done, name
+    kept = af.autofix('Analysis.\n<tool_call>\n"analysis": "keep me", "plan": "p", "commands": [{"keystrokes": "ls\\n"}]}', 'stop', p)
+    assert json.loads(kept.content)['analysis'] == 'keep me'           # the object's own analysis, not the prose
+    # a command inside text that does not parse is never silently dropped (no subset of the action runs)
+    lost = ('{\n "analysis": "a", "plan": "b", "commands": [{"keystrokes": "ls\\n", "duration": 1}, '
+            '{"keystrokes": "echo "x"\\n", "duration": 1}]\n}')
+    assert isinstance(af.autofix(lost, 'stop', p), af.Unfixable)
+    assert af.autofix(lost, 'stop', p).reason == 'json_command_lost'
+
+
+@needs_harbor
+def test_autofix_on_the_verify_note_replays_unparseable_qwen_replies():
+    """Fixture: every reply of the 2026-09-26 verify-note replay (job 2074731) that Terminus-2's parser rejected, 9
+    without the note and 29 with it. Autofix recovers 8/9 and 26/29 (of the other 3: two JSON that does not parse even
+    leniently, one whose third command sits in broken JSON and is refused rather than run as a subset); each rewrite
+    parses and keeps the commands. The rest go to the guard's resample."""
+    import autofix as af
+    p = _parser()
+    rows = [json.loads(l) for l in gzip.open(HERE / 'qwen_unparseable_replies.jsonl.gz', 'rt')]
+    fixed = {'A': 0, 'B': 0}
+    for r in rows:
+        assert p.parse_response(r['content']).error
+        fx = af.autofix(r['content'], r['finish_reason'], p)
+        if isinstance(fx, af.Fix):
+            fixed[r['variant']] += 1
+            assert not p.parse_response(fx.content).error and fx.commands
+    n = {v: sum(1 for r in rows if r['variant'] == v) for v in 'AB'}
+    assert n == {'A': 9, 'B': 29} and fixed['A'] >= 8 and fixed['B'] >= 26, fixed
+
+
+GUARD = ['--teacher-format-guard']
+
+
+@needs_harbor
+def test_guard_autofixes_a_qwen_turn_in_control_and_render_trains_only_the_action(tmp_path):
+    import render
+    tokp = _word_tokenizer(tmp_path / 'tok.json')
+    with Stack(tmp_path, mode='teacher', router_args=GUARD) as st:
+        st.teacher.script = [QWEN_BARE]
+        r = run_agent(st, 'done', tmp_path)
+        rows = _main_rows(st, r.sid)
+        fx = rows[0]
+        assert fx['owner'] == 'teacher' and fx['autofix'] and fx['autofix_kind'] == 'tool_call_salvaged_terminus_object'
+        assert fx['teacher_guard']['outcome'] == 'autofix' and fx['teacher_guard']['attempts'] == 1
+        assert '<tool_call>' in fx['original_teacher_reply']['choices'][0]['message']['content']
+        assert all(x['teacher_guard']['outcome'] == 'ok' for x in rows[1:])
+        assert 'cat out.txt' in r.term.sent                                   # Qwen's own action ran
+        assert 'Previous response had parsing errors' not in json.dumps(r.traj)
+        step = agent_steps(r.traj)[0]
+        assert json.loads(step['message'])['analysis'] == 'teacher-step 0 checks first'
+        assert step['reasoning_content'] == 'teacher reasoning 0'           # Qwen's reasoning, verbatim
+        assert st.router.counts['teacher_autofix'] == 1 and st.router.counts['teacher_checked'] == len(rows)
+        tok = render.rcap.load_tokenizer(tokp)
+        tpl = render.load_template(HERE / 'grug0921_chat_template.jinja')
+        row = render.render_episode(r.traj, st.turns(r.sid), tok, tpl, '<|begin_of_text|>')
+        c = render.check_row(row, tok)
+        assert c['teacher_autofix_turns'] == 1 and c['long_think_masked'] == 0
+        m0 = row['turns'][0]
+        trained = ''.join(row['text'][a:b] for (a, b), l in zip(row['offsets'], row['loss'])
+                          if l and a >= m0['span'][0] and b <= m0['span'][1])
+        assert 'teacher reasoning 0' in row['text']                           # Qwen's reasoning is in the row...
+        assert 'reasoning' not in trained and 'cat' in trained and 'checks' in trained   # ...only its action is trained
+        other = row['turns'][1]
+        assert other['think_trained']                                      # untouched Qwen turns keep their reasoning
+        sys.path.insert(0, str(HERE.parent.parent / 'pilot'))
+        import readout
+        tf = readout.teacher_format_view(readout.router_view(str(st.log_dir)))
+        assert tf['guarded_turns'] == len(rows) and tf['outcomes']['autofix'] == 1 and tf['first_sample_parse_errors'] == 1
+
+
+@needs_harbor
+def test_guard_resamples_an_unfixable_qwen_turn_and_never_shows_it(tmp_path):
+    with Stack(tmp_path, mode='teacher', router_args=GUARD) as st:
+        st.teacher.script = [QWEN_UNFIXABLE]
+        r = run_agent(st, 'done', tmp_path)
+        rows = _main_rows(st, r.sid)
+        g = rows[0]['teacher_guard']
+        assert g['outcome'] == 'resampled_ok' and g['attempts'] == 2 and g['unfixable'] == ['no_action']
+        assert len(rows[0]['teacher_resampled_replies']) == 1
+        assert 'UNPARSEABLE' in rows[0]['teacher_resampled_replies'][0]['choices'][0]['message']['content']
+        assert 'UNPARSEABLE' not in json.dumps(r.traj) and 'Previous response had parsing errors' not in json.dumps(r.traj)
+        assert 'UNPARSEABLE' not in json.dumps(rows[0]['response'])
+        bodies = st.teacher_bodies('SCENARIO=done.')
+        assert bodies[0] == bodies[1]                                        # the same request, sampled again
+        assert st.router.counts['teacher_resample'] == 1 and st.router.counts['teacher_unparseable_passed'] == 0
+
+
+@needs_harbor
+def test_guard_passes_the_last_reply_when_every_sample_fails(tmp_path):
+    with Stack(tmp_path, mode='teacher', router_args=GUARD + ['--teacher-resamples', '2']) as st:
+        st.teacher.script = [QWEN_UNFIXABLE] * 3
+        r = run_agent(st, 'done', tmp_path)
+        rows = _main_rows(st, r.sid)
+        assert rows[0]['teacher_guard']['outcome'] == 'unparseable_passed' and rows[0]['teacher_guard']['attempts'] == 3
+        assert rows[0]['teacher_unparseable_passed'] and len(rows[0]['teacher_resampled_replies']) == 2
+        assert 'Previous response had parsing errors' in json.dumps(r.traj)   # harbor re-prompted as usual
+        assert st.router.counts['teacher_unparseable_passed'] == 1 and st.router.counts['teacher_resample'] == 2
+        assert getattr(r.stop, 'value', r.stop) == 'task_complete'
+
+
+@needs_harbor
+def test_guard_off_passes_a_bad_qwen_turn_as_before(tmp_path):
+    with Stack(tmp_path, mode='teacher') as st:
+        st.teacher.script = [QWEN_UNFIXABLE]
+        r = run_agent(st, 'done', tmp_path)
+        rows = _main_rows(st, r.sid)
+        assert not any('teacher_guard' in x for x in rows) and not rows[0].get('autofix')
+        assert 'Previous response had parsing errors' in json.dumps(r.traj)
+
+
+@needs_harbor
+def test_guard_in_relay_covers_repairs_and_sticky_turns(tmp_path):
+    """relay_repair: the repair turn's bad Qwen reply is resampled by the guard (not --repair-attempts), the done_claim
+    takeover's bad confirmation reply is autofixed; the student path is unchanged."""
+    with Stack(tmp_path, router_args=REPAIR + ['--autofix'] + GUARD) as st:
+        st.teacher.script = [QWEN_UNFIXABLE, None, QWEN_BARE.replace('teacher-step 0', 'teacher-step 1')]
+        r = run_agent(st, 'autofix', tmp_path)
+        rows = _main_rows(st, r.sid)
+        assert rows[1]['autofix'] and rows[1]['owner'] == 'student' and 'teacher_guard' not in rows[1]
+        rep = next(x for x in rows if x.get('repair'))
+        assert rep['teacher_guard']['outcome'] == 'resampled_ok' and not rep.get('repair_rejected_replies')
+        assert rep['repair_reply_parse_error'] is None
+        take = next(x for x in rows if x.get('takeover'))
+        assert take['takeover']['trigger'] == 'done_claim' and take['teacher_guard']['outcome'] == 'autofix'
+        assert all(x['owner'] != 'student' or 'teacher_guard' not in x for x in rows)
+        _no_bad_format_in_trace(r, st, 'SCENARIO=autofix.')
+        assert 'UNPARSEABLE' not in json.dumps(r.traj)
+        assert st.router.counts['autofixes'] == 1 and st.router.counts['teacher_autofix'] == 1
+
+
+@needs_harbor
+def test_verify_note_on_the_done_claim_takeover_only(tmp_path):
+    """--verify-note: the done_claim takeover's confirmation request to Qwen ends with the replay's note; harbor's own
+    history, the student's requests and Qwen's later requests do not carry it."""
+    with Stack(tmp_path, router_args=REPAIR + ['--verify-note']) as st:
+        r = run_agent(st, 'done', tmp_path)
+        rows = _main_rows(st, r.sid)
+        take = next(x for x in rows if x.get('takeover'))
+        assert take['verify_note'] is True and take['request_kind'] == 'confirm'
+        tb = st.teacher_bodies('SCENARIO=done.')
+        assert tb[0]['messages'][-1]['content'].endswith('\n\n' + rr.VERIFY_NOTE)
+        assert rr.CONFIRM_MARK in tb[0]['messages'][-1]['content']
+        assert not any(rr.VERIFY_NOTE in fake_openai.text_of(m.get('content')) for b in tb[1:] for m in b['messages'])
+        assert not any(rr.VERIFY_NOTE in fake_openai.text_of(m.get('content'))
+                       for b in _student_bodies(st, 'SCENARIO=done.') for m in b['messages'])
+        assert rr.VERIFY_NOTE not in json.dumps(r.traj)
+        assert sum(1 for x in rows if x.get('verify_note')) == 1 and st.router.counts['verify_notes'] == 1
+    (tmp_path / 'b').mkdir()
+    with Stack(tmp_path / 'b', router_args=REPAIR) as st:                  # off by default
+        r = run_agent(st, 'done', tmp_path, tag='-0')
+        assert not any(rr.VERIFY_NOTE in fake_openai.text_of(m.get('content'))
+                       for b in st.teacher.requests for m in b['messages'])
+
+
+@needs_harbor
+def test_verify_note_in_control_on_terminus_confirmation(tmp_path):
+    with Stack(tmp_path, mode='teacher', router_args=['--verify-note']) as st:
+        r = run_agent(st, 'done', tmp_path)
+        rows = _main_rows(st, r.sid)
+        conf = [x for x in rows if x['request_kind'] == 'confirm']
+        assert conf and all(x.get('verify_note') for x in conf)
+        assert not any(x.get('verify_note') for x in rows if x['request_kind'] != 'confirm')
+        tb = [b for b in st.teacher_bodies('SCENARIO=done.') if rr.CONFIRM_MARK in b['messages'][-1]['content']]
+        assert tb and all(b['messages'][-1]['content'].endswith('\n\n' + rr.VERIFY_NOTE) for b in tb)
+
+
+def test_verify_note_text_is_the_replays():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('vn_replay', HERE.parent.parent / 'verify_note' / 'replay.py')
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    assert rr.VERIFY_NOTE == m.NOTE

@@ -47,9 +47,10 @@ def main():
                     a.check, '--gate', 'final', '--json', amended], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     r = json.load(open(amended if os.path.exists(amended) else os.path.join(a.check, 'readout.json')))
     o = r['relay_repair']
-    rows = readout.trials(os.path.join(a.check, 'jobs', f'{cname}_relay_repair'))
+    # both staggered harbor halves (<name>_<arm> and <name>_<arm>_p2), as readout.py reads them
+    rows = readout.arm_trials(a.check, cname, 'relay_repair')
     readout.mark_censored(readout.router_view(os.path.join(a.check, 'router_relay_repair')), rows)
-    ctl = readout.trials(os.path.join(a.run3, 'jobs', f'{rname}_control'))
+    ctl = readout.arm_trials(a.run3, rname, 'control')
     checks = []
 
     def check(name, ok, detail):
@@ -104,7 +105,8 @@ def main():
                paired_pass_vs_run3_control=pp,
                relay_pass=oc.get('pass_rate'), relay_pass_ci95=oc.get('pass_rate_ci95'),
                relay_episode_mean_s=round(statistics.mean(walls)) if walls else None,
-               autofixes=sum(1 for x in rv['recs'] if x.get('autofix')),
+               autofixes=sum(1 for x in rv['recs'] if x.get('autofix') and x.get('owner') == 'student'),
+               teacher_format=o.get('teacher_format'), format_by_model=fv.get('by_model'),
                repairs=(o.get('repair') or {}).get('repairs'),
                teacher_cut_at_cap=o['reasoning'].get('teacher_replies_cut_at_cap'),
                cap_retry_400_overflows=sum(1 for t in rows if t.get('cap_retry_400')),

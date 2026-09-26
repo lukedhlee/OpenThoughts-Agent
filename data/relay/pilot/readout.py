@@ -127,6 +127,18 @@ def trials(job_dir):
     return rows
 
 
+def arm_job_dirs(run_dir, name, arm):
+    """The harbor job dirs of one arm: <name>_<arm> and, when it exists, <name>_<arm>_p2 (the second staggered half,
+    STAGGER_SEC > 0, or the full run's phase-2 relay job)."""
+    return [d for d in (os.path.join(run_dir, 'jobs', f'{name}_{arm}'), os.path.join(run_dir, 'jobs', f'{name}_{arm}_p2'))
+            if os.path.isdir(d)]
+
+
+def arm_trials(run_dir, name, arm):
+    """trials() over every harbor job of the arm (both staggered halves)."""
+    return [t for d in arm_job_dirs(run_dir, name, arm) for t in trials(d)]
+
+
 def router_view(router_dir):
     recs = read_jsonl(os.path.join(router_dir, 'turns.jsonl'))
     events = read_jsonl(os.path.join(router_dir, 'events.jsonl'))
@@ -206,7 +218,10 @@ def harness_router(rv):
                 episodes_without_task=sum(1 for e in rv['eps'].values() if not e['task_id']),
                 done_claim_dropped=sum(e['done_claim_dropped'] for e in rv['eps'].values()),
                 retried_requests=sum(1 for r in recs if r.get('retry')),
-                bodies_missing=sum(1 for r in recs if r.get('upstream_status') is not None and not r.get('sent_body')))
+                # records the router answers itself (owner 'router': context_hard_end 400s, deadline / budget endings)
+                # send nothing upstream, so they have no body
+                bodies_missing=sum(1 for r in recs if r.get('upstream_status') is not None and not r.get('sent_body')
+                                   and r.get('owner') != 'router'))
 
 
 def reasoning_view(rv):
@@ -557,10 +572,47 @@ def repair_view(rv, rows):
 
 
 def format_validity(rows):
+    """What reached harbor: agent steps whose reply drew Terminus-2's parse-error re-prompt, overall and by the served
+    model of the step (snowball = the student, qwen38 = the teacher)."""
     steps = [s for t in rows for s in t['steps']]
     bad = sum(1 for s in steps if s['parse_error_obs'])
+    by = collections.defaultdict(lambda: [0, 0])
+    for s in steps:
+        by[s['model'] or 'unknown'][0] += 1
+        by[s['model'] or 'unknown'][1] += s['parse_error_obs']
     return dict(agent_steps=len(steps), followed_by_parse_error=bad,
-                valid_format_rate=round(1 - bad / len(steps), 4) if steps else None)
+                valid_format_rate=round(1 - bad / len(steps), 4) if steps else None,
+                by_model={m: dict(steps=n, followed_by_parse_error=b, valid_format_rate=round(1 - b / n, 4) if n else None)
+                          for m, (n, b) in sorted(by.items())})
+
+
+def teacher_format_view(rv):
+    """The router's teacher format guard (--teacher-format-guard): per teacher agent turn, whether the first sample
+    parsed, was autofixed, was resampled, or went to harbor unparseable; split by what kind of teacher turn it was.
+    Empty for runs without the guard (their teacher-side format is only visible through format_validity's by_model)."""
+    t = [r for r in rv['recs'] if r.get('owner') == 'teacher' and r.get('turn') is not None and r.get('teacher_guard')]
+    if not t:
+        return dict(guarded_turns=0)
+
+    def kind(r):
+        if r.get('request_kind') == 'confirm' and r.get('verify_note'):
+            return 'confirm_with_note'
+        return 'repair' if r.get('repair') else 'confirm' if r.get('request_kind') == 'confirm' else 'turn'
+    out = dict(guarded_turns=len(t), outcomes=dict(collections.Counter(r['teacher_guard']['outcome'] for r in t)),
+               first_sample_parse_errors=sum(1 for r in t if r['teacher_guard']['outcome'] not in ('ok',) and
+                                             not str(r['teacher_guard']['outcome']).startswith('http_')),
+               samples=sum(r['teacher_guard']['attempts'] for r in t),
+               autofix_kinds=dict(collections.Counter(r.get('autofix_kind') for r in t if r.get('autofix'))),
+               unfixable_reasons=dict(collections.Counter(u.split(':')[0] for r in t for u in r['teacher_guard'].get('unfixable', []))),
+               verify_notes=sum(1 for r in t if r.get('verify_note')))
+    out['first_sample_parse_error_rate'] = round(out['first_sample_parse_errors'] / len(t), 4)
+    by = collections.defaultdict(collections.Counter)
+    for r in t:
+        by[kind(r)][r['teacher_guard']['outcome']] += 1
+    out['by_turn_kind'] = {k: dict(n=sum(v.values()), first_ok=v['ok'],
+                                   first_parse_error_rate=round(1 - v['ok'] / sum(v.values()), 4), outcomes=dict(v))
+                           for k, v in sorted(by.items())}
+    return out
 
 
 def paired_pass(ctl_rows, rel_rows, seed=20260925, n_boot=10000):
@@ -619,8 +671,7 @@ def main():
     arms = {}
     for arm in arm_names:
         rv = router_view(os.path.join(a.run_dir, f'router_{arm}'))
-        rows = [] if a.gate == 'early' else trials(os.path.join(a.run_dir, 'jobs', f'{name}_{arm}')) + \
-            trials(os.path.join(a.run_dir, 'jobs', f'{name}_{arm}_p2'))     # the full run's phase-2 relay job
+        rows = [] if a.gate == 'early' else arm_trials(a.run_dir, name, arm)   # both staggered halves / phase 2
         mark_censored(rv, rows)
         arms[arm] = dict(rv=rv, rows=rows)
     out = dict(run=name, gate=a.gate, arms=arm_names)
@@ -636,7 +687,7 @@ def main():
                  episodes_seen=len(rv['eps']), main_turns=sum(len(e['main']) for e in rv['eps'].values()),
                  owners=collections.Counter(r.get('owner') for r in rv['recs'] if r.get('turn') is not None),
                  summarizations_per_episode=dict(sorted(summ.items())),
-                 throughput=throughput(rv, a.run_dir, nodes),
+                 throughput=throughput(rv, a.run_dir, nodes), teacher_format=teacher_format_view(rv),
                  student_think_modes=sorted({r.get('student_think') for r in rv['recs'] if r.get('student_think')}))
         if arm in RELAY_ARMS:
             o['student'] = student_view(rv)
@@ -798,6 +849,12 @@ def main():
                   f"(n {rc['scored']}) vs other takeovers {ro['recovery']} {ro['recovery_ci95']} (n {ro['scored']}); "
                   f"hard ends {cb['hard_ends']}; overflows {cb['overflows']} ({cb['overflows_from_hard_end']} hard ends)",
                   file=sys.stderr)
+    for arm in arm_names:
+        tf = out[arm].get('teacher_format') or {}
+        if tf.get('guarded_turns'):
+            print(f"{arm} teacher format guard: {tf['guarded_turns']} teacher turns, first sample failed Terminus-2's parser "
+                  f"in {tf['first_sample_parse_errors']} ({tf['first_sample_parse_error_rate']}); outcomes {tf['outcomes']}; "
+                  f"verify notes {tf['verify_notes']}", file=sys.stderr)
     if out.get('verdict'):
         print('VERDICT: ' + out['verdict'], file=sys.stderr)
     sys.exit(0 if all(c['ok'] for c in checks) else 1)

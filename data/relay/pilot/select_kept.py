@@ -67,8 +67,7 @@ def stalled(e, t):
 
 def arm_rows(run_dir, name, arm, timeouts='all'):
     rv = readout.router_view(os.path.join(run_dir, f'router_{arm}'))
-    rows = readout.trials(os.path.join(run_dir, 'jobs', f'{name}_{arm}')) + \
-        readout.trials(os.path.join(run_dir, 'jobs', f'{name}_{arm}_p2'))
+    rows = readout.arm_trials(run_dir, name, arm)       # both staggered halves / phase 2
     readout.mark_censored(rv, rows)
     eps = {e['sid']: e for e in rv['eps'].values()}
     out = []

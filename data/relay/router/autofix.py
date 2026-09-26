@@ -19,9 +19,19 @@ What is recovered (the action), in this order:
      a Terminus-2 object (any of analysis / plan / commands / task_complete), bare command objects, or tool-call
      shaped objects; several bare command objects -> the commands list.
   3. otherwise exactly one ```bash / ```sh block -> keystrokes = its text + "\\n".
+Qwen3.8's own tool-call shapes (the teacher format guard, 2026-09-26; seen in the verify-note replay), tried before
+the inner objects of 1 and 2 so the action's analysis / plan / task_complete survive:
+  * bare keys: the Terminus-2 keys written without the outer braces, often after `<function=` or `<`
+    (`<tool_call> "analysis": .., "commands": [..]`) -> the object with braces added;
+  * an unclosed object (`{"commands": [..]` then `</parameter>` / `</|end_think|>`): trailing tags dropped, the missing
+    brackets closed (never inside an open string);
+  * XML calls with no JSON at all: `<function=keystrokes>CMD</parameter>`, `<function=bash><parameter=command>CMD`;
+  * a Terminus-2 object split in two top-level objects with disjoint keys (analysis in one, plan + commands in the
+    next) -> merged.
 Unfixable (the teacher repairs): the reply ended inside its thinking; it was truncated (finish_reason length); no
 action at all; an action whose JSON does not parse even leniently; two or more bash blocks with no JSON action; the
-kept thinking itself holds a brace pair that Terminus-2's parser would read first (thinking_holds_json).
+kept thinking itself holds a brace pair that Terminus-2's parser would read first (thinking_holds_json); a command
+("keystrokes") outside every object that parses, which would run only a subset of the action (json_command_lost).
 Every rewrite is checked with the same strict parser, and its commands must equal the recovered ones.
 """
 import json
@@ -128,6 +138,88 @@ def obj_commands(o):
     return None
 
 
+KEY_RE = re.compile(r'"(analysis|plan|commands|task_complete|keystrokes)"\s*:')
+TRAIL_TAGS_RE = re.compile(r'(\s*</?[A-Za-z|][^<>]{0,40}>)+\s*$')
+XML_FN_RE = re.compile(r'<function=([\w.-]+)>')
+XML_PARAM_RE = re.compile(r'<parameter(?:=|\s+name=")([\w-]+)"?>(.*?)(?=</parameter>|<parameter[\s=]|</function>|\Z)', re.S)
+
+
+def close_json(s):
+    """s (an object's text, perhaps cut short) with its open brackets closed, or None when it ends inside a string."""
+    stack, in_str, esc = [], False, False
+    for ch in s:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == '\\':
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in '{[':
+            stack.append('}' if ch == '{' else ']')
+        elif ch in '}]':
+            if not stack or stack.pop() != ch:
+                return None
+    if in_str:
+        return None
+    return s.rstrip().rstrip(',') + ''.join(reversed(stack))
+
+
+def salvage_object(text):
+    """Qwen's broken Terminus-2 objects: bare keys (no outer braces) or an unclosed object. The dict, or None."""
+    t = TRAIL_TAGS_RE.sub('', text)
+    t = re.sub(r'<function=(?=(?:analysis|plan|commands|task_complete|keystrokes)")', '"', t)   # <function=analysis": ..
+    k = KEY_RE.search(t)
+    b = t.find('{')
+    if k and (b == -1 or k.start() < b):
+        cand = '{' + t[k.start():]
+    elif b != -1:
+        cand = t[b:]
+    else:
+        return None
+    dec = json.JSONDecoder(strict=False)
+    for c in (cand, close_json(cand)):
+        if not c:
+            continue
+        try:
+            o, end = dec.raw_decode(c)
+        except json.JSONDecodeError:
+            continue
+        rest = c[end:]
+        if '{' in rest or KEY_RE.search(rest):
+            continue            # only a prefix decoded (e.g. the first of several commands): not this object
+        if isinstance(o, dict) and obj_commands(o) is not None:
+            return o
+    return None
+
+
+def xml_call(block):
+    """`<function=NAME>` with `<parameter=K>V` / `<parameter name="K">V` (Qwen's XML tool calls), no JSON. A command
+    object for obj_commands, or None. `<function=keystrokes>CMD` takes the text before the first parameter as CMD."""
+    m = XML_FN_RE.search(block)
+    if not m:
+        return None
+    name = m.group(1)
+    params = {k: v.strip() for k, v in XML_PARAM_RE.findall(block)}
+    head = re.split(r'</parameter>|<parameter[\s=]|</function>', block[m.end():], maxsplit=1)[0].strip()
+    o = {}
+    if name in ('keystrokes', 'command', 'bash', 'shell', 'terminal'):
+        cmd = params.get('keystrokes') or params.get('command') or params.get('cmd') or head
+        if cmd:
+            o['keystrokes' if name == 'keystrokes' or 'keystrokes' in params else 'command'] = \
+                cmd if cmd.endswith('\n') else cmd + '\n'
+            if params.get('duration'):
+                try:
+                    o['duration'] = float(params['duration'])
+                except ValueError:
+                    pass
+    elif name.lower() in ('finish', 'submit', 'task_complete', 'mark_task_complete'):
+        o['name'] = name
+    return o if o and obj_commands(o) is not None else None
+
+
 def recover(body):
     """(commands, meta, kind, prose_before) or an Unfixable reason string."""
     blocks = [b for b in TOOL_RE.findall(body) if b.strip()]
@@ -136,6 +228,23 @@ def recover(body):
         cmds, meta, shapes = [], {}, []
         for b in blocks:
             objs = json_objects(b)
+            k, br = KEY_RE.search(b), b.find('{')
+            if (k and (br == -1 or k.start() < br)) or (objs and objs[0][2] is None):
+                o = salvage_object(b)          # bare keys, or an unclosed first object
+                if o is not None:
+                    r = obj_commands(o)
+                    cmds += r[0]
+                    meta = {**r[1], **meta}
+                    shapes.append('salvaged_' + r[2])
+                    continue
+            if not objs:
+                o = xml_call(b)
+                if o is not None:
+                    r = obj_commands(o)
+                    cmds += r[0]
+                    meta = {**r[1], **meta}
+                    shapes.append('xml')
+                    continue
             if not objs or objs[0][2] is None:
                 return 'tool_call_json_unparseable'
             for _, _, o in objs:          # several objects in one block: each must be a command
@@ -152,7 +261,22 @@ def recover(body):
         kind = ('tool_calls_to_list' if len(shapes) > 1 else 'tool_call_' + shapes[0].replace('tool_call_', ''))
         return cmds, meta, kind, body[:first]
     objs = json_objects(body)
+    if objs and objs[0][2] is None:
+        o = salvage_object(body[objs[0][0]:])     # an unclosed Terminus-2 object (its inner objects would lose its keys)
+        if o is not None and obj_commands(o)[2] == 'terminus_object':
+            cmds, meta, _ = obj_commands(o)
+            return cmds, meta, 'json_salvaged_object', body[:objs[0][0]]
     parsed = [(s, o) for s, e, o in objs if o is not None and obj_commands(o) is not None]
+    spans = [(s, e) for s, e, o in objs if o is not None]
+    if parsed and any(not any(s <= m.start() < e for s, e in spans) for m in re.finditer(r'"keystrokes"', body)):
+        return 'json_command_lost'                 # a command sits in text that does not parse: never run a subset
+    if (len(parsed) > 1 and all(obj_commands(o)[2] == 'terminus_object' for _, o in parsed)
+            and sum(len(o) for _, o in parsed) == len(set().union(*(o.keys() for _, o in parsed)))):
+        merged = {}                                # one Terminus-2 object split in two (disjoint keys)
+        for _, o in parsed:
+            merged.update(o)
+        cmds, meta, _ = obj_commands(merged)
+        return cmds, meta, 'json_split_object', body[:parsed[0][0]]
     if parsed:
         cmds, meta, shapes = [], {}, []
         for s, o in parsed:

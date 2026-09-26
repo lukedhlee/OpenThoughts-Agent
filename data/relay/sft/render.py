@@ -13,6 +13,8 @@ Loss (per token, 1 = trained):
     tokenizer, 09-21's eval per-turn output limit (Luke 2026-09-25 21:15 PT; the same rule in both arms). A cut or
     over-long turn's whole span is masked, end marker included: a truncated prefix followed by <|end_think|> would
     teach abrupt stops;
+  * teacher turn rewritten by the router's format guard (autofix=True on its record, 2026-09-26): the same rule as an
+    autofixed student turn: the rewritten action (content + <|eot_id|>) is trained, its reasoning span never;
   * student turn: masked, except an autofixed one (label autofix=True): with autofix_loss='content' (default) its
     rewritten action/format (content + <|eot_id|>) is trained, never its reasoning; 'none' masks it;
   * router turns (budget endings), system header and user turns: masked.
@@ -92,8 +94,8 @@ def render_episode(traj, records, tok, template, bos, autofix_loss='content', ca
             messages.append(dict(role='assistant', content=shown))
             n_think = len(tok.encode(r_full, add_special_tokens=False).ids) if r_full else 0
             info.append(dict(i=i, owner='teacher', repair=m['repair'], cut_at=at, reasoning_chars=len(r_full),
-                             reasoning_tokens=n_think, has_reasoning=bool(r_full),
-                             think_trained=bool(r_full) and at is None and n_think <= think_limit))
+                             reasoning_tokens=n_think, has_reasoning=bool(r_full), autofix=m['autofix'],
+                             think_trained=bool(r_full) and at is None and n_think <= think_limit and not m['autofix']))
         else:
             messages.append(dict(role=role, content=text))
             if role == 'assistant':
@@ -134,7 +136,8 @@ def check_row(row, tok):
     """Assert the mask rules on a rendered row; returns a dict of counts."""
     text, ids, loss = row['text'], row['ids'], row['loss']
     start_id, end_id, eot_id = (tok.token_to_id(x) for x in (START, END, EOT))
-    counts = dict(teacher_turns=0, cut_turns=0, long_think_masked=0, autofix_turns=0, trained_tokens=sum(loss))
+    counts = dict(teacher_turns=0, cut_turns=0, long_think_masked=0, autofix_turns=0, teacher_autofix_turns=0,
+                  trained_tokens=sum(loss))
     for m in row['turns']:
         s, e = m['span']
         toks = [k for k, (a, b) in enumerate(row['offsets']) if a >= s and b <= e]
@@ -144,9 +147,11 @@ def check_row(row, tok):
             assert toks and loss[toks[-1]] == 1 and ids[toks[-1]] == eot_id, 'teacher <|eot_id|> must be trained'
             think = [k for k in toks if row['offsets'][k][1] <= m['think_end']]
             counts['cut_turns'] += m['cut_at'] is not None
-            counts['long_think_masked'] += m['cut_at'] is None and bool(think) and not m['think_trained']
+            counts['teacher_autofix_turns'] += bool(m.get('autofix'))
+            counts['long_think_masked'] += (m['cut_at'] is None and bool(think) and not m['think_trained']
+                                            and not m.get('autofix'))
             if think and not m['think_trained']:
-                assert not any(loss[k] for k in think), 'a cut or over-long reasoning span (markers included) is masked'
+                assert not any(loss[k] for k in think), 'a cut, over-long or autofixed reasoning span (markers included) is masked'
                 assert any(ids[k] == end_id for k in think)
             elif think:
                 assert all(loss[k] for k in think), 'an uncut teacher reasoning span within the limit is trained'
@@ -186,7 +191,9 @@ def main():
     out = open(a.out, 'w') if a.out else None
     stats = collections.Counter()
     lens = []
-    for tj in sorted(glob.glob(os.path.join(a.run_dir, 'jobs', f'{name}_{a.arm}', '*', '**', 'agent', 'trajectory.json'), recursive=True)):
+    tjs = [tj for d in readout.arm_job_dirs(a.run_dir, name, a.arm)       # both staggered halves (<arm>, <arm>_p2)
+           for tj in glob.glob(os.path.join(d, '*', '**', 'agent', 'trajectory.json'), recursive=True)]
+    for tj in sorted(tjs):
         traj = json.load(open(tj))
         sid = traj.get('session_id')
         if sid not in recs:
@@ -208,6 +215,7 @@ def main():
         stats['think_trained_turns'] += sum(1 for m in row['turns'] if m.get('think_trained'))
         stats['teacher_turns'] += c['teacher_turns']
         stats['autofix_turns'] += c['autofix_turns']
+        stats['teacher_autofix_turns'] += c['teacher_autofix_turns']
         lens.append(row['n_tokens'])
         if out:
             out.write(json.dumps(dict(sid=sid, n_tokens=row['n_tokens'], fits=row['fits'], ids=row['ids'],

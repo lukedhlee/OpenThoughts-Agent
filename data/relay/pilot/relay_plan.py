@@ -45,14 +45,14 @@ def main():
     bname = os.path.basename(os.path.normpath(a.baseline))
     meta = dict(l.strip().split('=', 1) for l in open(os.path.join(a.baseline, 'run.meta')) if '=' in l)
     base_nh = float(meta['node_hours']) if a.spent is None else a.spent
-    rows = readout.trials(os.path.join(a.baseline, 'jobs', f'{bname}_control'))
+    rows = readout.arm_trials(a.baseline, bname, 'control')
     readout.mark_censored(readout.router_view(os.path.join(a.baseline, 'router_control')), rows)
     solved = sorted({t['task'] for t in rows if readout.usable(t) and readout.is_pass(t)})
     open(a.out_tasks, 'w').write(''.join(t + '\n' for t in solved))
     dec = json.load(open(a.check_decision))
     cname = os.path.basename(os.path.normpath(a.check))
-    chk = readout.trials(os.path.join(a.check, 'jobs', f'{cname}_relay_repair'))
-    r3 = readout.trials(os.path.join(a.run3, 'jobs', f'{os.path.basename(os.path.normpath(a.run3))}_control'))
+    chk = readout.arm_trials(a.check, cname, 'relay_repair')
+    r3 = readout.arm_trials(a.run3, os.path.basename(os.path.normpath(a.run3)), 'control')
     pp = readout.paired_pass(r3, chk)
     p = pp['both_pass'] / max(1, pp['both_pass'] + pp['control_only'])
     real_fail = 1.0   # every non-pass on a scored episode is a real failure; harness errors are budgeted below
