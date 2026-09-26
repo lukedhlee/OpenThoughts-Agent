@@ -31,6 +31,62 @@ It produces two SFT arms of about 2,000 kept traces each, 1:1 pass:fail:
   overflow above 20 % after 200 episodes, which costs about 7–9 node-hours if it fires).
 - **Nothing is submitted.**
 
+## Check run result, corrected (19:30 PT): FAIL on C2, overflow 49 %; the relay stays on HOLD
+
+**The first decision was wrong.** It scored the 40 episodes that ended on the cap-retry 400 as harness errors. That
+failed C1 and dropped them from C2's denominator. Scored as the overflows they are:
+- **C1 passes:** 8 harness errors in 100 trials; 99.35 % of the executed trace is valid format.
+- **C2 fails: 45 of 92 scored episodes overflowed (49 %).**
+- **C3 passes:** the student owns 72 % of executed turns.
+- **C4 passes:** recovery after takeover 0.65.
+- **C5 passes:** relay − control = −0.06, CI [−0.17, +0.06], paired over 89 tasks.
+- **Relay pass rate:** 0.50, CI [0.40, 0.60].
+
+**What fills the 64k.** Measured at the last request, overflowed vs other episodes.
+
+| | overflowed (45) | other (47) |
+|---|---|---|
+| turns per episode | 25.6 | 16.0 |
+| repairs per episode | 5.4 | 4.2 |
+| autofixes per episode | 2.6 | 1.9 |
+| takeover share | 0.22 | 0.51 |
+| student view total | 41.1k | 18.3k |
+| · terminal output | 18.0k | 8.5k |
+| · 09-21 visible | 8.5k | 3.5k |
+| · 09-21 reasoning | 5.7k | 1.7k |
+| · Qwen reasoning, as shown (capped) | 5.4k | 2.2k |
+| · Qwen visible | 2.6k | 1.5k |
+| · prompt | 1.0k | 0.9k |
+| teacher view total | 50.6k | 27.7k |
+| · Qwen reasoning, older (full) | 11.7k | 7.5k |
+| · Qwen reasoning, latest | 4.8k | 0.5k |
+
+**Where the overflowed episodes ended.** 40 of 45 ended on a teacher request, which vLLM rejected because prompt +
+the 16,384 reply cap > 65,536. The teacher's prompt was at least 49,154 tokens there. Harbor's own guard ended 5.
+
+**Why the fixes did not move it** (run 3 was 44 %).
+- **The cap only shrinks the student's view.** Qwen's older reasoning drops from 11.7k to 5.4k there. But the
+  teacher's own request is not capped, and it is the one that fails.
+- **Harbor's guard counts the owner's view.** During repairs that is the student's view, about 41k. So the guard does
+  not trip before the teacher's larger request (about 50k) meets the 16k reply cap.
+- **Terminal output is the largest component,** about 44 % of the context. No fix touches it.
+- **The overflowed episodes are long student episodes that never hand off:** 25.6 turns, and only 22 % reach a
+  takeover. Repairs keep the student going until the context is full.
+- With the fixed router (88a4b3b8, `max_tokens` dropped when the cap does not fit), those 40 would have run on with
+  about 15k of room. How many would then finish is unmeasured.
+
+**Yield if overflow is accepted.**
+- On the tasks run 3's control solved (the stand-in for "baseline-solvable"), relay episodes pass 33/49 = 0.67.
+  **Every one of the 16 failures is an overflow.** Kept 1:1 failures would therefore all be truncated,
+  context-full episodes.
+- Projection, assuming about 1,100 solvable tasks from the baseline (it has passed 92 of 144 scored so far, and 272
+  tasks lost to start timeouts are not in it):
+  - 3 rollouts per task, about 3,300 relay episodes;
+  - about 1,960 kept (980 passes + 980 overflow failures);
+  - about 2.7 h of wall time on 8 nodes, about 22 node-hours;
+  - **about 90 kept relay traces per relay node-hour;**
+  - about 32–33 node-hours in total with the baseline, inside 42.
+
 ## Check run result (job 2037164, 18:19–19:10 PT, 1.62 node-hours): FAIL on C1, so the relay was not launched
 
 **Verdict: FAIL.** The only failing check is C1: harness errors on 48 % of trials, against a limit of 10 %. 40 of the
