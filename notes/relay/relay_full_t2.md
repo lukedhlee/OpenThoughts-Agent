@@ -31,6 +31,24 @@ It produces two SFT arms of about 2,000 kept traces each, 1:1 pass:fail:
   overflow above 20 % after 200 episodes, which costs about 7–9 node-hours if it fires).
 - **Nothing is submitted.**
 
+## Check run (Luke's go, 18:25 PT): pass rule, pre-registered before its job starts
+
+**What.** relay_repair only, on the pilot's 100 tasks, with every fix on: autofix, the reasoning cap, the 16k Qwen
+reply cap, the paused student clock, no summarization, 64k. It uses 1 × 09-21 + 1 × Qwen on `-A transfernetx`,
+paired with run 3's control. Expected about 2.4 node-hours; hard ceiling 3.0 (`--time 1:30` × 2 nodes). Decided by
+`check_decide.py`.
+
+**It PASSES only if all five hold:**
+- **C1, harness gate as before:** H0, H1 (router and trials), H2, H3 (agent turns), H4, and H5 (the executed trace is
+  at least 99 % valid format).
+- **C2:** relay context overflow in at most 20 % of scored relay episodes.
+- **C3 (S2):** the student owns at least 50 % of executed turns. Autofixed turns count as the student's.
+- **C4 (S4):** recovery after a sticky takeover is at least 0.20.
+- **C5:** the relay pass rate is not below run 3's control by more than 15 points, paired by task.
+
+**PASS** → the 12-node full run launches at once from the staged kit: ceiling 42 node-hours, with the in-run overflow
+cancel kept as a backstop. **FAIL on any check** → no launch, and a report of the failing check with its numbers.
+
 **Pool: 2,043 tasks** (`data/relay/pilot/full_pool.txt`). That is the 2,457 Daytona-covered CalibForge tasks, minus
 the 300 held-out tasks, minus 114 tasks with agent budgets above 1,800 s. There are no duplicate instructions. The
 pilot's 100 tasks are included.
