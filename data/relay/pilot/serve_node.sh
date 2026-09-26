@@ -15,33 +15,20 @@ ROLE=${1:?student|teacher}
 # submission, job 2033358, lost both teacher nodes this way). A server that dies BEFORE its /health answers is started
 # again, up to START_TRIES times; once healthy, it is never restarted (a mid-run death ends the job, as before).
 START_TRIES=${START_TRIES:-6}
-serve() {  # serve <vllm args...>
-  local try rc pid
+serve() {  # serve <vllm args...>   (PORT env, default 8000)
+  local try rc pid port=${PORT:-8000}
   for try in $(seq 1 $START_TRIES); do
     "$@" & pid=$!
     while kill -0 $pid 2>/dev/null; do
-      curl -sf --max-time 5 localhost:8000/health >/dev/null && { echo "serve_node: healthy on try $try"; wait $pid; exit $?; }
+      curl -sf --max-time 5 localhost:$port/health >/dev/null && { echo "serve_node: port $port healthy on try $try"; wait $pid; exit $?; }
       sleep 10
     done
     wait $pid; rc=$?
-    echo "serve_node: server exited with $rc before it was healthy (try $try of $START_TRIES)"
-    pkill -u $USER -f "vllm.entrypoints.openai.api_server" 2>/dev/null; sleep 20
+    echo "serve_node: port $port server exited with $rc before it was healthy (try $try of $START_TRIES)"
+    sleep 20
   done
   exit 1
 }
-module load GCC/14.3.0
-module load nvidia-compilers/25.9-CUDA-13
-C=/e/project1/transfernetx/lee27/code
-PY=$C/envs/snowball-v2/bin/python
-export PYTHONPATH=$C/src/marin_vllm_eagle3${PYTHONPATH:+:$PYTHONPATH}   # the EAGLE-3 overlay shadows the venv's vllm
-export PATH=$C/envs/snowball-v2/bin:$PATH
-export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-export OMP_NUM_THREADS=8
-export VLLM_USE_FLASHINFER_SAMPLER=0
-export VLLM_ALLREDUCE_USE_SYMM_MEM=0
-CACHE=/e/fscratch/reformo/lee27/cache; mkdir -p $CACHE/vllm $CACHE/xdg $CACHE/triton $CACHE/inductor $CACHE/flashinfer $CACHE/tmp
-export VLLM_CACHE_ROOT=$CACHE/vllm XDG_CACHE_HOME=$CACHE/xdg TRITON_CACHE_DIR=$CACHE/triton TORCHINDUCTOR_CACHE_DIR=$CACHE/inductor FLASHINFER_WORKSPACE_BASE=$CACHE/flashinfer TMPDIR=$CACHE/tmp
 echo "serve_node $ROLE on $(hostname) job=$SLURM_JOB_ID step=$SLURM_STEP_ID ($(date -Is))"
 nvidia-smi --query-gpu=name,memory.total --format=csv
 case $ROLE in
@@ -63,11 +50,19 @@ case $ROLE in
     MODEL=${TEACHER_MODEL:-/e/data1/mmlaion/lee27/models/Qwen3.8-27B}
     [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
     $PY -c "import torchvision, vllm.model_executor.models.qwen3_5; print('torchvision', torchvision.__version__, 'qwen3_5 import ok')" || { echo "qwen3_5 import failed"; exit 1; }
-    serve $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name qwen38 --port 8000 \
-      --tensor-parallel-size 1 --data-parallel-size 4 \
-      --max-model-len ${TEACHER_MAXLEN:-65536} --gpu-memory-utilization 0.90 --max-num-seqs 96 \
-      --enable-prefix-caching --enable-chunked-prefill --no-enable-log-requests \
-      --speculative-config '{"method":"mtp","num_speculative_tokens":2}' \
-      --reasoning-parser qwen3;;
+    QARGS=(--model "$MODEL" --served-model-name qwen38 --tensor-parallel-size 1
+      --max-model-len ${TEACHER_MAXLEN:-65536} --gpu-memory-utilization 0.90 --max-num-seqs 96
+      --enable-prefix-caching --enable-chunked-prefill --no-enable-log-requests
+      --speculative-config '{"method":"mtp","num_speculative_tokens":2}' --reasoning-parser qwen3)
+    if [ "${PER_GPU:-0}" = 1 ]; then
+      # one server per GPU (TP1, DP1, ports 8000-8003): the router balances episodes across all of them itself; a DP4
+      # server spread its load unevenly over its engines (2026-09-26 diagnosis: busy engines at 85-95 % KV with 10-19
+      # waiting while siblings idled)
+      for g in 0 1 2 3; do
+        ( export CUDA_VISIBLE_DEVICES=$g PORT=$((8000 + g)); VLLM_PORT=$((29500 + 100 * g)) serve $PY -m vllm.entrypoints.openai.api_server "${QARGS[@]}" --port $((8000 + g)) ) &
+      done
+      wait; exit 1
+    fi
+    serve $PY -m vllm.entrypoints.openai.api_server "${QARGS[@]}" --port 8000 --data-parallel-size 4;;
   *) echo "ROLE must be student or teacher"; exit 2;;
 esac

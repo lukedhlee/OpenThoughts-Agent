@@ -804,3 +804,30 @@ def test_render_masks_uncut_reasoning_over_the_think_limit(tmp_path):
         assert c['cut_turns'] == len(t) - 1 and c['long_think_masked'] == 1 and not any(m['think_trained'] for m in t)
         wide = render.render_episode(r.traj, st.turns(r.sid), tok, tpl, '<|begin_of_text|>', cap=20, think_limit=10 ** 6)
         assert render.check_row(wide, tok)['long_think_masked'] == 0 and sum(wide['loss']) > sum(row['loss'])
+
+
+
+def test_active_balance_and_engine_metrics(tmp_path):
+    """--balance active: a new episode goes to the server with the fewest ACTIVE episodes (finished ones drop out);
+    --engine-metrics logs each server's KV / running / waiting."""
+    import time as _t
+    with Stack(tmp_path, mode='teacher', two_teachers=True,
+               router_args=['--balance', 'active', '--active-window', '100', '--engine-metrics']) as st:
+        rt_ = st.router
+        u0, u1 = rt_.urls['teacher']
+
+        def ep(sid, url, age):
+            e = rr.Episode(sid, 0, 'x', None, 'teacher')
+            e.pinned['teacher'] = url
+            e.last_t = _t.time() - age
+            rt_.episodes[sid] = e
+            return e
+        for i in range(3):
+            ep(f'old{i}', u0, 1000)          # finished long ago: not active
+        ep('a', u1, 5)                       # active on server 1
+        new = rr.Episode('new', 0, 'x', None, 'teacher')
+        assert rt_.pick('teacher', new) == u0      # server 0 has 0 active (3 pinned), server 1 has 1
+        st.run(rt_.log_engines())
+        rows = [json.loads(l) for l in (st.log_dir / 'engines.jsonl').read_text().splitlines()]
+        assert {r['url'] for r in rows} == {u0, u1}
+        assert all(r['kv'] == 0.42 and r['running'] == 3.0 and r['waiting'] == 1.0 for r in rows)

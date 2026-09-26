@@ -494,7 +494,15 @@ class Router:
             cur = ep.pinned.get(who)
             if cur in act:
                 return cur
-            u = min(act, key=lambda x: (self.pinned_count[x], act.index(x)))
+            if self.a.balance == 'active':
+                # least-loaded by ACTIVE episodes: pinned there and seen within --active-window s (finished episodes
+                # drop out, unlike the pinned count)
+                now = time.time()
+                load = collections.Counter(e.pinned.get(who) for e in self.episodes.values()
+                                           if e is not ep and now - e.last_t < self.a.active_window)
+                u = min(act, key=lambda x: (load[x], self.inflight[x], act.index(x)))
+            else:
+                u = min(act, key=lambda x: (self.pinned_count[x], act.index(x)))
             if cur is not None:
                 self.pinned_count[cur] -= 1
                 self.counts['repinned'] += 1
@@ -502,6 +510,32 @@ class Router:
             self.pinned_count[u] += 1
             return u
         return min(act, key=lambda x: (self.inflight[x], act.index(x)))
+
+    async def log_engines(self):
+        """Per-engine KV usage / running / waiting from each server's Prometheus /metrics, one line per engine per
+        status tick (default 60 s) to engines.jsonl, with the episodes pinned there and active."""
+        now = time.time()
+        rows = []
+        for who in self.need:
+            for u in self.urls[who]:
+                row = dict(ts=now, who=who, url=u, inflight=self.inflight[u],
+                           active_episodes=sum(1 for e in self.episodes.values()
+                                               if e.pinned.get(who) == u and now - e.last_t < self.a.active_window))
+                try:
+                    async with self.http.get(re.sub(r'/v1$', '', u) + '/metrics', timeout=ClientTimeout(total=10)) as r:
+                        txt = await r.text()
+                    for name, key in (('kv', r'vllm:(?:kv_cache_usage_perc|gpu_cache_usage_perc)'),
+                                      ('running', r'vllm:num_requests_running'), ('waiting', r'vllm:num_requests_waiting'),
+                                      ('prefix_hits', r'vllm:prefix_cache_hits_total'), ('prefix_queries', r'vllm:prefix_cache_queries_total')):
+                        vals = [float(m.group(1)) for m in re.finditer(r'^' + key + r'(?:\{[^}]*\})?\s+([0-9.eE+-]+)', txt, re.M)]
+                        if vals:
+                            row[name] = max(vals) if name == 'kv' else sum(vals)
+                except Exception as e:  # noqa: BLE001
+                    row['error'] = repr(e)[:120]
+                rows.append(row)
+        with open(os.path.join(self.a.log_dir, 'engines.jsonl'), 'a') as f:
+            for r in rows:
+                f.write(json.dumps(r) + '\n')
 
     def reload_teacher_urls(self):
         """--teacher-url-file: the driver edits the list to drain servers before releasing their nodes."""
@@ -936,6 +970,10 @@ def parse_args(argv=None):
     p.add_argument('--teacher-max-tokens', type=int, default=None,
                    help='max_tokens on every teacher request (reasoning + content); a reply cut there is logged as '
                         'teacher_cut_at_cap. Dropped (context remainder, below the cap) when the cap would not fit.')
+    p.add_argument('--balance', choices=['pinned', 'active'], default='pinned',
+                   help='new episodes go to the server with the fewest pinned episodes (pinned) or the fewest ACTIVE ones')
+    p.add_argument('--active-window', type=float, default=600.0, help='an episode counts as active this long after its last request')
+    p.add_argument('--engine-metrics', action='store_true', help='log per-engine KV/running/waiting to engines.jsonl every tick')
     p.add_argument('--pause-model-calls', action='store_true',
                    help="every model call (student and teacher) stops the episode's budget clock while it is in flight")
     p.add_argument('--report-max-model-len', type=int, default=None,
@@ -1016,6 +1054,8 @@ async def serve(a, ready_event=None):
                 pass
             router.snapshot()
             router.reload_teacher_urls()
+            if a.engine_metrics:
+                await router.log_engines()
             print(router.status_line(), flush=True)
     finally:
         router.snapshot()

@@ -40,7 +40,9 @@ done
 TPIDS=(); TURLS=()
 for k in "${!TNS[@]}"; do
   srun --nodes=1 --ntasks=1 --overlap --cpu-bind=none --gres=gpu:4 --cpus-per-task=72 -w "${TNS[$k]}" bash $HERE/serve_node.sh teacher > $LOGS/serve_teacher${k}_$SLURM_JOB_ID.log 2>&1 &
-  TPIDS+=($!); TURLS+=("http://${TNS[$k]}.jupiter.internal:8000/v1")
+  TPIDS+=($!)
+  if [ "${PER_GPU:-0}" = 1 ]; then for g in 0 1 2 3; do TURLS+=("http://${TNS[$k]}.jupiter.internal:$((8000 + g))/v1"); done
+  else TURLS+=("http://${TNS[$k]}.jupiter.internal:8000/v1"); fi
 done
 die() { echo "DEAD: $* ($(date -Is))"; echo "$*" > $EP/$SLURM_JOB_ID.DEAD; rm -f $EP/$SLURM_JOB_ID.student $EP/$SLURM_JOB_ID.teacher
         kill "${SPIDS[@]}" "${TPIDS[@]}" 2>/dev/null; scancel $SLURM_JOB_ID; exit 1; }

@@ -112,11 +112,17 @@ class FakeServer:
         app.router.add_get('/v1/models', self.models)
         app.router.add_post('/v1/chat/completions', self.chat)
         app.router.add_post('/tokenize', self.tokenize)
+        app.router.add_get('/metrics', self.metrics)
         return app
 
     async def models(self, request):
         return web.json_response({'object': 'list', 'data': [
             {'id': self.model, 'object': 'model', 'max_model_len': self.max_model_len}]})
+
+    async def metrics(self, request):
+        return web.Response(text=f'vllm:kv_cache_usage_perc{{engine="0",model_name="{self.model}"}} 0.42\n'
+                                 f'vllm:num_requests_running{{engine="0",model_name="{self.model}"}} 3.0\n'
+                                 f'vllm:num_requests_waiting{{engine="0",model_name="{self.model}"}} 1.0\n')
 
     async def tokenize(self, request):
         body = await request.json()

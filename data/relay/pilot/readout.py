@@ -247,6 +247,35 @@ def student_view(rv):
     return dict(student_replies=len(s), with_think_markers=marks, think_marker_frac=round(marks / len(s), 4) if s else None)
 
 
+def throughput(rv, run_dir, nodes):
+    """Teacher latency p50/p90 per 10-minute bucket, turns per serving node per hour over the active period, and
+    per-engine KV / waiting maxima from engines.jsonl."""
+    main = sorted((r for r in rv['recs'] if r.get('turn') is not None and r.get('upstream_status') == 200), key=lambda r: r['ts'])
+    out = {}
+    if main:
+        t0, t1 = main[0]['ts'], main[-1]['ts']
+        hours = max(1e-9, (t1 - t0) / 3600)
+        out['turns'] = len(main)
+        out['active_hours'] = round(hours, 2)
+        if nodes:
+            out['turns_per_node_hour'] = round(len(main) / (nodes * hours))
+        buckets = collections.defaultdict(list)
+        for r in main:
+            if r.get('owner') == 'teacher':
+                buckets[int((r['ts'] - t0) // 600)].append(r['latency_sec'])
+        out['teacher_latency_by_10min'] = {f'{10 * k}-{10 * k + 10} min': [len(v), q(v, .5), q(v, .9)] for k, v in sorted(buckets.items())}
+    eng = collections.defaultdict(list)
+    for p in glob.glob(os.path.join(run_dir, 'router_*', 'engines.jsonl')):
+        for e in read_jsonl(p):
+            eng[e['url']].append(e)
+    if eng:
+        out['engines'] = {u: dict(kv_max=max((x.get('kv') or 0) for x in v), waiting_max=max((x.get('waiting') or 0) for x in v),
+                                  running_max=max((x.get('running') or 0) for x in v), samples=len(v)) for u, v in sorted(eng.items())}
+        out['engine_kv_max'] = max(e['kv_max'] for e in out['engines'].values())
+        out['engines_over_90pct'] = sum(1 for e in out['engines'].values() if e['kv_max'] > 0.9)
+    return out
+
+
 def latency(rv):
     out = {}
     for who in ('student', 'teacher'):
@@ -538,6 +567,11 @@ def main():
         mark_censored(rv, rows)
         arms[arm] = dict(rv=rv, rows=rows)
     out = dict(run=name, gate=a.gate, arms=arm_names)
+    nodes = None
+    if os.path.exists(os.path.join(a.run_dir, 'run.meta')):
+        for line in open(os.path.join(a.run_dir, 'run.meta')):
+            if line.startswith('nodes='):
+                nodes = int(line.split('=', 1)[1])
     for arm, d in arms.items():
         rv, rows = d['rv'], d['rows']
         summ = collections.Counter(sum(1 for r in e['aux'] if r['request_kind'] == 'summary') for e in rv['eps'].values())
@@ -545,6 +579,7 @@ def main():
                  episodes_seen=len(rv['eps']), main_turns=sum(len(e['main']) for e in rv['eps'].values()),
                  owners=collections.Counter(r.get('owner') for r in rv['recs'] if r.get('turn') is not None),
                  summarizations_per_episode=dict(sorted(summ.items())),
+                 throughput=throughput(rv, a.run_dir, nodes),
                  student_think_modes=sorted({r.get('student_think') for r in rv['recs'] if r.get('student_think')}))
         if arm in RELAY_ARMS:
             o['student'] = student_view(rv)

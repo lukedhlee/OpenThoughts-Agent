@@ -85,6 +85,52 @@ like-for-like.
    - Visible analysis, plan and commands are always trained.
    - 09-21's own turns are context only. Autofixed turns train the rewritten action only.
 
+## Overnight results (2026-09-25 21:07 PT → 2026-09-26 00:20 PT)
+
+- **Re-check** (job 2041132, 2.52 node-hours, hit its 2.5 cap): **FAIL on C1 and C2.** The relay was not launched
+  (`launch_relay.sh` HOLD).
+- **Baseline rerun** (job 2041230, 10.02 node-hours, hit its 10.0 cap before finishing): partial.
+  - The clock paused on model calls removed the only bound on an episode, and the Qwen engines saturated (the
+    coordinator's diagnosis below). It is marked SUPERSEDED.
+- **Spend on the full run so far:** baseline 1 8.88 + check 1.62 + re-check 2.52 + rerun 10.02 = **23.04
+  node-hours**.
+
+## Clean Qwen-alone baseline (Luke, 2026-09-26 11:30 PT; relay paused)
+
+**Diagnosis (coordinator, from the rerun's vLLM logs).**
+- Each GPU holds 440,878 tokens of KV cache, and CalibForge conversations reach about 34k tokens. So capacity is about
+  12 agents per GPU, about 50 per node. We ran 100 per node.
+- Busy engines sat at 85–95 % KV with 10–19 requests waiting and 0 % prefix-cache hits, while sibling engines on the
+  same node idled: DP spread the load unevenly.
+- Baseline 1's 848 timeouts were queue waits.
+
+**The run.**
+- All 2,043 training tasks, 1 rollout each, on 8 Qwen nodes on `-A transfernetx`.
+- **50 agents per node** (400 in total).
+- **One vLLM server per GPU**: TP1, DP1, 32 endpoints, Qwen3.8 with MTP2 (`PER_GPU=1`).
+  - The router pins each episode to an endpoint, choosing the one with the fewest ACTIVE episodes (`--balance
+    active`: pinned there and seen in the last 10 min).
+  - It logs every endpoint's KV usage, running and waiting requests every minute (`engines.jsonl`).
+- **Normal wall-clock budgets, as in the TB2 eval.** Harbor's own 1× agent timeout ends an episode. There is no paused
+  clock and no router budget.
+- Qwen `--max-model-len` 65,536; reply cap 32,768 with the drop-to-remainder fallback; no summarization.
+- Sandbox starts: a 4× start window, and the start wave is staggered in two halves 3 min apart
+  (`STAGGER_SEC=180`).
+- **Auto-cancel from 15 min after harbor starts, if either holds:**
+  - the median Qwen reply latency over the last 5 min is above 30 s;
+  - any engine stays above 90 % KV with waiting requests for 5 min.
+- **Cost:** about 8–10 node-hours expected, including the start-up wave (32 servers loading, about 8 min). Hard
+  ceiling **12 node-hours** (8 nodes × 1.5 h `--time`). The router's deadline ends episodes 5 min before that.
+
+**Readout** (`readout.py`, plus `select_kept.py --timeouts all` and `sft/render.py`):
+- the pass rate;
+- failure causes, with stalled vs not for timeouts;
+- teacher latency p50/p90 per 10 min;
+- turns per node-hour against baseline 1's about 2,300;
+- per-engine KV maximum;
+- kept 1:1 counts;
+- the number of rows over 64k under the shared thinking mask.
+
 ## Baseline rerun (Luke's option 1, 21:30 PT) and the 47 node-hour ceiling
 
 **What.** Qwen alone on the same 2,043 tasks, 1 rollout each, under exactly the relay settings:

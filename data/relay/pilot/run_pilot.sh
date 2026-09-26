@@ -39,6 +39,10 @@ TASK_LIST=${TASK_LIST:-}          # a subset of the tree to run (default: the tr
 N_ATTEMPTS=${N_ATTEMPTS:-1}       # rollouts per task
 MAX_INPUT=${MAX_INPUT:-65536}     # harbor's max_input_tokens; 131072 when Qwen serves 128k (the router reports it)
 TEACHER_MAX_TOKENS=${TEACHER_MAX_TOKENS:-32768}
+CLOCK=${CLOCK:-paused}            # paused: the router's budgets, clock paused on model calls; wall: harbor's own 1x agent timeout
+BALANCE=${BALANCE:-pinned}; STAGGER_SEC=${STAGGER_SEC:-0}   # STAGGER_SEC>0: the task list is split in two harbor jobs started that far apart
+GATE_MIN=${GATE_MIN:-0}; GATE_LAT=${GATE_LAT:-30}; GATE_KV=${GATE_KV:-0.90}   # GATE_MIN>0: from then on, cancel on latency / KV saturation
+[ $CLOCK = wall ] && AGENT_MULT=1.0 || AGENT_MULT=8.0
 OVF_AFTER=${OVF_AFTER:-0}; OVF_MAX=${OVF_MAX:-0.20}   # relay backstop: cancel when overflow > OVF_MAX after OVF_AFTER episodes (0 = off)
 RUN_KIND=${RUN_KIND:-pilot}
 STUDENT_TOKENIZER=${STUDENT_TOKENIZER:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921/tokenizer.json}   # the cap on older teacher reasoning   # pilot: TASKS.txt must be disjoint from the held-out split; heldout: it must BE the split
@@ -62,17 +66,17 @@ declare -A HPID RPID PORT
 i=0; for arm in $ARMS; do PORT[$arm]=$((PORT0 + i)); i=$((i+1)); done
 SERVE_RELEASED=0
 release_serve() { [ $SERVE_RELEASED = 1 ] && return; scancel $JOB; SERVE_RELEASED=1; log "serve job $JOB cancelled: $*"; }
-stop_harbor() { for arm in $ARMS; do [ -n "${HPID[$arm]:-}" ] && kill -INT ${HPID[$arm]} 2>/dev/null; done; sleep 30
-                for arm in $ARMS; do [ -n "${HPID[$arm]:-}" ] && kill -TERM ${HPID[$arm]} 2>/dev/null; done; }
+stop_harbor() { for k in "${!HPID[@]}"; do kill -INT ${HPID[$k]} 2>/dev/null; done; pkill -INT -u $USER -f "harbor jobs start --config $R/" 2>/dev/null; sleep 30
+                for k in "${!HPID[@]}"; do kill -TERM ${HPID[$k]} 2>/dev/null; done; pkill -TERM -u $USER -f "harbor jobs start --config $R/" 2>/dev/null; }
 stop_routers() { for arm in $ARMS; do [ -n "${RPID[$arm]:-}" ] && kill -TERM ${RPID[$arm]} 2>/dev/null; done; }
 write_meta() {
   local el; el=$(sacct -j $JOB -X -n -o ElapsedRaw 2>/dev/null | head -1 | tr -d ' ')
-  printf 'serve_job=%s\nnode_hours=%s\nharbor=%s\nota=%s\narms=%s\nconc=%s\nmode=%s\ndeadline=%s\nend=%s\n' "$JOB" \
+  printf 'serve_job=%s\nnodes=%s\nnode_hours=%s\nharbor=%s\nota=%s\narms=%s\nconc=%s\nmode=%s\ndeadline=%s\nend=%s\n' "$JOB" "$NODES" \
     "$(awk -v s="${el:-0}" -v n=$NODES 'BEGIN{printf "%.3f", n*s/3600}')" "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" \
     "$(git -C $HERE rev-parse --short=8 HEAD 2>/dev/null)" "$ARMS" "$CONC" "$MODE" "${DEADLINE:-}" "$(date -Is)" > $R/run.meta
 }
 cleanup_sandboxes() {
-  local jobs=(); for arm in $ARMS; do [ -d $JOBS_ROOT/${NAME}_$arm ] && jobs+=($JOBS_ROOT/${NAME}_$arm); done
+  local jobs=(); for arm in $ARMS; do for d in $JOBS_ROOT/${NAME}_$arm $JOBS_ROOT/${NAME}_${arm}_p2; do [ -d $d ] && jobs+=($d); done; done
   [ ${#jobs[@]} -gt 0 ] && $PY $HERE/cleanup_sandboxes.py --key-file $KEYF --delete "${jobs[@]}" 2>&1 | tail -3
 }
 abort() { log "ABORT: $*"; echo "$*" > $R/ABORT; stop_harbor; stop_routers; release_serve "abort"; cleanup_sandboxes; write_meta; exit 1; }
@@ -128,7 +132,8 @@ for arm in $ARMS; do
                   --autofix --student-tokenizer $STUDENT_TOKENIZER);;
     *) abort "unknown arm $arm";; esac
   $PY $ROUTER "${M[@]}" --arm $arm --port ${PORT[$arm]} --log-dir $R/router_$arm --tasks $TREE/router_tasks.json \
-    --budget-mode on --pause-model-calls --deadline-epoch $DEADLINE "${SARGS[@]}" "${TARGS[@]}" \
+    $([ $CLOCK = wall ] && echo "--budget-mode off" || echo "--budget-mode on --pause-model-calls") --balance $BALANCE \
+    --engine-metrics --deadline-epoch $DEADLINE "${SARGS[@]}" "${TARGS[@]}" \
     > $R/router_$arm.log 2>&1 &
   RPID[$arm]=$!
 done
@@ -146,7 +151,7 @@ log "routers ready: $(for arm in $ARMS; do printf '%s:%s ' $arm ${PORT[$arm]}; d
 export PYTHONPATH=$HARBOR_SRC
 for arm in $ARMS; do
   CFG=$R/${NAME}_$arm.yaml
-  sed "s#__JOB_NAME__#${NAME}_$arm#; s#__JOBS_DIR__#$JOBS_ROOT#; s#__API_BASE__#http://127.0.0.1:${PORT[$arm]}/v1#; s#__CONC__#$CONC#; s#__MAX_INPUT__#$MAX_INPUT#" $HERE/relay_pilot.yaml > $CFG
+  sed "s#__JOB_NAME__#${NAME}_$arm#; s#__JOBS_DIR__#$JOBS_ROOT#; s#__API_BASE__#http://127.0.0.1:${PORT[$arm]}/v1#; s#__CONC__#$CONC#; s#__MAX_INPUT__#$MAX_INPUT#; s#__AGENT_MULT__#$AGENT_MULT#" $HERE/relay_pilot.yaml > $CFG
   $PY - "$CFG" "$TREE" "$MODE" "${TASK_LIST:-$TREE/TASKS.txt}" "$N_ATTEMPTS" <<'PY' || abort "config for $arm does not validate"
 import os, re, sys, yaml
 p, tree, mode, lst, att = sys.argv[1:6]
@@ -166,8 +171,25 @@ JobConfig.model_validate(c)
 print(f'{os.path.basename(p)}: {len(ids)} tasks x {att}, validates')
 PY
   [ -e $JOBS_ROOT/${NAME}_$arm ] && abort "$JOBS_ROOT/${NAME}_$arm exists"
-  $HARBOR jobs start --config $CFG > $R/harbor_$arm.log 2>&1 &
-  HPID[$arm]=$!
+  if [ $STAGGER_SEC -gt 0 ]; then
+    # stagger the sandbox start wave: two harbor jobs (every other task, longest first in each), the second
+    # STAGGER_SEC later; the readout merges <name>_<arm> and <name>_<arm>_p2
+    $PY - "$CFG" <<'PY'
+import sys, yaml
+p = sys.argv[1]; c = yaml.safe_load(open(p)); t = c['tasks']; n = c['n_concurrent_trials']
+a, b = dict(c, tasks=t[0::2], n_concurrent_trials=n // 2), dict(c, tasks=t[1::2], n_concurrent_trials=n - n // 2, job_name=c['job_name'] + '_p2')
+yaml.safe_dump(a, open(p, 'w'), sort_keys=False); yaml.safe_dump(b, open(p.replace('.yaml', '_p2.yaml'), 'w'), sort_keys=False)
+print('staggered:', len(a['tasks']), '+', len(b['tasks']))
+PY
+    $HARBOR jobs start --config $CFG > $R/harbor_$arm.log 2>&1 &
+    HPID[$arm]=$!
+    log "harbor $arm (first half) started (pid ${HPID[$arm]}); second half in ${STAGGER_SEC}s"
+    ( sleep $STAGGER_SEC; $HARBOR jobs start --config ${CFG%.yaml}_p2.yaml > $R/harbor_${arm}_p2.log 2>&1 ) &
+    HPID[${arm}_p2]=$!
+  else
+    $HARBOR jobs start --config $CFG > $R/harbor_$arm.log 2>&1 &
+    HPID[$arm]=$!
+  fi
   log "harbor $arm started (pid ${HPID[$arm]}) -> $JOBS_ROOT/${NAME}_$arm"
 done
 T0=$(date +%s); EARLY_DONE=0; LAST_N=0; LAST_CHANGE=$T0; RELEASED_AT=""; OVF_DONE=0
@@ -179,7 +201,7 @@ while :; do
   for arm in $ARMS; do [ -f $R/router_$arm/FATAL ] && abort "router $arm FATAL: $(head -3 $R/router_$arm/FATAL)"; done
   N=0; for arm in $ARMS; do N=$((N + $(wc -l < $R/router_$arm/turns.jsonl 2>/dev/null || echo 0))); done
   [ $N -ne $LAST_N ] && { LAST_N=$N; LAST_CHANGE=$NOW; }
-  ALIVE=0; for arm in $ARMS; do kill -0 ${HPID[$arm]} 2>/dev/null && ALIVE=$((ALIVE+1)); done
+  ALIVE=0; for k in "${!HPID[@]}"; do kill -0 ${HPID[$k]} 2>/dev/null && ALIVE=$((ALIVE+1)); done
   NH=$(awk -v s=$JSTART -v n=$NOW -v k=$NODES 'BEGIN{printf "%.2f", k*(n-s)/3600}')
   [ $SERVE_RELEASED = 1 ] && NH="$NH (released)"
   log "watch: node-h=$NH requests=$N harbor_alive=$ALIVE threads=$(ps -L -u $USER --no-headers 2>/dev/null | wc -l)"
@@ -192,6 +214,32 @@ while :; do
     [ $NOW -lt $DEADLINE ] && [ $((NOW - LAST_CHANGE)) -gt $((STALL_MIN*60)) ] && abort "no router traffic for $STALL_MIN min"
   elif [ $((NOW - RELEASED_AT)) -gt $VERIFY_WAIT ]; then
     log "harbor still running $VERIFY_WAIT s after the servers were released; stopping it"; stop_harbor; break
+  fi
+  if [ $GATE_MIN -gt 0 ] && [ $((NOW - T0)) -ge $((GATE_MIN*60)) ]; then
+    # auto-cancel: median teacher reply latency over the last 5 min > GATE_LAT s, or an engine with KV > GATE_KV and
+    # waiting requests in every sample of the last 5 min
+    G=$($PY - $R $GATE_LAT $GATE_KV <<'PY'
+import glob, json, sys, time, collections
+R, lat_max, kv_max = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]); now = time.time(); lat = []
+for p in glob.glob(R + '/router_*/turns.jsonl'):
+    for l in open(p):
+        try: r = json.loads(l)
+        except Exception: continue
+        if r.get('owner') == 'teacher' and r.get('upstream_status') == 200 and now - r['ts'] <= 300: lat.append(r['latency_sec'])
+eng = collections.defaultdict(list)
+for p in glob.glob(R + '/router_*/engines.jsonl'):
+    for l in open(p):
+        try: e = json.loads(l)
+        except Exception: continue
+        if now - e['ts'] <= 300: eng[e['url']].append(e)
+bad = [u for u, v in eng.items() if len(v) >= 4 and all((x.get('kv') or 0) > kv_max and (x.get('waiting') or 0) > 0 for x in v)]
+lat.sort(); p50 = lat[len(lat) // 2] if lat else 0
+print('%.1f %d %s' % (p50, len(lat), ','.join(bad) or '-'))
+PY
+)
+    set -- $G; log "gate: teacher p50 $1 s over the last 5 min ($2 replies); saturated engines: $3"
+    awk -v a=$1 -v b=$GATE_LAT 'BEGIN{exit !(a>b)}' && abort "gate: median teacher latency $1 s > $GATE_LAT s over the last 5 min"
+    [ "$3" != - ] && abort "gate: engines at KV > $GATE_KV with waiting requests for 5 min: $3"
   fi
   if [ $OVF_AFTER -gt 0 ] && [ $OVF_DONE = 0 ]; then
     for arm in $ARMS; do case $arm in relay*) ;; *) continue;; esac
