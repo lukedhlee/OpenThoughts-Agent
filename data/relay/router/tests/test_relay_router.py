@@ -1345,10 +1345,59 @@ def test_merge_runs_counts_every_task_once(tmp_path):
     assert res.returncode == 0, res.stderr
     m = json.loads((out / 'MERGED.json').read_text())
     assert m['tasks'] == 4 and m['scored_tasks'] == 3 and not m['scored_twice'] and m['node_hours'] == 13.4
-    assert {k: v['run'] for k, v in m['per_task'].items()} == {'cf-a': 'b6', 'cf-b': 'b6b', 'cf-c': 'b6', 'cf-d': 'b6b'}
+    assert {k: [x['run'] for x in v] for k, v in m['per_task'].items()} == {'cf-a': ['b6'], 'cf-b': ['b6b'], 'cf-c': ['b6'], 'cf-d': ['b6b']}
     rows = readout.arm_trials(str(out), 'b6m', 'control')
     readout.mark_censored(readout.router_view(str(out / 'router_control')), rows)
     assert sorted(t['task'] for t in rows) == ['cf-a', 'cf-b', 'cf-c', 'cf-d']
     assert sum(readout.usable(t) for t in rows) == 3 and sum(t['harness_error'] for t in rows) == 1
     rv = readout.router_view(str(out / 'router_control'))
+    assert set(rv['eps']) == {t['sid'] for t in rows}
+
+
+def test_merge_runs_per_task_slots_three_runs(tmp_path):
+    """merge_runs.py --per-task 4 (relay attempts 1 + 2 + top-up 3): the top-up list holds each task once per slot the
+    earlier runs did not score; the merge keeps at most 4 scored trials per task over the three runs, fills unscored
+    slots with the latest run's unscored trials, and sums node-hours."""
+    import subprocess
+    sys.path.insert(0, str(HERE.parent.parent / 'pilot'))
+    import readout
+    runs, merge = tmp_path / 'runs', str(HERE.parent.parent / 'pilot' / 'merge_runs.py')
+
+    def run(name, trials, nh):
+        d = runs / name
+        (d / 'router_relay_repair').mkdir(parents=True)
+        with open(d / 'router_relay_repair' / 'turns.jsonl', 'w') as f:
+            for trial, task, reward, exc in trials:
+                sid = f'{name}-{trial}'
+                td = d / 'jobs' / f'{name}_relay_repair' / trial
+                _result(td, task, reward, exc)
+                (td / 'agent').mkdir()
+                (td / 'agent' / 'trajectory.json').write_text(json.dumps(dict(session_id=sid, steps=[])))
+                f.write(json.dumps(dict(ts=1.0, sid=sid, task_id=task, turn=1, seq=1, owner='student',
+                                        upstream_status=200, sent_body='b#1', request_kind='initial')) + '\n')
+        (d / 'run.meta').write_text(f'nodes=8\nnode_hours={nh}\n')
+        return str(d)
+    r1 = run('a1', [('p1', 'cf-a', 1.0, None), ('p2', 'cf-a', 0.0, 'ContextLengthExceededError'),
+                    ('p3', 'cf-b', None, 'CancelledError')], 4.42)
+    r2 = run('a2', [('q1', 'cf-a', 1.0, None), ('q2', 'cf-b', 1.0, None), ('q3', 'cf-b', None, 'TmuxBatchProtocolError')], 5.46)
+    tasks = tmp_path / 'tasks.txt'
+    tasks.write_text('cf-a\ncf-b\ncf-c\n')
+    rem = tmp_path / 'rem.txt'
+    res = subprocess.run([sys.executable, merge, '--arm', 'relay_repair', '--per-task', '4', '--remaining', str(rem),
+                          '--tasks', str(tasks), r1, r2], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    assert rem.read_text().split() == ['cf-a'] + ['cf-b'] * 3 + ['cf-c'] * 4
+    r3 = run('a3', [('s1', 'cf-a', 0.0, None), ('s2', 'cf-b', 1.0, None), ('s3', 'cf-b', None, 'CancelledError'),
+                    ('s4', 'cf-c', 1.0, None)], 10.0)
+    out = runs / 'am'
+    res = subprocess.run([sys.executable, merge, '--out', str(out), '--arm', 'relay_repair', '--per-task', '4', r1, r2, r3],
+                         capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    m = json.loads((out / 'MERGED.json').read_text())
+    assert m['scored_slots'] == 7 and not m['scored_twice'] and abs(m['node_hours'] - 19.88) < 1e-6
+    assert [x['trial'] for x in m['per_task']['cf-a']] == ['p1', 'p2', 'q1', 's1']
+    assert [(x['trial'], x['scored']) for x in m['per_task']['cf-b']] == [('q2', True), ('s2', True), ('s3', False), ('q3', False)]
+    rows = readout.arm_trials(str(out), 'am', 'relay_repair')
+    assert len(rows) == 9 and sum(t['harness_error'] for t in rows) == 2
+    rv = readout.router_view(str(out / 'router_relay_repair'))
     assert set(rv['eps']) == {t['sid'] for t in rows}

@@ -38,7 +38,8 @@ HARBOR_SRC=${HARBOR_SRC:-$C/harbor-terminus2-relay/src}
 HARBOR_SHA=${HARBOR_SHA:-89098635}          # marin-community/harbor lukedhlee/terminus2-relay
 TREE=${TREE:-/e/fscratch/reformo/lee27/tasks/calibforge_relay100}
 NTASKS=${NTASKS:-100}
-TASK_LIST=${TASK_LIST:-}          # a subset of the tree to run (default: the tree's TASKS.txt), e.g. the solvable tasks
+TASK_LIST=${TASK_LIST:-}          # a subset of the tree to run (default: the tree's TASKS.txt), e.g. the solvable tasks; a task
+                                  # listed k times runs k times (round by round), e.g. a top-up of unscored rollout slots
 N_ATTEMPTS=${N_ATTEMPTS:-1}       # rollouts per task
 MAX_INPUT=${MAX_INPUT:-65536}     # harbor's max_input_tokens; 131072 when Qwen serves 128k (the router reports it)
 TEACHER_MAX_TOKENS=${TEACHER_MAX_TOKENS:-32768}
@@ -180,17 +181,23 @@ p, tree, mode, lst, att = sys.argv[1:6]
 c = yaml.safe_load(open(p))
 c['n_attempts'] = int(att)
 ids = [l.strip() for l in open(lst) if l.strip()]
+B = {}
 def budget(t):
-    m = re.search(r'\[agent\][^\[]*?timeout_sec\s*=\s*([0-9.]+)', open(f'{tree}/{t}/task.toml').read())
-    return float(m.group(1)) if m else 0.0
-ids.sort(key=lambda t: (-budget(t), t))           # longest budget first
+    if t not in B:
+        m = re.search(r'\[agent\][^\[]*?timeout_sec\s*=\s*([0-9.]+)', open(f'{tree}/{t}/task.toml').read())
+        B[t] = float(m.group(1)) if m else 0.0
+    return B[t]
+occ, seen = [], {}                                # a task listed k times (a top-up of unscored rollout slots) runs k
+for t in ids:                                     # times, round by round like harbor's attempts: every task's first
+    occ.append(seen.get(t, 0)); seen[t] = occ[-1] + 1   # copy, then every second copy, ...
+ids = [ids[i] for i in sorted(range(len(ids)), key=lambda i: (occ[i], -budget(ids[i]), ids[i]))]   # longest budget first
 if mode == 'smoke':
     ids = sorted(ids, key=lambda t: (budget(t), t))[:4]
 c['tasks'] = [{'path': f'{tree}/{t}'} for t in ids]
 yaml.safe_dump(c, open(p, 'w'), sort_keys=False)
 from harbor_config.models.job.config import JobConfig
 JobConfig.model_validate(c)
-print(f'{os.path.basename(p)}: {len(ids)} tasks x {att}, validates')
+print(f'{os.path.basename(p)}: {len(ids)} task entries ({len(seen)} distinct) x {att}, validates')
 PY
   [ -e $JOBS_ROOT/${NAME}_$arm ] && abort "$JOBS_ROOT/${NAME}_$arm exists"
   if [ $STAGGER_SEC -gt 0 ]; then

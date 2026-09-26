@@ -16,6 +16,9 @@
 # In-run stop rule: after >= 300 scored relay episodes, cancel on overflow > 30 %, valid format < 98 % or harness
 # errors > 10 % (run_pilot.sh STOP_*, stop_rule.py; re-evaluated every 15 min).
 # State: $E/runs/<name>.launch.log, the plan in $E/runs/<name>.plan.json.
+# TOPUP=<list> (attempt 3 on, Luke 2026-09-26 16:20 PT): run only the (task, rollout) slots the earlier attempts did not
+# score: the list (merge_runs.py --remaining) holds each solvable task once per unscored slot, run_pilot.sh runs it round
+# by round at 1 rollout per entry, so no slot is paid for twice. CAP_NODE_H is then what the 30 leaves.
 set -uo pipefail
 NAME=${1:?relay run name}
 C=/e/project1/transfernetx/lee27/code
@@ -45,6 +48,16 @@ $PY $HERE/relay_plan.py --baseline $RUNS/$BASE --check $RUNS/$CHECK --check-deci
   --spent 0 --total-ceiling $CAP_NODE_H --conc $CONC --rollouts $ROLLOUTS --out-tasks $RUNS/$NAME.solvable_recomputed.txt > $RUNS/$NAME.plan.json
 diff -q <(sort $TASKS) <(sort $RUNS/$NAME.solvable_recomputed.txt) >/dev/null || { log "solvable list $TASKS differs from the baseline's passes"; exit 1; }
 log "plan (projection only; the cap is the ceiling): $(tr -d '\n' < $RUNS/$NAME.plan.json | cut -c1-700)"
+if [ -n "${TOPUP:-}" ]; then
+  $PY - $TOPUP $TASKS $ROLLOUTS <<'PY' || { log "top-up list $TOPUP is not a subset of the solvable slots"; exit 1; }
+import collections, sys
+top = collections.Counter(l.strip() for l in open(sys.argv[1]) if l.strip()); sol = {l.strip() for l in open(sys.argv[2]) if l.strip()}
+bad = [t for t, k in top.items() if t not in sol or k > int(sys.argv[3])]
+print('top-up: %d slots over %d tasks, bad %d' % (sum(top.values()), len(top), len(bad))); sys.exit(1 if bad or not top else 0)
+PY
+  log "top-up $TOPUP: $(wc -l < $TOPUP) unscored slots over $(sort -u $TOPUP | wc -l) tasks, 1 rollout per entry"
+  TASKS=$TOPUP; ROLLOUTS=1
+fi
 TMIN=$($PY -c "print(int($CAP_NODE_H / $NODES * 60))")
 JOB=$(RELAY_PILOT_DIR=$HERE N_STUDENT=4 PER_GPU=1 TEACHER_MAXLEN=131072 sbatch --parsable --export=ALL --nodes=$NODES --time=$TMIN --job-name=relay_full_relay $HERE/serve_relay.sbatch) \
   || { log "sbatch failed"; exit 1; }
