@@ -740,3 +740,25 @@ def test_render_trains_an_autofixed_action_not_its_reasoning(tmp_path):
         assert 'echo hi > out.txt' in row['text'] and 'AUTOFIX' not in trained
         off = render.render_episode(r.traj, st.turns(r.sid), tok, tpl, '<|begin_of_text|>', autofix_loss='none')
         assert sum(off['loss']) < sum(row['loss'])
+
+
+
+@needs_harbor
+def test_teacher_reply_cap_cut_case_and_context_fallback(tmp_path):
+    """--teacher-max-tokens: every teacher request carries it, the student's never; a reply cut there is logged
+    (teacher_cut_at_cap) and handed to harbor as served; a cap that does not fit the context is lowered to what is left."""
+    with Stack(tmp_path, mode='relay', router_args=REPAIR + ['--teacher-max-tokens', '16384']) as st:
+        st.teacher.cut_first = True
+        r = run_agent(st, 'done', tmp_path)
+        tb = st.teacher_bodies('SCENARIO=done.')
+        assert tb and all(b['max_tokens'] == 16384 for b in tb)
+        assert not any('max_tokens' in b for b in _student_bodies(st, 'SCENARIO=done.'))
+        rows = [x for x in st.turns(r.sid) if x.get('owner') == 'teacher']
+        assert rows[0].get('teacher_cut_at_cap') and st.router.counts['teacher_cut_at_cap'] == 1
+        assert getattr(r.stop, 'value', r.stop) == 'task_complete'     # Terminus-2 asked again and the episode ended
+    (tmp_path / 'b').mkdir()
+    with Stack(tmp_path / 'b', mode='teacher', router_args=['--teacher-max-tokens', '70000']) as st:
+        r = run_agent(st, 'done', tmp_path, tag='-0')
+        rows = [x for x in st.turns(r.sid) if x.get('turn') is not None]
+        assert all(x['upstream_status'] == 200 for x in rows)
+        assert all(0 < x['teacher_max_tokens_lowered_to'] < 65536 for x in rows)

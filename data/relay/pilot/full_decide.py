@@ -40,10 +40,10 @@ def main():
     ap.add_argument('--run3', required=True)
     ap.add_argument('--readout', help="a readout.json other than the run's own (e.g. recomputed under the amended rule)")
     ap.add_argument('--pool', type=int, default=2043)
-    ap.add_argument('--ceiling', type=float, default=35.0)
+    ap.add_argument('--ceiling', type=float, default=42.0)
     ap.add_argument('--borderline', type=float, default=0.85)
     ap.add_argument('--conc-base', type=int, default=400)
-    ap.add_argument('--student-nodes', type=int, default=2, help='100 relay agents per student node')
+    ap.add_argument('--student-nodes', type=int, default=4, help='100 relay agents per student node')
     ap.add_argument('--core-qwen', type=int, default=4, help='Qwen nodes kept to the end (the rest are released)')
     ap.add_argument('--burst-qwen', type=int, default=4, help='Qwen nodes released once control drains')
     ap.add_argument('--relay-episode-s', type=float, default=None,

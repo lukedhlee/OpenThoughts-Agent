@@ -53,7 +53,8 @@ def arm_rows(run_dir, name, arm):
                         cause=None if readout.is_pass(t) else readout.failure_cause(t, e['ending']),
                         teacher_turns=teacher_turns, student_turns=sum(1 for r in e['main'] if r.get('owner') == 'student'),
                         repairs=sum(1 for r in e['main'] if r.get('repair_kind') == 'parse_error'),
-                        takeover=(e['takeover'] or {}).get('trigger')))
+                        takeover=(e['takeover'] or {}).get('trigger'),
+                        teacher_cut_turns=sum(1 for r in e['main'] if r.get('teacher_cut_at_cap'))))
     return out
 
 

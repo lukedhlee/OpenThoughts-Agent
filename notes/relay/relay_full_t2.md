@@ -12,17 +12,36 @@ It produces two SFT arms of about 2,000 kept traces each, 1:1 pass:fail:
 - **control**: Qwen3.8-27B from scratch;
 - **relay_repair**: the student with teacher repairs and takeovers.
 
+**Decided (Luke, 18:10 PT).**
+- **Layout: 12 nodes.** Core is 4 × 09-21 + 4 × Qwen (8 nodes); burst is 4 × Qwen, released when control drains.
+- **Cost.** About 34 node-hours expected (32–39 across the relay-episode range), 3.2–4.1 h of wall time. The hard
+  ceiling is **42 node-hours**, from the two jobs' `--time` and the driver's node-hour stop.
+- **Every Qwen reply is capped at 16,384 tokens,** reasoning plus content, in both arms.
+  - The router adds `max_tokens` to every teacher request; harbor's chat path sends none of its own.
+  - A reply cut at the cap reaches harbor as served (`finish_reason: length`). Terminus-2 then salvages it, or asks
+    again ("NONE of the actions … were performed").
+  - The router logs it as `teacher_cut_at_cap`. The readout counts cut replies and episodes with one per arm, and
+    `select_kept.py` records `teacher_cut_turns` on each kept row.
+  - When the cap does not fit what the context has left, vLLM answers 400. The router then asks once more for what
+    the context has left, which is what the uncapped request would have done, and logs
+    `teacher_max_tokens_lowered_to`.
+  - Run 3 had one reply of 64,208 tokens.
+- **Not changed.** No parse-after-thinking, so autofix stays at about 36 %.
+- **Still with Luke:** the separate 100-task check run (about 2.4 node-hours) or the in-run check (cancel on relay
+  overflow above 20 % after 200 episodes, which costs about 7–9 node-hours if it fires).
+- **Nothing is submitted.**
+
 **Pool: 2,043 tasks** (`data/relay/pilot/full_pool.txt`). That is the 2,457 Daytona-covered CalibForge tasks, minus
 the 300 held-out tasks, minus 114 tasks with agent budgets above 1,800 s. There are no duplicate instructions. The
 pilot's 100 tasks are included.
 
 **Phases.**
-- **Phase 1**, all 10 nodes busy: control, 1 rollout per task (400 concurrent, 50 per Qwen node), and relay_repair,
-  1 rollout per task (200 concurrent, 100 per student node).
+- **Phase 1**, all 12 nodes busy: control, 1 rollout per task (400 concurrent, 50 per Qwen node), and relay_repair,
+  1 rollout per task (400 concurrent, 100 per student node).
 - **Phase 2**: relay_repair, 2 more rollouts on every task control solved in phase 1. It starts once phase 1's relay
   job has at most 20 trials running, so the student nodes stay at about 100 agents.
 - **Releasing nodes.**
-  - The Qwen servers run as two jobs: *core* (2 × 09-21 + 4 × Qwen, 6 nodes) and *burst* (4 × Qwen).
+  - The Qwen servers run as two jobs: *core* (4 × 09-21 + 4 × Qwen, 8 nodes) and *burst* (4 × Qwen).
   - When control finishes, the burst servers are dropped from the routers' teacher list and drained (no requests in
     flight, or 10 min). Then their job is cancelled.
   - Episodes pinned to a dropped or dead server re-pin to a live one.
@@ -186,9 +205,10 @@ git -C $C/OpenThoughts-Agent fetch fork lukedhlee/vista-moe-grpo-30b
 git -C $C/OpenThoughts-Agent worktree add --detach $C/ota-relay-full FETCH_HEAD   # never re-checkout a worktree a live driver reads
 P=$C/ota-relay-full/data/relay/pilot
 LIST=$P/full_pool.txt bash $P/stage_tree.sh /e/fscratch/reformo/lee27/tasks/calibforge_full2043
-$C/envs/snowball-v2/bin/python $P/full_decide.py --run3 /e/fscratch/reformo/lee27/experiments/relay/pilot/runs/relay_run3_20260925 > /tmp/decision.json
+R3=/e/fscratch/reformo/lee27/experiments/relay/pilot/runs/relay_run3b_20260925
+$C/envs/snowball-v2/bin/python $P/full_decide.py --run3 $R3 --readout $R3/readout_amended.json --relay-episode-s 900 > /tmp/decision.json   # 12 nodes, ceiling 42
 # LAUNCH -> core_time_h / burst_time_h from the decision
-CORE=$(RELAY_PILOT_DIR=$P N_STUDENT=2 sbatch --parsable --export=ALL --nodes=6 --time=<core_time> --job-name=relay_full_core $P/serve_relay.sbatch)
+CORE=$(RELAY_PILOT_DIR=$P N_STUDENT=4 sbatch --parsable --export=ALL --nodes=8 --time=<core_time> --job-name=relay_full_core $P/serve_relay.sbatch)
 BURST=$(RELAY_PILOT_DIR=$P N_STUDENT=0 sbatch --parsable --export=ALL --nodes=4 --time=<burst_time> --job-name=relay_full_burst $P/serve_relay.sbatch)
 tmux new -d -s relay_full "bash $P/run_full.sh $CORE $BURST relay_full_20260925"
 ```

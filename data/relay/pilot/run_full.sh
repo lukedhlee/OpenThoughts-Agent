@@ -3,7 +3,7 @@
 # Jupiter login node, inside tmux. The full Terminus-2 relay run on CalibForge (spec: notes/relay/relay_full_t2.md).
 #
 # Servers (serve_relay.sbatch, two jobs so the second can be released on its own):
-#   core   N_STUDENT=2, 6 nodes: 2 x 09-21 + 4 x Qwen3.8          (--time = the run's wall ceiling)
+#   core   N_STUDENT=4, 8 nodes: 4 x 09-21 + 4 x Qwen3.8          (--time = the run's wall ceiling; Luke 18:10 PT)
 #   burst  N_STUDENT=0, 4 nodes: 4 x Qwen3.8                        (released when phase 1's baseline drains)
 # Arms (one router each, both pinning every episode to one server per role):
 #   control       Qwen from scratch, 1 rollout per task of the pool                         phase 1
@@ -15,8 +15,8 @@
 #   1. pre-flight as run_pilot.sh (harbor pin, tree = full_pool.txt, disjoint from the held-out split, key, snapshots)
 #   2. endpoints of both jobs; teacher list file = core + burst teachers
 #   3. routers (control, relay_repair) with --teacher-url-file and the deadline (core start + CORE_WALL - margin)
-#   4. harbor: control (CONC_BASE, default 400 = 50 per Qwen node) and relay_repair phase 1 (CONC_RELAY, default 200 =
-#      100 per student node)
+#   4. harbor: control (CONC_BASE, default 400 = 50 per Qwen node) and relay_repair phase 1 (CONC_RELAY, default 400 =
+#      100 per student node); every teacher request carries max_tokens TEACHER_MAX_TOKENS (16,384)
 #   5. watch every 60 s: FATAL / DEAD / stall -> abort; early gate at 25 min (readout --gate early) and the latency
 #      gate at 15 min (teacher p50 > LAT_WARN s: warn; > LAT_ABORT s: abort); node-hour cap CAP_NODE_H over both jobs
 #      -> stop. When control is done: phase-2 task list (control passes), phase 2 starts once phase 1 relay has at
@@ -35,9 +35,9 @@ KEYF=${KEYF:-/e/fscratch/reformo/lee27/keys/daytona_eval.env}
 E=/e/fscratch/reformo/lee27/experiments/relay/pilot; EP=$E/endpoints
 R=$E/runs/$NAME
 JOBS_ROOT=${JOBS_ROOT:-/e/data1/mmlaion/lee27/experiments/relay_full_jobs}
-CONC_BASE=${CONC_BASE:-400}; CONC_RELAY=${CONC_RELAY:-200}; CONC_P2=${CONC_P2:-$CONC_RELAY}; P2_START=${P2_START:-20}
+CONC_BASE=${CONC_BASE:-400}; CONC_RELAY=${CONC_RELAY:-400}; CONC_P2=${CONC_P2:-$CONC_RELAY}; P2_START=${P2_START:-20}
 OVF_AFTER=${OVF_AFTER:-200}; OVF_MAX=${OVF_MAX:-0.20}   # the in-run check: relay overflow share after the first OVF_AFTER relay episodes
-CAP_NODE_H=${CAP_NODE_H:-35}; DEADLINE_MARGIN=${DEADLINE_MARGIN:-600}
+CAP_NODE_H=${CAP_NODE_H:-42}; TEACHER_MAX_TOKENS=${TEACHER_MAX_TOKENS:-16384}; DEADLINE_MARGIN=${DEADLINE_MARGIN:-600}
 EARLY_MIN=${EARLY_MIN:-25}; LAT_MIN=${LAT_MIN:-15}; LAT_WARN=${LAT_WARN:-30}; LAT_ABORT=${LAT_ABORT:-90}
 STALL_MIN=${STALL_MIN:-15}; UP_WAIT=${UP_WAIT:-2400}; VERIFY_WAIT=${VERIFY_WAIT:-2700}; DRAIN_WAIT=${DRAIN_WAIT:-600}
 PORT0=${PORT0:-$((21000 + RANDOM % 8000))}; PB=$PORT0; PR=$((PORT0 + 1))
@@ -95,13 +95,13 @@ log "students=$SURL teachers=$(tr '\n' ' ' < $TFILE) deadline=$(date -d @$DEADLI
 TALL=$(paste -sd, $TFILE)
 $PY $ROUTER --mode teacher --arm control --port $PB --log-dir $R/router_control --tasks $TREE/router_tasks.json \
   --budget-mode on --deadline-epoch $DEADLINE --teacher-url $TALL --teacher-model qwen38 --teacher-url-file $TFILE \
-  > $R/router_control.log 2>&1 & RB=$!
+  --teacher-max-tokens $TEACHER_MAX_TOKENS > $R/router_control.log 2>&1 & RB=$!
 $PY $ROUTER --mode relay --arm relay_repair --student-think strip --repair-on-parse-error --autofix \
   --student-tokenizer ${STUDENT_TOKENIZER:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921/tokenizer.json} \
   --terminus-parser $HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py --port $PR \
   --log-dir $R/router_relay_repair --tasks $TREE/router_tasks.json --budget-mode on --deadline-epoch $DEADLINE \
   --student-url $SURL --student-model snowball --teacher-url $TALL --teacher-model qwen38 --teacher-url-file $TFILE \
-  > $R/router_relay_repair.log 2>&1 & RR=$!
+  --teacher-max-tokens $TEACHER_MAX_TOKENS > $R/router_relay_repair.log 2>&1 & RR=$!
 for arm in control relay_repair; do
   for i in $(seq 1 120); do grep -q RELAY_ROUTER_READY $R/router_$arm.log 2>/dev/null && break
     [ -f $R/router_$arm/FATAL ] && abort "router $arm health: $(head -2 $R/router_$arm/FATAL)"; sleep 5; done

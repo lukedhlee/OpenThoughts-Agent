@@ -241,7 +241,7 @@ class Router:
         self.fatal = None
         self.max_model_len = None
         self.counts = dict(requests=0, upstream_errors=0, takeovers=0, synthetic=0, no_task_match=0, repairs=0,
-                           repair_reply_rejected=0, repinned=0, autofixes=0)
+                           repair_reply_rejected=0, repinned=0, autofixes=0, teacher_cut_at_cap=0)
         os.makedirs(a.log_dir, exist_ok=True)
         os.makedirs(os.path.join(a.log_dir, 'bodies'), exist_ok=True)
         # one os.write per line on an O_APPEND fd: readers (the driver's gates) never see a half-written line
@@ -466,6 +466,9 @@ class Router:
         if who == 'teacher':
             b = {k: v for k, v in body.items() if k not in self.teacher_drop}
             b.update(self.teacher_extra)
+            if self.a.teacher_max_tokens:
+                # the cap on one teacher reply (Luke 18:10 PT); harbor's chat path sends no max_tokens of its own
+                b['max_tokens'] = min(int(b.get('max_tokens') or self.a.teacher_max_tokens), self.a.teacher_max_tokens)
         else:
             b = dict(body)
             b.update(self.student_extra)
@@ -774,6 +777,13 @@ class Router:
         attempts = self.a.repair_attempts if (rec.get('repair') and self.parser is not None) else 1
         for attempt in range(attempts):
             status, data = await self.post(who, '/chat/completions', b, ep)
+            if status == 400 and who == 'teacher' and b.get('max_tokens'):
+                # the cap asked for more than the context has left: ask for what is left, as the uncapped request did
+                m = re.search(rb'maximum context length is (\d+).*?prompt contains at least (\d+) input tokens', data, re.S)
+                if m and int(m.group(1)) - int(m.group(2)) >= 1:
+                    b = dict(b, max_tokens=int(m.group(1)) - int(m.group(2)))
+                    rec['teacher_max_tokens_lowered_to'] = b['max_tokens']
+                    status, data = await self.post(who, '/chat/completions', b, ep)
             if status != 200 or attempt == attempts - 1:
                 break
             c = text_of(json.loads(data)['choices'][0]['message'].get('content'))
@@ -806,6 +816,11 @@ class Router:
                 msg['reasoning_content'] = r
                 msg['reasoning'] = r
             rec['teacher_reasoning_chars'] = len(r or '')
+            if resp['choices'][0].get('finish_reason') == 'length':
+                # cut at the cap (or at the context's end): passed to harbor as served; Terminus-2 salvages it or
+                # asks again ("NONE of the actions ... were performed")
+                rec['teacher_cut_at_cap'] = True
+                self.counts['teacher_cut_at_cap'] += 1
             rec['content_has_think_close'] = '</think>' in (msg.get('content') or '')
         t = rec.get('turn')
         if main and self.mode in ('teacher', 'student'):
@@ -905,6 +920,9 @@ def parse_args(argv=None):
     p.add_argument('--repair-on-parse-error', action='store_true',
                    help='parse_error trigger (non-sticky): a student reply that Terminus-2\'s own parser rejects is '
                         'discarded and the teacher answers the same request for one turn; the student keeps the episode')
+    p.add_argument('--teacher-max-tokens', type=int, default=None,
+                   help='max_tokens on every teacher request (reasoning + content); a reply cut there is logged as '
+                        'teacher_cut_at_cap. Lowered to what the context has left when the cap would not fit.')
     p.add_argument('--student-tokenizer', default=None,
                    help="09-21's tokenizer.json: turns on the cap on older teacher reasoning in the student's view")
     p.add_argument('--reasoning-cap', type=int, default=rcap.CAP_TOKENS,

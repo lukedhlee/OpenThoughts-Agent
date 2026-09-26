@@ -209,6 +209,7 @@ def reasoning_view(rv):
                 tgt[k] += v
     need = ref['prior_teacher_turns'] - ref['teacher_turns_without_reasoning']
     comp = [((r.get('usage') or {}).get('completion_tokens')) for r in main]
+    cut = [r for r in t if r.get('teacher_cut_at_cap')]
     return dict(teacher_replies=len(main), with_reasoning=sum(1 for r in main if r.get('teacher_reasoning_chars')),
                 reasoning_frac=round(sum(1 for r in main if r.get('teacher_reasoning_chars')) / len(main), 4) if main else None,
                 think_close_in_content=sum(1 for r in main if r.get('content_has_think_close')),
@@ -220,6 +221,8 @@ def reasoning_view(rv):
                 summarization_requests_prior_teacher_turns=aux['prior_teacher_turns'],
                 student_think_spans_stripped=ref['think_stripped'],
                 student_think_sent_as_reasoning=ref['student_think_as_reasoning'],
+                teacher_replies_cut_at_cap=len(cut), episodes_with_a_cut_reply=len({r['sid'] for r in cut}),
+                teacher_max_tokens_lowered=sum(1 for r in t if r.get('teacher_max_tokens_lowered_to')),
                 completion_tokens_p50=q(comp, .5), completion_tokens_p90=q(comp, .9),
                 completion_tokens_max=max([c for c in comp if c is not None], default=None))
 

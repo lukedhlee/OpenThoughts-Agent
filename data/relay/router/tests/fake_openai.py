@@ -99,6 +99,7 @@ class FakeServer:
         self.role, self.model, self.reasoning_key = role, model, reasoning_key
         self.max_model_len, self.delay = max_model_len, delay
         self.long_reasoning = long_reasoning     # sentences appended to the teacher's reasoning (the cap tests)
+        self.cut_first = False                   # the teacher's first real reply ends at max_tokens (finish length)
         self.requests = []          # chat bodies
         self.tokenize_requests = []
         self.summarized = set()
@@ -139,6 +140,13 @@ class FakeServer:
         if self.delay:
             await asyncio.sleep(self.delay)
         msgs = body['messages']
+        prompt = sum(len(json.dumps(m)) for m in msgs) // 4
+        if body.get('max_tokens') and prompt + body['max_tokens'] > self.max_model_len:   # vLLM's check and wording
+            return web.json_response({'error': {'message': (
+                f"This model's maximum context length is {self.max_model_len} tokens. However, you requested "
+                f"{body['max_tokens']} output tokens and your prompt contains at least {prompt + 1} input tokens, for a "
+                f"total of at least {prompt + 1 + body['max_tokens']} tokens."), 'type': 'BadRequestError', 'code': 400}},
+                status=400)
         last = text_of(msgs[-1].get('content'))
         first = text_of(msgs[0].get('content'))
         reasoning = None
@@ -159,8 +167,12 @@ class FakeServer:
             reasoning = f'teacher reasoning {k}' + ''.join(f'. Sentence {j} of step {k} is here'
                                                             for j in range(self.long_reasoning)) + ('.' if self.long_reasoning else '')
         msg = {'role': 'assistant', 'content': content}
+        finish = 'stop'
         if reasoning is not None:
             msg[self.reasoning_key] = reasoning
+            if self.cut_first and 'Print hello' not in last:
+                self.cut_first = False
+                msg, finish = {'role': 'assistant', 'content': '', self.reasoning_key: reasoning + ' and then I would'}, 'length'
         if 'Print hello' in last:   # the router's health smoke
             msg = {'role': 'assistant', 'content': ('<|start_think|>hi<|end_think|>echo hello' if self.role == 'student'
                                                     else 'echo hello')}
@@ -168,7 +180,7 @@ class FakeServer:
                 msg[self.reasoning_key] = 'The user wants hello.'
         return web.json_response({
             'id': f'fake-{len(self.requests)}', 'object': 'chat.completion', 'model': self.model,
-            'choices': [{'index': 0, 'finish_reason': 'stop', 'message': msg}],
+            'choices': [{'index': 0, 'finish_reason': finish, 'message': msg}],
             'usage': {'prompt_tokens': 100, 'completion_tokens': 10, 'total_tokens': 110}})
 
     async def start(self, port=0, host='127.0.0.1'):

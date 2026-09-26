@@ -115,7 +115,7 @@ log "endpoints student=$SURL teacher=$TURL; job start $(date -d @$JSTART -Is), d
 
 # ---- 3. routers -----------------------------------------------------------------------------------------------------
 for arm in $ARMS; do
-  TARGS=(); [ -n "$TURL" ] && TARGS=(--teacher-url $TURL --teacher-model qwen38)
+  TARGS=(); [ -n "$TURL" ] && TARGS=(--teacher-url $TURL --teacher-model qwen38 --teacher-max-tokens ${TEACHER_MAX_TOKENS:-16384})
   case $arm in control) M=(--mode teacher);; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
     relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py
                   --autofix --student-tokenizer $STUDENT_TOKENIZER);;
