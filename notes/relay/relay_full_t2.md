@@ -660,3 +660,21 @@ quick ones, so their pass rate is biased high and is not comparable to baseline 
 Next decision: before any rerun, either let H1 tolerate retried 500s from a dead engine, or find the gather-index
 crash (Qwen3.8 with MTP 2 under per-GPU TP1). Otherwise the next run can stop the same way.
 Run dir: `/e/fscratch/reformo/lee27/experiments/relay/pilot/runs/relay_full_baseline4_20260926`.
+
+## Baseline 5 stopped by hand: the verify note on every confirmation made Qwen re-verify forever (2026-09-26 14:38 PT)
+
+**Why it was stopped.** Baseline 5 (job 2076765; commit 51cacd25; format guard on, verify note
+on) was cancelled after 29 min and 3.86 node-hours, with its run dir kept
+(`runs/relay_full_baseline5_20260926`). Serving and the format guard were healthy. The problem was the note.
+- In Qwen-alone mode the router put the note on **every** Terminus-2 confirmation. Qwen ran checks instead of
+  confirming 87 % of the time, then claimed done again, got the note again, and so on.
+- By 14:35 PT, 41 of the 221 episodes that had reached a confirmation had 8 or more of them; the worst had 35 in 79
+  turns, rebuilding and re-testing the same thing. Such episodes end only at the agent timeout or the context limit,
+  so outcomes, the failure split and the kept traces would all have been shaped by the loop.
+- The replay that justified the note only ever showed it once, and the relay arm shows it once (the done_claim
+  takeover's confirmation). The fix (ac025a7a) puts the note on the episode's **first** confirmation only in
+  Qwen-alone mode too. The relay path is unchanged.
+
+**Relaunched** as `relay_full_baseline6_20260926` (job 2077047), same command, on ac025a7a, ceiling 11.7 node-hours.
+The babysitter checks confirmations per episode (expected at most 2 for nearly all) and the share of first
+confirmations where Qwen runs commands before confirming.
