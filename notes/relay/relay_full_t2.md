@@ -31,6 +31,32 @@ It produces two SFT arms of about 2,000 kept traces each, 1:1 pass:fail:
   overflow above 20 % after 200 episodes, which costs about 7–9 node-hours if it fires).
 - **Nothing is submitted.**
 
+## Plan change (Luke, 18:40 PT): baseline first, relay only on solved tasks
+
+- **Baseline arm, running now** (job 2037808, submitted 18:41 PT; `tmux relay_full_base`):
+  - Qwen alone, 1 rollout per task on the 2,043-task pool, on 4 Qwen nodes at 400 concurrent (100 per node).
+  - Settings as the full-run baseline: no summarization, 64k, 16k Qwen reply cap, harbor 89098635, and the same keep
+    and labelling (`select_kept.py`).
+  - Cost: about 10 node-hours expected, hard ceiling 13 (`--time 3:15`). This is carved out of the 42 node-hour
+    full-run budget.
+- **Relay arm, launched automatically** by `launch_relay.sh` (`tmux relay_launcher`, started 18:50 PT). It launches
+  when the check run PASSES its pre-registered rule AND the baseline has **finished**.
+  - Waiting for the whole baseline is deliberate. Its tail is the long-budget tasks, the ones most worth relaying, and
+    a complete solvable list keeps the plan exact.
+  - The relay runs **only on the tasks the baseline solved**, on 4 × 09-21 + 4 × Qwen (8 nodes, 400 relay agents),
+    with the overflow backstop: cancel if more than 20 % of the first 200 relay episodes overflow.
+- **Rollouts per task** (`relay_plan.py`): the smallest r of 1–4 whose expected kept traces reach 2,000.
+  - Otherwise r = 3, and the shortfall is reported.
+  - The expectation uses the check run's relay pass rate on tasks run 3's control solved.
+  - Kept traces = 2 × min(passes capped at 2 per task, real failures, 1,000).
+- **Cost rule.** Relay node-hours are projected as 8 × (startup + n·r·D/400 + p90 tail), with D and the tail taken
+  from the check run. The relay launches only if that fits 42 − the baseline's actual node-hours. Its `--time` is
+  that remainder ÷ 8, so baseline + relay stays ≤ 42 by construction. If it does not fit, no launch, and a report.
+- **Expected**, from run 3 numbers:
+  - about 1,140 solvable tasks × 3 rollouts ≈ 3,400 relay episodes;
+  - about 2.6–2.9 h of wall time, about 21–23 node-hours;
+  - about 31–33 node-hours in total with the baseline.
+
 ## Check run (Luke's go, 18:25 PT): pass rule, pre-registered before its job starts
 
 **What.** relay_repair only, on the pilot's 100 tasks, with every fix on: autofix, the reasoning cap, the 16k Qwen
