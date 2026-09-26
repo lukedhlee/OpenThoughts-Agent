@@ -105,7 +105,8 @@ def render_episode(traj, records, tok, template, bos, autofix_loss='content', ca
         body = text[start:end]
         meta = info[a]
         a += 1
-        think_end = start + body.index(END) + len(END) if body.startswith(START) else start
+        # a student reply may open a span it never closes (the parser still accepted its JSON): no think span then
+        think_end = start + body.index(END) + len(END) if (body.startswith(START) and END in body) else start
         if meta['owner'] == 'teacher':
             if meta['cut_at'] is None:
                 loss_ranges.append((start, end))               # reasoning (uncut) + content + eot
@@ -165,6 +166,7 @@ def main():
     ap.add_argument('tokenizer_dir')
     ap.add_argument('--name')
     ap.add_argument('--out')
+    ap.add_argument('--cap', type=int, default=rcap.CAP_TOKENS, help='reasoning cap in tokens (a huge value = no cap)')
     a = ap.parse_args()
     name = a.name or os.path.basename(os.path.normpath(a.run_dir))
     tok = rcap.load_tokenizer(os.path.join(a.tokenizer_dir, 'tokenizer.json'))
@@ -185,12 +187,14 @@ def main():
             stats['no_router_records'] += 1
             continue
         try:
-            row = render_episode(traj, recs[sid], tok, tpl, bos)
+            row = render_episode(traj, recs[sid], tok, tpl, bos, cap=a.cap)
             c = check_row(row, tok)
         except (ValueError, AssertionError, StopIteration) as e:
             stats['error: ' + str(e)[:60]] += 1
             continue
         stats['episodes'] += 1
+        ended_overflow = any('ContextLengthExceeded' in json.dumps(s.get('extra') or {}) for s in traj['steps'][-3:])
+        stats['trained_tokens'] += sum(row['loss'])
         stats['fits_64k'] += row['fits']
         stats['with_cut'] += c['cut_turns'] > 0
         stats['cut_turns'] += c['cut_turns']

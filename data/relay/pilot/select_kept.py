@@ -2,7 +2,8 @@
 """Pick the kept traces of a relay run: 1:1 pass:fail per arm, at most 2 kept passes per task, failures only real
 model failures (harness errors, verifier timeouts and deadline-censored episodes dropped), each failure labelled by
 cause (readout.failure_cause). relay_repair episodes count only when the teacher wrote at least one turn (repair or
-takeover), since only teacher turns are trained on.
+takeover), since only teacher turns are trained on. S5 as a keep filter (Luke 2026-09-25 17:40 PT): a done_claim
+takeover episode is kept only if the teacher ran at least one command before confirming.
 
     python select_kept.py --run-dir <run> [--name <run name>] --target 2000 --out kept_manifest.jsonl
 
@@ -20,6 +21,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import readout  # noqa: E402
 
 
+def teacher_worked(e):
+    """Did the teacher run at least one command between its done_claim takeover and the episode's end?"""
+    t0 = e['takeover']['turn']
+    for r in sorted((r for r in e['main'] if r.get('owner') == 'teacher' and (r.get('turn') or 0) >= t0),
+                    key=lambda r: r['turn']):
+        c = (((r.get('response') or {}).get('choices') or [{}])[0].get('message') or {}).get('content') or ''
+        if readout.rt.parse_reply(c, 'terminus2')['cmds']:
+            return True
+    return False
+
+
 def arm_rows(run_dir, name, arm):
     rv = readout.router_view(os.path.join(run_dir, f'router_{arm}'))
     rows = readout.trials(os.path.join(run_dir, 'jobs', f'{name}_{arm}')) + \
@@ -33,6 +45,8 @@ def arm_rows(run_dir, name, arm):
             continue
         teacher_turns = sum(1 for r in e['main'] if r.get('owner') == 'teacher')
         if arm != 'control' and teacher_turns == 0:
+            continue
+        if (e['takeover'] or {}).get('trigger') == 'done_claim' and not teacher_worked(e):
             continue
         out.append(dict(arm=arm, task=t['task'], trial=t['trial'], sid=t['sid'], reward=t['reward'],
                         passed=readout.is_pass(t),

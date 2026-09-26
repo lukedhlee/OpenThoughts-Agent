@@ -615,14 +615,18 @@ def main():
             rp = out['relay_repair']['repair']
             scheck('S2 the student owns >= 50 % of executed turns in relay_repair', (rp['student_share_of_executed_turns'] or 0) >= 0.5,
                    rp['student_share_of_executed_turns'])
-            scheck('S3 sticky takeover rate >= 0.30', (tk.get('takeover_rate') or 0) >= 0.30, tk.get('takeover_rate'))
+            # target 0.30; Luke 2026-09-25 17:40 PT: run 3's 0.28 is inside noise and counts as a pass -> floor 0.25
+            scheck('S3 sticky takeover rate >= 0.25 (target 0.30)', (tk.get('takeover_rate') or 0) >= 0.25, tk.get('takeover_rate'))
         else:
             scheck('S2 relay takeover rate >= 0.40', (tk.get('takeover_rate') or 0) >= 0.40, tk.get('takeover_rate'))
         scheck('S4 recovery P(pass | sticky takeover) >= 0.20', (tk.get('recovery') or 0) >= 0.20,
                [tk.get('recovery'), tk.get('recovery_ci95')])
         dc = tk['by_trigger'].get('done_claim') or {}
-        scheck('S5 done_claim: teacher runs a command before confirming in >= 50 %',
-               (dc.get('teacher_worked_frac') or 0) >= 0.5, dc.get('teacher_worked_frac'))
+        if rel_arm != 'relay_repair':
+            scheck('S5 done_claim: teacher runs a command before confirming in >= 50 %',
+                   (dc.get('teacher_worked_frac') or 0) >= 0.5, dc.get('teacher_worked_frac'))
+        else:   # Luke 2026-09-25 17:40 PT: S5 is a keep filter now (select_kept.py), reported, not a gate
+            out['s5_keep_filter_teacher_worked_frac'] = dc.get('teacher_worked_frac')
         if rel_arm == 'relay_repair':
             rp = out['relay_repair']['repair']
             kr = kept(rp['with_teacher_passes'], rp['with_teacher_real_failures'])
