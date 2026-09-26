@@ -23,6 +23,18 @@ who answers each request:
     With --autofix, a reply whose single intended action is recoverable is first rewritten into valid Terminus-2 JSON
     (autofix.py; the student's thinking kept verbatim) and runs as the student's turn (autofix=True, the original raw
     reply and the rewrite kind logged); only unrecoverable replies go to the teacher.
+  * context_budget (--context-budget-tokens, sticky decision trigger; Luke 2026-09-26): before the student is asked,
+    the router counts the student's own view of the request (the body it would send, older teacher reasoning cut)
+    on the student server's /tokenize. At or over the threshold (32,000 in the check run), from agent turn 2 on, the
+    student is not called: the teacher answers this request and keeps the episode (takeover logged with
+    `prompt_tokens`). Every counted request logs `student_view_tokens`.
+  * Trainability hard end (--student-row-max-tokens, --student-row-reserve): training rows are rendered from 09-21's
+    view and must fit 09-21's 65,536. Once the teacher owns the episode, the router counts 09-21's view of every
+    request the same way; above max - reserve (65,536 - 8,192) it ends the episode as a context overflow: it answers
+    that request, and any later one, with vLLM's own context-length 400 ("This model's maximum context length is
+    ..."), so harbor raises ContextLengthExceededError exactly as when 09-21's own server rejects a prompt (with
+    summarization off Terminus-2 re-raises it; the verifier still scores the sandbox). A scored model failure, never
+    a harness error. Logged as owner 'router', ending 'context_hard_end', upstream_status 400, plus an event.
   * --mode teacher (control arm): the teacher answers everything; triggers are computed on its own turns and logged as
     `would_fire` only. --mode student: the reverse, for debugging.
 
@@ -98,7 +110,7 @@ sys.path.insert(0, HERE)
 import autofix as af  # noqa: E402
 import reasoning_cap as rcap  # noqa: E402
 
-ROUTER_VERSION = 'relay-router/1 (2026-09-25)'
+ROUTER_VERSION = 'relay-router/1 (2026-09-26 context_budget)'
 SESSION_HEADER = 'X-Harbor-Session-Id'
 
 # Terminus-2 prompt openings (harbor terminus_2.py; stable across the v0.1 pin and lukedhlee/terminus2-relay)
@@ -246,7 +258,8 @@ class Router:
         self.fatal = None
         self.max_model_len = None
         self.counts = dict(requests=0, upstream_errors=0, takeovers=0, synthetic=0, no_task_match=0, repairs=0,
-                           repair_reply_rejected=0, repinned=0, autofixes=0, teacher_cut_at_cap=0)
+                           repair_reply_rejected=0, repinned=0, autofixes=0, teacher_cut_at_cap=0,
+                           view_count_errors=0, context_hard_ends=0)
         os.makedirs(a.log_dir, exist_ok=True)
         os.makedirs(os.path.join(a.log_dir, 'bodies'), exist_ok=True)
         # one os.write per line on an O_APPEND fd: readers (the driver's gates) never see a half-written line
@@ -673,6 +686,8 @@ class Router:
         if not ep.ending and self.a.deadline_epoch and now >= self.a.deadline_epoch:
             ep.ending = 'deadline'
             self.event('ending', episode=ep.idx, sid=ep.sid, ending='deadline', turn=t, elapsed_sec=now - ep.t0)
+        if ep.ending == 'context_hard_end':
+            return self.hard_end(ep, rec, t, None)
         if ep.ending:
             return self.synthetic(ep, rec)
         if ep.pending is not None and ep.owner == 'student':
@@ -712,17 +727,74 @@ class Router:
             if env:
                 self.take_over(ep, env[0], t, now)
                 rec['takeover'] = self.takeover_rec(ep)
+        # context_budget: the student's own view of this request, counted before the student is asked
+        if ep.owner == 'student' and self.mode == 'relay' and self.a.context_budget_tokens:
+            n = await self.count_student_view(ep, body, messages, rec)
+            fire = rt.context_budget_fire(n, t, self.a.context_budget_tokens, self.a.context_budget_min_turn)
+            if fire:
+                self.take_over(ep, fire, t, now)
+                rec['takeover'] = self.takeover_rec(ep)
         if ep.owner == 'student':
             return await self.answer_student(ep, body, messages, rec, t, now)
+        # trainability hard end: once the teacher owns the episode, 09-21's view must leave the reply reserve
+        if self.mode == 'relay' and ep.takeover and self.a.student_row_max_tokens:
+            n = rec['student_view_tokens'] if 'student_view_tokens' in rec else \
+                await self.count_student_view(ep, body, messages, rec)
+            if n is not None and n > self.a.student_row_max_tokens - self.a.student_row_reserve:
+                ep.ending = 'context_hard_end'
+                self.event('ending', episode=ep.idx, sid=ep.sid, ending='context_hard_end', turn=t,
+                           elapsed_sec=now - ep.t0, student_view_tokens=n,
+                           limit=self.a.student_row_max_tokens - self.a.student_row_reserve,
+                           takeover_trigger=ep.takeover['trigger'])
+                return self.hard_end(ep, rec, t, n)
         rec['owner'] = 'teacher'
         return await self.answer(ep, 'teacher', body, messages, rec, main=True)
+
+    async def count_student_view(self, ep, body, messages, rec):
+        """Tokens in 09-21's rendered prompt for this request: the student-bound body (for_student: its own turns as
+        sent, teacher turns inline with older reasoning cut) on the student server's /tokenize, i.e. the prompt_tokens
+        the student's chat request would report. Logged as student_view_tokens; None (and the error logged) if the
+        count fails, in which case neither context rule acts on this request."""
+        msgs, _ = self.for_student(ep, messages)
+        b = self.upstream_body('student', body, msgs)
+        tb = {k: b[k] for k in ('model', 'messages', 'chat_template_kwargs', 'tools', 'add_generation_prompt',
+                                'continue_final_message') if k in b}
+        tb.setdefault('add_generation_prompt', True)
+        status, data = await self.post('student', '/tokenize', tb, ep)
+        n = None
+        if status == 200:
+            try:
+                n = int(json.loads(data)['count'])
+            except (ValueError, KeyError, TypeError):
+                pass
+        if n is None:
+            self.counts['view_count_errors'] += 1
+            rec['student_view_tokens_error'] = f'HTTP {status}: {data[:300].decode("utf-8", "replace")}'
+        rec['student_view_tokens'] = n
+        return n
+
+    def hard_end(self, ep, rec, t, n):
+        """End the episode as a context overflow: vLLM's own context-length 400, which harbor maps to
+        ContextLengthExceededError (lite_llm._is_context_length_error matches 'maximum context length')."""
+        lim, res = self.a.student_row_max_tokens, self.a.student_row_reserve
+        msg = (f"This model's maximum context length is {lim} tokens. However, your request has {n if n is not None else 'at least ' + str(lim - res + 1)} "
+               f"input tokens and {res} tokens are reserved for the reply. Please reduce the length of the input messages. "
+               f"(relay router: 09-21's view of this request exceeds {lim - res} tokens; the episode ends as a context "
+               f"overflow)")
+        if n is not None:
+            self.counts['context_hard_ends'] += 1
+        rec.update(owner='router', ending='context_hard_end', upstream_status=400, upstream_error=msg, latency_sec=0.0,
+                   hard_end=dict(student_view_tokens=n, limit=lim - res, turn=t,
+                                 takeover_trigger=(ep.takeover or {}).get('trigger')))
+        self.log(rec)
+        return openai_error(400, msg, 'BadRequestError')
 
     def take_over(self, ep, fire, t, now, discarded=None):
         ep.owner = 'teacher'
         ep.takeover_t = now
         ep.paused_at_takeover = ep.paused_sec
         ep.takeover = dict(trigger=fire['trigger'], kind=fire['kind'], reason=fire.get('reason'), fired_turn=fire.get('turn'),
-                           turn=t, elapsed_sec=round(now - ep.t0, 3),
+                           turn=t, elapsed_sec=round(now - ep.t0, 3), prompt_tokens=fire.get('prompt_tokens'),
                            budget_sec=(ep.task or {}).get('budget_sec'), discarded_student_reply=discarded)
         self.counts['takeovers'] += 1
         self.event('takeover', episode=ep.idx, sid=ep.sid, task_id=(ep.task or {}).get('task_id'),
@@ -990,6 +1062,16 @@ def parse_args(argv=None):
                    help='path of harbor terminus_json_plain_parser.py (default: found on sys.path / PYTHONPATH)')
     p.add_argument('--repair-attempts', type=int, default=2,
                    help='teacher attempts per repair turn when its own reply fails the parser')
+    p.add_argument('--context-budget-tokens', type=int, default=None,
+                   help='context_budget takeover (sticky): the teacher takes the episode once the student view of a '
+                        'request (counted on the student /tokenize) reaches this many tokens; off by default (32000 '
+                        'in the 2026-09-26 check)')
+    p.add_argument('--context-budget-min-turn', type=int, default=2, help='context_budget never fires before this agent turn')
+    p.add_argument('--student-row-max-tokens', type=int, default=None,
+                   help='trainability hard end: after a takeover, end the episode as a context overflow once the '
+                        'student view exceeds this minus --student-row-reserve (65536 in the check); off by default')
+    p.add_argument('--student-row-reserve', type=int, default=8192,
+                   help="tokens kept free for the reply under --student-row-max-tokens (09-21's eval per-turn output limit)")
     p.add_argument('--deadline-epoch', type=float, default=None,
                    help='wall-clock time (unix) after which every episode is ended at its next request (ending '
                         "'deadline'), so the run finishes with its results inside the node-hour cap")
@@ -1020,6 +1102,8 @@ async def serve(a, ready_event=None):
     router.event('start', argv=sys.argv, version=ROUTER_VERSION, mode=a.mode, takeover=router.cfg['enabled'],
                  budget_mode=a.budget_mode, tasks=len(router.tasks), student_think=a.student_think,
                  deadline_epoch=a.deadline_epoch, repair_on_parse_error=a.repair_on_parse_error,
+                 context_budget_tokens=a.context_budget_tokens, context_budget_min_turn=a.context_budget_min_turn,
+                 student_row_max_tokens=a.student_row_max_tokens, student_row_reserve=a.student_row_reserve,
                  terminus_parser=router.parser_path, terminus_parser_sha256=router.parser_sha)
     if not a.skip_health:
         ok, report = await router.health_check()

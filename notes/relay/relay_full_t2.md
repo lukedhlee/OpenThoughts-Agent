@@ -31,6 +31,95 @@ It produces two SFT arms of about 2,000 kept traces each, 1:1 pass:fail:
   overflow above 20 % after 200 episodes, which costs about 7–9 node-hours if it fires).
 - **Nothing is submitted.**
 
+## Context-budget check (Luke 2026-09-26 12:50 PT): pass rule pre-registered, not submitted
+
+**Why.** In the last relay check 09-21 wandered slowly: about 21 turns per episode against about 9 for Qwen alone.
+Between 23 % and 49 % of relay episodes overflowed 09-21's 64k, mostly before any takeover. A CPU replay of the 300
+logged relay episodes tried a takeover once 09-21's view reached 32k. It would have caught 96 of 132 overflows before
+any other takeover. It fired in 52 % of episodes, at a median turn of 14. On 27 of those episodes 09-21 would have
+passed alone. Luke chose 32k.
+
+**What the router now does** (`relay_router.py`, tested on CPU, off unless the flags are set).
+1. **context_budget, a sticky decision trigger** (`--context-budget-tokens 32000`).
+   - Before the student is asked, the router counts 09-21's view of the request on the student server's `/tokenize`.
+     This is the body the student would get, with older teacher reasoning cut, so the count is the `prompt_tokens`
+     the student's request would report.
+   - At 32,000 tokens or more, the student is not called. The teacher answers this request and keeps the episode.
+   - It never fires before agent turn 2 (`--context-budget-min-turn`). It cannot fire again after a takeover, because
+     the router only counts while the student owns the episode.
+   - Logged like the other takeovers: the takeover record and event carry the trigger, the turn and `prompt_tokens`.
+     Every counted request carries `student_view_tokens`.
+   - The rule itself is `relay_triggers.context_budget_fire`.
+2. **The trainability hard end** (`--student-row-max-tokens 65536 --student-row-reserve 8192`).
+   - Once the teacher owns the episode, the router counts 09-21's view of every request the same way.
+   - Above 65,536 − 8,192 = 57,344 tokens, it ends the episode. It answers that request, and any later one, with
+     vLLM's own context-length 400 ("This model's maximum context length is …").
+   - Harbor maps that 400 to `ContextLengthExceededError`, exactly as when 09-21's own server rejects a prompt. With
+     summarization off, Terminus-2 re-raises it and the verifier scores the sandbox. So a hard end is a scored model
+     failure, never a harness error.
+   - Logged as owner `router`, ending `context_hard_end`, `upstream_status` 400, with the view size, the limit and
+     the takeover trigger. The readout counts it as a context 400, not as an upstream error.
+   - It applies after any takeover, done_claim included.
+   - A final teacher reply longer than 8,192 tokens can still push the last row over 65,536. `sft/render.py` marks
+     such a row `fits=False`.
+3. **Count failures.** If `/tokenize` fails, neither rule acts on that request. The error is logged and the readout
+   counts `view_count_errors`.
+
+**Interplay** (all covered by the CPU tests).
+- A parse-error repair turn counts toward the student's view, because teacher turns are rendered inline. Repairs
+  stay non-sticky below the threshold. Once context_budget fires, no student call and no repair follow.
+- done_claim below the threshold keeps done_claim. Terminus-2's confirmation is not a student request. When the
+  budget is reached first, the teacher answers before the student can claim.
+
+**The check.** relay_repair only, on the same 100 pilot tasks.
+- **Settings are the re-check's:**
+  - Qwen serves 131,072 tokens and harbor's `max_input_tokens` is 131,072;
+  - the Qwen reply cap is 32,768, with the drop-`max_tokens` fallback;
+  - autofix, the reasoning cap, summarization off.
+- **One change to the clock (`CLOCK=repair`).**
+  - The student's clock pauses only while a teacher repair is in flight. Otherwise the task's budget runs on wall
+    time.
+  - The router ends the student at 1× the task budget, and the teacher at 1× from its takeover. This is the check
+    run's and run 3's clock.
+  - Harbor's `agent_timeout_multiplier` of 8 is only a backstop.
+- **Serving follows the healthy-serving rules.**
+  - 1 × 09-21, served exactly as in its TB2 eval (TP1 × DP4 × EP, 65,536).
+  - 2 × Qwen3.8 with one vLLM server per GPU (`PER_GPU=1`: 8 servers, TP1, MTP 2, 131,072).
+  - The router pins each episode to the Qwen server with the fewest active episodes (`--balance active`).
+  - 96 concurrent episodes, which is at most 12 per Qwen GPU.
+  - The start wave is staggered in two halves 3 min apart.
+- **Auto-cancel from 15 min after harbor starts:** the median Qwen reply latency over the last 5 min is above 30 s,
+  or any engine (09-21's included) stays above 90 % KV with waiting requests for 5 min.
+- **Cost:** 3 nodes, about 2.5–3 node-hours expected. The hard ceiling is **3.75 node-hours** (`--time 1:15`,
+  `CAP_NODE_H=3.75`). The router's deadline ends episodes 5 min before that.
+
+**It PASSES only if all five hold** (`check_decide.py --rule ctxbudget`):
+- **C1, harness gate:** H0–H4 of the readout.
+- **C2:** relay context overflow, hard ends included, in at most 20 % of scored relay episodes.
+- **C3:** the executed trace is at least 98 % valid format.
+- **C4:** the student owns at least 50 % of executed turns.
+- **C5:** recovery after a sticky takeover (every trigger, context_budget included) is at least 0.20.
+
+**Informational, not gates:**
+- the context_budget fire rate, with the turn and view size at the fire;
+- recovery after context_budget vs after the other takeovers;
+- the hard ends and where the overflows came from;
+- Qwen context 400s;
+- the pass rate paired against run 3's control.
+
+**PASS** → report to Luke. Nothing launches automatically. **FAIL** → report the failing check with its numbers.
+
+**Launch (Jupiter login node; only after Luke's go, once the Qwen-alone baseline confirms the per-GPU serving):**
+
+```bash
+C=/e/project1/transfernetx/lee27/code; P=$C/ota-relay-v5/data/relay/pilot
+JOB=$(RELAY_PILOT_DIR=$P N_STUDENT=1 PER_GPU=1 TEACHER_MAXLEN=131072 sbatch --parsable --export=ALL --nodes=3 --time=1:15:00 --job-name=relay_ctxb $P/serve_relay.sbatch)
+tmux new -d -s relay_ctxb "ARMS=relay_repair CLOCK=repair CTX_BUDGET=32000 ROW_MAX=65536 ROW_RESERVE=8192 MAX_INPUT=131072 TEACHER_MAX_TOKENS=32768 BALANCE=active STAGGER_SEC=180 GATE_MIN=15 GATE_LAT=30 GATE_KV=0.90 CONC=96 NODES=3 CAP_NODE_H=3.75 bash $P/run_pilot.sh $JOB relay_ctxb_20260926"
+# after RUN_DONE:
+R=/e/fscratch/reformo/lee27/experiments/relay/pilot/runs
+$C/envs/snowball-v2/bin/python $P/check_decide.py --check $R/relay_ctxb_20260926 --run3 $R/relay_run3b_20260925 --rule ctxbudget
+```
+
 ## Re-check (Luke's go, 21:15 PT): five fixes, pass rule pre-registered before its job starts
 
 **Rollout fixes, tested by the re-check.**

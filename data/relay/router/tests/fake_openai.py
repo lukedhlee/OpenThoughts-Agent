@@ -102,6 +102,7 @@ class FakeServer:
         self.cut_first = False                   # the teacher's first real reply ends at max_tokens (finish length)
         self.requests = []          # chat bodies
         self.tokenize_requests = []
+        self.count_fn = None                     # messages -> /tokenize count (the context_budget tests)
         self.summarized = set()
         self.fail_model = None      # set to make chat answer 404 (a served-name change mid-run)
         self.runner = None
@@ -135,6 +136,8 @@ class FakeServer:
         if (scenario_of(msgs) == 'summ' and len(msgs) >= 7 and first not in self.summarized
                 and not last.startswith((SUMMARY_PREFIX, QUESTIONS_PREFIX, ANSWERS_PREFIX))):
             count = 32000
+        if self.count_fn is not None:
+            count = self.count_fn(msgs)
         return web.json_response({'count': count, 'max_model_len': self.max_model_len, 'tokens': []})
 
     async def chat(self, request):

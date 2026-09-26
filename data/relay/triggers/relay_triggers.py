@@ -1060,3 +1060,23 @@ CALIBRATED_CONFIG = dict(
 LOGGED = ['gave_up', 'edit_failed', 'error_streak', 'submit_check', 'success_claim_unchecked',
           'success_contradicted', 'destructive']
 DEFAULT_CONFIG = CALIBRATED_CONFIG
+
+
+# ==== context budget (router-side; Luke 2026-09-26 12:50 PT) ================================================
+# A sticky decision trigger on the size of the student's own view, not on the episode's content: before the student
+# is asked, if 09-21's rendered prompt for this request (its own chat template, the older teacher reasoning cut as the
+# student sees it; the router counts it on the student server's /tokenize) holds at least `threshold` tokens, the
+# student is not called; the teacher answers this request and keeps the episode. It targets the slow, wandering
+# student episodes that filled 09-21's 64k before any other takeover (CPU replay of the 09-25 relay logs: at 32k it
+# catches 96 of 132 overflows first, fires in 52 % of episodes, median turn 14). Like the other takeovers it never
+# fires before agent turn 2, and it cannot fire again once the teacher owns the episode (the router only asks it
+# while the student does).
+CONTEXT_BUDGET_TOKENS = 32000
+
+
+def context_budget_fire(prompt_tokens, turn, threshold=CONTEXT_BUDGET_TOKENS, min_turn=2):
+    """The context_budget fire for a student request of `prompt_tokens` at agent turn `turn` (1-based), or None."""
+    if prompt_tokens is None or not threshold or turn < min_turn or prompt_tokens < threshold:
+        return None
+    return dict(trigger='context_budget', kind='decision', turn=turn, prompt_tokens=int(prompt_tokens),
+                reason=f"student view {int(prompt_tokens)} tokens >= {int(threshold)}")

@@ -10,6 +10,16 @@ notes/relay/relay_full_t2.md before its job started (Luke 2026-09-25 18:25 PT). 
   C3 (S2) the student owns >= 50 % of executed turns (autofixed turns are the student's)
   C4 (S4) recovery after a sticky takeover >= 0.20
   C5 relay pass rate not below run 3's control by more than 15 points, paired by task (mean over tasks scored in both)
+
+--rule ctxbudget: the 2026-09-26 context-budget check (router context_budget at 32k + the trainability hard end),
+pre-registered in notes/relay/relay_full_t2.md before its job was submitted:
+  C1 harness gate: every harness check H0-H4 of the readout (H5's 99 % format bar is replaced by C3)
+  C2 relay context overflow, router hard ends included, <= 20 % of scored relay episodes
+  C3 the executed trace >= 98 % valid format
+  C4 the student owns >= 50 % of executed turns
+  C5 recovery after a sticky takeover (all triggers, context_budget included) >= 0.20
+  Informational: the context_budget view (fire rate, turn and view size at fire, recovery after it vs the other
+  takeovers, hard ends), Qwen context 400s, the paired pass vs run 3's control.
 """
 import argparse
 import json
@@ -25,7 +35,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--check', required=True)
     ap.add_argument('--run3', required=True)
-    ap.add_argument('--rule', choices=['check', 'recheck'], default='check',
+    ap.add_argument('--rule', choices=['check', 'recheck', 'ctxbudget'], default='check',
                     help="recheck: the 21:15 PT re-check's pre-registered rule (C3 = zero Qwen context 400s; the paired "
                          "pass vs run 3's control is informational, the clock change makes it not like-for-like)")
     a = ap.parse_args()
@@ -46,20 +56,32 @@ def main():
         checks.append(dict(check=name, ok=bool(ok), detail=detail))
     bad = [c['check'] for c in r.get('harness_checks', []) if not c['ok']]
     fv = o.get('format') or {}
-    check('C1 harness gate (H0-H4) and H5 valid format >= 99 %', not bad and (fv.get('valid_format_rate') or 0) >= 0.99,
-          dict(failed=bad, format=fv))
+    if a.rule == 'ctxbudget':
+        bad = [c for c in bad if not c.startswith('H5 ')]
+        check('C1 harness gate (H0-H4)', not bad, dict(failed=bad))
+    else:
+        check('C1 harness gate (H0-H4) and H5 valid format >= 99 %', not bad and (fv.get('valid_format_rate') or 0) >= 0.99,
+              dict(failed=bad, format=fv))
     oc = o.get('outcomes') or {}
     scored = [t for t in rows if readout.usable(t) or t['exc'] == 'ContextLengthExceededError']
     ovf = sum(1 for t in scored if t['exc'] == 'ContextLengthExceededError')
-    check('C2 relay context overflow <= 20 % of scored episodes', scored and ovf / len(scored) <= 0.20,
-          dict(overflow=ovf, scored=len(scored), rate=round(ovf / len(scored), 4) if scored else None))
+    cb = o.get('context_budget') or {}
+    check('C2 relay context overflow <= 20 % of scored episodes' + (' (hard ends included)' if a.rule == 'ctxbudget' else ''),
+          scored and ovf / len(scored) <= 0.20,
+          dict(overflow=ovf, scored=len(scored), rate=round(ovf / len(scored), 4) if scored else None,
+               from_hard_end=cb.get('overflows_from_hard_end'), other=cb.get('overflows_other')))
     share = (o.get('repair') or {}).get('student_share_of_executed_turns')
     tk = o.get('takeovers') or {}
     pp = readout.paired_pass(ctl, rows)
     rv0 = readout.router_view(os.path.join(a.check, 'router_relay_repair'))
     q400 = [x for x in rv0['recs'] if x.get('owner') == 'teacher' and x.get('upstream_status') == 400
             and 'maximum context length' in (x.get('upstream_error') or '')]
-    if a.rule == 'recheck':
+    if a.rule == 'ctxbudget':
+        check('C3 executed trace >= 98 % valid format', (fv.get('valid_format_rate') or 0) >= 0.98, fv)
+        check('C4 student owns >= 50 % of executed turns', (share or 0) >= 0.5, share)
+        check('C5 recovery after a sticky takeover >= 0.20', (tk.get('recovery') or 0) >= 0.20,
+              [tk.get('recovery'), tk.get('recovery_ci95'), tk.get('takeover_episodes')])
+    elif a.rule == 'recheck':
         check('C3 zero Qwen context-length 400s', not q400,
               dict(final_400s=len(q400), cap_dropped_then_ok=sum(1 for x in rv0['recs'] if x.get('teacher_max_tokens_dropped')
                                                                and x.get('upstream_status') == 200)))
@@ -85,7 +107,8 @@ def main():
                autofixes=sum(1 for x in rv['recs'] if x.get('autofix')),
                repairs=(o.get('repair') or {}).get('repairs'),
                teacher_cut_at_cap=o['reasoning'].get('teacher_replies_cut_at_cap'),
-               cap_retry_400_overflows=sum(1 for t in rows if t.get('cap_retry_400')))
+               cap_retry_400_overflows=sum(1 for t in rows if t.get('cap_retry_400')),
+               qwen_context_400s=len(q400), context_budget=cb or None)
     print(json.dumps(out, indent=1))
     sys.exit(0 if out['decision'] == 'PASS' else 2)
 

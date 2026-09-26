@@ -431,6 +431,51 @@ def relay_takeovers(rv, rows):
     return out
 
 
+def context_budget_view(rv, rows):
+    """The context_budget takeover and the trainability hard end (router --context-budget-tokens /
+    --student-row-max-tokens, 2026-09-26): how often it fired, at which turn and student-view size, recovery after it
+    vs after the other takeovers, and the hard ends (episodes ended as a context overflow once the teacher owned them
+    and 09-21's view outgrew max - reserve). Overflows are split by where they came from: a router hard end, or 09-21's
+    own 400 / harbor's guard (every other ContextLengthExceededError)."""
+    by_sid = {t['sid']: t for t in rows if t['sid']}
+    eps = list(rv['eps'].values())
+    fired = [e for e in eps if (e['takeover'] or {}).get('trigger') == 'context_budget']
+    other = [e for e in eps if e['takeover'] and e['takeover'].get('trigger') != 'context_budget']
+
+    def recovery(items):
+        sc = [t for t in (by_sid.get(e['sid']) for e in items) if usable(t)]
+        p = sum(1 for t in sc if is_pass(t))
+        return dict(n=len(items), scored=len(sc), passes=p, recovery=round(p / len(sc), 4) if sc else None,
+                    recovery_ci95=wilson(p, len(sc)),
+                    hard_ends=sum(1 for e in items if e['ending'] == 'context_hard_end'),
+                    overflows=sum(1 for t in sc if t['exc'] == 'ContextLengthExceededError'))
+    turns = [e['takeover']['turn'] for e in fired]
+    size = [e['takeover'].get('prompt_tokens') for e in fired]
+    hard = [e for e in eps if e['ending'] == 'context_hard_end']
+    hard_rec = [next((r['hard_end'] for r in e['main'] if r.get('hard_end')), {}) for e in hard]
+    hard_sids = {e['sid'] for e in hard}
+    ovf = [t for t in rows if t['exc'] == 'ContextLengthExceededError']
+    views = [max((r.get('student_view_tokens') or 0) for r in e['main']) for e in eps
+             if any(r.get('student_view_tokens') is not None for r in e['main'])]
+    return dict(
+        episodes=len(eps), fires=len(fired), fire_rate=round(len(fired) / len(eps), 4) if eps else None,
+        fire_turn_p25=q(turns, .25), fire_turn_p50=q(turns, .5), fire_turn_p75=q(turns, .75),
+        fire_prompt_tokens_p50=q(size, .5), fire_prompt_tokens_p90=q(size, .9),
+        fire_prompt_tokens_min=min((x for x in size if x is not None), default=None),
+        fire_prompt_tokens_max=max((x for x in size if x is not None), default=None),
+        recovery_after_context_budget=recovery(fired), recovery_after_other_takeovers=recovery(other),
+        hard_ends=len(hard), hard_ends_by_takeover=dict(collections.Counter(h.get('takeover_trigger') for h in hard_rec)),
+        hard_end_turn_p50=q([h.get('turn') for h in hard_rec], .5),
+        hard_end_view_tokens_p50=q([h.get('student_view_tokens') for h in hard_rec], .5),
+        overflows=len(ovf), overflows_from_hard_end=sum(1 for t in ovf if t['sid'] in hard_sids),
+        overflows_other=sum(1 for t in ovf if t['sid'] not in hard_sids),
+        # must be 0: a hard end reaches harbor as a context 400, so its trial ends ContextLengthExceededError
+        hard_ends_not_overflow=sum(1 for e in hard if e['sid'] in by_sid
+                                   and by_sid[e['sid']]['exc'] != 'ContextLengthExceededError') if rows else None,
+        student_view_max_p50=q(views, .5), student_view_max_p90=q(views, .9),
+        view_count_errors=sum(1 for r in rv['recs'] if r.get('student_view_tokens_error')))
+
+
 def would_fire(rv, rows):
     by_sid = {t['sid']: t for t in rows if t['sid']}
     c = collections.Counter()
@@ -584,6 +629,7 @@ def main():
         if arm in RELAY_ARMS:
             o['student'] = student_view(rv)
             o['takeovers'] = relay_takeovers(rv, rows)
+            o['context_budget'] = context_budget_view(rv, rows)
             if arm == 'relay_repair':
                 o['repair'] = repair_view(rv, rows)
         else:
@@ -731,6 +777,15 @@ def main():
               f"{sk['keep']['ci95']}, keep - strip {sk['keep_minus_strip']} {sk['keep_minus_strip_ci95_newcombe']}; "
               f"paired over {sk['paired_tasks']} tasks {sk['paired_mean_diff']} {sk['paired_ci95_bootstrap']}; "
               f"guards keep - strip {sk['guard_diff_keep_minus_strip']} -> {out['strip_vs_keep_rule']}", file=sys.stderr)
+    for arm in arm_names:
+        cb = out[arm].get('context_budget')
+        if cb and (cb['fires'] or cb['hard_ends']):
+            rc, ro = cb['recovery_after_context_budget'], cb['recovery_after_other_takeovers']
+            print(f"{arm} context_budget: fired in {cb['fires']}/{cb['episodes']} ({cb['fire_rate']}), turn p50 "
+                  f"{cb['fire_turn_p50']}, view p50 {cb['fire_prompt_tokens_p50']}; recovery {rc['recovery']} {rc['recovery_ci95']} "
+                  f"(n {rc['scored']}) vs other takeovers {ro['recovery']} {ro['recovery_ci95']} (n {ro['scored']}); "
+                  f"hard ends {cb['hard_ends']}; overflows {cb['overflows']} ({cb['overflows_from_hard_end']} hard ends)",
+                  file=sys.stderr)
     if out.get('verdict'):
         print('VERDICT: ' + out['verdict'], file=sys.stderr)
     sys.exit(0 if all(c['ok'] for c in checks) else 1)

@@ -39,7 +39,10 @@ TASK_LIST=${TASK_LIST:-}          # a subset of the tree to run (default: the tr
 N_ATTEMPTS=${N_ATTEMPTS:-1}       # rollouts per task
 MAX_INPUT=${MAX_INPUT:-65536}     # harbor's max_input_tokens; 131072 when Qwen serves 128k (the router reports it)
 TEACHER_MAX_TOKENS=${TEACHER_MAX_TOKENS:-32768}
-CLOCK=${CLOCK:-paused}            # paused: the router's budgets, clock paused on model calls; wall: harbor's own 1x agent timeout
+CLOCK=${CLOCK:-paused}            # paused: the router's budgets, clock paused on model calls; wall: harbor's own 1x agent timeout;
+                                  # repair: the router's budgets, the student's clock paused only while a teacher repair is in flight
+CTX_BUDGET=${CTX_BUDGET:-}        # relay arms: context_budget takeover at this student-view size (e.g. 32000); empty = off
+ROW_MAX=${ROW_MAX:-}; ROW_RESERVE=${ROW_RESERVE:-8192}   # relay arms: hard end once 09-21's view > ROW_MAX - ROW_RESERVE after a takeover
 BALANCE=${BALANCE:-pinned}; STAGGER_SEC=${STAGGER_SEC:-0}   # STAGGER_SEC>0: the task list is split in two harbor jobs started that far apart
 GATE_MIN=${GATE_MIN:-0}; GATE_LAT=${GATE_LAT:-30}; GATE_KV=${GATE_KV:-0.90}   # GATE_MIN>0: from then on, cancel on latency / KV saturation
 [ $CLOCK = wall ] && AGENT_MULT=1.0 || AGENT_MULT=8.0
@@ -80,7 +83,7 @@ cleanup_sandboxes() {
   [ ${#jobs[@]} -gt 0 ] && $PY $HERE/cleanup_sandboxes.py --key-file $KEYF --delete "${jobs[@]}" 2>&1 | tail -3
 }
 abort() { log "ABORT: $*"; echo "$*" > $R/ABORT; stop_harbor; stop_routers; release_serve "abort"; cleanup_sandboxes; write_meta; exit 1; }
-log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h"
+log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off}"
 
 # ---- 1. pre-flight --------------------------------------------------------------------------------------------------
 [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = "$HARBOR_SHA" ] || { log "harbor at ${HARBOR_SRC%/src} is not $HARBOR_SHA"; scancel $JOB; exit 1; }
@@ -131,8 +134,13 @@ for arm in $ARMS; do
     relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py
                   --autofix --student-tokenizer $STUDENT_TOKENIZER);;
     *) abort "unknown arm $arm";; esac
+  case $arm in relay*)
+    [ -n "$CTX_BUDGET" ] && M+=(--context-budget-tokens $CTX_BUDGET)
+    [ -n "$ROW_MAX" ] && M+=(--student-row-max-tokens $ROW_MAX --student-row-reserve $ROW_RESERVE);; esac
+  case $CLOCK in wall) CARGS=(--budget-mode off);; repair) CARGS=(--budget-mode on);; paused) CARGS=(--budget-mode on --pause-model-calls);;
+    *) abort "unknown CLOCK $CLOCK";; esac
   $PY $ROUTER "${M[@]}" --arm $arm --port ${PORT[$arm]} --log-dir $R/router_$arm --tasks $TREE/router_tasks.json \
-    $([ $CLOCK = wall ] && echo "--budget-mode off" || echo "--budget-mode on --pause-model-calls") --balance $BALANCE \
+    "${CARGS[@]}" --balance $BALANCE \
     --engine-metrics --deadline-epoch $DEADLINE "${SARGS[@]}" "${TARGS[@]}" \
     > $R/router_$arm.log 2>&1 &
   RPID[$arm]=$!

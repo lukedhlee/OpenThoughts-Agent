@@ -831,3 +831,176 @@ def test_active_balance_and_engine_metrics(tmp_path):
         rows = [json.loads(l) for l in (st.log_dir / 'engines.jsonl').read_text().splitlines()]
         assert {r['url'] for r in rows} == {u0, u1}
         assert all(r['kv'] == 0.42 and r['running'] == 3.0 and r['waiting'] == 1.0 for r in rows)
+
+
+# ---- context_budget and the trainability hard end (2026-09-26) ---------------------------------------------------
+# The fake student's /tokenize reports 1,000 tokens per assistant turn in the request, so agent turn t (1-based) is
+# (t - 1) * 1,000 tokens: turn 4 reaches a 3,000 threshold. Harbor's own /tokenize probes see the same counts, far
+# under its 32,768 input limit.
+
+def _per_turn(k=1000):
+    return lambda msgs: k * sum(1 for m in msgs if m.get('role') == 'assistant')
+
+
+CTX = REPAIR + ['--context-budget-tokens', '3000']
+
+
+def _main_rows(st, sid):
+    return [x for x in st.turns(sid) if x.get('turn') is not None]
+
+
+def test_context_budget_fire_rule():
+    import relay_triggers as rt_
+    assert rt_.context_budget_fire(31999, 5, 32000) is None
+    f = rt_.context_budget_fire(32000, 5, 32000)
+    assert f['trigger'] == 'context_budget' and f['kind'] == 'decision' and f['prompt_tokens'] == 32000 and f['turn'] == 5
+    assert rt_.context_budget_fire(60000, 1, 32000) is None          # never before turn 2
+    assert rt_.context_budget_fire(60000, 2, 32000) is not None
+    assert rt_.context_budget_fire(None, 5, 32000) is None and rt_.context_budget_fire(60000, 5, None) is None
+    a = rr.parse_args(['--mode', 'teacher', '--port', '0', '--log-dir', 'x', '--teacher-url', 'u', '--teacher-model', 'm'])
+    assert a.context_budget_tokens is None and a.student_row_max_tokens is None and a.student_row_reserve == 8192   # off by default
+
+
+@needs_harbor
+def test_context_budget_fires_at_the_threshold_and_is_sticky(tmp_path):
+    with Stack(tmp_path, router_args=CTX) as st:
+        st.student.count_fn = _per_turn()
+        r = run_agent(st, 'budget', tmp_path, max_turns=9)
+        rows = _main_rows(st, r.sid)
+        assert [x['owner'] for x in rows[:4]] == ['student', 'student', 'student', 'teacher']
+        assert [x['student_view_tokens'] for x in rows[:4]] == [0, 1000, 2000, 3000]
+        tk = rows[3]['takeover']
+        assert tk['trigger'] == 'context_budget' and tk['kind'] == 'decision' and tk['turn'] == 4 and tk['prompt_tokens'] == 3000
+        assert 'discarded_student_reply' not in rows[3]                 # the student was never asked at turn 4
+        assert len(_student_bodies(st, 'SCENARIO=budget.')) == 3
+        assert all(x['owner'] == 'teacher' for x in rows[3:])            # sticky
+        assert sum(1 for x in rows if x.get('takeover')) >= 1 and {x['takeover']['trigger'] for x in rows if x.get('takeover')} == {'context_budget'}
+        ev = [json.loads(l) for l in (st.log_dir / 'events.jsonl').read_text().splitlines()]
+        tev = [e for e in ev if e.get('event') == 'takeover' and e.get('sid') == r.sid]
+        assert len(tev) == 1 and tev[0]['trigger'] == 'context_budget' and tev[0]['prompt_tokens'] == 3000 and tev[0]['turn'] == 4
+        assert st.router.counts['takeovers'] == 1 and st.router.episodes[r.sid].takeover['trigger'] == 'context_budget'
+        assert getattr(r.stop, 'value', r.stop) == 'task_complete'
+        assert not any(x.get('ending') for x in rows)                    # no hard end configured
+
+
+@needs_harbor
+def test_context_budget_never_fires_at_turn_1(tmp_path):
+    with Stack(tmp_path, router_args=CTX) as st:
+        st.student.count_fn = lambda msgs: 5000 if not any(m.get('role') == 'assistant' for m in msgs) else 100
+        r = run_agent(st, 'selfdone', tmp_path)
+        rows = _main_rows(st, r.sid)
+        assert rows[0]['student_view_tokens'] == 5000 and rows[0]['owner'] == 'student' and not rows[0].get('takeover')
+        assert not any((x.get('takeover') or {}).get('trigger') == 'context_budget' for x in rows)
+
+
+@needs_harbor
+def test_context_budget_off_counts_nothing(tmp_path):
+    with Stack(tmp_path, router_args=REPAIR) as st:
+        r = run_agent(st, 'done', tmp_path)
+        assert not any('student_view_tokens' in x for x in st.turns(r.sid))
+        assert _main_rows(st, r.sid)[3]['takeover']['trigger'] == 'done_claim'
+
+
+@needs_harbor
+def test_hard_end_after_takeover_ends_as_context_overflow(tmp_path):
+    """Row limit 7,000 - reserve 2,000 = 5,000: 5,000 still runs (turn 6), 6,000 ends (turn 7, the teacher's
+    confirmation request). Harbor sees vLLM's context 400 and raises ContextLengthExceededError (scored overflow)."""
+    sys.path.insert(0, str(HERE.parent.parent / 'pilot'))
+    import readout
+    with Stack(tmp_path, router_args=CTX + ['--student-row-max-tokens', '7000', '--student-row-reserve', '2000']) as st:
+        st.student.count_fn = _per_turn()
+        r = run_agent(st, 'budget', tmp_path, max_turns=12, enable_summarize=False)
+        assert type(r.exc).__name__ == 'ContextLengthExceededError'
+        rows = _main_rows(st, r.sid)
+        assert [x['owner'] for x in rows] == ['student'] * 3 + ['teacher'] * 3 + ['router']
+        assert [x['student_view_tokens'] for x in rows] == [0, 1000, 2000, 3000, 4000, 5000, 6000]
+        end = rows[-1]
+        assert end['ending'] == 'context_hard_end' and end['upstream_status'] == 400 and end['turn'] == 7
+        assert 'maximum context length' in end['upstream_error']
+        assert end['hard_end'] == {'student_view_tokens': 6000, 'limit': 5000, 'turn': 7, 'takeover_trigger': 'context_budget'}
+        assert len(st.teacher_bodies('SCENARIO=budget.')) == 3           # the teacher never saw the ended request
+        assert st.router.counts['context_hard_ends'] == 1 and st.router.episodes[r.sid].ending == 'context_hard_end'
+        # labels: an overflow scored as a model failure, never a harness error; the router record is no upstream error
+        rv = readout.router_view(str(st.log_dir))
+        h = readout.harness_router(rv)
+        assert not h['upstream_errors'] and h['context_length_400'] == 1
+        row = dict(trial='t', task='cf-budget', reward=0.0, exc='ContextLengthExceededError', sid=r.sid, steps=[],
+                   verifier_timeout=False, censored=False,
+                   harness_error=False if 'ContextLengthExceededError' in readout.AGENT_ENDS else True)
+        assert not row['harness_error'] and readout.usable(row)
+        readout.mark_censored(rv, [row])
+        assert readout.failure_cause(row, rv['eps'][r.sid]['ending']) == 'context_overflow'
+        cb = readout.context_budget_view(rv, [row])
+        assert cb['fires'] == 1 and cb['fire_turn_p50'] == 4 and cb['fire_prompt_tokens_p50'] == 3000
+        assert cb['hard_ends'] == 1 and cb['overflows_from_hard_end'] == 1 and cb['hard_ends_not_overflow'] == 0
+        assert cb['hard_ends_by_takeover'] == {'context_budget': 1} and cb['view_count_errors'] == 0
+        assert cb['recovery_after_context_budget']['scored'] == 1 and cb['recovery_after_context_budget']['recovery'] == 0.0
+        rp = readout.repair_view(rv, [row])                                # the hard end is not an executed turn
+        assert rp['executed_turns'] == {'student': 3, 'teacher_sticky': 3}
+
+
+@needs_harbor
+def test_hard_end_applies_to_other_takeovers_too(tmp_path):
+    """done_claim takeover at turn 4 (confirmation); with the budget off the hard end still guards the row."""
+    with Stack(tmp_path, router_args=REPAIR + ['--student-row-max-tokens', '5000', '--student-row-reserve', '1500']) as st:
+        st.student.count_fn = _per_turn()
+        r = run_agent(st, 'done', tmp_path, enable_summarize=False)
+        rows = _main_rows(st, r.sid)
+        assert rows[3]['takeover']['trigger'] == 'done_claim' and rows[3]['owner'] == 'teacher'
+        assert rows[3]['student_view_tokens'] == 3000 and rows[3]['upstream_status'] == 200
+        assert rows[4]['ending'] == 'context_hard_end' and rows[4]['hard_end']['takeover_trigger'] == 'done_claim'
+        assert type(r.exc).__name__ == 'ContextLengthExceededError'
+
+
+@needs_harbor
+def test_context_budget_after_parse_error_repairs(tmp_path):
+    """Repairs are counted in the student's view (teacher turns inline); the budget fires at turn 4 before the
+    student is asked, so no third student call and no further repair."""
+    with Stack(tmp_path, router_args=CTX) as st:
+        st.student.count_fn = _per_turn()
+        r = run_agent(st, 'repairs', tmp_path)
+        rows = _main_rows(st, r.sid)
+        assert [x['owner'] for x in rows[:4]] == ['student', 'teacher', 'teacher', 'teacher']
+        assert [bool(x.get('repair')) for x in rows[:4]] == [False, True, True, False]
+        assert rows[3]['takeover']['trigger'] == 'context_budget' and rows[3]['takeover']['prompt_tokens'] == 3000
+        assert rows[2]['student_view_tokens'] == 2000 and not rows[2].get('takeover')   # repair turns stay non-sticky below it
+        assert len(_student_bodies(st, 'SCENARIO=repairs.')) == 3
+        assert not any(x.get('repair') for x in rows[4:]) and all(x['owner'] == 'teacher' for x in rows[3:])
+        _no_bad_format_in_trace(r, st, 'SCENARIO=repairs.')
+        assert getattr(r.stop, 'value', r.stop) == 'task_complete'
+
+
+@needs_harbor
+def test_context_budget_and_done_claim(tmp_path):
+    """A done claim below the threshold keeps done_claim (its confirmation is not a student request); at a lower
+    threshold the budget fires first and the student never claims."""
+    with Stack(tmp_path, router_args=CTX) as st:
+        st.student.count_fn = _per_turn()
+        r = run_agent(st, 'done', tmp_path)
+        rows = _main_rows(st, r.sid)
+        assert rows[2]['done_claim'] and rows[2]['student_view_tokens'] == 2000
+        assert rows[3]['takeover']['trigger'] == 'done_claim' and rows[3]['request_kind'] == 'confirm'
+        assert 'student_view_tokens' not in rows[3]                      # no count once the teacher owns (no hard end set)
+        assert st.router.counts['takeovers'] == 1
+    (tmp_path / 'b').mkdir()
+    with Stack(tmp_path / 'b', router_args=REPAIR + ['--context-budget-tokens', '2000']) as st:
+        st.student.count_fn = _per_turn()
+        r = run_agent(st, 'done', tmp_path, tag='-0')
+        rows = _main_rows(st, r.sid)
+        assert rows[2]['takeover']['trigger'] == 'context_budget' and rows[2]['turn'] == 3
+        assert not any(x.get('done_claim') for x in rows)
+        assert len(_student_bodies(st, 'SCENARIO=done-0.')) == 2
+        assert getattr(r.stop, 'value', r.stop) == 'task_complete'
+
+
+def test_count_failure_leaves_the_student_in_charge(tmp_path):
+    """A failed count (student /tokenize down) logs the error and neither rule acts on that request."""
+    with Stack(tmp_path, router_args=CTX + ['--student-row-max-tokens', '7000']) as st:
+        def boom(msgs):
+            raise RuntimeError('tokenize down')
+        st.student.count_fn = boom
+        ep = rr.Episode('s1', 1, 'x', None, 'student')
+        rec = {}
+        n = st.run(st.router.count_student_view(ep, {'model': 'relay'}, [{'role': 'user', 'content': 'hi'}], rec))
+        assert n is None and rec['student_view_tokens'] is None and rec['student_view_tokens_error'].startswith('HTTP 500')
+        assert st.router.counts['view_count_errors'] == 1
