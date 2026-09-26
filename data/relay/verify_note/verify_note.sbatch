@@ -21,8 +21,10 @@ export C=/e/project1/transfernetx/lee27/code
 export PY=$C/envs/snowball-v2/bin/python
 OTA=${OTA:-$C/ota-verify-note}
 W=/e/fscratch/reformo/lee27/experiments/relay/verify_note; mkdir -p $W/logs
-echo "verify_note job=$SLURM_JOB_ID node=$(hostname) ota=$(git -C $OTA rev-parse --short HEAD) ($(date -Is))"
-PER_GPU=1 TEACHER_MAXLEN=131072 bash $OTA/data/relay/pilot/serve_node.sh teacher > $W/logs/serve_$SLURM_JOB_ID.log 2>&1 &
+echo "verify_note job=$SLURM_JOB_ID node=$(hostname) ota=$OTA ($(date -Is))"
+# through srun as serve_relay.sbatch runs it (serve_node.sh needs the step environment, e.g. SLURM_STEP_ID)
+PER_GPU=1 TEACHER_MAXLEN=131072 srun --nodes=1 --ntasks=1 --overlap --cpu-bind=none --gres=gpu:4 --cpus-per-task=72 \
+  --export=ALL bash $OTA/data/relay/pilot/serve_node.sh teacher > $W/logs/serve_$SLURM_JOB_ID.log 2>&1 &
 SP=$!
 trap 'kill $SP 2>/dev/null; pkill -u $USER -f "vllm.entrypoints.openai.api_server" 2>/dev/null' EXIT
 URLS=http://127.0.0.1:8000/v1,http://127.0.0.1:8001/v1,http://127.0.0.1:8002/v1,http://127.0.0.1:8003/v1
