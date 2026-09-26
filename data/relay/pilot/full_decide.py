@@ -38,15 +38,21 @@ def episode_walls(run_dir, arm):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--run3', required=True)
+    ap.add_argument('--readout', help="a readout.json other than the run's own (e.g. recomputed under the amended rule)")
     ap.add_argument('--pool', type=int, default=2043)
     ap.add_argument('--ceiling', type=float, default=35.0)
     ap.add_argument('--borderline', type=float, default=0.85)
     ap.add_argument('--conc-base', type=int, default=400)
-    ap.add_argument('--conc-relay', type=int, default=200)
+    ap.add_argument('--student-nodes', type=int, default=2, help='100 relay agents per student node')
+    ap.add_argument('--core-qwen', type=int, default=4, help='Qwen nodes kept to the end (the rest are released)')
+    ap.add_argument('--burst-qwen', type=int, default=4, help='Qwen nodes released once control drains')
+    ap.add_argument('--relay-episode-s', type=float, default=None,
+                    help="override run 3's mean relay episode wall (e.g. adjusted for autofix and the cap)")
+    ap.add_argument('--relay-pass', type=float, default=None, help="override run 3's relay pass rate")
     ap.add_argument('--startup-h', type=float, default=0.15)
     ap.add_argument('--min-kept', type=int, default=1500)
     a = ap.parse_args()
-    r = json.load(open(os.path.join(a.run3, 'readout.json')))
+    r = json.load(open(a.readout or os.path.join(a.run3, 'readout.json')))
     reasons = []
     bad_h = [c['check'] for c in r.get('harness_checks', []) if not c['ok']]
     bad_s = [c['check'] for c in r.get('science_checks', []) if not c['ok']]
@@ -62,15 +68,21 @@ def main():
     rp = r['relay_repair'].get('repair') or {}
     pr = rel.get('pass_rate') or 0.0
     proj = {}
+    a.conc_relay = 100 * a.student_nodes
+    core_nodes = a.student_nodes + a.core_qwen
+    if a.relay_pass is not None:
+        pr = a.relay_pass
     if db and dr:
         mb, mr, tail = statistics.mean(db), statistics.mean(dr), readout.q(dr, .9)
+        if a.relay_episode_s:
+            tail, mr = tail * a.relay_episode_s / mr, a.relay_episode_s
         t_base = a.pool * mb / a.conc_base
         t_r1 = a.pool * mr / a.conc_relay
         n_p2 = 2 * round(a.pool * pb)
         t_r2 = n_p2 * mr / a.conc_relay
         wall = a.startup_h * 3600 + max(t_base, t_r1) + t_r2 + tail
         burst = a.startup_h * 3600 + t_base + 600
-        nh = (6 * wall + 4 * burst) / 3600
+        nh = (core_nodes * wall + a.burst_qwen * burst) / 3600
         # kept: control 1 rollout per task; relay p1 + p2 (p2 on solved tasks, pass rate taken from run 3's relay
         # episodes on tasks control passed), passes capped at 2 per task
         pp = r.get('paired_pass_relay_vs_control') or {}
@@ -85,7 +97,8 @@ def main():
                     phase2_episodes=n_p2, hours_control=round(t_base / 3600, 2), hours_relay_p1=round(t_r1 / 3600, 2),
                     hours_relay_p2=round(t_r2 / 3600, 2), wall_h=round(wall / 3600, 2),
                     burst_h=round(burst / 3600, 2), node_h=round(nh, 1), kept_control=kept_ctl, kept_relay=kept_rel,
-                    core_time_h=round(min(wall / 3600 * 1.25, (a.ceiling - 4 * burst * 1.25 / 3600) / 6), 2),
+                    layout=f'{a.student_nodes} x 09-21 + {a.core_qwen + a.burst_qwen} x Qwen ({a.burst_qwen} released after control)',
+                    core_time_h=round(min(wall / 3600 * 1.25, (a.ceiling - a.burst_qwen * burst * 1.25 / 3600) / core_nodes), 2),
                     burst_time_h=round(burst / 3600 * 1.25, 2))
         if nh > a.borderline * a.ceiling:
             reasons.append(f'projected {nh:.1f} node-h > {a.borderline} x {a.ceiling} ceiling (S6 for the 10-node layout)')

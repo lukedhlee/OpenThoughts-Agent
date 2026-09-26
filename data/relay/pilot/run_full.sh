@@ -35,7 +35,8 @@ KEYF=${KEYF:-/e/fscratch/reformo/lee27/keys/daytona_eval.env}
 E=/e/fscratch/reformo/lee27/experiments/relay/pilot; EP=$E/endpoints
 R=$E/runs/$NAME
 JOBS_ROOT=${JOBS_ROOT:-/e/data1/mmlaion/lee27/experiments/relay_full_jobs}
-CONC_BASE=${CONC_BASE:-400}; CONC_RELAY=${CONC_RELAY:-200}; CONC_P2=${CONC_P2:-200}; P2_START=${P2_START:-20}
+CONC_BASE=${CONC_BASE:-400}; CONC_RELAY=${CONC_RELAY:-200}; CONC_P2=${CONC_P2:-$CONC_RELAY}; P2_START=${P2_START:-20}
+OVF_AFTER=${OVF_AFTER:-200}; OVF_MAX=${OVF_MAX:-0.20}   # the in-run check: relay overflow share after the first OVF_AFTER relay episodes
 CAP_NODE_H=${CAP_NODE_H:-35}; DEADLINE_MARGIN=${DEADLINE_MARGIN:-600}
 EARLY_MIN=${EARLY_MIN:-25}; LAT_MIN=${LAT_MIN:-15}; LAT_WARN=${LAT_WARN:-30}; LAT_ABORT=${LAT_ABORT:-90}
 STALL_MIN=${STALL_MIN:-15}; UP_WAIT=${UP_WAIT:-2400}; VERIFY_WAIT=${VERIFY_WAIT:-2700}; DRAIN_WAIT=${DRAIN_WAIT:-600}
@@ -95,7 +96,8 @@ TALL=$(paste -sd, $TFILE)
 $PY $ROUTER --mode teacher --arm control --port $PB --log-dir $R/router_control --tasks $TREE/router_tasks.json \
   --budget-mode on --deadline-epoch $DEADLINE --teacher-url $TALL --teacher-model qwen38 --teacher-url-file $TFILE \
   > $R/router_control.log 2>&1 & RB=$!
-$PY $ROUTER --mode relay --arm relay_repair --student-think strip --repair-on-parse-error \
+$PY $ROUTER --mode relay --arm relay_repair --student-think strip --repair-on-parse-error --autofix \
+  --student-tokenizer ${STUDENT_TOKENIZER:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921/tokenizer.json} \
   --terminus-parser $HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py --port $PR \
   --log-dir $R/router_relay_repair --tasks $TREE/router_tasks.json --budget-mode on --deadline-epoch $DEADLINE \
   --student-url $SURL --student-model snowball --teacher-url $TALL --teacher-model qwen38 --teacher-url-file $TFILE \
@@ -124,7 +126,7 @@ PY
 }
 CB=$(render control $PB $CONC_BASE $TREE/TASKS.txt 1 | tail -1); $HARBOR jobs start --config $CB > $R/harbor_control.log 2>&1 & HB=$!
 CR=$(render relay_repair $PR $CONC_RELAY $TREE/TASKS.txt 1 | tail -1); $HARBOR jobs start --config $CR > $R/harbor_relay_repair.log 2>&1 & HR=$!
-T0=$(date +%s); LAST_N=0; LAST_CHANGE=$T0; EARLY=0; LAT=0; P2=0; RELEASED_AT=""
+T0=$(date +%s); LAST_N=0; LAST_CHANGE=$T0; EARLY=0; LAT=0; P2=0; RELEASED_AT=""; OVF=0
 log "phase 1 started: control pid $HB, relay_repair pid $HR"
 
 # ---- 5. watch -----------------------------------------------------------------------------------------------------
@@ -161,6 +163,23 @@ PY
     $PY $HERE/readout.py --run-dir $R --name $NAME --gate early > $R/early_gate.json 2> $R/early_gate.txt \
       || abort "early gate: $(grep FAIL $R/early_gate.txt | tr '\n' ' ')"
     log "early gate passed"
+  fi
+  # the check inside the full run: after the first OVF_AFTER finished relay episodes, a context-overflow share above
+  # OVF_MAX cancels the whole run (the cap on older teacher reasoning is supposed to bring run 3's 44 % down)
+  if [ $OVF = 0 ]; then
+    OV=$($PY - $JOBS_ROOT/${NAME}_relay_repair $OVF_AFTER $HERE <<'PY'
+import glob, sys
+sys.path.insert(0, sys.argv[3]); import readout
+out = [readout.read_outcome(p) for p in glob.glob(f'{sys.argv[1]}/*/result.json')]
+n = len(out)
+if n < int(sys.argv[2]): print('wait'); sys.exit()
+print('%d %.4f' % (n, sum(1 for _, _, e in out if e == 'ContextLengthExceededError') / n))
+PY
+)
+    if [ "$OV" != wait ] && [ -n "$OV" ]; then
+      OVF=1; set -- $OV; log "overflow check: $2 of the first $1 relay episodes ended in context overflow (limit $OVF_MAX)"
+      awk -v a=$2 -v b=$OVF_MAX 'BEGIN{exit !(a>b)}' && abort "relay context overflow $2 > $OVF_MAX after $1 episodes"
+    fi
   fi
   # control drained -> phase-2 list; burst drained and released
   if [ $P2 = 0 ] && ! kill -0 $HB 2>/dev/null; then

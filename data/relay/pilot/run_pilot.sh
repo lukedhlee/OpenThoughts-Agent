@@ -35,7 +35,8 @@ HARBOR_SRC=${HARBOR_SRC:-$C/harbor-terminus2-relay/src}
 HARBOR_SHA=${HARBOR_SHA:-89098635}          # marin-community/harbor lukedhlee/terminus2-relay
 TREE=${TREE:-/e/fscratch/reformo/lee27/tasks/calibforge_relay100}
 NTASKS=${NTASKS:-100}
-RUN_KIND=${RUN_KIND:-pilot}   # pilot: TASKS.txt must be disjoint from the held-out split; heldout: it must BE the split
+RUN_KIND=${RUN_KIND:-pilot}
+STUDENT_TOKENIZER=${STUDENT_TOKENIZER:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921/tokenizer.json}   # the cap on older teacher reasoning   # pilot: TASKS.txt must be disjoint from the held-out split; heldout: it must BE the split
 KEYF=${KEYF:-/e/fscratch/reformo/lee27/keys/daytona_eval.env}
 E=/e/fscratch/reformo/lee27/experiments/relay/pilot; EP=$E/endpoints
 R=$E/runs/$NAME
@@ -116,7 +117,8 @@ log "endpoints student=$SURL teacher=$TURL; job start $(date -d @$JSTART -Is), d
 for arm in $ARMS; do
   TARGS=(); [ -n "$TURL" ] && TARGS=(--teacher-url $TURL --teacher-model qwen38)
   case $arm in control) M=(--mode teacher);; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
-    relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py);;
+    relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py
+                  --autofix --student-tokenizer $STUDENT_TOKENIZER);;
     *) abort "unknown arm $arm";; esac
   $PY $ROUTER "${M[@]}" --arm $arm --port ${PORT[$arm]} --log-dir $R/router_$arm --tasks $TREE/router_tasks.json \
     --budget-mode on --deadline-epoch $DEADLINE --student-url $SURL --student-model snowball "${TARGS[@]}" \
