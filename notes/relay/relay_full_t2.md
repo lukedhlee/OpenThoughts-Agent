@@ -70,6 +70,32 @@ above 30 % of scored episodes, valid format below 98 %, or harness errors above 
   GPU)**, plus `--failover-5xx`, so a crashed engine's 500s go to another server (baseline 6's failure). Cap 25.5
   node-hours (`--time` 3 h 11), so both attempts stay within 30.
 
+**Attempt 2 stopped by the in-run stop rule at 16:13 PT (harness errors 10.3 % > 10 %). Nothing relaunched; Luke's
+call.**
+- At 313 scored episodes: overflow 15.0 % (limit 30 %), valid format 100 % (limit 98 %), harness errors 10.3 %
+  (limit 10 %). The errors are TmuxBatchProtocolError (return code 143 or 137) and TmuxSessionEndedError.
+- They came in a burst: 14–16 % of trials finishing per 10 min between 15:40 and 16:00 PT, then 5–6 % after. The
+  burst overlapped baseline 6b's 400 sandboxes on the same Daytona org, and early finishers are enriched for errors.
+  The steady 5–6 % matches the ctxb2 check's 6 %. No engine died in either attempt.
+- The KV gate was also close at 9 per GPU: one or two engines at 0.93–0.99 with up to 4 requests waiting for
+  10 min or more.
+- **What the two attempts produced** (pass rate among scored; early finishers, so biased high):
+
+  | | attempt 1 (192) | attempt 2 (144) |
+  |---|---|---|
+  | scored episodes | 225 | 313 |
+  | pass rate | 0.87 [0.82, 0.91] | 0.80 [0.75, 0.84] |
+  | real failures | 29 (overflow 16, false done 12, tests 1) | 63 (false done 40, overflow 21, tests 2) |
+  | recovery after context_budget | 0.80 (n 121) | 0.71 (n 161) |
+  | recovery after done_claim | 0.95 (n 62) | 0.89 (n 87) |
+  | teacher guard: first sample failed | 7.1 % of 2,970 turns | 7.1 % of 3,474 turns |
+  | kept 1:1 | 58 | 126 |
+  | rendered rows over 64k | 0 of 430 | 3 of 485 (max 71,211) |
+  | node-hours | 4.42 | 5.46 |
+
+- **Spend so far: 9.88 of the 30 node-hours.** Run dirs `runs/relay_full_relay_20260926`,
+  `runs/relay_full_relay2_20260926` (readout.json, kept_manifest.jsonl, render.txt).
+
 ## Context-budget check (Luke 2026-09-26 12:50 PT): pass rule pre-registered, not submitted
 
 **Why.** In the last relay check 09-21 wandered slowly: about 21 turns per episode against about 9 for Qwen alone.
