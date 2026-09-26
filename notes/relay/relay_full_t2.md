@@ -43,9 +43,10 @@ sets those from run 3's measured episode times, so the two jobs' `--time` sum to
 also stops at 35 node-hours across both jobs. Wall time is about 4 h. Daytona sandboxes are free under the deal, at
 most about 600 open at once.
 
-**Launch rule** (Luke's conditional go, 15:35 PT). `full_decide.py` must say LAUNCH:
+**Launch rule** (Luke's conditional go, 15:35 PT; amended 17:40 PT: S5 is now a keep filter, and the S3 floor is
+0.25). `full_decide.py` must say LAUNCH:
 - run 3 passed every harness check (H0–H5);
-- run 3 passed every scale-up check (S1–S6);
+- run 3 passed every scale-up check (S1–S4, S6);
 - recomputed for this 10-node layout from run 3's measured episode wall times, pass rates and startup, the projected
   node-hours are at most 0.85 × 35 = 29.75, so nothing borderline launches;
 - the core job's share of the ceiling covers the projected wall time;
@@ -62,6 +63,120 @@ server that dies before `/health`, up to 6 times on a 10-node run. Each retry co
 - latency gate at 15 min: teacher p50 above 30 s → warning; above 90 s → abort;
 - early harness gate at 25 min (`readout.py --gate early`);
 - node-hour cap.
+
+
+## Changes after run 3 (Luke, 17:40 PT), built and tested, not run
+
+**1. Format autofix before a Qwen repair** (`router/autofix.py`, router flag `--autofix`).
+- When a student reply fails Terminus-2's strict parser but its action can be recovered without guessing, the reply
+  is rewritten into valid Terminus-2 JSON and the student's own action runs.
+- **Recoverable shapes:**
+  - `<tool_call>` with keystrokes, `{"name": .., "arguments": {"command"|"cmd": ..}}`, `{"command": ..}`, a commands
+    list, or a Terminus object;
+  - several command objects, which become the commands list;
+  - a JSON object missing analysis or plan, parsed leniently;
+  - exactly one ```bash block;
+  - `{"name": "finish"}`, which becomes `task_complete: true`.
+- **How the rewrite is built:**
+  - The student's thinking is kept verbatim, up to its last `<|end_think|>`.
+  - analysis = the visible prose before the action; plan = "" unless the student wrote one; task_complete is kept.
+  - The rewrite is checked with the same parser, and its commands must equal the recovered ones.
+  - The triggers (done_claim etc.) judge the rewrite.
+- **Logged per turn:** owner student, `autofix=True`, `autofix_kind`, and `original_student_reply`.
+- **Still sent to Qwen:** no action, ended inside thinking, truncated, unparseable JSON, several bash blocks, and
+  `thinking_holds_json`.
+- **Measured on run 3's 528 discarded replies (CPU replay): 191 autofixable, 36 %.**
+
+  | outcome | replies |
+  |---|---|
+  | autofixed: Terminus object parsed leniently | 40 |
+  | autofixed: several objects → list | 36 |
+  | autofixed: tool_call keystrokes | 31 |
+  | autofixed: several tool_calls → list | 21 |
+  | autofixed: bare keystrokes object | 19 |
+  | autofixed: tool_call with a Terminus object | 17 |
+  | autofixed: tool_call command | 12 |
+  | autofixed: bash block | 12 |
+  | Qwen: prose with no action | 125 |
+  | Qwen: thinking_holds_json | 78 |
+  | Qwen: unparseable tool_call JSON | 52 |
+  | Qwen: ended inside thinking | 28 |
+  | Qwen: truncated | 21 |
+  | Qwen: other | 33 |
+
+  - On a 3,000-reply sample of the held-out run's parse failures (09-21 alone), 65 % are autofixable.
+  - `thinking_holds_json` means the student's own thinking contains a `{...}` that Terminus-2's parser reads first,
+    because at this harbor base the parser runs on the raw reply, thinking included. Keeping the thinking verbatim
+    makes these 15 % unfixable. They become fixable only if harbor parses after the think span (branch
+    `lukedhlee/terminus2-think-parity`), and that changes the eval harness. **That is a decision for Luke, not taken.**
+
+**2. The cap on older Qwen reasoning in the student's view** (`router/reasoning_cap.py`, router flag
+`--student-tokenizer`).
+- The most recent teacher turn keeps its reasoning in full.
+- Every older teacher turn's reasoning is cut to its first 1,000 tokens of the 09-21 tokenizer, at the last sentence
+  or line boundary, with no marker.
+- The teacher's own view is unchanged. The same function serves the router and the SFT renderer.
+- **Logged per request:** `student_view.cuts` with each cut's `content_sha`, `reasoning_chars` and `cut_at` (char
+  offset). The exact student-bound body is logged too.
+- **Run 3 replayed through the renderer:**
+  - Cut in 80 of 100 relay episodes (182 teacher turns).
+  - The rendered episode shrinks to a median 0.88 of its uncapped length.
+  - All 100 fit in 64k (98 without the cap).
+  - Of the 44 episodes that overflowed, the capped history leaves at least 16k tokens of room in 18.
+  - Some overflows are on the teacher's side: a single Qwen reply ran to 64,208 completion tokens. A cap on Qwen's
+    output (e.g. `max_tokens` 16k) would address that. **Not built; a decision for Luke.**
+
+**3. Training layout, Luke's option 1** (`sft/render.py`).
+- **One sequence per episode**, rendered with 09-21's own chat template (HF jinja settings; the token ids match HF
+  `apply_chat_template` on run 3 episodes) and with exactly the capped history the student saw.
+  - Teacher turns appear inline as `<|start_think|>{reasoning}<|end_think|>{content}`.
+  - The final teacher turn keeps its reasoning whole, and every older one is cut.
+- **Loss:**
+  - Teacher content plus `<|eot_id|>` is always trained.
+  - Teacher reasoning is trained only if it was never cut: it is at most 1,000 tokens, or it is the final teacher
+    turn.
+  - A cut turn's whole think span is masked, markers included.
+  - An autofixed student turn is labelled. By default its rewritten action and format (content plus `<|eot_id|>`) is
+    trained, never its reasoning; `autofix_loss='none'` masks it.
+  - Everything else is masked: student turns, observations, router endings and headers.
+- **`check_row` enforces these rules.** On run 3's relay arm:
+  - 100 of 100 episodes rendered and passed the mask checks.
+  - All fit in 65,536 tokens: p50 30.8k, p90 60.6k, max 65,155.
+  - 787k trained tokens, against 1.76M uncapped.
+
+**4. S5 becomes a keep filter; S3 at 0.28 passes.**
+- `select_kept.py` keeps a done_claim takeover episode only if Qwen ran at least one command before confirming. On run
+  3 that is 12 of 28.
+- The readout now gates S3 at ≥ 0.25, with a target of 0.30. Run 3's 0.28 is inside noise, per Luke.
+- Under the amended rule, run 3 passes every check (S1–S4, S6).
+- Run 3 kept-trace replay: relay 56 (73 candidates after the S5 filter), control 86.
+
+## Cost lines (from run 3's timings; relay episode 820–1,100 s after autofix and the cap, 900 s central)
+
+- **(a) 100-task check run** of relay_repair with the fixes: 1 × 09-21 + 1 × Qwen, paired with run 3's control, which
+  the fixes do not change.
+  - Expected about 2.4 node-hours, 65–75 min of wall time.
+  - Ceiling 3.0 node-hours, `--time 1:30` × 2.
+- **(b) Full T2 run, 10 nodes** (2 × 09-21 + 8 × Qwen, 4 of them released after control):
+  - 40–51 node-hours (43 central), 5.5–7.4 h of wall time.
+  - The relay arm is bound by the 2 student nodes.
+  - Over the 35 ceiling in every case.
+- **(b) Full T2 run, 12 nodes** (4 × 09-21 + 8 × Qwen, 4 released after control):
+  - 32–39 node-hours (33.7 central), 3.2–4.1 h of wall time.
+  - Faster and cheaper than 10 nodes.
+  - Inside 35 only at the optimistic end; `full_decide.py` HOLDs it under its 0.85 × 35 borderline rule.
+  - A ceiling of 42 node-hours covers the pessimistic case.
+  - Releasing 2 more Qwen nodes in phase 2 would save about 3 node-hours. The teacher's load there is only repairs
+    and takeovers.
+- **Kept traces (both layouts).** Relay reaches 2,000 (S5 filter included). Control reaches about 1,810, because one
+  rollout per task at a 0.557 pass rate gives about 900 real failures.
+
+**Auto-cancel for doing the check inside the full run** (`run_full.sh`, `OVF_AFTER=200`, `OVF_MAX=0.20`).
+- Once 200 relay_repair episodes have finished, if more than 20 % of them ended in context overflow, the driver
+  cancels both jobs, cleans up and stops.
+- Run 3 was at 44 %.
+- On the 12-node layout the first 200 relay episodes finish about 30–40 min after the servers are up. A cancel there
+  costs about 7–9 node-hours, against 2.4 for the separate check run.
 
 ## How to launch (Jupiter login node; only on LAUNCH)
 

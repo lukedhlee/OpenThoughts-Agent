@@ -397,3 +397,10 @@ Job 2033360, 1 node, 15:33–16:51 PT, 1.29 node-hours. Settings are run 3's stu
 - **Failure causes:** format loop 179, context overflow 63, timeout 28, false done 6.
 - **Overflow rate:** 21 %.
 - **Turns per episode:** p50 57, p90 258.
+
+**Stop rule amendment (Luke, 2026-09-25 17:40 PT, after run 3).**
+- S5 is no longer a gate. It is a keep filter: a done_claim takeover trace is kept only if Qwen ran at least one
+  command before confirming.
+- S3's 0.28 counts as a pass, inside noise. The gate is now ≥ 0.25, with a target of 0.30.
+- Under the amended rule, run 3 passes S1–S4 and S6.
+- Next steps are in `notes/relay/relay_full_t2.md` ("Changes after run 3").
