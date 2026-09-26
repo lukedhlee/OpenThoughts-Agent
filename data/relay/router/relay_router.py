@@ -51,7 +51,8 @@ who answers each request:
     completion claim gets a note appended to Terminus-2's "Are you sure?" message (relay: VERIFY_NOTE, the exact text of
     the verify-note replay; --mode teacher: VERIFY_NOTE_OWN, the same text without the "another agent" framing, since
     there the claim is the teacher's own; coordinator 2026-09-26; the rest byte-identical): in relay on the done_claim
-    takeover's confirmation request, in --mode teacher on every Terminus-2 confirmation request. Only the teacher's body changes: harbor's history, the student's view and the
+    takeover's confirmation request, in --mode teacher on the episode's first Terminus-2 confirmation request
+    (once per episode in both arms: a note on every confirmation kept Qwen re-verifying until the timeout). Only the teacher's body changes: harbor's history, the student's view and the
     training rows keep Terminus-2's own message. Logged as verify_note=True.
 
 Episode identity: the X-Harbor-Session-Id header that Terminus-2 sends with `llm_session_header` set (harbor branch
@@ -773,8 +774,11 @@ class Router:
                            takeover_trigger=ep.takeover['trigger'])
                 return self.hard_end(ep, rec, t, n)
         rec['owner'] = 'teacher'
-        if self.a.verify_note and kind == 'confirm' and (self.mode == 'teacher' or ep.note_turn == t):
-            rec['verify_note'] = True     # the teacher confirms a claim: the done_claim takeover's, or any in control
+        if self.a.verify_note and kind == 'confirm' and self.mode == 'teacher' and ep.note_turn is None:
+            ep.note_turn = t              # control: the episode's FIRST confirmation only (the replay's condition); a
+                                          # note on every one made Qwen re-verify forever (baseline5, 2026-09-26)
+        if self.a.verify_note and kind == 'confirm' and ep.note_turn == t:
+            rec['verify_note'] = True     # the teacher confirms a claim: the done_claim takeover's, or control's first
         return await self.answer(ep, 'teacher', body, messages, rec, main=True)
 
     async def count_student_view(self, ep, body, messages, rec):
@@ -1163,7 +1167,7 @@ def parse_args(argv=None):
                    help='--teacher-format-guard: extra teacher samples of the same request when autofix cannot recover')
     p.add_argument('--verify-note', action='store_true',
                    help="append VERIFY_NOTE to the teacher's confirmation request (relay: the done_claim takeover's; "
-                        "--mode teacher: every one)")
+                        "--mode teacher: the episode's first)")
     p.add_argument('--context-budget-tokens', type=int, default=None,
                    help='context_budget takeover (sticky): the teacher takes the episode once the student view of a '
                         'request (counted on the student /tokenize) reaches this many tokens; off by default (32000 '

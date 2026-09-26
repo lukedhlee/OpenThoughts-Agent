@@ -1261,14 +1261,19 @@ def test_verify_note_on_the_done_claim_takeover_only(tmp_path):
 @needs_harbor
 def test_verify_note_in_control_on_terminus_confirmation(tmp_path):
     with Stack(tmp_path, mode='teacher', router_args=['--verify-note']) as st:
+        # Qwen checks at its first confirmation instead of confirming, claims again, then confirms
+        st.teacher.script = [None, None, None, fake_openai.t2('teacher-step recheck', ['cat out.txt\n'])]
         r = run_agent(st, 'done', tmp_path)
         rows = _main_rows(st, r.sid)
         conf = [x for x in rows if x['request_kind'] == 'confirm']
-        assert conf and all(x.get('verify_note') for x in conf)
+        assert len(conf) >= 2                                             # the fake checks first, then confirms
+        assert conf[0].get('verify_note') and not any(x.get('verify_note') for x in conf[1:])   # the first only
         assert not any(x.get('verify_note') for x in rows if x['request_kind'] != 'confirm')
         tb = [b for b in st.teacher_bodies('SCENARIO=done.') if rr.CONFIRM_MARK in b['messages'][-1]['content']]
         # control: the claim is Qwen's own, so the note drops the "another agent" framing
-        assert tb and all(b['messages'][-1]['content'].endswith('\n\n' + rr.VERIFY_NOTE_OWN) for b in tb)
+        assert tb[0]['messages'][-1]['content'].endswith('\n\n' + rr.VERIFY_NOTE_OWN)
+        assert not any(rr.VERIFY_NOTE_OWN in fake_openai.text_of(m.get('content')) for b in tb[1:] for m in b['messages'])
+        assert st.router.counts['verify_notes'] == 1
         assert not any('another agent' in fake_openai.text_of(m.get('content')) for b in tb for m in b['messages'])
         assert st.router.note_text == rr.VERIFY_NOTE_OWN
 
