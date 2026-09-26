@@ -9,8 +9,10 @@ One sequence per episode, rendered with exactly the capped history the student s
   * observations: the user messages harbor sent, verbatim.
 Loss (per token, 1 = trained):
   * teacher turn: visible content + <|eot_id|> always; its reasoning span (<|start_think|> .. <|end_think|>) only if the
-    reasoning was never cut (<= cap, or the final teacher turn). A cut turn's whole span is masked, end marker
-    included: a truncated prefix followed by <|end_think|> would teach abrupt stops;
+    reasoning was never cut (<= cap, or the final teacher turn) AND is at most THINK_LIMIT (8,192) tokens of 09-21's
+    tokenizer, 09-21's eval per-turn output limit (Luke 2026-09-25 21:15 PT; the same rule in both arms). A cut or
+    over-long turn's whole span is masked, end marker included: a truncated prefix followed by <|end_think|> would
+    teach abrupt stops;
   * student turn: masked, except an autofixed one (label autofix=True): with autofix_loss='content' (default) its
     rewritten action/format (content + <|eot_id|>) is trained, never its reasoning; 'none' masks it;
   * router turns (budget endings), system header and user turns: masked.
@@ -34,6 +36,7 @@ import reasoning_cap as rcap  # noqa: E402
 A_HDR = '<|start_header_id|>assistant<|end_header_id|>\n'
 START, END, EOT = '<|start_think|>', '<|end_think|>', '<|eot_id|>'
 MAX_TOKENS = 65536
+THINK_LIMIT = 8192
 
 
 def sha(s):
@@ -77,7 +80,7 @@ def episode_turns(traj, records):
     return turns
 
 
-def render_episode(traj, records, tok, template, bos, autofix_loss='content', cap=rcap.CAP_TOKENS):
+def render_episode(traj, records, tok, template, bos, autofix_loss='content', cap=rcap.CAP_TOKENS, think_limit=THINK_LIMIT):
     turns = episode_turns(traj, records)
     teacher = [i for i, (role, _, m) in enumerate(turns) if role == 'assistant' and m['owner'] == 'teacher']
     final_teacher = teacher[-1] if teacher else None
@@ -87,8 +90,10 @@ def render_episode(traj, records, tok, template, bos, autofix_loss='content', ca
             full, _, r_full = rcap.teacher_turn_for_student(text, m['reasoning'], tok, cut=False, cap=cap)
             shown, at, _ = rcap.teacher_turn_for_student(text, m['reasoning'], tok, cut=(i != final_teacher), cap=cap)
             messages.append(dict(role='assistant', content=shown))
+            n_think = len(tok.encode(r_full, add_special_tokens=False).ids) if r_full else 0
             info.append(dict(i=i, owner='teacher', repair=m['repair'], cut_at=at, reasoning_chars=len(r_full),
-                             has_reasoning=bool(r_full)))
+                             reasoning_tokens=n_think, has_reasoning=bool(r_full),
+                             think_trained=bool(r_full) and at is None and n_think <= think_limit))
         else:
             messages.append(dict(role=role, content=text))
             if role == 'assistant':
@@ -108,10 +113,10 @@ def render_episode(traj, records, tok, template, bos, autofix_loss='content', ca
         # a student reply may open a span it never closes (the parser still accepted its JSON): no think span then
         think_end = start + body.index(END) + len(END) if (body.startswith(START) and END in body) else start
         if meta['owner'] == 'teacher':
-            if meta['cut_at'] is None:
-                loss_ranges.append((start, end))               # reasoning (uncut) + content + eot
+            if meta['think_trained'] or think_end == start:
+                loss_ranges.append((start, end))               # reasoning (uncut, <= limit) + content + eot
             else:
-                loss_ranges.append((think_end, end))           # content + eot; the cut span is masked, markers too
+                loss_ranges.append((think_end, end))           # content + eot; a cut/over-long span is masked, markers too
         elif meta['owner'] == 'student' and meta.get('autofix') and autofix_loss == 'content':
             loss_ranges.append((think_end, end))               # the rewritten action/format, not the reasoning
         meta.update(span=(start, end), think_end=think_end)
@@ -129,7 +134,7 @@ def check_row(row, tok):
     """Assert the mask rules on a rendered row; returns a dict of counts."""
     text, ids, loss = row['text'], row['ids'], row['loss']
     start_id, end_id, eot_id = (tok.token_to_id(x) for x in (START, END, EOT))
-    counts = dict(teacher_turns=0, cut_turns=0, autofix_turns=0, trained_tokens=sum(loss))
+    counts = dict(teacher_turns=0, cut_turns=0, long_think_masked=0, autofix_turns=0, trained_tokens=sum(loss))
     for m in row['turns']:
         s, e = m['span']
         toks = [k for k, (a, b) in enumerate(row['offsets']) if a >= s and b <= e]
@@ -138,12 +143,13 @@ def check_row(row, tok):
             counts['teacher_turns'] += 1
             assert toks and loss[toks[-1]] == 1 and ids[toks[-1]] == eot_id, 'teacher <|eot_id|> must be trained'
             think = [k for k in toks if row['offsets'][k][1] <= m['think_end']]
-            if m['cut_at'] is not None:
-                counts['cut_turns'] += 1
-                assert think and not any(loss[k] for k in think), 'a cut reasoning span (markers included) is masked'
+            counts['cut_turns'] += m['cut_at'] is not None
+            counts['long_think_masked'] += m['cut_at'] is None and bool(think) and not m['think_trained']
+            if think and not m['think_trained']:
+                assert not any(loss[k] for k in think), 'a cut or over-long reasoning span (markers included) is masked'
                 assert any(ids[k] == end_id for k in think)
             elif think:
-                assert all(loss[k] for k in think), 'an uncut teacher reasoning span is trained'
+                assert all(loss[k] for k in think), 'an uncut teacher reasoning span within the limit is trained'
         elif m['owner'] == 'student' and m.get('autofix'):
             counts['autofix_turns'] += 1
             think = [k for k in toks if row['offsets'][k][1] <= m['think_end']]
@@ -198,6 +204,8 @@ def main():
         stats['fits_64k'] += row['fits']
         stats['with_cut'] += c['cut_turns'] > 0
         stats['cut_turns'] += c['cut_turns']
+        stats['long_think_masked'] += c['long_think_masked']
+        stats['think_trained_turns'] += sum(1 for m in row['turns'] if m.get('think_trained'))
         stats['teacher_turns'] += c['teacher_turns']
         stats['autofix_turns'] += c['autofix_turns']
         lens.append(row['n_tokens'])

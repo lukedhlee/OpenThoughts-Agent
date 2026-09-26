@@ -31,6 +31,60 @@ It produces two SFT arms of about 2,000 kept traces each, 1:1 pass:fail:
   overflow above 20 % after 200 episodes, which costs about 7–9 node-hours if it fires).
 - **Nothing is submitted.**
 
+## Re-check (Luke's go, 21:15 PT): five fixes, pass rule pre-registered before its job starts
+
+**Rollout fixes, tested by the re-check.**
+1. **Qwen serves `--max-model-len 131072`** for relay (`TEACHER_MAXLEN`; Qwen3.8's native length is 262k).
+   - 09-21 stays at 65,536, exactly as in its eval.
+   - Harbor's `max_input_tokens` is 131,072 for relay runs, and the router reports 131,072 on `/v1/models`.
+   - Harbor's guard counts the owner's view. So a student turn whose view outgrows 65,536 ends with the student's own
+     context 400. Harbor scores that as `ContextLengthExceededError`, an overflow.
+   - The teacher's view (full reasoning) gets up to 128k. The student's view keeps the 1k cap on older Qwen reasoning.
+2. **Every model call pauses the episode's budget clock** (`--pause-model-calls`), student and teacher alike, in both
+   arms from now on.
+   - The clock stops from the router sending a request (retries included) to its answer.
+   - The student's clock runs from the episode's first request, and the teacher's from its takeover. Control's also
+     runs from the first request.
+   - **How the agent timeout is enforced:** the router ends an episode at 1× the task's budget on the owner's clock,
+     with a synthetic `task_complete` (owner `router`, never trained on).
+   - Harbor's own agent timeout, `agent_timeout_multiplier` 8.0, is only a backstop.
+   - Logged per turn: `paused_sec`, `paused_this_turn_sec`, `student_clock_sec`.
+3. **The Qwen reply cap goes from 16,384 to 32,768 tokens.** The fallback is kept: when the cap does not fit, the
+   router retries without `max_tokens`.
+
+**Re-check.** relay_repair only, on the same 100 pilot tasks, 1 × 09-21 + 1 × Qwen (128k), `-A transfernetx`. About
+1.6 node-hours expected, ceiling 2.5 (2 nodes × 75 min). Decided by `check_decide.py --rule recheck`.
+
+**It PASSES only if all five hold:**
+- **C1, harness gate:** H0–H5, as before. Overflow is a scored model failure, never a harness error.
+- **C2:** relay context overflow in at most 20 % of scored relay episodes.
+- **C3:** zero Qwen context-length 400s. That means final 400s on teacher requests; a cap that did not fit and was
+  retried without `max_tokens` does not count, but is reported.
+- **C4:** the student owns at least 50 % of executed turns.
+- **C5:** recovery after a takeover is at least 0.20.
+
+**Informational, not a gate:** relay pass vs run 3's control, paired by task. The clock change makes it not
+like-for-like.
+
+**PASS** → `launch_relay.sh` (RULE=recheck, ROLLOUTS=4) starts the relay arm automatically.
+- 945 baseline-solvable tasks × 4 rollouts, on 4 × 09-21 + 4 × Qwen (128k), all fixes on.
+- Ceiling = 42 − (baseline 8.88 + the re-check's node-hours), so the whole full run stays within 42. About 24
+  expected.
+- The in-run overflow cancel stays as a backstop: more than 20 % of the first 200 episodes overflowing cancels the run.
+
+**FAIL** → no launch, and a report of the failing check with its numbers.
+
+**Training side (CPU, existing traces).**
+4. **Kept failures:** a timeout failure is kept only if the episode had stalled.
+   - Stalled means a loop or no-progress trigger fired (as a takeover or, in control, as `would_fire`), or its last 3
+     executed turns produced no new terminal output (`relay_triggers`' own rule).
+   - The rest are re-balanced to 1:1 with passes (`select_kept.py`).
+5. **The same thinking mask in both arms** (`sft/render.py`).
+   - A Qwen turn's thinking gets loss only if it was never cut in the rendered view AND is at most 8,192 tokens of
+     09-21's tokenizer. That is 09-21's eval per-turn output limit.
+   - Visible analysis, plan and commands are always trained.
+   - 09-21's own turns are context only. Autofixed turns train the rewritten action only.
+
 ## Baseline arm result (job 2037808, 18:44–20:56 PT, 8.88 node-hours of its 13 ceiling)
 
 **Qwen alone passes 945 of 2,007 scored tasks: 0.471, CI [0.449, 0.493].**

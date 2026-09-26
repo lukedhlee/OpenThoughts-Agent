@@ -48,10 +48,14 @@ episodes as censored.
 Teacher endpoints: --teacher-url may be a comma-separated list; each episode is pinned to one (round-robin by
 episode index), for its chat and /tokenize requests alike.
 
-Budgets (--budget-mode, relay arm). The student's clock is the wall time since the episode's first request minus the
-time its repair turns were with the teacher (from the router sending the repair request, retries included, to the
-teacher's answer): repair queueing is infrastructure, not the student's time. The student's own discarded reply still
-counts as its time. Every log line carries paused_sec and student_clock_sec.
+Budgets (--budget-mode). The owner's clock is wall time minus paused time. With --pause-model-calls (from the 21:15 PT
+re-check on, both arms) every model call pauses it, student and teacher alike, from the router sending the request
+(retries included) to the answer: budgets count sandbox and tool time, not serving latency. Without it only the
+student's repair turns pause it (run 3, the check run). The student's clock runs from the episode's first request;
+the teacher's from its takeover (paused time since then subtracted); control's from its first request. Every log line
+carries paused_sec, student_clock_sec and paused_this_turn_sec. The agent timeout is enforced by the router, which ends
+an episode at 1x the task budget on the owner's clock with a synthetic task_complete (owner 'router'); harbor's own
+agent timeout (agent_timeout_multiplier) is only a backstop set far above it.
  harbor runs the relay arm with agent_timeout_multiplier ~2 and the router ends
 the episode itself when the student has used 1x the task's agent timeout without a takeover (`student_budget`), or
 the teacher has used 1x from its takeover (`teacher_budget`). It ends an episode by answering the pending request, and
@@ -198,7 +202,8 @@ class Episode:
         self.student_think = None
         self.n_repairs = 0
         self.pinned = {}                  # who -> the server this episode is pinned to
-        self.paused_sec = 0.0             # wall time the student's clock was stopped (teacher repair turns in flight)
+        self.paused_sec = 0.0             # wall time the episode's clock was stopped (model calls in flight)
+        self.paused_at_takeover = 0.0
         self.repair_confirm = False       # the teacher claimed done in a repair turn: it answers that confirmation
 
     def summary(self):
@@ -542,7 +547,8 @@ class Router:
     # ---- HTTP handlers -----------------------------------------------------------------------------------------
     async def h_models(self, request):
         return web.json_response({'object': 'list', 'data': [{
-            'id': self.a.public_model, 'object': 'model', 'owned_by': 'relay-router', 'max_model_len': self.max_model_len}]})
+            'id': self.a.public_model, 'object': 'model', 'owned_by': 'relay-router',
+            'max_model_len': self.a.report_max_model_len or self.max_model_len}]})
 
     async def h_endpoints(self, request):
         return web.json_response({w: {u: dict(inflight=self.inflight[u], pinned=self.pinned_count[u],
@@ -647,11 +653,13 @@ class Router:
                 ep.pending = None
         if self.a.budget_mode == 'on' and ep.task and ep.task.get('budget_sec'):
             b = ep.task['budget_sec']
+            # the owner's clock: wall time minus the paused time (model calls; repairs only without --pause-model-calls)
             if ep.owner == 'student' and self.mode in ('relay', 'student') and now - ep.t0 - ep.paused_sec >= self.a.student_budget_frac * b:
                 ep.ending = 'student_budget'
-            elif ep.owner == 'teacher' and ep.takeover_t and now - ep.takeover_t >= self.a.teacher_budget_frac * b:
+            elif (ep.owner == 'teacher' and ep.takeover_t and now - ep.takeover_t - (ep.paused_sec - ep.paused_at_takeover)
+                  >= self.a.teacher_budget_frac * b):
                 ep.ending = 'teacher_budget'
-            elif ep.owner == 'teacher' and self.mode == 'teacher' and now - ep.t0 >= self.a.teacher_budget_frac * b:
+            elif ep.owner == 'teacher' and self.mode == 'teacher' and now - ep.t0 - ep.paused_sec >= self.a.teacher_budget_frac * b:
                 ep.ending = 'teacher_budget'
             if ep.ending:
                 self.event('ending', episode=ep.idx, sid=ep.sid, ending=ep.ending, turn=t, elapsed_sec=now - ep.t0)
@@ -678,6 +686,7 @@ class Router:
     def take_over(self, ep, fire, t, now, discarded=None):
         ep.owner = 'teacher'
         ep.takeover_t = now
+        ep.paused_at_takeover = ep.paused_sec
         ep.takeover = dict(trigger=fire['trigger'], kind=fire['kind'], reason=fire.get('reason'), fired_turn=fire.get('turn'),
                            turn=t, elapsed_sec=round(now - ep.t0, 3),
                            budget_sec=(ep.task or {}).get('budget_sec'), discarded_student_reply=discarded)
@@ -704,8 +713,11 @@ class Router:
         b = self.upstream_body('student', body, msgs)
         rec['sent_body'] = self.write_body(ep, rec['seq'], 'student', b)
         t1 = time.time()
-        status, data = await self.post('student', '/chat/completions', b)
+        status, data = await self.post('student', '/chat/completions', b, ep)
         rec.update(latency_sec=round(time.time() - t1, 3), upstream_status=status)
+        if self.a.pause_model_calls:
+            ep.paused_sec += time.time() - t1
+            rec['paused_this_turn_sec'] = round(time.time() - t1, 3)
         if status != 200:
             self.check_fatal('student', status, data)
             rec['upstream_error'] = data[:2000].decode('utf-8', 'replace')
@@ -799,10 +811,11 @@ class Router:
             if not pr.error and pr.is_task_complete and rec.get('repair_kind') == 'parse_error':
                 ep.repair_confirm = True
         rec.update(latency_sec=round(time.time() - t1, 3), upstream_status=status)
-        if rec.get('repair') and ep.owner == 'student':
-            # the student's clock stops while its repair turn is with the teacher (queueing is infrastructure)
+        if self.a.pause_model_calls or (rec.get('repair') and ep.owner == 'student'):
+            # the owner's clock stops while a model call is in flight (serving latency is infrastructure); without
+            # --pause-model-calls only the student's repair turns pause it (run 3 / check run behaviour)
             ep.paused_sec += time.time() - t1
-            rec['paused_this_turn_sec'] = round(time.time() - t1, 3)
+            rec['paused_this_turn_sec'] = round(rec.get('paused_this_turn_sec', 0) + time.time() - t1, 3)
         if status != 200:
             self.check_fatal(who, status, data)
             rec['upstream_error'] = data[:2000].decode('utf-8', 'replace')
@@ -923,6 +936,11 @@ def parse_args(argv=None):
     p.add_argument('--teacher-max-tokens', type=int, default=None,
                    help='max_tokens on every teacher request (reasoning + content); a reply cut there is logged as '
                         'teacher_cut_at_cap. Dropped (context remainder, below the cap) when the cap would not fit.')
+    p.add_argument('--pause-model-calls', action='store_true',
+                   help="every model call (student and teacher) stops the episode's budget clock while it is in flight")
+    p.add_argument('--report-max-model-len', type=int, default=None,
+                   help='max_model_len the router reports on /v1/models (harbor takes min(model_info, this)); default: '
+                        'the smallest served length')
     p.add_argument('--student-tokenizer', default=None,
                    help="09-21's tokenizer.json: turns on the cap on older teacher reasoning in the student's view")
     p.add_argument('--reasoning-cap', type=int, default=rcap.CAP_TOKENS,

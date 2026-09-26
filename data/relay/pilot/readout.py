@@ -121,6 +121,7 @@ def trials(job_dir):
                 pass
         vt = exc == VERIFIER_TIMEOUT
         rows.append(dict(trial=os.path.basename(tdir), task=task, reward=reward, exc=exc, sid=sid, steps=steps,
+                         traj_path=trajs[-1] if trajs else None,
                          verifier_timeout=vt, censored=False,
                          harness_error=not vt and ((reward is None) or (exc is not None and exc not in AGENT_ENDS))))
     return rows

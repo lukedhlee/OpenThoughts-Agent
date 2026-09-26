@@ -25,6 +25,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--check', required=True)
     ap.add_argument('--run3', required=True)
+    ap.add_argument('--rule', choices=['check', 'recheck'], default='check',
+                    help="recheck: the 21:15 PT re-check's pre-registered rule (C3 = zero Qwen context 400s; the paired "
+                         "pass vs run 3's control is informational, the clock change makes it not like-for-like)")
     a = ap.parse_args()
     cname, rname = (os.path.basename(os.path.normpath(x)) for x in (a.check, a.run3))
     # re-read the check run with this readout (the run's own final readout may predate an amendment)
@@ -51,13 +54,24 @@ def main():
     check('C2 relay context overflow <= 20 % of scored episodes', scored and ovf / len(scored) <= 0.20,
           dict(overflow=ovf, scored=len(scored), rate=round(ovf / len(scored), 4) if scored else None))
     share = (o.get('repair') or {}).get('student_share_of_executed_turns')
-    check('C3 student owns >= 50 % of executed turns', (share or 0) >= 0.5, share)
     tk = o.get('takeovers') or {}
-    check('C4 recovery after a sticky takeover >= 0.20', (tk.get('recovery') or 0) >= 0.20,
-          [tk.get('recovery'), tk.get('recovery_ci95'), tk.get('takeover_episodes')])
     pp = readout.paired_pass(ctl, rows)
-    check('C5 relay pass not below run 3 control by more than 15 points (paired)',
-          pp['relay_minus_control'] is not None and pp['relay_minus_control'] >= -0.15, pp)
+    rv0 = readout.router_view(os.path.join(a.check, 'router_relay_repair'))
+    q400 = [x for x in rv0['recs'] if x.get('owner') == 'teacher' and x.get('upstream_status') == 400
+            and 'maximum context length' in (x.get('upstream_error') or '')]
+    if a.rule == 'recheck':
+        check('C3 zero Qwen context-length 400s', not q400,
+              dict(final_400s=len(q400), cap_dropped_then_ok=sum(1 for x in rv0['recs'] if x.get('teacher_max_tokens_dropped')
+                                                               and x.get('upstream_status') == 200)))
+        check('C4 student owns >= 50 % of executed turns', (share or 0) >= 0.5, share)
+        check('C5 recovery after a sticky takeover >= 0.20', (tk.get('recovery') or 0) >= 0.20,
+              [tk.get('recovery'), tk.get('recovery_ci95'), tk.get('takeover_episodes')])
+    else:
+        check('C3 student owns >= 50 % of executed turns', (share or 0) >= 0.5, share)
+        check('C4 recovery after a sticky takeover >= 0.20', (tk.get('recovery') or 0) >= 0.20,
+              [tk.get('recovery'), tk.get('recovery_ci95'), tk.get('takeover_episodes')])
+        check('C5 relay pass not below run 3 control by more than 15 points (paired)',
+              pp['relay_minus_control'] is not None and pp['relay_minus_control'] >= -0.15, pp)
     walls = []
     rv = readout.router_view(os.path.join(a.check, 'router_relay_repair'))
     for e in rv['eps'].values():
@@ -65,6 +79,7 @@ def main():
         if ts and e['ending'] != 'deadline':
             walls.append(max(ts) - min(ts) + 60)
     out = dict(decision='PASS' if all(c['ok'] for c in checks) else 'FAIL', checks=checks,
+               paired_pass_vs_run3_control=pp,
                relay_pass=oc.get('pass_rate'), relay_pass_ci95=oc.get('pass_rate_ci95'),
                relay_episode_mean_s=round(statistics.mean(walls)) if walls else None,
                autofixes=sum(1 for x in rv['recs'] if x.get('autofix')),

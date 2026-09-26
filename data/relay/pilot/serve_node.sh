@@ -6,7 +6,8 @@
 #             probe_adapt_20260911/checkpoints/3, the model's own chat_template.jinja, no reasoning parser, TP1 x DP4
 #             x EP, 65,536 context, 32 seqs per replica). skip_special_tokens=false comes per request from harbor.
 #   teacher = data/mini_swe_host/serve_qwen38.sbatch (= data/relay/bench/qwen_bench.sbatch's pick: TP1 x DP4, MTP 2,
-#             64k, prefix caching, 96 seqs per replica, the relay-extra torchvision side dir) with --reasoning-parser
+#             64k (TEACHER_MAXLEN=131072 for relay from 21:15 PT; Qwen3.8's native length is 262k), prefix caching,
+#             96 seqs per replica, the relay-extra torchvision side dir) with --reasoning-parser
 #             qwen3; no sampler override (Qwen3.8's generation_config).
 set -uo pipefail
 ROLE=${1:?student|teacher}
@@ -64,7 +65,7 @@ case $ROLE in
     $PY -c "import torchvision, vllm.model_executor.models.qwen3_5; print('torchvision', torchvision.__version__, 'qwen3_5 import ok')" || { echo "qwen3_5 import failed"; exit 1; }
     serve $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name qwen38 --port 8000 \
       --tensor-parallel-size 1 --data-parallel-size 4 \
-      --max-model-len 65536 --gpu-memory-utilization 0.90 --max-num-seqs 96 \
+      --max-model-len ${TEACHER_MAXLEN:-65536} --gpu-memory-utilization 0.90 --max-num-seqs 96 \
       --enable-prefix-caching --enable-chunked-prefill --no-enable-log-requests \
       --speculative-config '{"method":"mtp","num_speculative_tokens":2}' \
       --reasoning-parser qwen3;;

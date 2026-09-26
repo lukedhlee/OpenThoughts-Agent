@@ -33,6 +33,9 @@ def main():
     ap.add_argument('--check-decision', required=True)
     ap.add_argument('--run3', default='/e/fscratch/reformo/lee27/experiments/relay/pilot/runs/relay_run3b_20260925')
     ap.add_argument('--total-ceiling', type=float, default=42.0)
+    ap.add_argument('--spent', type=float, default=None,
+                    help='node-hours already spent on the full run (default: the baseline run.meta); the relay gets the rest')
+    ap.add_argument('--rollouts', type=int, default=None, help='fixed rollouts per task (default: the smallest reaching the target)')
     ap.add_argument('--nodes', type=int, default=8)
     ap.add_argument('--conc', type=int, default=400)
     ap.add_argument('--startup-h', type=float, default=0.2)
@@ -41,7 +44,7 @@ def main():
     a = ap.parse_args()
     bname = os.path.basename(os.path.normpath(a.baseline))
     meta = dict(l.strip().split('=', 1) for l in open(os.path.join(a.baseline, 'run.meta')) if '=' in l)
-    base_nh = float(meta['node_hours'])
+    base_nh = float(meta['node_hours']) if a.spent is None else a.spent
     rows = readout.trials(os.path.join(a.baseline, 'jobs', f'{bname}_control'))
     readout.mark_censored(readout.router_view(os.path.join(a.baseline, 'router_control')), rows)
     solved = sorted({t['task'] for t in rows if readout.usable(t) and readout.is_pass(t)})
@@ -73,6 +76,9 @@ def main():
             break
     r, kept = plan if plan[1] >= a.target * 0.98 else (3, 2 * min(min(n * 3 * usable_share * p, 2 * n),
                                                                 n * 3 * usable_share * (1 - p), a.target / 2))
+    if a.rollouts:
+        r = a.rollouts
+        kept = 2 * min(min(n * r * usable_share * p, 2 * n), n * r * usable_share * (1 - p), a.target / 2)
     wall_s = a.startup_h * 3600 + n * r * d / a.conc + tail
     node_h = a.nodes * wall_s / 3600
     ceiling = a.total_ceiling - base_nh

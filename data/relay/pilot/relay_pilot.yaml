@@ -11,9 +11,10 @@
 #   llm_session_header                    the router tells episodes apart by it (lukedhlee/terminus2-relay 8dfd835a)
 #   trajectory_config.raw_content: true   trajectory.json keeps each raw reply, so router records join by content hash
 # The router drops skip_special_tokens for the teacher. Sandboxes follow the CalibForge gates (gate_nop.yaml).
-# agent_timeout_multiplier 3.0: harbor's hard stop sits above the router's budgets (student 1x of its own clock, which
-# pauses during repair turns; teacher 1x from its takeover; control 1x), so the router, not harbor, ends each episode
-# at the task's own budget in both arms.
+# agent_timeout_multiplier 8.0: the router enforces the agent timeout (1x the task budget on the owner's clock, which
+# pauses during every model call from 21:15 PT on), so harbor's own hard stop is only a backstop far above it.
+# __MAX_INPUT__: 65,536, or 131,072 for relay runs whose Qwen serves 128k (09-21 stays at 65,536; its requests end with
+# a context 400 at its own limit, which harbor scores as ContextLengthExceededError).
 # Retries cover sandbox and upload infrastructure only. LLM-path errors (router 5xx, connect errors, timeouts) are left
 # out on purpose: the pilot is a harness gate, so they must surface as trial exceptions, not disappear into retries.
 # Harbor = marin-community/harbor lukedhlee/terminus2-relay (the setup-files hook + the two relay commits).
@@ -22,7 +23,7 @@ jobs_dir: __JOBS_DIR__
 n_attempts: 1
 n_concurrent_trials: __CONC__
 timeout_multiplier: 1.0
-agent_timeout_multiplier: 3.0
+agent_timeout_multiplier: 8.0
 # 400 sandboxes created at once overran the 300-600 s start window: 272 EnvironmentStartTimeoutError in the full-run
 # baseline's first 5 min (2026-09-25 18:57 PT), none after. A 4x window absorbs a start burst.
 environment_build_timeout_multiplier: 4.0
@@ -57,7 +58,7 @@ agents:
   kwargs:
     api_base: __API_BASE__
     model_info:
-      max_input_tokens: 65536
+      max_input_tokens: __MAX_INPUT__
       max_output_tokens: 8192
       input_cost_per_token: 0.0
       output_cost_per_token: 0.0

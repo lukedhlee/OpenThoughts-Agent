@@ -762,3 +762,45 @@ def test_teacher_reply_cap_cut_case_and_context_fallback(tmp_path):
         rows = [x for x in st.turns(r.sid) if x.get('turn') is not None]
         assert all(x['upstream_status'] == 200 for x in rows)
         assert all(x['teacher_max_tokens_dropped'] for x in rows)
+
+
+@needs_harbor
+def test_every_model_call_pauses_the_budget_clock(tmp_path):
+    """--pause-model-calls: budgets count sandbox/tool time, not serving latency, for the student and the teacher."""
+    with Stack(tmp_path, router_args=REPAIR + ['--budget-mode', 'on', '--pause-model-calls'],
+               budgets={'budget': 1.0, 'done': 1.0}, student_delay=0.2, teacher_delay=0.4) as st:
+        r = run_agent(st, 'budget', tmp_path, max_turns=8)                 # 8 x 0.2 s of student calls > 1.0 s budget
+        rows = [x for x in st.turns(r.sid) if x.get('turn') is not None]
+        assert not any(x.get('ending') for x in rows) and type(r.exc).__name__ == 'TurnCapExhaustedError'
+        assert st.router.episodes[r.sid].paused_sec >= 8 * 0.2
+        r2 = run_agent(st, 'done', tmp_path, tag='-0')                     # 4 teacher turns x 0.4 s > 1.0 s after takeover
+        rows2 = [x for x in st.turns(r2.sid) if x.get('turn') is not None]
+        assert rows2[3]['takeover']['trigger'] == 'done_claim' and not any(x.get('ending') for x in rows2)
+        assert getattr(r2.stop, 'value', r2.stop) == 'task_complete'
+        assert all(x['paused_this_turn_sec'] >= 0.2 for x in rows2)
+
+
+def test_reported_max_model_len(tmp_path):
+    import urllib.request
+    with Stack(tmp_path, mode='teacher', router_args=['--report-max-model-len', '131072']) as st:
+        d = json.load(urllib.request.urlopen(st.url + '/models'))
+        assert d['data'][0]['max_model_len'] == 131072
+
+
+@needs_harbor
+def test_render_masks_uncut_reasoning_over_the_think_limit(tmp_path):
+    """Same rule in both arms: a Qwen turn's thinking is trained only if never cut AND within the limit (8,192 tokens
+    of 09-21's tokenizer in production; 5 here). Control (teacher-only) episodes render with the same function."""
+    import render
+    tokp = _word_tokenizer(tmp_path / 'tok.json')
+    with Stack(tmp_path, mode='teacher', router_args=['--student-tokenizer', tokp, '--reasoning-cap', '20'],
+               teacher_long=60) as st:
+        r = run_agent(st, 'done', tmp_path)
+        tok = render.rcap.load_tokenizer(tokp)
+        tpl = render.load_template(HERE / 'grug0921_chat_template.jinja')
+        row = render.render_episode(r.traj, st.turns(r.sid), tok, tpl, '<|begin_of_text|>', cap=20, think_limit=5)
+        c = render.check_row(row, tok)
+        t = [m for m in row['turns'] if m['owner'] == 'teacher']
+        assert c['cut_turns'] == len(t) - 1 and c['long_think_masked'] == 1 and not any(m['think_trained'] for m in t)
+        wide = render.render_episode(r.traj, st.turns(r.sid), tok, tpl, '<|begin_of_text|>', cap=20, think_limit=10 ** 6)
+        assert render.check_row(wide, tok)['long_think_masked'] == 0 and sum(wide['loss']) > sum(row['loss'])

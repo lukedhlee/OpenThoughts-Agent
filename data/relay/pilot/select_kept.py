@@ -3,7 +3,9 @@
 model failures (harness errors, verifier timeouts and deadline-censored episodes dropped), each failure labelled by
 cause (readout.failure_cause). relay_repair episodes count only when the teacher wrote at least one turn (repair or
 takeover), since only teacher turns are trained on. S5 as a keep filter (Luke 2026-09-25 17:40 PT): a done_claim
-takeover episode is kept only if the teacher ran at least one command before confirming.
+takeover episode is kept only if the teacher ran at least one command before confirming. A timeout failure is kept
+only if the episode had stalled (stalled(): a loop / no-progress trigger fired, or no new terminal output in its last
+3 turns).
 
     python select_kept.py --run-dir <run> [--name <run name>] --target 2000 --out kept_manifest.jsonl
 
@@ -32,6 +34,37 @@ def teacher_worked(e):
     return False
 
 
+STALL_TRIGGERS = ('loop', 'no_progress_wait')
+
+
+def stalled(e, t):
+    """A timeout counts as a real (kept) failure only if the episode had actually stalled (Luke 2026-09-25 21:15 PT):
+    a stall trigger (exact-repeat loop or no-progress wait) fired on it (as a takeover, or, in control, as would_fire),
+    or its last 3 executed turns produced no new terminal output (relay_triggers' own "no new output" rule)."""
+    if (e['takeover'] or {}).get('trigger') in STALL_TRIGGERS:
+        return 'trigger'
+    if any(f.get('trigger') in STALL_TRIGGERS for r in e['main'] for f in (r.get('would_fire') or [])):
+        return 'trigger'
+    if not t.get('traj_path'):
+        return None
+    try:
+        traj = json.load(open(t['traj_path']))
+    except (OSError, ValueError):
+        return None
+    msgs = []
+    for s in traj['steps']:
+        if s.get('source') == 'user' and not msgs:
+            msgs.append(dict(role='user', content=s.get('message') or ''))
+        elif s.get('source') == 'agent' and not s.get('is_copied_context'):
+            msgs.append(dict(role='assistant', content=s['message'] if isinstance(s.get('message'), str) else json.dumps(s.get('message'))))
+            obs = '\n'.join(r.get('content') or '' for r in (s.get('observation') or {}).get('results', [])
+                            if isinstance(r.get('content'), str))
+            msgs.append(dict(role='user', content=obs))
+    sc = readout.rt.scan_messages(msgs, harness='terminus2')
+    acts = [a for a in sc.actions if not a['mark']]
+    return 'no_new_output' if len(acts) >= 3 and all(a['empty'] for a in acts[-3:]) else None
+
+
 def arm_rows(run_dir, name, arm):
     rv = readout.router_view(os.path.join(run_dir, f'router_{arm}'))
     rows = readout.trials(os.path.join(run_dir, 'jobs', f'{name}_{arm}')) + \
@@ -55,6 +88,11 @@ def arm_rows(run_dir, name, arm):
                         repairs=sum(1 for r in e['main'] if r.get('repair_kind') == 'parse_error'),
                         takeover=(e['takeover'] or {}).get('trigger'),
                         teacher_cut_turns=sum(1 for r in e['main'] if r.get('teacher_cut_at_cap'))))
+        x = out[-1]
+        if x['cause'] == 'timeout':
+            x['stalled'] = stalled(e, t)
+            if not x['stalled']:
+                out.pop()        # a timeout on a working episode is not a model failure worth keeping
     return out
 
 

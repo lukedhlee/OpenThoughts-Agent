@@ -37,6 +37,8 @@ TREE=${TREE:-/e/fscratch/reformo/lee27/tasks/calibforge_relay100}
 NTASKS=${NTASKS:-100}
 TASK_LIST=${TASK_LIST:-}          # a subset of the tree to run (default: the tree's TASKS.txt), e.g. the solvable tasks
 N_ATTEMPTS=${N_ATTEMPTS:-1}       # rollouts per task
+MAX_INPUT=${MAX_INPUT:-65536}     # harbor's max_input_tokens; 131072 when Qwen serves 128k (the router reports it)
+TEACHER_MAX_TOKENS=${TEACHER_MAX_TOKENS:-32768}
 OVF_AFTER=${OVF_AFTER:-0}; OVF_MAX=${OVF_MAX:-0.20}   # relay backstop: cancel when overflow > OVF_MAX after OVF_AFTER episodes (0 = off)
 RUN_KIND=${RUN_KIND:-pilot}
 STUDENT_TOKENIZER=${STUDENT_TOKENIZER:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921/tokenizer.json}   # the cap on older teacher reasoning   # pilot: TASKS.txt must be disjoint from the held-out split; heldout: it must BE the split
@@ -118,14 +120,15 @@ log "endpoints student=$SURL teacher=$TURL; job start $(date -d @$JSTART -Is), d
 
 # ---- 3. routers -----------------------------------------------------------------------------------------------------
 for arm in $ARMS; do
-  TARGS=(); [ -n "$TURL" ] && TARGS=(--teacher-url $TURL --teacher-model qwen38 --teacher-max-tokens ${TEACHER_MAX_TOKENS:-16384})
+  TARGS=(); [ -n "$TURL" ] && TARGS=(--teacher-url $TURL --teacher-model qwen38 --teacher-max-tokens $TEACHER_MAX_TOKENS)
+  [ "$MAX_INPUT" != 65536 ] && TARGS+=(--report-max-model-len $MAX_INPUT)
   SARGS=(); [ -n "$SURL" ] && SARGS=(--student-url $SURL --student-model snowball)   # empty on a teacher-only serve
   case $arm in control) M=(--mode teacher);; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
     relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py
                   --autofix --student-tokenizer $STUDENT_TOKENIZER);;
     *) abort "unknown arm $arm";; esac
   $PY $ROUTER "${M[@]}" --arm $arm --port ${PORT[$arm]} --log-dir $R/router_$arm --tasks $TREE/router_tasks.json \
-    --budget-mode on --deadline-epoch $DEADLINE "${SARGS[@]}" "${TARGS[@]}" \
+    --budget-mode on --pause-model-calls --deadline-epoch $DEADLINE "${SARGS[@]}" "${TARGS[@]}" \
     > $R/router_$arm.log 2>&1 &
   RPID[$arm]=$!
 done
@@ -143,7 +146,7 @@ log "routers ready: $(for arm in $ARMS; do printf '%s:%s ' $arm ${PORT[$arm]}; d
 export PYTHONPATH=$HARBOR_SRC
 for arm in $ARMS; do
   CFG=$R/${NAME}_$arm.yaml
-  sed "s#__JOB_NAME__#${NAME}_$arm#; s#__JOBS_DIR__#$JOBS_ROOT#; s#__API_BASE__#http://127.0.0.1:${PORT[$arm]}/v1#; s#__CONC__#$CONC#" $HERE/relay_pilot.yaml > $CFG
+  sed "s#__JOB_NAME__#${NAME}_$arm#; s#__JOBS_DIR__#$JOBS_ROOT#; s#__API_BASE__#http://127.0.0.1:${PORT[$arm]}/v1#; s#__CONC__#$CONC#; s#__MAX_INPUT__#$MAX_INPUT#" $HERE/relay_pilot.yaml > $CFG
   $PY - "$CFG" "$TREE" "$MODE" "${TASK_LIST:-$TREE/TASKS.txt}" "$N_ATTEMPTS" <<'PY' || abort "config for $arm does not validate"
 import os, re, sys, yaml
 p, tree, mode, lst, att = sys.argv[1:6]
