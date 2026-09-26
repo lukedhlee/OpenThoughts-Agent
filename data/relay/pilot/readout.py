@@ -455,6 +455,9 @@ def context_budget_view(rv, rows):
     hard_rec = [next((r['hard_end'] for r in e['main'] if r.get('hard_end')), {}) for e in hard]
     hard_sids = {e['sid'] for e in hard}
     ovf = [t for t in rows if t['exc'] == 'ContextLengthExceededError']
+    same = [(r['student_view_tokens'], (r.get('usage') or {}).get('prompt_tokens')) for r in rv['recs']
+            if r.get('owner') == 'student' and r.get('student_view_tokens') is not None
+            and (r.get('usage') or {}).get('prompt_tokens') is not None]
     views = [max((r.get('student_view_tokens') or 0) for r in e['main']) for e in eps
              if any(r.get('student_view_tokens') is not None for r in e['main'])]
     return dict(
@@ -473,7 +476,10 @@ def context_budget_view(rv, rows):
         hard_ends_not_overflow=sum(1 for e in hard if e['sid'] in by_sid
                                    and by_sid[e['sid']]['exc'] != 'ContextLengthExceededError') if rows else None,
         student_view_max_p50=q(views, .5), student_view_max_p90=q(views, .9),
-        view_count_errors=sum(1 for r in rv['recs'] if r.get('student_view_tokens_error')))
+        view_count_errors=sum(1 for r in rv['recs'] if r.get('student_view_tokens_error')),
+        # the count must equal what the student's own request reported (same server, same template): 0 expected
+        view_vs_prompt_tokens=dict(compared=len(same), mismatched=sum(1 for a_, b_ in same if a_ != b_),
+                                   max_abs_diff=max((abs(a_ - b_) for a_, b_ in same), default=None)))
 
 
 def would_fire(rv, rows):
