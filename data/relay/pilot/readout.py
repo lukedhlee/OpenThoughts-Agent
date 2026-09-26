@@ -144,9 +144,15 @@ def router_view(router_dir):
 
 
 def mark_censored(rv, rows):
+    """Deadline-censored episodes; and episodes the router's cap retry ended with a false context 400 (router bug fixed
+    in 88a4b3b8: the retry lowered max_tokens from vLLM's lower-bound message and failed again). Those are harness
+    errors (RouterCapRetry400), not model overflows, per the amendment of 2026-09-25 18:50 PT."""
     dead = {e['sid'] for e in rv['eps'].values() if e['ending'] == 'deadline'}
+    capbug = {r['sid'] for r in rv['recs'] if r.get('upstream_status') == 400 and r.get('teacher_max_tokens_lowered_to')}
     for t in rows:
         t['censored'] = t['sid'] in dead
+        if t['sid'] in capbug:
+            t['exc'], t['harness_error'], t['verifier_timeout'] = 'RouterCapRetry400', True, False
 
 
 def usable(t):

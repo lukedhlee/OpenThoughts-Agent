@@ -72,6 +72,16 @@ paired with run 3's control. Expected about 2.4 node-hours; hard ceiling 3.0 (`-
 - **C4 (S4):** recovery after a sticky takeover is at least 0.20.
 - **C5:** the relay pass rate is not below run 3's control by more than 15 points, paired by task.
 
+**Amendment, 18:50 PT, before the check run's result.** A router bug is fixed in 88a4b3b8.
+- **The bug.** When the 16k cap did not fit the context left, the router lowered `max_tokens` using vLLM's "prompt
+  contains at least N input tokens". That N is only a lower bound, so the retry failed again with a context 400.
+  Harbor then ended the episode as a context overflow.
+- **The fix.** Retry without `max_tokens`. What the context has left is below the cap anyway.
+- **How the running check run is scored.** Its router has the bug, so its episodes ended by that 400 are harness
+  errors (`RouterCapRetry400`): they count against the harness gate's ≤ 10 % and are excluded from C2's overflow
+  rate. There were 17 such teacher requests at 18:43 PT.
+- The thresholds are unchanged. The baseline and relay routers start with the fix.
+
 **PASS** → the 12-node full run launches at once from the staged kit: ceiling 42 node-hours, with the in-run overflow
 cancel kept as a backstop. **FAIL on any check** → no launch, and a report of the failing check with its numbers.
 
