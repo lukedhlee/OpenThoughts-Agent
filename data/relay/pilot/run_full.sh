@@ -1,5 +1,8 @@
 #!/bin/bash
 # run_full.sh <core-jobid> <burst-jobid> <run-name>
+# SUPERSEDED (2026-09-26): the full run launches through launch_relay.sh -> run_pilot.sh, the driver the checks ran.
+# This 12-node two-arm driver passes none of the check's settings (CLOCK, CTX_BUDGET, ROW_MAX/ROW_RESERVE, MAX_INPUT /
+# --report-max-model-len, BALANCE, STAGGER_SEC, GATE_*); porting them would fork the driver the check validated.
 # Jupiter login node, inside tmux. The full Terminus-2 relay run on CalibForge (spec: notes/relay/relay_full_t2.md).
 #
 # Servers (serve_relay.sbatch, two jobs so the second can be released on its own):

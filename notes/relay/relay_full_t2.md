@@ -31,6 +31,34 @@ It produces two SFT arms of about 2,000 kept traces each, 1:1 pass:fail:
   overflow above 20 % after 200 episodes, which costs about 7–9 node-hours if it fires).
 - **Nothing is submitted.**
 
+## Full relay run launched on the context-budget check (2026-09-26 15:00 PT)
+
+**The check failed only on overflow, inside the band the plan had already said to launch on.** The context-budget
+check (`relay_ctxb2_20260926`, job 2076715, 1.97 node-hours) failed C2 only: 22 of 94 scored relay episodes overflowed
+(23.4 %, limit 20 %). All 22 are hard ends after a context_budget takeover. The other four checks passed: harness gate
+clean, 99.95 % valid format, the student owns 51.6 % of executed turns, recovery after a takeover 0.56. Before the
+result the plan said: overflow 20–25 % → launch the full run anyway, since overflowed episodes are scored failures that
+the keep filter drops (they cost compute, not data quality); above 25 % → lower the trigger. So the relay launches.
+
+**What runs.** The check's exact driver and settings (`run_pilot.sh`, `CLOCK=repair`, context_budget 32k, the 64k row
+hard end, harbor input 131,072, Qwen reply cap 32,768, `--balance active`, the start wave staggered 3 min, the latency
+and KV gates, the teacher format guard, the verify note) on the 945 baseline-solvable tasks × 4 rollouts (3,780
+episodes). 4 × 09-21 + 4 × Qwen (one server per GPU, 128k), 192 concurrent (12 per Qwen GPU).
+- `run_full.sh` is superseded: it passes none of the check's settings. `launch_relay.sh` now calls `run_pilot.sh`
+  directly.
+
+**Cost: a flat 30 node-hour ceiling** (`--time` 3 h 45 × 8 nodes). It replaces the old 42 / 47 accounting.
+- Projected from the check's episode times (`relay_plan.py`: mean 707 s, p90 1,239 s): about 35 node-hours to finish
+  all 3,780 episodes at 192 concurrent. The earlier estimate of about 24 assumed 400 concurrent.
+- So the cap probably binds. The router deadline ends the last episodes 5 min before it, and the readout drops them as
+  censored. Harbor runs rollout 1 of every task before rollout 2, so a cut tail loses late rollouts, not whole tasks.
+- Solvable-task episodes may be shorter than the check's 100-task mix, which would bring the finish inside the cap.
+- Expected kept traces are about 1,400, not 2,000: at a relay pass rate of about 0.80 on solvable tasks, failures
+  are the scarce side of 1:1.
+
+**In-run stop rule** (`stop_rule.py`, checked every 15 min from 300 scored relay episodes on): cancel if overflow is
+above 30 % of scored episodes, valid format below 98 %, or harness errors above 10 % of finished trials.
+
 ## Context-budget check (Luke 2026-09-26 12:50 PT): pass rule pre-registered, not submitted
 
 **Why.** In the last relay check 09-21 wandered slowly: about 21 turns per episode against about 9 for Qwen alone.

@@ -95,13 +95,16 @@ def q(xs, f):
     return xs[int(f * (len(xs) - 1))] if xs else None
 
 
-def trials(job_dir):
-    """Per trial: task, reward, exception, session id and the main trajectory's agent steps."""
+def trials(job_dir, only=None):
+    """Per trial: task, reward, exception, session id and the main trajectory's agent steps (only: trial dir names to
+    read, default all)."""
     rows = []
     if not job_dir or not os.path.isdir(job_dir):
         return rows
     for rj in sorted(glob.glob(os.path.join(job_dir, '*', 'result.json'))):
         tdir = os.path.dirname(rj)
+        if only is not None and os.path.basename(tdir) not in only:
+            continue
         try:
             task, reward, exc = read_outcome(rj)
         except (OSError, ValueError, KeyError):

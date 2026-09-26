@@ -53,6 +53,9 @@ TEACHER_RESAMPLES=${TEACHER_RESAMPLES:-2}
 VERIFY_NOTE=${VERIFY_NOTE:-0}      # 1: the verification note on Qwen's confirmation request (relay: done_claim takeover; control: every one)
 [ $CLOCK = wall ] && AGENT_MULT=1.0 || AGENT_MULT=8.0
 OVF_AFTER=${OVF_AFTER:-0}; OVF_MAX=${OVF_MAX:-0.20}   # relay backstop: cancel when overflow > OVF_MAX after OVF_AFTER episodes (0 = off)
+STOP_AFTER=${STOP_AFTER:-0}; STOP_OVF=${STOP_OVF:-0.30}; STOP_FMT=${STOP_FMT:-0.98}; STOP_HERR=${STOP_HERR:-0.10}; STOP_EVERY=${STOP_EVERY:-900}
+                                  # full run's stop rule (stop_rule.py): from STOP_AFTER scored relay episodes on, every STOP_EVERY s,
+                                  # cancel on overflow > STOP_OVF, valid format < STOP_FMT or harness errors > STOP_HERR (0 = off)
 RUN_KIND=${RUN_KIND:-pilot}
 STUDENT_TOKENIZER=${STUDENT_TOKENIZER:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921/tokenizer.json}   # the cap on older teacher reasoning   # pilot: TASKS.txt must be disjoint from the held-out split; heldout: it must BE the split
 KEYF=${KEYF:-/e/fscratch/reformo/lee27/keys/daytona_eval.env}
@@ -89,7 +92,7 @@ cleanup_sandboxes() {
   [ ${#jobs[@]} -gt 0 ] && $PY $HERE/cleanup_sandboxes.py --key-file $KEYF --delete "${jobs[@]}" 2>&1 | tail -3
 }
 abort() { log "ABORT: $*"; echo "$*" > $R/ABORT; stop_harbor; stop_routers; release_serve "abort"; cleanup_sandboxes; write_meta; exit 1; }
-log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE"
+log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE max_input=$MAX_INPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR"
 
 # ---- 1. pre-flight --------------------------------------------------------------------------------------------------
 [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = "$HARBOR_SHA" ] || { log "harbor at ${HARBOR_SRC%/src} is not $HARBOR_SHA"; scancel $JOB; exit 1; }
@@ -210,7 +213,7 @@ PY
   fi
   log "harbor $arm started (pid ${HPID[$arm]}) -> $JOBS_ROOT/${NAME}_$arm"
 done
-T0=$(date +%s); EARLY_DONE=0; LAST_N=0; LAST_CHANGE=$T0; RELEASED_AT=""; OVF_DONE=0
+T0=$(date +%s); EARLY_DONE=0; LAST_N=0; LAST_CHANGE=$T0; RELEASED_AT=""; OVF_DONE=0; STOP_LAST=0
 
 # ---- 5. watch -------------------------------------------------------------------------------------------------------
 while :; do
@@ -274,6 +277,18 @@ PY
         log "overflow backstop: $2 of the first $1 $arm episodes overflowed (limit $OVF_MAX)"
         awk -v a=$2 -v b=$OVF_MAX 'BEGIN{exit !(a>b)}' && abort "relay context overflow $2 > $OVF_MAX after $1 episodes"
       fi
+    done
+  fi
+  if [ $STOP_AFTER -gt 0 ] && [ $SERVE_RELEASED = 0 ] && [ $((NOW - STOP_LAST)) -ge $STOP_EVERY ]; then
+    for arm in $ARMS; do case $arm in relay*) ;; *) continue;; esac
+      SR=$(timeout 600 $PY $HERE/stop_rule.py $R $NAME $arm --after $STOP_AFTER --ovf-max $STOP_OVF --fmt-min $STOP_FMT --herr-max $STOP_HERR 2>>$R/stop_rule.err)
+      set -- ${SR:-error}
+      case $1 in
+        wait) STOP_LAST=$((NOW - STOP_EVERY + 120)); log "stop rule $arm: $2 scored episodes (< $STOP_AFTER)";;   # re-check in 2 min
+        ok) STOP_LAST=$NOW; log "stop rule $arm: ok over $2 scored (overflow $3, format $4, harness errors $5 of $6 trials)";;
+        stop) abort "stop rule $arm over $2 scored: overflow $3 (max $STOP_OVF), format $4 (min $STOP_FMT), harness errors $5 (max $STOP_HERR)";;
+        *) STOP_LAST=$NOW; log "stop rule $arm: evaluation failed (${SR:-no output}; see stop_rule.err)";;
+      esac
     done
   fi
   if [ $EARLY_DONE = 0 ] && [ $((NOW - T0)) -ge $((EARLY_MIN*60)) ]; then
