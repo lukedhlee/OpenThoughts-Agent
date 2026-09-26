@@ -633,3 +633,30 @@ settings.
 - All 300 tasks are included, the 15 over 1,800 s too, longest first.
 - The readout gives the pass rate with a CI, the parse-error rate per turn, failure causes (format loop, false done,
   timeout, overflow, tests failed), turns, and the overflow rate.
+
+## Clean baseline result (2026-09-26, 12:20–12:58 PT): serving fixed, run stopped by the early gate
+
+**Per-GPU serving fixed the queueing.** With one Qwen server per GPU, no reply queued, KV never stayed saturated, and
+not one trial timed out. The run still stopped after 25 min: one of the 32 engines crashed, and the early gate
+(H1, "router clean") aborts on any upstream error, even when the retry succeeds. The 510 scored episodes are the
+quick ones, so their pass rate is biased high and is not comparable to baseline 1's 0.47.
+
+- **Serving:** Qwen reply latency p50 8.6 → 14.1 → 16.9 s and p90 about 95–100 s per 10 min. The latency gate never
+  fired (worst 5-min p50 17 s). 12 of 32 engines reached KV > 90 % at some point, but at most 7 requests waited and
+  the KV gate never fired. Throughput was 2,392 turns per node-hour, the same as baseline 1's about 2,300.
+- **The abort:** engine `jpbo-104-46:8001` died at 12:50 PT from a CUDA device-side assert (a vectorized gather
+  index out of bounds, then a flash-attn TMA descriptor failure). The router moved its episodes to the other
+  engines, and all 14 of its 500s were retried. H1 counts upstream errors with no tolerance, so the early gate
+  aborted at 12:58 PT (`early_gate.txt`).
+- **Outcomes so far:** 947 trials. 399 were cancelled by the abort and 38 hit harness errors (7 % of the uncancelled:
+  20 sandbox start timeouts, 17 tmux protocol, 1 setup). 510 were scored: 331 passes, pass rate 0.649, CI
+  [0.607, 0.689]. The 179 real failures were 93 false done and 86 context overflow. Timeouts were 0. Overflow ended
+  111 episodes (12 %) at 64k.
+- **Kept 1:1:** 179 + 179 (`kept.jsonl`). All 919 rendered rows fit 64k under the shared thinking mask
+  (p90 34k, max 54k tokens).
+- **Cost:** 5.27 node-hours in total: 5.11 for job 2074704 plus 0.17 for the failed start 2074696. Commit
+  bc0b2f59 had dropped `serve_node.sh`'s environment block, so every server exited at start; fixed in 276de47c.
+
+Next decision: before any rerun, either let H1 tolerate retried 500s from a dead engine, or find the gather-index
+crash (Qwen3.8 with MTP 2 under per-GPU TP1). Otherwise the next run can stop the same way.
+Run dir: `/e/fscratch/reformo/lee27/experiments/relay/pilot/runs/relay_full_baseline4_20260926`.
