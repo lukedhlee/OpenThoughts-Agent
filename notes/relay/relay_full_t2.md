@@ -31,6 +31,31 @@ It produces two SFT arms of about 2,000 kept traces each, 1:1 pass:fail:
   overflow above 20 % after 200 episodes, which costs about 7–9 node-hours if it fires).
 - **Nothing is submitted.**
 
+## Baseline arm result (job 2037808, 18:44–20:56 PT, 8.88 node-hours of its 13 ceiling)
+
+**Qwen alone passes 945 of 2,007 scored tasks: 0.471, CI [0.449, 0.493].**
+- **Harness.** Every check passed:
+  - 34 harness errors (1.7 %): TmuxBatchProtocolError 32, TmuxCommandError 1, SetupScriptError 1.
+  - Owner labels joined 17,207 of 17,207 turns.
+  - Harbor re-fed the teacher's reasoning on 62,147 of 62,152 agent turns, with none restored.
+  - The start-up burst's `EnvironmentStartTimeoutError` trials were retried, and all resolved.
+- **Failure causes:** timeout 848, false done 155, context overflow 56, format loop 2, tests failed 1.
+  - Overflow ended 71 episodes in all (3.5 %), so 15 of them passed anyway.
+  - Turns per episode: p50 8, p90 13.
+- **The 16k reply cap:** 621 replies were cut at the cap, in 528 episodes. On 332 requests the cap did not fit the
+  context, and the router dropped `max_tokens` (the 88a4b3b8 fix working).
+- **Latency.** Teacher p50 52 s, p90 361 s, at 100 agents per node.
+- **Kept (`select_kept.py`): 1,890 traces**, 945 passes and 945 failures.
+  - The kept failures are timeout 758, false done 133, overflow 51, format loop 2, tests failed 1.
+  - There are no same-task pairs: one rollout per task.
+- **Solvable list:** `runs/relay_full_baseline_20260925/solvable_tasks.txt`, 945 tasks.
+
+**Relay arm, still HOLD (check run C2).** Projection on the 945 solvable tasks, from the check run's pass rate on
+solvable tasks (0.67) and its episode times:
+- **4 rollouts per task:** about 3,780 episodes. Kept about 2,000: 1,000 passes plus 1,000 failures, **every failure
+  an overflow**. About 3.0 h of wall time and about 24 node-hours, inside the 33.1 left of 42.
+- **3 rollouts per task:** kept about 1,680. About 2.3 h, about 19 node-hours.
+
 ## Check run result, corrected (19:30 PT): FAIL on C2, overflow 49 %; the relay stays on HOLD
 
 **The first decision was wrong.** It scored the 40 episodes that ended on the cap-retry 400 as harness errors. That
