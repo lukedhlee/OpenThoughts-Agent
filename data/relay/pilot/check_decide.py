@@ -27,7 +27,12 @@ def main():
     ap.add_argument('--run3', required=True)
     a = ap.parse_args()
     cname, rname = (os.path.basename(os.path.normpath(x)) for x in (a.check, a.run3))
-    r = json.load(open(os.path.join(a.check, 'readout.json')))
+    # re-read the check run with this readout (the run's own final readout may predate an amendment)
+    import subprocess
+    amended = os.path.join(a.check, 'readout_decide.json')
+    subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'readout.py'), '--run-dir',
+                    a.check, '--gate', 'final', '--json', amended], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    r = json.load(open(amended if os.path.exists(amended) else os.path.join(a.check, 'readout.json')))
     o = r['relay_repair']
     rows = readout.trials(os.path.join(a.check, 'jobs', f'{cname}_relay_repair'))
     readout.mark_censored(readout.router_view(os.path.join(a.check, 'router_relay_repair')), rows)
@@ -64,7 +69,8 @@ def main():
                relay_episode_mean_s=round(statistics.mean(walls)) if walls else None,
                autofixes=sum(1 for x in rv['recs'] if x.get('autofix')),
                repairs=(o.get('repair') or {}).get('repairs'),
-               teacher_cut_at_cap=o['reasoning'].get('teacher_replies_cut_at_cap'))
+               teacher_cut_at_cap=o['reasoning'].get('teacher_replies_cut_at_cap'),
+               router_cap_retry_400=sum(1 for t in rows if t['exc'] == 'RouterCapRetry400'))
     print(json.dumps(out, indent=1))
     sys.exit(0 if out['decision'] == 'PASS' else 2)
 
