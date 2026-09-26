@@ -85,6 +85,33 @@ like-for-like.
    - Visible analysis, plan and commands are always trained.
    - 09-21's own turns are context only. Autofixed turns train the rewritten action only.
 
+## Baseline rerun (Luke's option 1, 21:30 PT) and the 47 node-hour ceiling
+
+**What.** Qwen alone on the same 2,043 tasks, 1 rollout each, under exactly the relay settings:
+- the clock paused on every model call;
+- Qwen at 131,072 context;
+- a 32,768-token reply cap;
+- the same harbor and router refs;
+- 4 Qwen nodes on `-A transfernetx`;
+- the sandbox start window widened 4× (`environment_build_timeout_multiplier`), so no start-up burst loss.
+
+It launches as soon as the re-check's early health gate confirms the paused clock and the 128k Qwen serve. It does
+not wait for the re-check's result. About 9–10 node-hours expected.
+
+**The whole full run's ceiling is 47 node-hours.** That covers the old baseline 8.88, the check run 1.62, the
+re-check, the baseline rerun, and the relay.
+- The rerun gets `--time` 2 h 30 × 4 nodes = 10.0 node-hours: 47 − 8.88 − 1.62 − 2.5 (re-check ceiling) − about 24
+  (relay expected).
+- The relay still launches only on a re-check PASS, using the existing 945-task solvable list, at 4 rollouts per task.
+- `launch_relay.sh` charges the finished runs plus the rerun's full 10.0 node-hour ceiling as a reserve. The relay's
+  `--time` is what is left of 47 ÷ 8 nodes.
+
+**Training.**
+- The rerun's traces replace the old baseline arm. The old arm stays on disk, marked `SUPERSEDED`.
+- Keep filter and 1:1 rules as before. **Timeouts count as real failures now** (`select_kept.py --timeouts all`),
+  since the clock no longer charges serving time.
+- Stalled vs not is still reported for every kept timeout. The old baseline used `--timeouts stalled`.
+
 ## Training-side results on the baseline (CPU, 21:30 PT)
 
 **Stalled-only timeout failures shrink control's kept set from 1,890 to 440** (220 passes + 220 failures).

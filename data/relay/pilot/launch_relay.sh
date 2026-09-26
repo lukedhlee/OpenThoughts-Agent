@@ -28,15 +28,17 @@ log "check run decision: $DEC ($($PY -c "import json; d=json.load(open('$RUNS/$C
 [ "$DEC" = PASS ] || { log "HOLD: the check run failed its rule; relay not launched"; exit 1; }
 until grep -qE "RUN_DONE|ABORT" $RUNS/$BASE/driver.log 2>/dev/null; do sleep 120; done
 grep -q ABORT $RUNS/$BASE/driver.log && log "note: the baseline aborted ($(grep ABORT $RUNS/$BASE/driver.log | tail -1)); planning from what finished"
+# node-hours charged to the full run before the relay: the runs finished so far (BASE, CHECK and EXTRA_RUNS, from their
+# run.meta) plus RESERVE, the ceiling of a job still running (the baseline rerun, 21:30 PT)
 SPENT=$($PY -c "
 import sys
-t = 0.0
-for r in sys.argv[1:]:
+t = float(sys.argv[1])
+for r in sys.argv[2:]:
     t += float(dict(l.strip().split('=', 1) for l in open(r + '/run.meta') if '=' in l)['node_hours'])
-print(round(t, 3))" $RUNS/$BASE $RUNS/$CHECK)   # baseline + the (re-)check run count against the full run's 42
-log "spent so far on the full run: $SPENT node-h (baseline + $CHECK)"
+print(round(t, 3))" ${RESERVE:-0} $RUNS/$BASE $RUNS/$CHECK $(for x in ${EXTRA_RUNS:-}; do echo $RUNS/$x; done))
+log "charged to the full run before the relay: $SPENT node-h ($BASE, $CHECK, ${EXTRA_RUNS:-}, reserve ${RESERVE:-0})"
 $PY $HERE/relay_plan.py --baseline $RUNS/$BASE --check $RUNS/$CHECK --check-decision $RUNS/$CHECK/check_decision.json \
-  --spent $SPENT ${ROLLOUTS:+--rollouts $ROLLOUTS} --out-tasks $RUNS/$NAME.solvable.txt > $RUNS/$NAME.plan.json
+  --spent $SPENT --total-ceiling ${TOTAL_CEILING:-42} ${ROLLOUTS:+--rollouts $ROLLOUTS} --out-tasks $RUNS/$NAME.solvable.txt > $RUNS/$NAME.plan.json
 PD=$($PY -c "import json; d=json.load(open('$RUNS/$NAME.plan.json')); print(d['decision'], d['rollouts_per_task'], d['relay_time_h'], d['relay_ceiling_node_h'], d['solvable_tasks'])")
 set -- $PD; PDEC=$1; R=$2; TH=$3; CEIL=$4; NSOLV=$5
 log "relay plan: $PDEC, $NSOLV solvable tasks x $R, --time ${TH} h, ceiling $CEIL node-h ($(tr -d '\n' < $RUNS/$NAME.plan.json | cut -c1-600))"

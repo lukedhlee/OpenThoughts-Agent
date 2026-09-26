@@ -65,7 +65,7 @@ def stalled(e, t):
     return 'no_new_output' if len(acts) >= 3 and all(a['empty'] for a in acts[-3:]) else None
 
 
-def arm_rows(run_dir, name, arm):
+def arm_rows(run_dir, name, arm, timeouts='all'):
     rv = readout.router_view(os.path.join(run_dir, f'router_{arm}'))
     rows = readout.trials(os.path.join(run_dir, 'jobs', f'{name}_{arm}')) + \
         readout.trials(os.path.join(run_dir, 'jobs', f'{name}_{arm}_p2'))
@@ -91,8 +91,8 @@ def arm_rows(run_dir, name, arm):
         x = out[-1]
         if x['cause'] == 'timeout':
             x['stalled'] = stalled(e, t)
-            if not x['stalled']:
-                out.pop()        # a timeout on a working episode is not a model failure worth keeping
+            if timeouts == 'stalled' and not x['stalled']:
+                out.pop()        # old clock: a timeout on a working episode was often serving latency, not the model
     return out
 
 
@@ -129,6 +129,9 @@ def main():
     ap.add_argument('--target', type=int, default=2000)
     ap.add_argument('--seed', type=int, default=20260925)
     ap.add_argument('--out', required=True)
+    ap.add_argument('--timeouts', choices=['all', 'stalled'], default='all',
+                    help="all: every timeout is a real failure (runs whose clock pauses on model calls, 21:15 PT on); "
+                         "stalled: only stalled timeouts (runs under the old clock, which charged serving latency)")
     a = ap.parse_args()
     name = a.name or os.path.basename(os.path.normpath(a.run_dir))
     summary = {}
@@ -136,14 +139,16 @@ def main():
         for arm in ('control', 'relay_repair'):
             if not os.path.isdir(os.path.join(a.run_dir, f'router_{arm}')):
                 continue
-            rows = arm_rows(a.run_dir, name, arm)
+            rows = arm_rows(a.run_dir, name, arm, a.timeouts)
             kp, kf = select(rows, a.target, a.seed)
             for r in kp + kf:
                 f.write(json.dumps(r) + '\n')
             summary[arm] = dict(candidates=len(rows), candidate_passes=sum(r['passed'] for r in rows),
                                 kept=len(kp) + len(kf), kept_passes=len(kp), kept_failures=len(kf),
                                 same_task_pairs=len({p['task'] for p in kp} & {x['task'] for x in kf}),
-                                failure_causes=dict(collections.Counter(x['cause'] for x in kf)))
+                                failure_causes=dict(collections.Counter(x['cause'] for x in kf)),
+                                kept_timeouts_stalled=dict(collections.Counter(str(x.get('stalled')) for x in kf
+                                                                               if x['cause'] == 'timeout')))
     print(json.dumps(summary, indent=1))
 
 
