@@ -85,6 +85,24 @@ like-for-like.
    - Visible analysis, plan and commands are always trained.
    - 09-21's own turns are context only. Autofixed turns train the rewritten action only.
 
+## Training-side results on the baseline (CPU, 21:30 PT)
+
+**Stalled-only timeout failures shrink control's kept set from 1,890 to 440** (220 passes + 220 failures).
+- Only 6 of the baseline's 848 timeout failures had stalled: 4 by a loop or no-progress trigger, 2 by no new output
+  in the last 3 turns.
+- The eligible failures are now 220: false done 155, context overflow 56, timeout (stalled) 6, format loop 2, tests
+  failed 1.
+- Most baseline timeouts ran out of wall-clock budget while waiting on the teacher. Latency was p50 52 s per call
+  under the old clock, which counted serving time.
+- **To get failures back toward 1,000**, the baseline has to be rerun under the new clock (paused on every model
+  call), or the stall definition loosened. **Luke's call.**
+
+**Same thinking mask, baseline rows:** all 2,042 render within 64k (p50 15.0k, p90 27.1k, max 54.3k).
+- The 1k cap cut older Qwen turns 3,601 times.
+- 105 uncut turns had thinking over 8,192 tokens, masked.
+- 11,119 of 14,827 teacher turns keep their thinking trained.
+- 11.3M trained tokens in total.
+
 ## Baseline arm result (job 2037808, 18:44–20:56 PT, 8.88 node-hours of its 13 ceiling)
 
 **Qwen alone passes 945 of 2,007 scored tasks: 0.471, CI [0.449, 0.493].**
