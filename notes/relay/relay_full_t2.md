@@ -31,6 +31,40 @@ It produces two SFT arms of about 2,000 kept traces each, 1:1 pass:fail:
   overflow above 20 % after 200 episodes, which costs about 7–9 node-hours if it fires).
 - **Nothing is submitted.**
 
+## Check run result (job 2037164, 18:19–19:10 PT, 1.62 node-hours): FAIL on C1, so the relay was not launched
+
+**Verdict: FAIL.** The only failing check is C1: harness errors on 48 % of trials, against a limit of 10 %. 40 of the
+48 come from the cap-retry bug (`RouterCapRetry400`). It was fixed in 88a4b3b8, after this run's router had started.
+The other 8 are TmuxBatchProtocolError 6 and TmuxSessionEndedError 2. `launch_relay.sh` held as designed.
+
+**The other checks passed, on the 52 scored episodes:**
+- **C2:** overflow 5 of 52 (9.6 %).
+  - **Caveat.** The 40 bug-hit episodes were all at a context of at least 49k tokens, so they are the ones most likely
+    to overflow.
+  - If all of them had overflowed, the rate would be 45 of 92 (49 %).
+  - So C2 is not really measured by this run.
+- **C3:** the student owns 72 % of executed turns.
+- **C4:** recovery after takeover 0.64, CI [0.45, 0.80]. There were 34 takeovers (30 done_claim, 3 loop, 1
+  no-progress wait).
+- **C5:** relay − run-3 control = −0.04, CI [−0.20, +0.12], paired over 51 tasks. The relay pass rate is 0.63, CI
+  [0.50, 0.75].
+
+**The fixes worked.**
+- 222 autofixes against 436 teacher repairs. Of all failing replies, 34 % were autofixed.
+- 99.35 % of the executed trace was valid format.
+- 18 teacher replies were cut at the 16k cap.
+- The reasoning cap cut older teacher turns 891 times.
+- Harbor re-fed the teacher's reasoning on 2,210 of 2,210 turns.
+- The student's clock paused a mean 427 s per episode.
+- Teacher latency p50 29 s, p90 236 s. Student latency p50 2.9 s.
+
+**Spend.** 1.62 node-hours.
+
+**Sandbox start-up.** The full-run baseline started 400 sandboxes at once and lost 272 trials to
+`EnvironmentStartTimeoutError` in its first 5 minutes; none after. The retry list names this exception, but these
+trials were not retried. Future runs set `environment_build_timeout_multiplier: 4.0`. The 272 tasks are not in the
+baseline and would need a rerun (about 1.5 node-hours).
+
 ## Plan change (Luke, 18:40 PT): baseline first, relay only on solved tasks
 
 - **Baseline arm, running now** (job 2037808, submitted 18:41 PT; `tmux relay_full_base`):
