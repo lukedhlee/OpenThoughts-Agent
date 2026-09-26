@@ -51,11 +51,12 @@ class Stack:
 
     def __init__(self, tmp, mode='relay', router_args=(), teacher_key='reasoning', student_delay=0.0,
                  budgets=None, teacher_model='qwen38', strict=True, skip_health=False, teacher_delay=0.0,
-                 two_teachers=False):
+                 two_teachers=False, teacher_long=0):
         self.tmp = Path(tmp)
         self.mode, self.router_args = mode, list(router_args)
         self.student = fake_openai.FakeServer('student', 'snowball', delay=student_delay)
-        self.teacher = fake_openai.FakeServer('teacher', 'qwen38', reasoning_key=teacher_key, delay=teacher_delay)
+        self.teacher = fake_openai.FakeServer('teacher', 'qwen38', reasoning_key=teacher_key, delay=teacher_delay,
+                                              long_reasoning=teacher_long)
         self.teacher2 = fake_openai.FakeServer('teacher', 'qwen38', delay=teacher_delay) if two_teachers else None
         self.teacher_model, self.strict, self.skip_health = teacher_model, strict, skip_health
         self.budgets = budgets or {}
@@ -82,7 +83,7 @@ class Stack:
         if self.teacher2:
             t_url += ',' + await self.teacher2.start()
         tasks = [dict(task_id=f'cf-{sc}', instruction=instruction(sc, tag), agent_timeout_sec=self.budgets.get(sc, 1000))
-                 for sc in ('selfdone', 'done', 'loop', 'wait', 'budget', 'summ', 'gaveup', 'repair', 'repairs')
+                 for sc in ('selfdone', 'done', 'loop', 'wait', 'budget', 'summ', 'gaveup', 'repair', 'repairs', 'autofix')
                  for tag in [''] + [f'-{i}' for i in range(8)]]
         tf = self.tmp / 'tasks.json'
         tf.write_text(json.dumps(tasks))
@@ -575,7 +576,7 @@ def test_repair_then_the_student_resumes_then_done_claim_takes_over(tmp_path):
         tm = [m for m in after if m['role'] == 'assistant' and 'teacher-step 0' in m['content']]
         assert len(tm) == 1 and tm[0]['content'].startswith('<|start_think|>teacher reasoning 0<|end_think|>{"analysis": "teacher-step 0')
         assert 'reasoning' not in tm[0] and 'reasoning_content' not in tm[0]
-        assert rows[2]['student_view'] == {'teacher_turns_inline': 1, 'teacher_turns_without_reasoning': 0}
+        assert rows[2]['student_view'] == {'teacher_turns_inline': 1, 'teacher_turns_without_reasoning': 0, 'cuts': []}
         # the teacher's repair request is the same request the student failed
         tb = st.teacher_bodies('SCENARIO=repair.')[0]['messages']
         sb = _student_bodies(st, 'SCENARIO=repair.')[1]['messages']
@@ -660,3 +661,82 @@ def test_teacher_failover_and_drain(tmp_path):
         st.a.teacher_url_file = str(f)
         st.router.reload_teacher_urls()
         assert st.router.urls['teacher'] == [st.router.urls['teacher'][0]]
+
+
+
+# ---- run 4 changes: format autofix, the cap on older teacher reasoning, the SFT render ---------------------------
+
+sys.path.insert(0, str(HERE.parent.parent / 'sft'))
+
+
+def _word_tokenizer(path):
+    """A word-level stand-in for 09-21's tokenizer with its special tokens (atomic, as in the real one)."""
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    t = Tokenizer(models.WordLevel({'[UNK]': 0}, unk_token='[UNK]'))
+    t.pre_tokenizer = pre_tokenizers.Whitespace()
+    t.add_special_tokens(['<|begin_of_text|>', '<|start_header_id|>', '<|end_header_id|>', '<|eot_id|>',
+                          '<|start_think|>', '<|end_think|>'])
+    t.save(str(path))
+    return str(path)
+
+
+@needs_harbor
+def test_autofix_runs_the_students_own_action(tmp_path):
+    with Stack(tmp_path, router_args=REPAIR + ['--autofix']) as st:
+        r = run_agent(st, 'autofix', tmp_path)
+        rows = [x for x in st.turns(r.sid) if x.get('turn') is not None]
+        assert [x['owner'] for x in rows] == ['student', 'student', 'teacher', 'student', 'teacher']
+        fx = rows[1]
+        assert fx['autofix'] and fx['autofix_kind'] == 'tool_call_command' and not fx.get('repair')
+        assert '<tool_call>' in fx['original_student_reply']['choices'][0]['message']['content']
+        assert 'echo hi > out.txt' in r.term.sent                       # the student's own action ran
+        assert rows[2]['repair'] and rows[2]['autofix_unfixable'] == 'no_action'
+        assert rows[4]['takeover']['trigger'] == 'done_claim'
+        step = agent_steps(r.traj)[1]['message']
+        assert step.startswith('<|start_think|>AUTOFIX me: list the files.<|end_think|>{"analysis": "I will list the files."')
+        assert 'Previous response had parsing errors' not in json.dumps(r.traj)
+        assert st.router.counts['autofixes'] == 1
+
+
+@needs_harbor
+def test_older_teacher_reasoning_is_cut_in_the_student_view_and_the_render_matches(tmp_path):
+    import render
+    tokp = _word_tokenizer(tmp_path / 'tok.json')
+    with Stack(tmp_path, router_args=REPAIR + ['--student-tokenizer', tokp, '--reasoning-cap', '20'], teacher_long=60) as st:
+        r = run_agent(st, 'repairs', tmp_path)
+        rows = [x for x in st.turns(r.sid) if x.get('turn') is not None]
+        assert [x['owner'] for x in rows] == ['student', 'teacher', 'teacher', 'student', 'student', 'teacher']
+        body = _student_bodies(st, 'SCENARIO=repairs.')[3]['messages']          # after both repairs
+        t0 = next(m['content'] for m in body if m['role'] == 'assistant' and 'teacher-step 0' in m['content'])
+        t1 = next(m['content'] for m in body if m['role'] == 'assistant' and 'teacher-step 1' in m['content'])
+        assert 'Sentence 59 of step 1 is here.<|end_think|>' in t1               # the latest teacher turn: whole
+        assert 'Sentence 59 of step 0' not in t0 and '.<|end_think|>{"analysis": "teacher-step 0' in t0   # older: cut
+        cuts = rows[3]['student_view']['cuts']
+        assert len(cuts) == 1 and 0 < cuts[0]['cut_at'] < cuts[0]['reasoning_chars']
+        # the SFT row: same capped history, masks as specified
+        tok = render.rcap.load_tokenizer(tokp)
+        tpl = render.load_template(HERE / 'grug0921_chat_template.jinja')
+        row = render.render_episode(r.traj, st.turns(r.sid), tok, tpl, '<|begin_of_text|>', cap=20)
+        c = render.check_row(row, tok)
+        assert c['teacher_turns'] == 3 and c['cut_turns'] == 2                  # two repairs cut, the final turn whole
+        assert t0 in row['text']                                               # byte-identical to the student's view
+        assert row['text'].startswith('<|begin_of_text|><|start_header_id|>system<|end_header_id|>Reasoning: /think<|eot_id|>')
+
+
+@needs_harbor
+def test_render_trains_an_autofixed_action_not_its_reasoning(tmp_path):
+    import render
+    tokp = _word_tokenizer(tmp_path / 'tok.json')
+    with Stack(tmp_path, router_args=REPAIR + ['--autofix', '--student-tokenizer', tokp]) as st:
+        r = run_agent(st, 'autofix', tmp_path)
+        tok = render.rcap.load_tokenizer(tokp)
+        tpl = render.load_template(HERE / 'grug0921_chat_template.jinja')
+        row = render.render_episode(r.traj, st.turns(r.sid), tok, tpl, '<|begin_of_text|>')
+        c = render.check_row(row, tok)
+        assert c['autofix_turns'] == 1 and c['cut_turns'] == 0
+        fx = next(m for m in row['turns'] if m.get('autofix'))
+        trained = ''.join(row['text'][a:b] for (a, b), l in zip(row['offsets'], row['loss'])
+                          if l and a >= fx['span'][0] and b <= fx['span'][1])
+        assert 'echo hi > out.txt' in row['text'] and 'AUTOFIX' not in trained
+        off = render.render_episode(r.traj, st.turns(r.sid), tok, tpl, '<|begin_of_text|>', autofix_loss='none')
+        assert sum(off['loss']) < sum(row['loss'])

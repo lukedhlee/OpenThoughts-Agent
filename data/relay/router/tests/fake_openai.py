@@ -69,6 +69,12 @@ def student_json(scenario, n):
     if scenario == 'repairs':       # two unparseable replies in a row
         return [t2('look', ['ls -la\n']), bad, bad, t2('write', ['echo hi > out.txt\n']), t2('I am done', [], True),
                 t2('confirm', [], True)][min(n, 5)]
+    if scenario == 'autofix':       # a fixable tool_call, then prose with no action (teacher repair), then done
+        return [t2('look', ['ls -la\n']),
+                '<|start_think|>AUTOFIX me: list the files.<|end_think|>I will list the files.<tool_call>'
+                '{"name": "bash", "arguments": {"command": "echo hi > out.txt"}}</tool_call>',
+                '<|start_think|>NOACTION prose only<|end_think|>The task looks complete to me.',
+                t2('I am done', [], True), t2('confirm', [], True)][min(n, 4)]
     if scenario == 'gaveup':        # gives up in words at its 3rd reply (gave_up is a decision trigger when enabled)
         if n == 2:
             return t2('The requirement is impossible without internet, so we cannot solve the task as specified.',
@@ -89,9 +95,10 @@ def teacher_json(k, last_user):
 
 
 class FakeServer:
-    def __init__(self, role, model, reasoning_key='reasoning', max_model_len=65536, delay=0.0):
+    def __init__(self, role, model, reasoning_key='reasoning', max_model_len=65536, delay=0.0, long_reasoning=0):
         self.role, self.model, self.reasoning_key = role, model, reasoning_key
         self.max_model_len, self.delay = max_model_len, delay
+        self.long_reasoning = long_reasoning     # sentences appended to the teacher's reasoning (the cap tests)
         self.requests = []          # chat bodies
         self.tokenize_requests = []
         self.summarized = set()
@@ -149,7 +156,8 @@ class FakeServer:
         else:
             k = sum(1 for m in msgs if m.get('role') == 'assistant' and 'teacher-step' in text_of(m.get('content')))
             content = teacher_json(k, last)
-            reasoning = f'teacher reasoning {k}'
+            reasoning = f'teacher reasoning {k}' + ''.join(f'. Sentence {j} of step {k} is here'
+                                                            for j in range(self.long_reasoning)) + ('.' if self.long_reasoning else '')
         msg = {'role': 'assistant', 'content': content}
         if reasoning is not None:
             msg[self.reasoning_key] = reasoning

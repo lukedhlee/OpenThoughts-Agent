@@ -17,7 +17,12 @@ who answers each request:
     (warnings pass) the reply is discarded (logged), the teacher answers the same request for ONE turn, and the
     student keeps the episode: no "fix your JSON" re-prompt enters the trace. If the teacher's repair turn claims
     done, it also answers Terminus-2's confirmation. The student then sees the repair turn rendered as the SFT
-    converter renders teacher turns for 09-21: <|start_think|>{teacher reasoning}<|end_think|>{content}.
+    converter renders teacher turns for 09-21: <|start_think|>{teacher reasoning}<|end_think|>{content}. With
+    --student-tokenizer, only the most recent teacher turn keeps its reasoning whole; older ones are cut to their first
+    --reasoning-cap tokens at a sentence/line boundary (reasoning_cap.py), each cut's char offset logged per request.
+    With --autofix, a reply whose single intended action is recoverable is first rewritten into valid Terminus-2 JSON
+    (autofix.py; the student's thinking kept verbatim) and runs as the student's turn (autofix=True, the original raw
+    reply and the rewrite kind logged); only unrecoverable replies go to the teacher.
   * --mode teacher (control arm): the teacher answers everything; triggers are computed on its own turns and logged as
     `would_fire` only. --mode student: the reverse, for debugging.
 
@@ -85,6 +90,9 @@ from aiohttp import ClientConnectionError, ClientSession, ClientTimeout, TCPConn
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'triggers'))
 import relay_triggers as rt  # noqa: E402
+sys.path.insert(0, HERE)
+import autofix as af  # noqa: E402
+import reasoning_cap as rcap  # noqa: E402
 
 ROUTER_VERSION = 'relay-router/1 (2026-09-25)'
 SESSION_HEADER = 'X-Harbor-Session-Id'
@@ -223,6 +231,7 @@ class Router:
         self.teacher_extra = json.loads(a.teacher_extra) if a.teacher_extra else {}
         self.student_extra = json.loads(a.student_extra) if a.student_extra else {}
         self.tasks = self._load_tasks(a.tasks)
+        self.tok = rcap.load_tokenizer(a.student_tokenizer) if a.student_tokenizer else None
         self.parser = self.parser_path = self.parser_sha = None
         if a.repair_on_parse_error:
             self.parser, self.parser_path, self.parser_sha = load_terminus_parser(a.terminus_parser)
@@ -232,7 +241,7 @@ class Router:
         self.fatal = None
         self.max_model_len = None
         self.counts = dict(requests=0, upstream_errors=0, takeovers=0, synthetic=0, no_task_match=0, repairs=0,
-                           repair_reply_rejected=0, repinned=0)
+                           repair_reply_rejected=0, repinned=0, autofixes=0)
         os.makedirs(a.log_dir, exist_ok=True)
         os.makedirs(os.path.join(a.log_dir, 'bodies'), exist_ok=True)
         # one os.write per line on an O_APPEND fd: readers (the driver's gates) never see a half-written line
@@ -423,9 +432,12 @@ class Router:
         """The student sees its own turns unchanged. A teacher turn in its history (a parse_error repair) is rendered
         the way the SFT converter renders teacher turns for 09-21: the teacher's reasoning inside 09-21's think
         markers, then the content, no newlines around the span, no separate reasoning field."""
-        stats = dict(teacher_turns_inline=0, teacher_turns_without_reasoning=0)
+        stats = dict(teacher_turns_inline=0, teacher_turns_without_reasoning=0, cuts=[])
+        teacher_idx = [i for i, m in enumerate(messages) if m.get('role') == 'assistant' and ep
+                       and (ep.replies.get(sha(text_of(m.get('content')))) or {}).get('owner') == 'teacher']
+        last_teacher = teacher_idx[-1] if teacher_idx else None
         out = []
-        for m in messages:
+        for i, m in enumerate(messages):
             if m.get('role') != 'assistant' or not ep:
                 out.append(m)
                 continue
@@ -433,10 +445,20 @@ class Router:
             rec = ep.replies.get(sha(content))
             m2 = {k: v for k, v in m.items() if k not in ('reasoning', 'reasoning_content')}
             if rec and rec['owner'] == 'teacher':
-                r = (m.get('reasoning') or m.get('reasoning_content') or rec.get('reasoning') or '').strip()
-                m2['content'] = (f'<|start_think|>{r}<|end_think|>' if r else '') + content.strip()
+                r = m.get('reasoning') or m.get('reasoning_content') or rec.get('reasoning') or ''
+                cut = self.tok is not None and i != last_teacher     # older teacher turns only
+                key = ('cut', sha(content))
+                if cut and key in rec:
+                    text, at = rec[key]
+                else:
+                    text, at, _ = rcap.teacher_turn_for_student(content, r, self.tok, cut, self.a.reasoning_cap)
+                    if cut:
+                        rec[key] = (text, at)
+                m2['content'] = text
                 stats['teacher_turns_inline'] += 1
-                stats['teacher_turns_without_reasoning'] += not r
+                stats['teacher_turns_without_reasoning'] += not r.strip()
+                if at is not None:
+                    stats['cuts'].append(dict(content_sha=sha(content), reasoning_chars=len(r.strip()), cut_at=at))
             out.append(m2)
         return out, stats
 
@@ -690,6 +712,19 @@ class Router:
         content = text_of(resp['choices'][0]['message'].get('content'))
         if self.parser is not None and self.mode == 'relay':
             pr = self.parser.parse_response(content)
+            if pr.error and self.a.autofix:
+                fx = af.autofix(content, resp['choices'][0].get('finish_reason'), self.parser)
+                if isinstance(fx, af.Fix):
+                    # format autofix: the student's own action, rewritten into valid Terminus-2 JSON; it runs, and the
+                    # triggers judge the rewrite
+                    rec.update(autofix=True, autofix_kind=fx.kind, autofix_reason=pr.error[:300],
+                               original_student_reply=json.loads(json.dumps(resp)))
+                    resp['choices'][0]['message']['content'] = fx.content
+                    content = fx.content
+                    self.counts['autofixes'] += 1
+                    pr = self.parser.parse_response(content)
+                else:
+                    rec['autofix_unfixable'] = fx.reason
             if pr.error:
                 # parse_error (non-sticky repair): Terminus-2 would reject this reply; it never reaches harbor. The
                 # teacher answers the same request, one turn, and the student keeps the episode.
@@ -870,6 +905,13 @@ def parse_args(argv=None):
     p.add_argument('--repair-on-parse-error', action='store_true',
                    help='parse_error trigger (non-sticky): a student reply that Terminus-2\'s own parser rejects is '
                         'discarded and the teacher answers the same request for one turn; the student keeps the episode')
+    p.add_argument('--student-tokenizer', default=None,
+                   help="09-21's tokenizer.json: turns on the cap on older teacher reasoning in the student's view")
+    p.add_argument('--reasoning-cap', type=int, default=rcap.CAP_TOKENS,
+                   help='tokens of an older teacher turn\'s reasoning the student sees (the latest turn stays whole)')
+    p.add_argument('--autofix', action='store_true',
+                   help='before a parse_error repair, rewrite a recoverable student reply into valid Terminus-2 JSON '
+                        '(autofix.py) and run the student\'s own action; the teacher repairs only what is unrecoverable')
     p.add_argument('--terminus-parser', default=None,
                    help='path of harbor terminus_json_plain_parser.py (default: found on sys.path / PYTHONPATH)')
     p.add_argument('--repair-attempts', type=int, default=2,
