@@ -195,7 +195,13 @@ def harness_router(rv):
     bad_status = collections.Counter(r.get('upstream_status') for r in recs
                                      if r.get('upstream_status') not in (200, None) and not is_context_error(r))
     det = sum(1 for r in recs for s in (r.get('logged') or []) if s.get('trigger') == 'detector_error')
+    # an error on a request the router retried to a 200 (e.g. an engine that died mid-run) is recovered, not a harness fault
+    ok = {(r.get('sid'), r.get('turn')) for r in recs if r.get('upstream_status') == 200}
+    unrecovered = collections.Counter(r.get('upstream_status') for r in recs
+                                      if r.get('upstream_status') not in (200, None) and not is_context_error(r)
+                                      and (r.get('sid'), r.get('turn')) not in ok)
     return dict(fatal=rv['fatal'], fatal_text=rv['fatal_text'], upstream_errors=dict(bad_status),
+                upstream_errors_unrecovered=dict(unrecovered),
                 context_length_400=sum(1 for r in recs if is_context_error(r)), detector_errors=det,
                 episodes_without_task=sum(1 for e in rv['eps'].values() if not e['task_id']),
                 done_claim_dropped=sum(e['done_claim_dropped'] for e in rv['eps'].values()),
@@ -653,7 +659,7 @@ def main():
 
     for arm in arm_names:
         h = out[arm]['router_harness']
-        check(f'H1 {arm}: router clean', not h['fatal'] and not h['upstream_errors'] and not h['detector_errors']
+        check(f'H1 {arm}: router clean', not h['fatal'] and not h['upstream_errors_unrecovered'] and not h['detector_errors']
               and not h['episodes_without_task'] and not h['bodies_missing'], h)
         r = out[arm]['reasoning']
         if r['teacher_replies']:
