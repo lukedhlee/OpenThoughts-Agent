@@ -777,13 +777,13 @@ class Router:
         attempts = self.a.repair_attempts if (rec.get('repair') and self.parser is not None) else 1
         for attempt in range(attempts):
             status, data = await self.post(who, '/chat/completions', b, ep)
-            if status == 400 and who == 'teacher' and b.get('max_tokens'):
-                # the cap asked for more than the context has left: ask for what is left, as the uncapped request did
-                m = re.search(rb'maximum context length is (\d+).*?prompt contains at least (\d+) input tokens', data, re.S)
-                if m and int(m.group(1)) - int(m.group(2)) >= 1:
-                    b = dict(b, max_tokens=int(m.group(1)) - int(m.group(2)))
-                    rec['teacher_max_tokens_lowered_to'] = b['max_tokens']
-                    status, data = await self.post(who, '/chat/completions', b, ep)
+            if status == 400 and who == 'teacher' and b.get('max_tokens') and b'maximum context length' in data:
+                # the cap asked for more than the context has left. vLLM's "at least N input tokens" is only a lower
+                # bound, so ask again WITHOUT max_tokens: vLLM then generates into what is left, which is below the
+                # cap anyway (the uncapped request's behaviour). A 400 on that retry is a real context overflow.
+                b = {k: v for k, v in b.items() if k != 'max_tokens'}
+                rec['teacher_max_tokens_dropped'] = True
+                status, data = await self.post(who, '/chat/completions', b, ep)
             if status != 200 or attempt == attempts - 1:
                 break
             c = text_of(json.loads(data)['choices'][0]['message'].get('content'))
@@ -922,7 +922,7 @@ def parse_args(argv=None):
                         'discarded and the teacher answers the same request for one turn; the student keeps the episode')
     p.add_argument('--teacher-max-tokens', type=int, default=None,
                    help='max_tokens on every teacher request (reasoning + content); a reply cut there is logged as '
-                        'teacher_cut_at_cap. Lowered to what the context has left when the cap would not fit.')
+                        'teacher_cut_at_cap. Dropped (context remainder, below the cap) when the cap would not fit.')
     p.add_argument('--student-tokenizer', default=None,
                    help="09-21's tokenizer.json: turns on the cap on older teacher reasoning in the student's view")
     p.add_argument('--reasoning-cap', type=int, default=rcap.CAP_TOKENS,

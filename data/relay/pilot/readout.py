@@ -222,7 +222,7 @@ def reasoning_view(rv):
                 student_think_spans_stripped=ref['think_stripped'],
                 student_think_sent_as_reasoning=ref['student_think_as_reasoning'],
                 teacher_replies_cut_at_cap=len(cut), episodes_with_a_cut_reply=len({r['sid'] for r in cut}),
-                teacher_max_tokens_lowered=sum(1 for r in t if r.get('teacher_max_tokens_lowered_to')),
+                teacher_max_tokens_lowered=sum(1 for r in t if r.get('teacher_max_tokens_lowered_to') or r.get('teacher_max_tokens_dropped')),
                 completion_tokens_p50=q(comp, .5), completion_tokens_p90=q(comp, .9),
                 completion_tokens_max=max([c for c in comp if c is not None], default=None))
 

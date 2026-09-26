@@ -144,8 +144,9 @@ class FakeServer:
         if body.get('max_tokens') and prompt + body['max_tokens'] > self.max_model_len:   # vLLM's check and wording
             return web.json_response({'error': {'message': (
                 f"This model's maximum context length is {self.max_model_len} tokens. However, you requested "
-                f"{body['max_tokens']} output tokens and your prompt contains at least {prompt + 1} input tokens, for a "
-                f"total of at least {prompt + 1 + body['max_tokens']} tokens."), 'type': 'BadRequestError', 'code': 400}},
+                f"{body['max_tokens']} output tokens and your prompt contains at least "
+                f"{self.max_model_len - body['max_tokens'] + 1} input tokens, for a total of at least "
+                f"{self.max_model_len + 1} tokens."), 'type': 'BadRequestError', 'code': 400}},   # vLLM: a lower bound only
                 status=400)
         last = text_of(msgs[-1].get('content'))
         first = text_of(msgs[0].get('content'))

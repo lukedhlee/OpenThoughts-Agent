@@ -761,4 +761,4 @@ def test_teacher_reply_cap_cut_case_and_context_fallback(tmp_path):
         r = run_agent(st, 'done', tmp_path, tag='-0')
         rows = [x for x in st.turns(r.sid) if x.get('turn') is not None]
         assert all(x['upstream_status'] == 200 for x in rows)
-        assert all(0 < x['teacher_max_tokens_lowered_to'] < 65536 for x in rows)
+        assert all(x['teacher_max_tokens_dropped'] for x in rows)
