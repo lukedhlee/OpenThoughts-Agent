@@ -10,12 +10,20 @@ Definitions are check_decide.py --rule ctxbudget's (scored = usable or ContextLe
 readout.format_validity over the trials' agent steps). Deadline censoring is not applied: before the deadline no
 episode is censored. A trial's summary is cached in <run dir>/stop_rule_cache.jsonl (finished trials never change),
 so each call reads only the new trajectories.
+
+--harness-exclude-tasks <file> (Luke 2026-09-26 20:55 PT, relay top-up 4): judge the harness-error part only on trials of
+tasks NOT in the file (the tasks with a harness error in attempts 1-3; their errors are the diagnosed in-sandbox tmux
+kill, and their errored trials are excluded from the data anyway). Overflow and format stay on all scored episodes, the
+limit stays. Without the option, <run dir>/harness_exclude_tasks.txt is used when it exists (so a live driver picks it
+up); with neither, the rule is unchanged. Every call appends both harness-error rates (judged and all-task) to
+<run dir>/stop_rule.log, and the printed line carries the all-task rate and trial count as two extra fields.
 """
 import argparse
 import glob
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import readout  # noqa: E402
@@ -28,12 +36,16 @@ def main():
     ap.add_argument('--ovf-max', type=float, default=0.30)
     ap.add_argument('--fmt-min', type=float, default=0.98)
     ap.add_argument('--herr-max', type=float, default=0.10)
+    ap.add_argument('--harness-exclude-tasks', help='judge harness errors only on tasks not listed here')
     a = ap.parse_args()
+    excl_p = a.harness_exclude_tasks or os.path.join(a.run_dir, 'harness_exclude_tasks.txt')
+    excl = {l.strip() for l in open(excl_p) if l.strip()} if os.path.exists(excl_p) else None
     cache_p = os.path.join(a.run_dir, 'stop_rule_cache.jsonl')
     cache = {}
     if os.path.exists(cache_p):
         for r in readout.read_jsonl(cache_p):
-            cache[r['key']] = r
+            if 'task' in r:                          # rows cached before the task was recorded are re-read
+                cache[r['key']] = r
     new = []
     for d in readout.arm_job_dirs(a.run_dir, a.name, a.arm):
         done = {os.path.basename(os.path.dirname(p)) for p in glob.glob(os.path.join(d, '*', 'result.json'))}
@@ -43,7 +55,7 @@ def main():
         for t in readout.trials(d, only=todo):
             key = f'{os.path.basename(d)}/{t["trial"]}'
             if t['trial'] in todo and key not in cache:
-                r = dict(key=key, exc=t['exc'], usable=readout.usable(t), harness_error=t['harness_error'],
+                r = dict(key=key, task=t['task'], exc=t['exc'], usable=readout.usable(t), harness_error=t['harness_error'],
                          steps=len(t['steps']), bad=sum(1 for s in t['steps'] if s['parse_error_obs']))
                 cache[key] = r
                 new.append(r)
@@ -59,9 +71,17 @@ def main():
     ovf = sum(1 for r in scored if r['exc'] == 'ContextLengthExceededError') / len(scored)
     steps = sum(r['steps'] for r in rows)
     fmt = 1 - sum(r['bad'] for r in rows) / steps if steps else 1.0
-    herr = sum(1 for r in rows if r['harness_error']) / len(rows)
+    herr_all = sum(1 for r in rows if r['harness_error']) / len(rows)
+    judged = rows if excl is None else [r for r in rows if r['task'] not in excl]
+    herr = sum(1 for r in judged if r['harness_error']) / len(judged) if judged else 0.0
     stop = ovf > a.ovf_max or fmt < a.fmt_min or herr > a.herr_max
-    print('%s %d %.4f %.4f %.4f %d' % ('stop' if stop else 'ok', len(scored), ovf, fmt, herr, len(rows)))
+    with open(os.path.join(a.run_dir, 'stop_rule.log'), 'a') as f:
+        f.write(json.dumps(dict(ts=time.time(), scored=len(scored), ovf=round(ovf, 4), fmt=round(fmt, 4),
+                                herr_judged=round(herr, 4), judged_trials=len(judged), herr_all=round(herr_all, 4),
+                                all_trials=len(rows), exclude_file=excl_p if excl is not None else None,
+                                verdict='stop' if stop else 'ok', all_task_rule='stop' if (ovf > a.ovf_max or fmt < a.fmt_min
+                                                                                           or herr_all > a.herr_max) else 'ok')) + '\n')
+    print('%s %d %.4f %.4f %.4f %d %.4f %d' % ('stop' if stop else 'ok', len(scored), ovf, fmt, herr, len(judged), herr_all, len(rows)))
 
 
 if __name__ == '__main__':
