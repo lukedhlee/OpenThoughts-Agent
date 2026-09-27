@@ -1089,3 +1089,23 @@ subset by session, which is exact because a row is rendered per episode) and `fi
 - The baseline trains 7 % more tokens. Relay rows are longer because the student's turns are in context but masked.
 - The relay's 11 remaining timeouts are stalled ones (a loop / no-progress trigger or no new output), the baseline's 2
   likewise; every kept row fits 09-21's 65,536.
+
+## Final arms re-rendered with a 16,384-token thinking-loss limit (65k/16k TB policy, 2026-09-27 04:58 PT)
+
+**Result.** Both 907 + 907 final sets are re-rendered with the per-turn thinking-loss limit raised from 8,192 to
+16,384 tokens, as `final_rendered_think16k.jsonl` in each run dir (`final_rendered.jsonl` is kept). Only the loss mask
+changes: every row's token ids are identical to the 8k render and every row's trained tokens are a superset. No row
+is over 65,536 in either arm. `render_think_limit.py` (7e1e0c55) imports `render.py` from `ota-relay-v8` (d0ddd237),
+so the template, tokenizer, capped history, mask rules and row limit are unchanged; only `think_limit` differs.
+
+| per arm, 907 + 907 | relay | baseline (Qwen alone) |
+|---|---|---|
+| rows over 64k | 0 | 0 |
+| trained tokens, 8k → 16k limit | 14.42 M → 14.97 M (+0.55 M) | 15.40 M → 15.77 M (+0.38 M) |
+| Qwen turns with uncut reasoning masked for length, 8k → 16k | 81 → 34 (of 17,524) | 52 → 19 (of 21,796) |
+| max reasoning tokens in one Qwen turn | 29,555 | 29,928 |
+
+- "Masked for length" means a Qwen turn whose reasoning was never cut in the rendered view but is over the limit, so
+  its whole thinking span is masked (the text itself is never truncated by this limit; older turns' 1,000-token cut
+  in the student's view is separate and unchanged).
+- Stats: `render_think16k.json` in each run dir.
