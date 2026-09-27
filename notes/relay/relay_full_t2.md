@@ -177,10 +177,51 @@ episodes, 740 kept at 1:1. Failures are the scarce side: 377 real failures in 2,
     (`all_task_rule`) to `stop_rule.log`. The first line (after 1) is a manual verification: judged 3.5 % (85
     trials), all tasks 12.4 % (129 trials), so the old rule would have read stop.
 - **Files.**
-  - Run dirs `runs/relay_full_relay3_20260926` and `runs/relay_full_relaym_20260926`: `MERGED.json`,
-    `readout.json`, `kept_manifest.jsonl`, `select_kept.txt`, `render.txt`, and `rendered.jsonl` (all 3,780 rows,
-    696 MB).
+  - Run dir `runs/relay_full_relay3_20260926`. The three-attempt merge described above now lives in
+    `runs/relay_full_relaym123_20260926` (`MERGED.json`, `readout.json`, `kept_manifest.jsonl`, `select_kept.txt`,
+    `render.txt`, and `rendered.jsonl` with all 3,780 rows, 696 MB). `relaym` is the four-attempt merge below.
   - Top-up list `runs/relay_full_relay3_20260926.topup.txt`.
+
+**Top-up 4 finished every slot (20:28–23:40 PT, 19.36 node-hours); the relay arm ends at 1,182 kept traces.**
+The stop rule and the gates never fired. The rule judged harness errors on clean tasks: 3.5–5.2 % at every check.
+The old all-task rule would have stopped the run once, at 21:38 PT, when the all-task rate read 10.3 % over 777
+trials. At every other check it read 9.0–9.9 %.
+- **Attempt 4.**
+  - All 1,493 slots ran, and none were censored. 1,354 were scored.
+  - Pass rate 0.833 [0.812, 0.852]. The 226 real failures were false done 130, overflow 63, timeout 27, tests
+    failed 6.
+  - Harness errors were 9.2 % of trials: 111 tmux kills, 15 session ends, 5 Daytona 502s, 4 tmux command errors.
+  - Router clean, with no upstream errors. The early gate passed at 21:00 PT.
+  - The serve job was released at 22:53 PT, past the deadline with no LLM traffic. Harbor was stopped at 23:38 PT,
+    after the 45 min verify window.
+- **Merged arm, all four attempts** (`runs/relay_full_relaym_20260926`, `merge_runs.py --per-task 4`): 3,501 of
+  3,780 slots scored (225 + 313 + 1,609 + 1,354), none scored twice. The 35 quarantined tasks have no scored trial.
+  The quarantine and prior-error lists were copied into this dir.
+
+  | | merged 1 + 2 + 3 + 4 |
+  |---|---|
+  | scored episodes | 3,501 (910 of 945 tasks) |
+  | pass rate | 0.828 [0.815, 0.840] |
+  | real failures | 603: false done 355, overflow 199, timeout 35, tests failed 14 |
+  | overflow (hard end included) | 391 of 3,501 scored (11.2 %), 383 of them hard ends |
+  | recovery after context_budget | 0.78 [0.76, 0.80] (n 1,737) |
+  | recovery after done_claim | 0.88 [0.86, 0.90] (n 1,073); the teacher ran a command before confirming in 98.6 % |
+  | recovery after loop / no_progress_wait | 0.83 (n 36) / 0.70 (n 23) |
+  | teacher guard: first sample failed | 6.6 % of 33,041 turns |
+  | kept 1:1 (`select_kept.py`) | 1,182 (591 + 591; 185 same-task pairs) |
+  | rendered rows over 64k (shared mask) | 21 of 3,780; 15 of the 1,182 kept (max 72,214) |
+  | node-hours | 49.43 (4.42 + 5.46 + 20.19 + 19.36) |
+
+- **Where this leaves the 2,000 target.**
+  - The 945 × 4 plan is exhausted: every slot outside the 35 quarantined tasks has been scored.
+  - Failures cap the kept set. There are 591 usable real failures against 2,871 candidate passes.
+  - 2,000 kept would need about 1,000 real failures. At the 17 % failure rate that is about 5,800 scored episodes,
+    either more rollouts per task or harder tasks.
+- **Files.**
+  - Run dirs `runs/relay_full_relay4_20260926` (`stop_rule.log` has both harness-error rates per check) and
+    `runs/relay_full_relaym_20260926`.
+  - The merged dir holds `MERGED.json`, `readout.json`, `kept_manifest.jsonl`, `select_kept.txt`, `render.txt`,
+    `rendered.jsonl` (all 3,780 rows), `quarantine_tasks.txt` and `harness_error_tasks_1to3.txt`.
 
 ## Context-budget check (Luke 2026-09-26 12:50 PT): pass rule pre-registered, not submitted
 
