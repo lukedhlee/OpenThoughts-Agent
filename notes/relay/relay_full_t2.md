@@ -96,6 +96,69 @@ call.**
 - **Spend so far: 9.88 of the 30 node-hours.** Run dirs `runs/relay_full_relay_20260926`,
   `runs/relay_full_relay2_20260926` (readout.json, kept_manifest.jsonl, render.txt).
 
+**Attempt 3 ran to the node-hour cap (16:24–18:56 PT); the three attempts merged give 740 kept traces, not 2,000.**
+The stop rule and the gates never fired. The 30 node-hours are spent, and the relay arm ends with 2,147 scored
+episodes, 740 kept at 1:1. Failures are the scarce side: 377 real failures in 2,147 scored.
+- **What ran.** `relay_full_relay3_20260926` (job 2078270, dd709f19, worktree `ota-relay-v8`) had the attempt-2
+  settings at **128 concurrent (8 per Qwen GPU)**, with a 20.1 node-hour cap. It ran only the 3,242 (task, rollout)
+  slots that attempts 1 and 2 had not scored (`merge_runs.py --per-task 4 --remaining`), so no slot was paid for
+  twice. `run_pilot.sh` ran the repeated task lines round by round, longest budget first; `launch_relay.sh TOPUP=`
+  sets this up. Baseline 6b had already left the queue (early gate at 16:01 PT), so nothing else of ours shared Daytona.
+- **Health across the run.**
+  - The early gate passed at 16:56 PT. The KV gate never fired. At most one engine at a time reached 0.95–0.99
+    with 1–4 requests waiting.
+  - The stop rule read overflow 11.8–17 %, format 99.99 % and harness errors 7.0–8.7 % at every evaluation. The last
+    in-run value was 8.1 % at 18:39 PT.
+  - Every context_budget fire was at 32,002 tokens or more. The view count matched the student's `prompt_tokens`
+    on all 15,833 compared requests.
+  - The teacher guard resampled 1.6 % of Qwen turns. The verify note fired exactly once per done_claim takeover.
+- **How it ended.**
+  - The router deadline (18:50 PT) ended 1,483 queued or in-flight episodes, which the readout drops as censored.
+  - The driver released the serve job at the cap at 18:55 PT (20.19 node-hours). Harbor was stopped at 19:41 PT,
+    after the 45 min verify window.
+  - The final readout's H1 "router clean" fails on one unrecovered 502 at 18:49:52 PT: engine jpbo-066-42:8002
+    refused a connection 15 s before the deadline. That was the only upstream error in the run.
+- **Merged arm** `runs/relay_full_relaym_20260926` (attempts 1 + 2 + 3, `merge_runs.py --per-task 4`): 3,780
+  slots, 2,147 scored (225 + 313 + 1,609), no slot scored twice. Pass rate among scored and failures are below.
+  Early finishers dominate, so the pass rate reads high.
+
+  | | merged 1 + 2 + 3 |
+  |---|---|
+  | scored episodes | 2,147 (910 of 945 tasks) |
+  | pass rate | 0.824 [0.808, 0.840] |
+  | real failures | 377: false done 225, overflow 136, tests failed 8, timeout 8 |
+  | overflow (hard end included) | 268 of 2,147 scored (12.5 %), 263 of them hard ends |
+  | recovery after context_budget | 0.78 [0.75, 0.80] (n 1,087) |
+  | recovery after done_claim | 0.88 [0.85, 0.90] (n 643); the teacher ran a command before confirming in 98.8 % |
+  | teacher guard: first sample failed | 6.9 % of 20,836 turns |
+  | kept 1:1 (`select_kept.py`) | 740 (370 + 370; 60 same-task pairs) |
+  | rendered rows over 64k (shared mask) | 15 of 3,780; 12 of the 740 kept (max 72,214) |
+  | node-hours | 30.07 (4.42 + 5.46 + 20.19) |
+
+- **Projection against 2,000.**
+  - The 1,633 unscored slots would add about 1,500 scored episodes and about 260 failures, for about 1,260 kept.
+    That costs about 19 more node-hours at attempt 3's rate.
+  - 2,000 kept needs about 1,000 real failures, which is about 5,700 scored episodes at this failure rate. That is
+    more than the 3,780 slots of the 945 × 4 plan.
+- **Harness errors come from inside the sandbox and cluster on one task family** (diagnosis at 18:10 PT, 105 errors).
+  - **What fails.** 84 % are TmuxBatchProtocolError: harbor's per-turn tmux script is killed in the sandbox before
+    printing, by SIGTERM (143) or SIGKILL (137). 10 % are TmuxSessionEnded. Only 18 of the 88 follow an agent
+    command containing kill or pkill.
+  - **Where.** contrastive_solver / system-administration tasks (supervisord, nginx, gunicorn, Flask servers) error
+    in 40 % of their trials (35 of 88); every other family is at 0–8 %. 12 tasks errored on every trial they had.
+    The errors do not cluster on any student server or owner.
+  - **Why it bursts.** The Daytona org held a steady ~758 other sandboxes the whole time. The 10-min rate (2.6–13.6 %)
+    swings with when system-administration tasks come up in the queue, which likely explains attempt 2's burst as
+    well.
+  - **Fix before any further top-up.** Quarantine the repeat-offender system-administration tasks, or make harbor's
+    batch exec survive in-sandbox kills (keep its argv from `pkill -f`, run it in its own process group). Either
+    brings the rate to about 5–6 %.
+- **Files.**
+  - Run dirs `runs/relay_full_relay3_20260926` and `runs/relay_full_relaym_20260926`: `MERGED.json`,
+    `readout.json`, `kept_manifest.jsonl`, `select_kept.txt`, `render.txt`, and `rendered.jsonl` (all 3,780 rows,
+    696 MB).
+  - Top-up list `runs/relay_full_relay3_20260926.topup.txt`.
+
 ## Context-budget check (Luke 2026-09-26 12:50 PT): pass rule pre-registered, not submitted
 
 **Why.** In the last relay check 09-21 wandered slowly: about 21 turns per episode against about 9 for Qwen alone.
