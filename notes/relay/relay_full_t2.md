@@ -153,6 +153,29 @@ episodes, 740 kept at 1:1. Failures are the scarce side: 377 real failures in 2,
   - **Fix before any further top-up.** Quarantine the repeat-offender system-administration tasks, or make harbor's
     batch exec survive in-sandbox kills (keep its argv from `pkill -f`, run it in its own process group). Either
     brings the rate to about 5–6 %.
+- **Top-up 4 launched (Luke's go, 20:28 PT).**
+  - **What runs.** `relay_full_relay4_20260926` (job 2080079, 128 concurrent, cap 20 node-hours) covers the 1,493
+    slots still unscored after attempts 1–3. It was launched after baseline 6c left the queue.
+  - **Quarantine.** The 35 tasks that errored on every trial so far are dropped, in
+    `runs/relay_full_relaym_20260926/quarantine_tasks.txt`. They are exactly the 35 solvable tasks with no scored
+    trial: 7 had only one trial, 18 had two, 10 had three or four. The baseline arm drops the same list when both arms
+    are trimmed to equal size.
+- **Stop-rule change for top-up 4 (Luke 20:55 PT).**
+  - **What changed.** The harness-error part is judged only on tasks with no harness error in attempts 1–3. That
+    list is 133 tasks, in `runs/relay_full_relaym_20260926/harness_error_tasks_1to3.txt`, linked as the run dir's
+    `harness_exclude_tasks.txt`.
+  - **Why.** A top-up re-runs the slots whose trials errored, so it is error-rich by construction. At 106 finished
+    trials (20:51 PT), tasks with a prior harness error errored 12 of 34 times (35.3 %). Tasks that never errored
+    errored 3 of 72 times (4.2 %), a normal baseline. The rule exists to catch a broken harness, and the clean tasks
+    measure exactly that. The error-prone tasks carry the diagnosed in-sandbox tmux kill, and their errored trials
+    are dropped from the data anyway.
+  - **What did not change.** The 10 % limit stays, and overflow and format are still judged on all scored episodes.
+  - **How.** `stop_rule.py --harness-exclude-tasks` (d0ddd237) falls back to `<run dir>/harness_exclude_tasks.txt`
+    when that file exists, so the live driver picked it up. Only `stop_rule.py` changed in `ota-relay-v8`, and the
+    driver's `run_pilot.sh` is byte-identical. The rule was live at 20:53 PT, at 113 scored.
+  - **Logging.** Every check appends the judged rate, the all-task rate and the old rule's verdict
+    (`all_task_rule`) to `stop_rule.log`. The first line (after 1) is a manual verification: judged 3.5 % (85
+    trials), all tasks 12.4 % (129 trials), so the old rule would have read stop.
 - **Files.**
   - Run dirs `runs/relay_full_relay3_20260926` and `runs/relay_full_relaym_20260926`: `MERGED.json`,
     `readout.json`, `kept_manifest.jsonl`, `select_kept.txt`, `render.txt`, and `rendered.jsonl` (all 3,780 rows,
