@@ -51,6 +51,8 @@ BALANCE=${BALANCE:-pinned}; STAGGER_SEC=${STAGGER_SEC:-0}   # STAGGER_SEC>0: the
 GATE_MIN=${GATE_MIN:-0}; GATE_LAT=${GATE_LAT:-30}; GATE_KV=${GATE_KV:-0.90}   # GATE_MIN>0: from then on, cancel on latency / KV saturation
 TEACHER_GUARD=${TEACHER_GUARD:-1}  # 1: every Qwen agent turn is checked with Terminus-2's parser (autofix, else resample, else pass), every arm
 TEACHER_RESAMPLES=${TEACHER_RESAMPLES:-2}
+SHUFFLE_SEED=${SHUFFLE_SEED:-}     # set: tasks run in a uniform shuffled order (this seed), so a run cut early is an unbiased sample;
+                                  # empty: longest agent budget first (the default so far)
 FAILOVER_5XX=${FAILOVER_5XX:-1}    # 1: an upstream 5xx (a crashed engine) fails over to another server like a connection error
 VERIFY_NOTE=${VERIFY_NOTE:-0}      # 1: the verification note on Qwen's confirmation request (relay: done_claim takeover; control: the first)
 [ $CLOCK = wall ] && AGENT_MULT=1.0 || AGENT_MULT=8.0
@@ -98,7 +100,7 @@ cleanup_sandboxes() {
   [ ${#jobs[@]} -gt 0 ] && $PY $HERE/cleanup_sandboxes.py --key-file $KEYF --delete "${jobs[@]}" 2>&1 | tail -3
 }
 abort() { log "ABORT: $*"; echo "$*" > $R/ABORT; stop_harbor; stop_routers; release_serve "abort"; cleanup_sandboxes; write_meta; exit 1; }
-log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE failover_5xx=$FAILOVER_5XX max_input=$MAX_INPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR herr_exclude=${HERR_EXCLUDE:-none} target_fail=$TARGET_FAIL base=$TARGET_BASE"
+log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE failover_5xx=$FAILOVER_5XX max_input=$MAX_INPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR herr_exclude=${HERR_EXCLUDE:-none} target_fail=$TARGET_FAIL base=$TARGET_BASE shuffle=${SHUFFLE_SEED:-off}"
 
 # ---- 1. pre-flight --------------------------------------------------------------------------------------------------
 [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = "$HARBOR_SHA" ] || { log "harbor at ${HARBOR_SRC%/src} is not $HARBOR_SHA"; scancel $JOB; exit 1; }
@@ -179,9 +181,9 @@ export PYTHONPATH=$HARBOR_SRC
 for arm in $ARMS; do
   CFG=$R/${NAME}_$arm.yaml
   sed "s#__JOB_NAME__#${NAME}_$arm#; s#__JOBS_DIR__#$JOBS_ROOT#; s#__API_BASE__#http://127.0.0.1:${PORT[$arm]}/v1#; s#__CONC__#$CONC#; s#__MAX_INPUT__#$MAX_INPUT#; s#__AGENT_MULT__#$AGENT_MULT#" $HERE/relay_pilot.yaml > $CFG
-  $PY - "$CFG" "$TREE" "$MODE" "${TASK_LIST:-$TREE/TASKS.txt}" "$N_ATTEMPTS" <<'PY' || abort "config for $arm does not validate"
-import os, re, sys, yaml
-p, tree, mode, lst, att = sys.argv[1:6]
+  $PY - "$CFG" "$TREE" "$MODE" "${TASK_LIST:-$TREE/TASKS.txt}" "$N_ATTEMPTS" "$SHUFFLE_SEED" <<'PY' || abort "config for $arm does not validate"
+import os, random, re, sys, yaml
+p, tree, mode, lst, att, seed = sys.argv[1:7]
 c = yaml.safe_load(open(p))
 c['n_attempts'] = int(att)
 ids = [l.strip() for l in open(lst) if l.strip()]
@@ -194,14 +196,19 @@ def budget(t):
 occ, seen = [], {}                                # a task listed k times (a top-up of unscored rollout slots) runs k
 for t in ids:                                     # times, round by round like harbor's attempts: every task's first
     occ.append(seen.get(t, 0)); seen[t] = occ[-1] + 1   # copy, then every second copy, ...
-ids = [ids[i] for i in sorted(range(len(ids)), key=lambda i: (occ[i], -budget(ids[i]), ids[i]))]   # longest budget first
+if seed:                                          # uniform shuffled order within each round
+    rk = random.Random(int(seed)).sample(range(len(ids)), len(ids))
+    ids = [ids[i] for i in sorted(range(len(ids)), key=lambda i: (occ[i], rk[i]))]
+else:
+    ids = [ids[i] for i in sorted(range(len(ids)), key=lambda i: (occ[i], -budget(ids[i]), ids[i]))]   # longest budget first
 if mode == 'smoke':
     ids = sorted(ids, key=lambda t: (budget(t), t))[:4]
 c['tasks'] = [{'path': f'{tree}/{t}'} for t in ids]
 yaml.safe_dump(c, open(p, 'w'), sort_keys=False)
 from harbor_config.models.job.config import JobConfig
 JobConfig.model_validate(c)
-print(f'{os.path.basename(p)}: {len(ids)} task entries ({len(seen)} distinct) x {att}, validates')
+print(f'{os.path.basename(p)}: {len(ids)} task entries ({len(seen)} distinct) x {att}, validates, order '
+      f'{"shuffled, seed " + seed if seed else "longest budget first"}; first 3: {ids[:3]}')
 PY
   [ -e $JOBS_ROOT/${NAME}_$arm ] && abort "$JOBS_ROOT/${NAME}_$arm exists"
   if [ $STAGGER_SEC -gt 0 ]; then
