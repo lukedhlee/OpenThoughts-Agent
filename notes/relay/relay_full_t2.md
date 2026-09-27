@@ -1065,3 +1065,27 @@ through 792421dc. Re-rendering 5 relay rows reproduced their stored ids and mask
 - Files in `runs/relay_full_baseline6m_20260926/`: `MERGED.json`, `readout.json`, `kept_manifest.jsonl`,
   `kept_manifest_all.jsonl`, `kept_manifest_strict.jsonl`, `match_kept_strict.txt`, `rendered.jsonl` (3,966 rows),
   `render.txt`, `render.sha`, `strict_stats.json`.
+
+## Final matched SFT arms: 907 + 907 each, every row within 65,536 tokens (2026-09-27 04:41 PT)
+
+**Result.** Both arms are trimmed to **N = 907 passes + 907 real failures** (`final_match.py`, fc2507db; seed
+20260927). Each run dir has `final_manifest.jsonl`, `final_rendered.jsonl` (1,814 rows, the existing renders
+subset by session, which is exact because a row is rendered per episode) and `final_match.json`.
+- **Relay step 1.** 25 of the relay's 979 + 979 kept rows were over 65,536 tokens, all failures, so no pass needed
+  replacing. That left 954 failures. I also held the relay's failures to the baseline's strict definition (no
+  quarantined tasks, no weak timeouts, as `match_kept.py` defines them): 47 were unstalled timeouts, so **N = 907**.
+  Keeping those weak timeouts would give N = 954 instead.
+- **Trim.** `match_kept.py --weak-timeouts drop`: the relay's passes sampled from its 979, the baseline's from
+  `kept_manifest_strict.jsonl` (1,000 + 1,000).
+
+| per arm, 907 + 907 | relay | baseline (Qwen alone) |
+|---|---|---|
+| failure mix | false done 594, overflow 286, tests failed 16, timeout 11 | false done 526, overflow 377, timeout 2, tests failed 2 |
+| trained tokens (per row) | 14.42 M (7,950) | 15.40 M (8,489) |
+| row tokens p50 / p90 | 36.4k / 57.6k | 22.6k / 39.8k |
+| max row tokens | 65,439 | 58,152 |
+| Qwen turns per row | 9.7 | 12.0 |
+
+- The baseline trains 7 % more tokens. Relay rows are longer because the student's turns are in context but masked.
+- The relay's 11 remaining timeouts are stalled ones (a loop / no-progress trigger or no new output), the baseline's 2
+  likewise; every kept row fits 09-21's 65,536.
