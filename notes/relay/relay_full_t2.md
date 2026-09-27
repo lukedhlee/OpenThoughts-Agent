@@ -931,8 +931,12 @@ remain unscored.
 ## Matched SFT arms: baseline trimmed to 591 + 591 and rendered (2026-09-27 00:15 PT)
 
 **The baseline's 224 timeouts are slow Qwen replies, not stuck agents.** The baseline ran with `CLOCK=wall`, so the
-agent budget also paid for Qwen's reply time, and these episodes spent their budget waiting on Qwen. The relay arm's
-clock pauses on every model call, so its 35 timeouts are agent time and stay real failures.
+agent budget also paid for Qwen's reply time, and these episodes spent their budget waiting on Qwen. (Corrected
+2026-09-27: the relay arm runs `CLOCK=repair`, not a clock paused on every model call. Only teacher repair turns pause
+it; the student's turns and sticky Qwen turns are charged their reply time, as the relay routers' logs show.)
+Baseline top-up 6d runs `CLOCK=paused` on purpose, for yield: for Qwen alone `CLOCK=repair` is effectively
+`CLOCK=wall`, whose latency timeouts are weak and dropped by `match_kept.py` anyway, so pausing turns that compute into
+real passes and failures; both arms' kept sets exclude weak timeouts.
 - **Timing.** Timeouts took a median 7 turns (passes 10) at 121 s of Qwen time per turn (passes 24 s). The median
   longest single reply was 445 s, and 56 % had a format-guard resample (passes 8 %). In 185 of 224 the last reply was
   still being generated when the clock ran out.

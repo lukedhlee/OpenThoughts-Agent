@@ -52,7 +52,7 @@ GATE_MIN=${GATE_MIN:-0}; GATE_LAT=${GATE_LAT:-30}; GATE_KV=${GATE_KV:-0.90}   # 
 TEACHER_GUARD=${TEACHER_GUARD:-1}  # 1: every Qwen agent turn is checked with Terminus-2's parser (autofix, else resample, else pass), every arm
 TEACHER_RESAMPLES=${TEACHER_RESAMPLES:-2}
 SHUFFLE_SEED=${SHUFFLE_SEED:-}     # set: tasks run in a uniform shuffled order (this seed), so a run cut early is an unbiased sample;
-                                  # empty: longest agent budget first (the default so far)
+                                  # 'list': the task list's own order; empty: longest agent budget first (the default so far)
 FAILOVER_5XX=${FAILOVER_5XX:-1}    # 1: an upstream 5xx (a crashed engine) fails over to another server like a connection error
 VERIFY_NOTE=${VERIFY_NOTE:-0}      # 1: the verification note on Qwen's confirmation request (relay: done_claim takeover; control: the first)
 [ $CLOCK = wall ] && AGENT_MULT=1.0 || AGENT_MULT=8.0
@@ -196,7 +196,9 @@ def budget(t):
 occ, seen = [], {}                                # a task listed k times (a top-up of unscored rollout slots) runs k
 for t in ids:                                     # times, round by round like harbor's attempts: every task's first
     occ.append(seen.get(t, 0)); seen[t] = occ[-1] + 1   # copy, then every second copy, ...
-if seed:                                          # uniform shuffled order within each round
+if seed == 'list':                                # the list's own order within each round (a top-up continuing a shuffle)
+    ids = [ids[i] for i in sorted(range(len(ids)), key=lambda i: (occ[i], i))]
+elif seed:                                        # uniform shuffled order within each round
     rk = random.Random(int(seed)).sample(range(len(ids)), len(ids))
     ids = [ids[i] for i in sorted(range(len(ids)), key=lambda i: (occ[i], rk[i]))]
 else:
