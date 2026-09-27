@@ -842,3 +842,24 @@ more tasks scored, no crash, no unrecovered upstream error. Baseline 6 + 6b toge
 /tmp/lee27_b6m on the Jupiter login node, not yet the final `relay_full_baseline6m_20260926`): 998 of 2,043 tasks
 scored, pass 655 / 998 = 0.656 [0.626, 0.685], 9.71 node-hours (plus 3.86 for the stopped baseline 5). 1,045 tasks
 remain unscored.
+
+## Qwen-alone baseline complete: 6 + 6b + 6c = `relay_full_baseline6m_20260926` (2026-09-26 20:10 PT)
+
+**Result.** Every one of the 2,043 tasks has one trial; 2,001 are scored. Qwen3.8 alone passes **1,245 / 2,001 =
+0.622, 95 % CI [0.601, 0.643]**, with the format guard and the verify note (first confirmation only) on. That gives
+**1,512 kept traces at 1:1** (756 + 756), short of the 2,000 target because only 756 real failures exist.
+- Top-up 6c (job 2079799, launched 19:11 PT once the relay job left the queue, 40 agents per node, 1,045 tasks)
+  ran to completion: 1,003 scored, 7.70 node-hours, no gate stop.
+- **Failures (756):** false done 312, timeout 224, context overflow 217 (316 episodes overflowed at 64k in all),
+  tests failed 3. Excluded: 40 harness errors (37 tmux protocol), 2 verifier timeouts, 0 censored.
+- **Format guard:** Qwen's first sample failed Terminus-2's parser on 3.0 % of 23,055 turns (0.1 % on plain
+  confirmations, 1.4 % on noted ones, 3.6 % on work turns). 323 were autofixed, 251 recovered on a resample (547
+  extra samples), 122 went to harbor unparseable; 114 replies were cut at the 32k cap. Executed steps are 99.98 %
+  valid format.
+- **Verify note:** 95.6 % of the 1,449 episodes that reached a confirmation stopped at 2 or fewer (max 4); Qwen ran
+  commands before confirming at 77.8 % of first confirmations.
+- **Harness:** H1 "router clean" fails on one 502, a request that arrived after 6c's servers were released at the
+  end of the run; every engine error during the runs was retried to a 200.
+- **Node-hours:** 17.41 for 6 + 6b + 6c (4.41 + 5.30 + 7.70), 21.27 with the stopped baseline 5.
+- Files: `runs/relay_full_baseline6m_20260926/` (symlinked trials, `MERGED.json`, `readout.json`, `readout.txt`,
+  `kept_manifest.jsonl`, `kept_summary.json`).
