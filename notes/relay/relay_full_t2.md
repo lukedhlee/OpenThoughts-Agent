@@ -984,3 +984,32 @@ through 792421dc. Re-rendering 5 relay rows reproduced their stored ids and mask
   - `matched_stats.json`;
   - `timeout_probe.json` (per-episode timing) and `timeout_handread.txt`.
 - Relay run dir `runs/relay_full_relaym_20260926/`: `kept_manifest_matched_strict.jsonl` and `match_kept_strict.txt`.
+
+## Baseline arm at 2,000 kept: top-ups 6d + 6e, merged 6 + 6b + 6c + 6d + 6e (2026-09-27 02:46 PT)
+
+**Result.** The Qwen-alone arm now has **1,038 real failures** (quarantine dropped, weak timeouts excluded, as in
+`match_kept.py`), so its strict kept set is **1,000 passes + 1,000 real failures**, rendered with the relay arm's
+`render.py` (d0ddd237) and settings: all 2,000 rows fit 64k.
+- **6d** (job 2086439, fa6edbab): a second try on the 2,043 tasks minus the 35 quarantined, in a uniform shuffled
+  order (`SHUFFLE_SEED=20260927`), `CLOCK=paused` on purpose for yield, 40 agents per node. The KV gate stopped it at
+  01:39 PT (one engine above 90 % KV with requests waiting for 5 min): 7.87 node-hours, +330 real failures (861).
+- **6e** (job 2091008, 403bf053): launched automatically at 01:42 PT on the 999 tasks 6d had not scored, in 6d's
+  order, then a second pass; the target watcher stopped it at 02:22 PT at 1,038: 5.43 node-hours, +177.
+  The 6f follow-up (32 agents per node) was armed but not needed. 6d + 6e = 13.30 of the 25 node-hour budget.
+- **Merge** (`merge_runs.py --per-task 2`): 2,026 of 2,043 tasks scored, 3,546 scored trials; no task got a third
+  scored trial, none counted twice. The 6 + 6b + 6c merge moved to `relay_full_baseline6m_20260926_v1` intact.
+- **Pass rate** 2,282 / 3,546 = **0.644 [0.628, 0.659]**. Failures 1,264: false done 601, context overflow 435,
+  timeout 225 (222 weak, nearly all from the CLOCK=wall runs; 6d + 6e added about one), tests failed 3. Harness
+  errors 445, mostly 363 in-flight trials cancelled by gate aborts (so H1's 10 % trial check fails), 72 tmux protocol.
+- **Format guard:** first sample failed Terminus-2's parser on 3.0 % of 44,022 Qwen turns; 598 autofixed, 1,031 extra
+  samples, 223 passed unparseable, 191 cut at the 32k cap; executed steps 99.97 % valid format.
+- **Verify note:** 95.7 % of the 2,717 episodes with a confirmation had at most 2 (max 4); Qwen ran commands before
+  confirming at 77.7 % of noted first confirmations.
+- **Strict kept set** (`kept_manifest_strict.jsonl`, seed 20260927): passes sampled from 1,254, failures from 1,038:
+  false done 581, overflow 415, tests failed 2, stalled timeout 2. Rendered rows: 0 over 64k (max 58,152), tokens
+  p50 22.6k / p90 39.7k, 16.93 M trained tokens (8,467 per row), 11.9 Qwen turns per row, 335 autofixed Qwen turns
+  (action trained, reasoning masked).
+- **Node-hours:** the arm 30.71 (6 4.41, 6b 5.30, 6c 7.70, 6d 7.87, 6e 5.43); 34.57 with the stopped baseline 5.
+- Files in `runs/relay_full_baseline6m_20260926/`: `MERGED.json`, `readout.json`, `kept_manifest.jsonl`,
+  `kept_manifest_all.jsonl`, `kept_manifest_strict.jsonl`, `match_kept_strict.txt`, `rendered.jsonl` (3,966 rows),
+  `render.txt`, `render.sha`, `strict_stats.json`.
