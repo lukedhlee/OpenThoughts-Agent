@@ -927,3 +927,56 @@ remain unscored.
 - **Node-hours:** 17.41 for 6 + 6b + 6c (4.41 + 5.30 + 7.70), 21.27 with the stopped baseline 5.
 - Files: `runs/relay_full_baseline6m_20260926/` (symlinked trials, `MERGED.json`, `readout.json`, `readout.txt`,
   `kept_manifest.jsonl`, `kept_summary.json`).
+
+## Matched SFT arms: baseline trimmed to 591 + 591 and rendered (2026-09-27 00:15 PT)
+
+**The baseline's 224 timeouts are slow Qwen replies, not stuck agents.** The baseline ran with `CLOCK=wall`, so the
+agent budget also paid for Qwen's reply time, and these episodes spent their budget waiting on Qwen. The relay arm's
+clock pauses on every model call, so its 35 timeouts are agent time and stay real failures.
+- **Timing.** Timeouts took a median 7 turns (passes 10) at 121 s of Qwen time per turn (passes 24 s). The median
+  longest single reply was 445 s, and 56 % had a format-guard resample (passes 8 %). In 185 of 224 the last reply was
+  still being generated when the clock ran out.
+- **The rate follows the budget, not the task.** 27 % of 600 s tasks timed out, 13 % of 900 s and 2 % of 1,800 s.
+  That is why baseline 6 (long budgets first) had none, 6b had 30 and 6c (the short-budget remainder) had 194.
+- **Hand-read of 8.** Six were cut mid-work after 1 to 7 turns while one reply ran 5 to 20 min. One (BIND/DNSSEC,
+  18 turns) had named answering queries. One was rewriting a broken test script. None looped.
+- **Not the verify note.** Only 9 of 224 had reached a confirmation, and only 3 had stalled (no new output in the
+  last 3 turns).
+
+**Trim** (`match_kept.py`, 792421dc, seed 20260927; the original `kept_manifest.jsonl` is unchanged).
+- The 35 quarantined tasks drop 21 rows (14 passes, 7 failures).
+- Without the 218 unstalled timeouts only 531 real failures remain, 60 short of 591.
+- **`kept_manifest_matched.jsonl`, 591 + 591.** It keeps all 531 and fills the 60 with uniformly sampled unstalled
+  timeouts, marked `weak_timeout_fill`. Failures are false done 310, overflow 215, timeout 63 (3 stalled + 60 fill)
+  and tests failed 3. The 591 passes are sampled from 742.
+- **`kept_manifest_matched_strict.jsonl`, 531 + 531 in both run dirs.** No weak timeouts. The relay side is a
+  uniform sample of its 1,182.
+- Which pair trains is open.
+
+**Render.** `ota-relay-v8` at d0ddd237, with the tokenizer and template from `grug-datakit-sft-20260921` and default
+cap and limits. `render.py`, `reasoning_cap.py` and the readout code the renderer uses are unchanged from 6b3b21e0
+through 792421dc. Re-rendering 5 relay rows reproduced their stored ids and masks exactly. The run rendered 2,042 of
+2,043 episodes, with no errors and no row over 64k.
+
+| kept rows (shared mask) | relay 1,182 | baseline matched 1,182 | relay strict 1,062 | baseline strict 1,062 |
+|---|---|---|---|---|
+| rows over 64k (max) | 15 (72,214) | 0 (55,381) | 13 (72,214) | 0 (55,381) |
+| row tokens p50 / p90 | 37.1k / 57.7k | 22.2k / 38.9k | 37.4k / 57.7k | 22.5k / 39.5k |
+| trained tokens, total (per row) | 9.40 M (7,957) | 9.78 M (8,273) | 8.48 M (7,986) | 9.00 M (8,478) |
+| turns per row, mean (p50) | 21.1 (19) | 11.3 (10) | 21.0 (19) | 11.6 (11) |
+| Qwen turns per row | 9.7 | 11.3 | 9.7 | 11.6 |
+| Qwen thinking tokens per Qwen turn, as rendered | 619 | 515 | 619 | 511 |
+| thinking share of trained tokens | 25.8 % | 28.4 % | 25.8 % | 27.9 % |
+
+- Both arms train about the same number of tokens: the baseline gets 4 % more in the matched pair and 6 % more in
+  the strict pair. Relay rows are longer because the student's turns are in context but masked.
+- The thinking rows skip 18 relay rows. Their observations contain literal chat-header strings, which the tokenizer
+  turns into special tokens. Those rows are in the user turns and never trained.
+
+**Files.**
+- Baseline run dir `runs/relay_full_baseline6m_20260926/`:
+  - the two matched manifests, `match_kept.txt` and `match_kept_strict.txt`;
+  - `rendered.jsonl` with all 2,042 rows, `render.txt` and `render.sha`;
+  - `matched_stats.json`;
+  - `timeout_probe.json` (per-episode timing) and `timeout_handread.txt`.
+- Relay run dir `runs/relay_full_relaym_20260926/`: `kept_manifest_matched_strict.jsonl` and `match_kept_strict.txt`.
