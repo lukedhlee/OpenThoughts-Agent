@@ -772,3 +772,10 @@ done, which is why the top-up covers every task without a scored trial rather th
 dir of symlinks: per task the first scored trial (6 first, then 6b), a task scored nowhere keeps 6b's trial, the
 router records follow the kept sessions, node-hours add up, and `MERGED.json` lists the source of every task.
 `readout.py`, `select_kept.py` and `render.py` read the merged dir as one run; no task is counted twice.
+
+**6b stopped by the KV gate (2026-09-26 16:01 PT).** One of 32 engines (jpbo-057-08:8003) stayed above 90 % KV
+with requests waiting for 5 min, 31 min after harbor started; the driver aborted as designed. 5.30 node-hours; 595
+more tasks scored, no crash, no unrecovered upstream error. Baseline 6 + 6b together (merged read-only in
+/tmp/lee27_b6m on the Jupiter login node, not yet the final `relay_full_baseline6m_20260926`): 998 of 2,043 tasks
+scored, pass 655 / 998 = 0.656 [0.626, 0.685], 9.71 node-hours (plus 3.86 for the stopped baseline 5). 1,045 tasks
+remain unscored.
