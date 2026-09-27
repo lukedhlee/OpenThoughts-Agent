@@ -21,7 +21,7 @@ inside it; a `<|start_header_id|>role<|end_header_id|>` header goes as a whole. 
 teacher's reasoning, student turns (masked context), observations and turns without a marker are untouched. The strip
 runs after the router-record join (by content hash), inside render.episode_turns, so render.py itself is unchanged.
 Checks per stripped turn (needs --terminus-parser): the stripped reply parses with no error and gives the same commands
-and task_complete as the original; and each episode is also rendered unstripped, so every turn's owner, reasoning span
+and task_complete as the original (a turn that fails this is kept as served and listed); and each episode is also rendered unstripped, so every turn's owner, reasoning span
 text and cut, and every student turn's text are compared unchanged.
 """
 import argparse
@@ -45,22 +45,35 @@ MARKER_RE = re.compile('|'.join([HEADER.pattern] + [re.escape(m) for m in
                                                            key=len, reverse=True)]))
 
 
-def strip_copied(content, parser):
-    """(new content, [markers removed]) — markers removed before/after the JSON object the parser executes."""
-    js, _ = parser._extract_json_content(content)
-    if not js:
-        return content, []
-    a = content.find(js)
-    before, obj, after = content[:a], js, content[a + len(js):]
-    found = MARKER_RE.findall(before) + MARKER_RE.findall(after)
-    if not found:
-        return content, []
-    before = MARKER_RE.sub('', before)
-    after = MARKER_RE.sub('', after)
+def _tidy(before, after, obj):
     before = re.sub(r'\n[ \t]*\n(?:[ \t]*\n)+', '\n\n', before).rstrip()
     after = re.sub(r'\n[ \t]*\n(?:[ \t]*\n)+', '\n\n', after).strip()
-    return (before + '\n\n' if before.strip() else '') + obj + ('\n' + after if after else ''), [
-        'header' if m.startswith('<|start_header_id|>') and m.endswith('<|end_header_id|>') else m for m in found]
+    return (before + '\n\n' if before.strip() else '') + obj + ('\n' + after if after else '')
+
+
+def strip_copied(content, parser):
+    """(new content, [markers removed]) — markers removed before/after the JSON object the parser executes. When the
+    parser's brace scan finds no object (prose with an unbalanced brace; the harness then runs its auto-fixes), only
+    markers that directly open a JSON object (`<tool_call>\\n{`) or directly follow one (`}\\n</tool_call>`) go."""
+    js, _ = parser._extract_json_content(content)
+    if js:
+        a = content.find(js)
+        before, after = content[:a], content[a + len(js):]
+        found = MARKER_RE.findall(before) + MARKER_RE.findall(after)
+        if not found:
+            return content, []
+        new = _tidy(MARKER_RE.sub('', before), MARKER_RE.sub('', after), js)
+    else:
+        opener = re.compile(r'[ \t]*(?:' + MARKER_RE.pattern + r')\s*(?=\{)')
+        closer = re.compile(r'(?<=\})\s*(?:' + MARKER_RE.pattern + r')')
+        found = [MARKER_RE.search(m.group(0)).group(0) for m in opener.finditer(content)] + \
+            [MARKER_RE.search(m.group(0)).group(0) for m in closer.finditer(content)]
+        if not found:
+            return content, []
+        new = closer.sub('', opener.sub(lambda m: '\n\n' if m.start() else '', content)).strip()
+        new = re.sub(r'\n[ \t]*\n(?:[ \t]*\n)+', '\n\n', new)
+    return new, ['header' if m.startswith('<|start_header_id|>') and m.endswith('<|end_header_id|>') else m
+                 for m in found]
 
 
 def load_parser(path):
@@ -129,8 +142,11 @@ def main():
                         strip['row_hit'] = True
                         c = same_action(parser, text, new)
                         strip['checks'].update(k for k, v in c.items() if v)
-                        if not c['same']:
+                        if not c['same']:   # never change what the harness executed: keep the turn as served
                             strip['bad'].append(dict(sid=traj.get('session_id'), turn=m.get('turn'), **c))
+                            strip['markers'].subtract(found)
+                            strip['turns'] -= 1
+                            continue
                         turns[i] = (role, new, m)
             return turns
         render.episode_turns = episode_turns
