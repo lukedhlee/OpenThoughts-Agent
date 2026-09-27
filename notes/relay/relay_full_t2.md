@@ -222,6 +222,58 @@ trials. At every other check it read 9.0–9.9 %.
     `runs/relay_full_relaym_20260926`.
   - The merged dir holds `MERGED.json`, `readout.json`, `kept_manifest.jsonl`, `select_kept.txt`, `render.txt`,
     `rendered.jsonl` (all 3,780 rows), `quarantine_tasks.txt` and `harness_error_tasks_1to3.txt`.
+  - That four-attempt merge now lives in `runs/relay_full_relaym1234_20260926`. `relaym` is the five-attempt merge
+    below.
+
+**Attempt 5 (Luke: 2,000 kept per arm) stopped on the number: 1,003 real failures, 1,958 kept, 26.39 node-hours.**
+The merged relay arm reached its failure target at 03:58 PT, 3 h 17 min into the run and within its 32 node-hour cap.
+No gate or stop rule fired. After select_kept the relay arm has 979 usable failures, fewer than the baseline's
+1,000 strict, so both arms match at 979 + 979.
+- **What ran.**
+  - `relay_full_relay5_20260927` (job 2086476, 12ad6991, worktree `ota-relay-v10`) was the 910 non-quarantined tasks
+    with tries 5–7: 2,869 slots from `merge_runs.py --per-task 7 --remaining`, round by round.
+  - Settings as attempt 4: 128 concurrent, `CLOCK=repair`. The handoff said "clock paused during model calls", but
+    attempt 4 ran `repair`, so it was kept identical for comparability.
+  - Baseline 6d ran in parallel on the same Daytona org.
+- **Stop rule.** Harness errors are judged on clean tasks via `HERR_EXCLUDE`: the 1–3 list plus the 10 tasks that
+  errored on every trial in attempt 4, 143 tasks in `harness_error_tasks_1to4.txt`.
+  - Judged rate 1.0–3.1 % at every check. The all-task rate was 3.9–6.5 %.
+  - One burst at 01:40–01:50 PT (13.7 % over 10 min) was the known in-sandbox tmux kill, mostly on
+    system-administration tasks.
+- **How it ended.**
+  - `run_pilot.sh TARGET_FAIL=1000 TARGET_BASE=603` (the 603 real failures of attempts 1–4) checked with the stop
+    rule every 15 min. It read 1,003 at 03:58 PT.
+  - It then stopped harbor, released the servers (26.39 node-hours) and ran the final readout. The 128 in-flight
+    trials became CancelledError, which is why the attempt's own readout shows 10.3 % harness errors.
+- **One unfixed router gap.**
+  - Qwen engine jpbo-006-24:8001 died at about 03:43 PT. The main-request failover moved its traffic, but the teacher
+    format guard's resample went back to the dead engine and returned 502.
+  - 39 requests hit this (`teacher_guard.outcome = http_502`); those episodes end as harness errors, not data.
+  - The guard's resample path needs the same connection-error failover. Not built.
+- **Merged arm, all five attempts** (`runs/relay_full_relaym_20260926`, `merge_runs.py --per-task 7`): 5,780 scored
+  slots (225 + 313 + 1,609 + 1,354 + 2,279) on 910 tasks, none scored twice.
+
+  | | merged 1–5 |
+  |---|---|
+  | scored episodes | 5,780 (910 of 945 tasks) |
+  | pass rate | 0.827 [0.817, 0.836] |
+  | real failures | 1,003: false done 599, overflow 323, timeout 59, tests failed 22 |
+  | overflow (hard end included) | 634 of 5,780 scored (11.0 %) |
+  | recovery after context_budget | 0.78 [0.77, 0.80] (n 2,897) |
+  | recovery after done_claim | 0.88 [0.87, 0.90] (n 1,722); the teacher ran a command before confirming in 98.9 % |
+  | recovery after loop / no_progress_wait | 0.74 (n 66) / 0.81 (n 42) |
+  | teacher guard: first sample failed | 6.6 % of 55,417 turns |
+  | kept 1:1 (`select_kept.py`) | 1,958 (979 + 979; 349 same-task pairs). 24 real failures drop out: episodes where the teacher wrote no turn, and the S5 filter |
+  | rendered rows over 64k (shared mask) | 35 of 6,526; 25 of the 1,958 kept (max 76,515) |
+  | node-hours | 75.82 (4.42 + 5.46 + 20.19 + 19.36 + 26.39) |
+
+- **Matching.** `match_kept.py --passes 979 --failures 979 --weak-timeouts fill` over the quarantine list writes
+  `kept_manifest_matched.jsonl` (1,958 rows, identical to the kept set). The baseline arm is trimmed to the same
+  979 + 979.
+- **Files** in `runs/relay_full_relaym_20260926`: `merge.txt`, `MERGED.json`, `readout.json`,
+  `kept_manifest.jsonl`, `kept_manifest_matched.jsonl`, `select_kept.txt`, `render.txt`, and `rendered.jsonl` (all
+  6,526 rows; `render.py` identical to d0ddd237). The quarantine and prior-error lists are there too.
+  Attempt 5's `stop_rule.log` has both rates and the real-failure count per check.
 
 ## Context-budget check (Luke 2026-09-26 12:50 PT): pass rule pre-registered, not submitted
 
