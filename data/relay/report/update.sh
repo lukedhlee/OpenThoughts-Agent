@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # update.sh — regenerate the teacher-relay status gist and push it.
 #   1. pull the run readouts and the verify-note replay from Jupiter (read-only: tar/scp of small files, plus
-#      live_status.py on the login node, which only reads) into $WORK/cache;
+#      live_status.py and, once, arm_quality.py on the login node, which only read) into $WORK/cache;
 #   2. draw the figures (status_figs.py figs);
 #   3. push them to the secret figures gist, then write README.md with raw URLs pinned to that commit and push it to
 #      the secret text gist.
@@ -15,6 +15,7 @@ TXT_GIST=${TXT_GIST:-d8fc1454ed134eff585448c4982458c9}   # Teacher relay: status
 OWNER=lukedhlee
 R=/e/fscratch/reformo/lee27/experiments/relay/pilot/runs
 V=/e/fscratch/reformo/lee27/experiments/relay/verify_note
+JPY=/e/project1/transfernetx/lee27/code/envs/snowball/bin/python   # has `tokenizers` (arm_quality.py); no torch
 CACHE=$WORK/cache; OUT=$WORK/out
 mkdir -p "$CACHE/runs" "$CACHE/verify_note" "$OUT"
 
@@ -25,6 +26,11 @@ ssh -o BatchMode=yes jupiter "cd $R && tar czf - \$(ls -d */readout*.json */read
 for f in classified.jsonl replies.jsonl; do   # the replay is finished; fetch once
   [ -s "$CACHE/verify_note/$f" ] || scp -q "jupiter:$V/$f" "$CACHE/verify_note/$f"
 done
+if [ ! -s "$CACHE/arm_quality.jsonl" ]; then   # the final SFT arms are fixed; per-row facts once (~1 min, 6 procs)
+  ssh -o BatchMode=yes jupiter "OMP_NUM_THREADS=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false nice $JPY -" \
+    < "$HERE/arm_quality.py" > "$CACHE/arm_quality.jsonl.tmp"
+  mv "$CACHE/arm_quality.jsonl.tmp" "$CACHE/arm_quality.jsonl"
+fi
 ssh -o BatchMode=yes jupiter python3 - < "$HERE/live_status.py" > "$CACHE/live_status.json.tmp"
 mv "$CACHE/live_status.json.tmp" "$CACHE/live_status.json"
 

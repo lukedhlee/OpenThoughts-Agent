@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""status_figs.py — the teacher-relay status gist: six figures and a short README, from the run readouts.
+"""status_figs.py — the teacher-relay status gist: eight figures and a short README, from the run readouts.
 
     python status_figs.py figs   --cache <dir> --out <dir>
     python status_figs.py readme --cache <dir> --out <dir> --fig-base <raw url prefix ending in />
 
 <cache> is what update.sh pulls from Jupiter: one dir per run under runs/ (readout*.json, check_decision*.json,
 decide*.json, run.meta, ABORT, SUPERSEDED, launch logs), verify_note/{classified,replies}.jsonl, and
-live_status.json (live_status.py's snapshot). Every number is read from those files, except the few that exist only
+live_status.json (live_status.py's snapshot), and arm_quality.jsonl (arm_quality.py's per-row facts on the two final
+SFT arms, for the "SFT arms: quality comparison" section and fig0). Every number is read from those files, except the few that exist only
 in the notes; those sit in NOTES_SPEND / NOTES_* below with the note they come from.
 
 The narrative lines (VERDICT, BULLETS, NEXT) are the part to edit when the state of the project changes; their numbers
 are filled from the data.
 """
 import argparse
+import collections
 import datetime as dt
 import glob
 import json
@@ -69,8 +71,8 @@ FAIL_RUNS = [
     ('Qwen alone, baseline 1\n2,043 tasks, queued serving', 'relay_full_baseline_20260925', 'control'),
     ('Qwen alone, baseline 4\nper-GPU serving, stopped at 25 min', 'relay_full_baseline4_20260926', 'control'),
     ('Relay, context budget 2\n100 pilot tasks', 'relay_ctxb2_20260926', 'relay_repair'),
-    ('Qwen alone, baseline 6\n2,043 tasks', 'relay_full_baseline6_20260926', 'control'),
-    ('Relay, full run\n945 tasks x 4', 'relay_full_relay_20260926', 'relay_repair'),
+    ('Qwen alone, final pool (6 + 6b–6e)\n2,026 tasks x up to 2', 'relay_full_baseline6m_20260926', 'control'),
+    ('Relay, final pool (5 attempts)\n910 tasks x up to 7', 'relay_full_relaym_20260926', 'relay_repair'),
 ]
 # Compute spend. Runs with a run.meta are read from it; the rest exist only in the notes.
 SPEND_RUNS = [  # (label, run dir, date)
@@ -80,6 +82,8 @@ SPEND_RUNS = [  # (label, run dir, date)
     ('Re-check', 'relay_recheck_20260925', '09-25'), ('Baseline rerun', 'relay_full_baseline2_20260925', '09-26'),
     ('Baseline 4', 'relay_full_baseline4_20260926', '09-26'), ('Context budget 1', 'relay_ctxb_20260926', '09-26'),
     ('Baseline 5', 'relay_full_baseline5_20260926', '09-26'), ('Context budget 2', 'relay_ctxb2_20260926', '09-26'),
+    ('Relay full run, 5 attempts', 'relay_full_relaym_20260926', '09-26/27'),     # merged run.meta = sum of attempts
+    ('Qwen-alone arm, 6 + 6b–6e', 'relay_full_baseline6m_20260926', '09-26/27'),
 ]
 NOTES_SPEND = [  # (label, node-h, status, date, source)
     ('MSA', 2.2, 'used', '09-24', 'session spend line'), ('Bench', 1.3, 'used', '09-24', 'session spend line'),
@@ -105,22 +109,25 @@ LIVE_WHAT = {'relay_full_relay_20260926': 'Relay full run (945 solvable tasks x 
              'relay_full_baseline6_20260926': 'Baseline 6, Qwen alone (2,043 tasks)'}
 
 # ---- narrative (edit when the state changes; numbers come from the data) ----
-VERDICT = ('The relay now passes as often as Qwen alone and its format problem is solved; '
-           'overflow ({ovf:.0%}) is the one open issue, so the full relay run launched inside the pre-stated '
-           '20–25 % band and is live now.')
+VERDICT = ('Both SFT arms are final at 907 passes + 907 real failures each, every row within 65,536 tokens. Nothing is '
+           'running; the next step is SFT of 09-21 on each arm.')
 BULLETS = [
+    'Full runs: the relay passes {relay_full:.1%} of {relay_scored:,} scored episodes on the {relay_tasks} Qwen-solvable '
+    'tasks (up to 7 tries each); Qwen alone passes {base_full:.1%} of {base_scored:,} on {base_tasks:,} tasks (up to 2).',
     'Last check (100 pilot tasks): relay {relay_p:.0%} vs Qwen alone {qwen_p:.0%} on the same {n_pair} tasks '
     '({diff:+.0f} points, CI {dlo:+.0f} to {dhi:+.0f}). 09-21 alone passes {s_p:.0%} (held-out set).',
-    'Format is fixed: {fmt:.2%} of executed steps parse, and 09-21 still plays {share:.0%} of the turns.',
-    'Overflow is what is left: all {hard} overflows are hard ends after a context-budget takeover, and Qwen recovers '
-    '{rec_cb:.0%} of those episodes vs {rec_dc:.0%} after a done claim.',
+    'In that check {fmt:.2%} of executed steps parse (Terminus-2 accepts prose or markers before the JSON with a '
+    'warning), and 09-21 still plays {share:.0%} of the turns.',
     'Spend since 09-24: {total:.1f} node-h, {waste:.1f} of it on runs that were stopped, failed to start or were '
-    'superseded; the live relay run is capped at 30.',
+    'superseded.',
 ]
 NEXT = [
-    ('Keep 1:1 pass:fail traces for both arms (`select_kept.py`)', 'after both runs finish'),
-    ('SFT 09-21 on relay vs Qwen-alone traces; eval both on the 300 held-out tasks', 'after the keep step'),
+    ('SFT 09-21 on each arm (907 + 907 rows, 16k thinking-loss limit)', 'next'),
+    ('Eval both SFT models on the 300 held-out CalibForge tasks and on TB2, under the 65k/16k policy', 'after SFT'),
 ]
+# Hand-read of failed rows in the final arms (notes/relay/relay_full_t2.md, "SFT arms: quality comparison").
+NOTES_HANDREAD = dict(relay=7, baseline=6, rubber_stamp=0)
+POOL_TASKS = dict(relay=910, baseline=2026)   # tasks with a scored trial in each merged pool (relay_full_t2.md)
 
 
 # ---- helpers ----
@@ -415,7 +422,7 @@ def fig_fail(cache, out):
     tidy(ax, xgrid=True)
     ax.grid(axis='y', visible=False)
     b1 = runs[0][1]['timeout'] / runs[0][2]
-    fig.suptitle(f"Timeouts are gone ({b1:.0%} of baseline 1 were queue waits); false done claims and context "
+    fig.suptitle(f"Queue-wait timeouts are gone ({b1:.0%} of baseline 1); false done claims and context "
                  'overflow are what is left', x=0.01, ha='left', fontsize=13, fontweight='bold', color=INK)
     fig.text(0.01, 1 - 0.55 / (1.2 + 1.0 * len(runs)), 'How each finished episode ended (share of finished '
              'episodes). Baseline 4 only scored its quickest episodes before it was stopped.', fontsize=9, color=INK2)
@@ -643,11 +650,133 @@ def fig_checkq(out):
     save(fig, out, 'fig7_check_quality.png')
 
 
+def aq_rows(cache):
+    p = os.path.join(cache, 'arm_quality.jsonl')
+    if not os.path.exists(p):
+        return None
+    rows = [json.loads(line) for line in open(p)]
+    return {arm: [r for r in rows if r['arm'] == arm] for arm in ('relay', 'baseline')}
+
+
+def qtile(xs, f):
+    xs = sorted(x for x in xs if x is not None)   # a takeover whose first Qwen turn hit the hard end has no sticky turn
+    return xs[int(f * (len(xs) - 1))] if xs else float('nan')
+
+
+def aq_numbers(A):
+    """The side-by-side numbers for the two final SFT arms, from arm_quality.py's per-row facts."""
+    out = {}
+    for arm, R in A.items():
+        n = len(R)
+        tasks = collections.Counter(r['task'] for r in R)
+        per = list(tasks.values())
+        fails = [r for r in R if not r['passed']]
+        passes = [r for r in R if r['passed']]
+        tr = sum(r['trained'] for r in R)
+        by, bym = collections.Counter(), collections.Counter()   # trained tokens; those in marker-copying Qwen turns
+        for r in R:
+            by['student'] += r['trained_by']['student']
+            by['repair'] += r['trained_by']['repair']
+            by['sticky:' + (r['takeover'] or 'none')] += r['trained_by']['sticky']
+            bym['repair'] += r['fmt']['repair']['trained_residue']
+            bym['sticky:' + (r['takeover'] or 'none')] += r['fmt']['sticky']['trained_residue']
+        fmt = collections.Counter()
+        for r in R:
+            for k in ('repair', 'sticky'):
+                for kk, v in r['fmt'][k].items():
+                    fmt[kk] += v
+        claims = [r for r in passes if r['claim_by']]
+        ro = [r for r in R if r['takeover'] is None] if arm == 'relay' else []
+        stok = [x for r in R for x in r['q_think']]
+        out[arm] = dict(
+            rows=n, tasks=len(tasks), rpt_p90=qtile(per, .9), rpt_max=max(per),
+            share_ge3=sum(v for v in per if v >= 3) / n, fail_tasks=len({r['task'] for r in fails}),
+            families=len({r['family'] for r in R}),
+            top_family=collections.Counter(r['family'] for r in R).most_common(1)[0],
+            trained=tr, by=by, bym=bym, low1k=sum(r['trained'] < 1000 for r in R),
+            ro_rows=len(ro), ro_trained=sum(r['trained'] for r in ro), ro_p50=qtile([r['trained'] for r in ro], .5),
+            ro_fail=sum(not r['passed'] for r in ro),
+            repair_claims=sum(1 for r in R if r['claim_by'] == 'repair'),
+            ctx_cb=qtile([r['ctx_at_takeover'] for r in R if r['takeover'] == 'context_budget'], .5),
+            ctx_dc=qtile([r['ctx_at_takeover'] for r in R if r['takeover'] == 'done_claim'], .5),
+            stud_cb=qtile([r['student_before_takeover'] for r in R if r['takeover'] == 'context_budget'], .5),
+            stud_dc=qtile([r['student_before_takeover'] for r in R if r['takeover'] == 'done_claim'], .5),
+            pass_turns=qtile([r['n_turns'] for r in passes], .5),
+            pass_qturns=sum(r['n_repair'] + r['n_sticky'] for r in passes) / len(passes),
+            checked=sum(bool({'test', 'run', 'look'} & set(r['verify_window_any'])) for r in claims) / len(claims),
+            ran=sum(bool({'test', 'run'} & set(r['verify_window_any'])) for r in claims) / len(claims),
+            think_mean=sum(stok) / len(stok), think_p50=qtile(stok, .5),
+            think_trained=sum(x for r in R for x in r['q_think_trained']) / len(stok),
+            fail_repeat=sum(r['q_repeat_pairs'] > 0 for r in fails) / len(fails),
+            fail_giveup=sum(r['q_giveup'] > 0 for r in fails) / len(fails),
+            qturns=fmt['n'], marker=fmt['residue'], tool_call=fmt['tool_call'], think_marker=fmt['think_marker'],
+            marker_rows=sum(r['fmt']['repair']['residue'] + r['fmt']['sticky']['residue'] > 0 for r in R),
+            marker_trained=sum(r['fmt'][k]['trained_residue'] for r in R for k in ('repair', 'sticky')),
+            preamble=fmt['preamble'] / fmt['n'], autofix=fmt['autofix'],
+            student_ctx=sum(r['tokens_by']['student'] for r in R) / sum(r['n_tokens'] for r in R),
+            row_p50=qtile([r['n_tokens'] for r in R], .5))
+    return out
+
+
+def fig_sft_tokens(cache, out):
+    A = aq_rows(cache)
+    if not A:
+        return
+    N = aq_numbers(A)
+    rel, base = N['relay'], N['baseline']
+    tr = rel['trained']
+    m = rel['bym']
+    segs = [  # (label, relay tokens, of them in marker-copying turns, color, text color)
+        ("Qwen after a context-budget takeover (continues 09-21's 32k context)", rel['by']['sticky:context_budget'],
+         m['sticky:context_budget'], C_QWEN, 'white'),
+        ('Qwen after a done-claim takeover', rel['by']['sticky:done_claim'], m['sticky:done_claim'], '#b8491c',
+         'white'),
+        ('Qwen after a loop / no-progress takeover', rel['by']['sticky:loop'] + rel['by']['sticky:no_progress_wait'],
+         m['sticky:loop'] + m['sticky:no_progress_wait'], '#7a2e0e', 'white'),
+        ("Qwen's one-turn repairs of 09-21's unparseable replies (09-21 keeps the episode)", rel['by']['repair'],
+         m['repair'], C_QWEN_LIGHT, INK),
+        ("09-21's own actions, format autofixed (content trained, thinking masked)", rel['by']['student'], 0,
+         C_STUDENT, 'white'),
+    ]
+    fig, ax = plt.subplots(figsize=(12, 4.4))
+    left = 0
+    for lab, v, vm, col, tc in segs:
+        ax.barh(1, v / 1e6, left=left, color=col, edgecolor=SURF, lw=2, height=0.6, label=lab)
+        if vm:
+            ax.barh(1, vm / 1e6, left=left, color='none', edgecolor=SURF, hatch='////', lw=0, height=0.6)
+        if v / tr >= 0.025:
+            ax.text(left + v / 2e6, 1.42, f'{v / tr:.0%}', ha='center', va='center', fontsize=9.5, color=INK,
+                    fontweight='bold')
+        left += v / 1e6
+    ax.barh(0, base['trained'] / 1e6, color=C_NONE, edgecolor=SURF, lw=2, height=0.6)
+    ax.text(base['trained'] / 2e6, 0, 'Qwen alone, on the states it reaches itself (100 %)', ha='center', va='center',
+            fontsize=9.5, color='white', fontweight='bold')
+    hand = [Patch(color=c, label=lab) for lab, _, _, c, _ in segs]
+    hand.append(Patch(facecolor=C_QWEN, edgecolor=SURF, hatch='////',
+                      label=f"hatched: in a Qwen turn that copies 09-21's <tool_call> or <|end_think|> into its content "
+                      f"({rel['marker_trained'] / tr:.0%} of the relay's trained tokens, baseline "
+                      f"{base['marker_trained'] / base['trained']:.1%})"))
+    ax.legend(handles=hand, loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=2, fontsize=8.5)
+    ax.set_yticks([1, 0])
+    ax.set_yticklabels([f"Relay\n{tr / 1e6:.2f} M", f"Qwen alone\n{base['trained'] / 1e6:.2f} M"], fontsize=10)
+    ax.set_ylim(-0.45, 1.6)
+    ax.set_xlabel('trained tokens (millions), 907 passes + 907 failures per arm')
+    tidy(ax, xgrid=True)
+    ax.grid(axis='y', visible=False)
+    qwen_share = (tr - rel['by']['student']) / tr
+    fig.suptitle(f"{qwen_share:.0%} of the relay's trained tokens are Qwen working inside 09-21's episodes; "
+                 f"{rel['marker_trained'] / tr:.0%} copy 09-21's format quirks", x=0.01, ha='left', fontsize=13,
+                 fontweight='bold', color=INK)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    save(fig, out, 'fig0_sft_tokens.png')
+
+
 FIGS = ['fig1_checks.png', 'fig2_pass.png', 'fig3_work.png', 'fig4_failures.png', 'fig5_verify_note.png',
         'fig6_spend.png', 'fig7_check_quality.png']
 
 
 def make_figs(cache, out):
+    fig_sft_tokens(cache, out)
     rows = check_rows(cache)
     fig_checks(cache, out, rows)
     fig_pass(cache, out, rows)
@@ -660,6 +789,76 @@ def make_figs(cache, out):
 
 def hm(t):
     return t.strftime('%H:%M') if t else '?'
+
+
+def pct(x, d=0):
+    return f'{100 * x:.{d}f} %'
+
+
+def sft_section(cache, base):
+    """'SFT arms: quality comparison' (from arm_quality.jsonl), or nothing when the cache has no per-row facts."""
+    A = aq_rows(cache)
+    if not A:
+        return []
+    N = aq_numbers(A)
+    r, b = N['relay'], N['baseline']
+    tr = r['trained']
+    q_in = tr - r['by']['student']
+    cb, rep = r['by']['sticky:context_budget'], r['by']['repair']
+    hr = NOTES_HANDREAD
+    rows = [
+        ('Tasks (rows from tasks with ≥ 3 rows)', f"{r['tasks']:,} ({pct(r['share_ge3'])})",
+         f"{b['tasks']:,} ({pct(b['share_ge3'])})"),
+        ('Rows per task, p90 / max', f"{r['rpt_p90']} / {r['rpt_max']}", f"{b['rpt_p90']} / {b['rpt_max']}"),
+        ('Tasks behind the 907 failures', f"{r['fail_tasks']}", f"{b['fail_tasks']}"),
+        ('Trained tokens (Qwen inside 09-21\'s episodes)', f"{tr / 1e6:.2f} M ({pct(q_in / tr)})",
+         f"{b['trained'] / 1e6:.2f} M (0 %)"),
+        ('Rows with repairs only, no takeover (their trained tokens)',
+         f"{r['ro_rows']} ({pct(r['ro_rows'] / r['rows'])}), {r['ro_trained'] / 1e6:.2f} M "
+         f"({pct(r['ro_trained'] / tr)}), median {r['ro_p50']:,} per row", 'none'),
+        ('Rows training under 1,000 tokens', f"{r['low1k']} ({pct(r['low1k'] / r['rows'], 1)})", f"{b['low1k']}"),
+        ('Context when Qwen takes over, median (09-21 turns before)',
+         f"{r['ctx_cb'] / 1e3:.1f}k after the context budget ({r['stud_cb']}), {r['ctx_dc'] / 1e3:.1f}k after a done "
+         f"claim ({r['stud_dc']})", 'none'),
+        ('Turns in a pass, median (Qwen turns, mean)', f"{r['pass_turns']} ({r['pass_qturns']:.1f})",
+         f"{b['pass_turns']} ({b['pass_qturns']:.1f})"),
+        ("Passes where Qwen's first done claim follows a check in the last 3 turns (ran tests or the program)",
+         f"{pct(r['checked'])} ({pct(r['ran'])})", f"{pct(b['checked'])} ({pct(b['ran'])})"),
+        ('Thinking tokens per Qwen turn, mean (median)', f"{r['think_mean']:,.0f} ({r['think_p50']})",
+         f"{b['think_mean']:,.0f} ({b['think_p50']})"),
+        ('Failure rows with a repeated command', pct(r['fail_repeat'], 1), pct(b['fail_repeat'], 1)),
+        ("Qwen turns that copy `<tool_call>` or `<\\|end_think\\|>` into trained content (rows)",   # escaped pipes keep the table
+         f"{r['marker']:,} ({pct(r['marker'] / r['qturns'])}; {r['marker_rows']} rows)",
+         f"{b['marker']} ({pct(b['marker'] / b['qturns'], 2)}; {b['marker_rows']} rows)"),
+        ('Qwen turns with prose before the JSON', pct(r['preamble']), pct(b['preamble'])),
+        ("Masked 09-21 turns, share of row tokens (row tokens, median)", f"{pct(r['student_ctx'])} "
+         f"({r['row_p50'] / 1e3:.1f}k)", f"0 ({b['row_p50'] / 1e3:.1f}k)"),
+    ]
+    L = ['', '## SFT arms: quality comparison', '',
+         f"**The relay's tokens sit where 09-21 goes wrong, but {pct(r['marker_trained'] / tr)} of them copy 09-21's "
+         f"format quirks and its failures come from {r['fail_tasks']} tasks against {b['fail_tasks']}.**", '',
+         '| 907 passes + 907 real failures per arm | Relay | Qwen alone |', '|---|---|---|']
+    L += [f'| {a} | {x} | {y} |' for a, x, y in rows]
+    L += ['', f'![fig0_sft_tokens.png]({base}fig0_sft_tokens.png)',
+          "*Trained tokens by who wrote them and from where. Hatched: the Qwen turns that carry a chat marker copied "
+          "from 09-21's turns in the context.*", '',
+          "*Why the relay could be better.* At eval 09-21 spends its turns in states Qwen alone never reaches (a "
+          "32k context of its own wandering, a premature done claim, a reply the parser rejects), and the baseline "
+          f"never shows it what to do there. In the relay **{pct(q_in / tr)} of the trained tokens are Qwen working "
+          f"inside 09-21's own episodes** ({pct(cb / tr)} continuing a 32k context 09-21 filled, {pct(rep / tr)} "
+          "one-turn repairs of its rejected replies). That is the DAgger correction, and it is not thin (only "
+          f"{r['low1k']} rows train under 1,000 tokens, and the {r['ro_rows']} repair-only rows still carry "
+          f"{pct(r['ro_trained'] / tr)} of the tokens). Qwen stays as careful in those states as alone (a check before "
+          f"its first done claim in {pct(r['checked'])} of passes against {pct(b['checked'])}). In the "
+          f"{hr['relay'] + hr['baseline']} failures I read by hand, neither arm rubber-stamps a done claim; both miss "
+          'by trusting their own tests or explaining away a warning.', '',
+          "*What could make it worse.* **Qwen copies 09-21's format quirks from the context** (`<tool_call>` or "
+          "`<|end_think|>` inside the reply, the hatched part of the chart), which teaches 09-21 its own bug back. "
+          "The failure half is narrower "
+          f"({r['fail_tasks']} tasks against {b['fail_tasks']}, up to {r['rpt_max']} rows on one task), and all "
+          f"{r['tasks']} relay tasks are ones Qwen can solve. Only the SFT and the held-out and TB2 evals settle which "
+          'effect wins. Stripping the copied markers at render time before SFT is a cheap fix for the format cost.']
+    return L
 
 
 def make_readme(cache, out, base):
@@ -678,12 +877,17 @@ def make_readme(cache, out, base):
              dlo=100 * pp['ci95_bootstrap'][0], dhi=100 * pp['ci95_bootstrap'][1], s_p=ho['pass_rate'], fmt=last['fmt'],
              share=last['share'], hard=cb['hard_ends'], rec_cb=cb['recovery_after_context_budget']['recovery'],
              rec_dc=cb['recovery_after_other_takeovers']['recovery'], total=total, waste=waste)
+    for key, (_, run, arm) in (('relay', FAIL_RUNS[-1]), ('base', FAIL_RUNS[-2])):
+        oc = load(cache, 'runs', run, 'readout.json')[arm]['outcomes']
+        v.update({f'{key}_full': oc['passes'] / oc['scored'], f'{key}_scored': oc['scored'],
+                  f'{key}_tasks': POOL_TASKS['relay' if key == 'relay' else 'baseline']})
     b1 = load(cache, 'runs', FAIL_RUNS[0][1], 'readout.json')[FAIL_RUNS[0][2]]['outcomes']
     b1_to = b1['failure_causes'].get('timeout', 0) / b1['trials']
     live, now = live_runs(cache)
     stamp = dt.datetime.fromtimestamp(now or dt.datetime.now().timestamp(), PT)
     L = ['# Teacher relay: status', '', f'**{VERDICT.format(**v)}**', '']
     L += [f'- {b.format(**v)}' for b in BULLETS]
+    L += sft_section(cache, base)
     caps = [
         f"The four gated numbers across the five relay checks on the pilot's 100 tasks. Only overflow still misses "
         f"its line ({last['ovf_n'][0]}/{last['ovf_n'][1]} scored episodes).",
@@ -691,8 +895,9 @@ def make_readme(cache, out, base):
         'closed as the kit was fixed.',
         "Left: executed turns by owner per check. Right: takeover triggers in the last check, with Qwen's pass rate "
         'after each.',
-        f'Baseline 1 lost {b1_to:.0%} of episodes to queue waits; per-GPU serving removed them. Live runs join this '
-        'chart when their readout lands.',
+        f'Baseline 1 lost {b1_to:.0%} of episodes to queue waits; per-GPU serving removed them. The last two rows are '
+        "the pools the final SFT arms were drawn from (the Qwen-alone pool's timeouts are slow replies under the wall "
+        'clock, dropped from its arm).',
         f"Replay of {nk} real done-claim takeovers, with and without the note, plus what the live relay runs did. "
         f"The note costs longer replies ({tok['A']['reply']:,.0f} → {tok['B']['reply']:,.0f} tokens) and a few more "
         'format errors.',

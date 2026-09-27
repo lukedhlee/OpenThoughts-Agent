@@ -1109,3 +1109,35 @@ so the template, tokenizer, capped history, mask rules and row limit are unchang
   its whole thinking span is masked (the text itself is never truncated by this limit; older turns' 1,000-token cut
   in the student's view is separate and unchanged).
 - Stats: `render_think16k.json` in each run dir.
+
+## SFT arms: quality comparison (2026-09-27 10:00 PT)
+
+**The relay's trained tokens sit where 09-21 goes wrong, but a fifth of them copy 09-21's format quirks and its
+failures come from fewer tasks.** Measured on the two final training sets (`final_rendered_think16k.jsonl`, 907 + 907
+each) with `data/relay/report/arm_quality.py` (read-only, login node, 6 single-threaded processes, about 1 min). The
+gist section "SFT arms: quality comparison" is generated from its output by `status_figs.py`.
+- **Where the relay's 14.97 M trained tokens sit.** Qwen after a context-budget takeover 49 %, after a done-claim
+  takeover 11 %, after loop / no-progress 3 %, Qwen's one-turn repairs 29 %, 09-21's own autofixed actions 8 %. So
+  92 % are Qwen working inside 09-21's episodes. Median context at the takeover is 32.3k tokens after the context
+  budget (11 student turns) and 18.2k after a done claim (8).
+- **Repair-only rows are not empty.** 299 rows (16 %) have no takeover; they carry 1.34 M trained tokens (9 %),
+  median 3,990 per row. Only 17 relay rows (0.9 %) train under 1,000 tokens. In 338 relay rows the first Qwen done
+  claim is a repair turn (the router lets a repair turn's claim through without the verify note); 142 of them failed.
+- **Coverage.** Relay 790 tasks, 56 % of rows from tasks with 3 or more rows, up to 7 rows per task; its 907 failures
+  come from 437 tasks. Baseline 1,342 tasks, at most 2 rows per task, failures from 680 tasks. Family mix is the same
+  (16 families, software engineering 37–38 %).
+- **Behaviour.** Before Qwen's first done claim, a check (tests, running the program, or reading the output) sits in
+  the last 3 turns in 99 % of relay passes and 100 % of baseline passes (tests or the program 90 % and 94 %). Thinking
+  per Qwen turn is 1,600 tokens mean (345 median) against 1,473 (274). Failure rows with a repeated command are 4.4 %
+  and 4.5 %.
+- **Format residue (the main cost).** Qwen copies 09-21's quirks from the context. 3,782 of 17,524 trained Qwen turns
+  (22 %, in 615 rows) put `<tool_call>` (3,364) or `<|end_think|>` / `<|start_think|>` (486) into the reply content,
+  against 10 of 21,796 in the baseline. They hold 20 % of the relay's trained tokens. 58 % of relay Qwen turns have
+  prose before the JSON (baseline 22 %). Terminus-2 accepts these with warnings, so the executed-step format rate
+  does not show them. Stripping the markers from teacher content at render time would remove them.
+- **Hand-read of 13 failed rows** (7 relay, 6 baseline; sampled false done ×3, overflow ×2, other ×1 per arm, plus
+  one relay repair-only false done). Neither arm rubber-stamps a done claim; every false done followed a check.
+  Both miss the same way: verifying against their own tests, or explaining away a warning ("The Flask module error
+  is expected"). Both arms have one row hunting for the grader, and both have a trained thinking span of about 10k
+  tokens. The one baseline timeout row spends about 13 trained turns waiting on a frozen screen. The relay rows add
+  the copied markers and 09-21's messy turns in the masked context.
