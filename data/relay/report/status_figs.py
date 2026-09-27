@@ -127,6 +127,11 @@ NEXT = [
 ]
 # Hand-read of failed rows in the final arms (notes/relay/relay_full_t2.md, "SFT arms: quality comparison").
 NOTES_HANDREAD = dict(relay=7, baseline=6, rubber_stamp=0)
+# Before the marker strip (final_rendered_think16k.jsonl, arm_quality.py --rendered; relay_full_t2.md) and the prose
+# copy census (Qwen turns with prose before the executed JSON, by the preceding 09-21 turn; same note).
+NOTES_PRESTRIP = dict(marker_turns=3782, qwen_turns=17524, trained_share=0.199, base_marker_turns=10,
+                      base_qwen_turns=21796)
+NOTES_PROSE = dict(after_prose=(6435, 9304), after_clean=(2870, 7191))
 POOL_TASKS = dict(relay=910, baseline=2026)   # tasks with a scored trial in each merged pool (relay_full_t2.md)
 
 
@@ -752,10 +757,10 @@ def fig_sft_tokens(cache, out):
     ax.text(base['trained'] / 2e6, 0, 'Qwen alone, on the states it reaches itself (100 %)', ha='center', va='center',
             fontsize=9.5, color='white', fontweight='bold')
     hand = [Patch(color=c, label=lab) for lab, _, _, c, _ in segs]
+    pre = NOTES_PRESTRIP
     hand.append(Patch(facecolor=C_QWEN, edgecolor=SURF, hatch='////',
-                      label=f"hatched: in a Qwen turn that copies 09-21's <tool_call> or <|end_think|> into its content "
-                      f"({rel['marker_trained'] / tr:.0%} of the relay's trained tokens, baseline "
-                      f"{base['marker_trained'] / base['trained']:.1%})"))
+                      label=f"hatched: Qwen turns still carrying a copied 09-21 marker after the strip "
+                      f"({rel['marker_trained'] / tr:.1%} of trained tokens; {pre['trained_share']:.0%} before)"))
     ax.legend(handles=hand, loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=2, fontsize=8.5)
     ax.set_yticks([1, 0])
     ax.set_yticklabels([f"Relay\n{tr / 1e6:.2f} M", f"Qwen alone\n{base['trained'] / 1e6:.2f} M"], fontsize=10)
@@ -764,9 +769,8 @@ def fig_sft_tokens(cache, out):
     tidy(ax, xgrid=True)
     ax.grid(axis='y', visible=False)
     qwen_share = (tr - rel['by']['student']) / tr
-    fig.suptitle(f"{qwen_share:.0%} of the relay's trained tokens are Qwen working inside 09-21's episodes; "
-                 f"{rel['marker_trained'] / tr:.0%} copy 09-21's format quirks", x=0.01, ha='left', fontsize=13,
-                 fontweight='bold', color=INK)
+    fig.suptitle(f"{qwen_share:.0%} of the relay's trained tokens are Qwen working inside 09-21's episodes; the "
+                 'baseline has none', x=0.01, ha='left', fontsize=13, fontweight='bold', color=INK)
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     save(fig, out, 'fig0_sft_tokens.png')
 
@@ -805,7 +809,7 @@ def sft_section(cache, base):
     tr = r['trained']
     q_in = tr - r['by']['student']
     cb, rep = r['by']['sticky:context_budget'], r['by']['repair']
-    hr = NOTES_HANDREAD
+    hr, pre, pr = NOTES_HANDREAD, NOTES_PRESTRIP, NOTES_PROSE
     rows = [
         ('Tasks (rows from tasks with ≥ 3 rows)', f"{r['tasks']:,} ({pct(r['share_ge3'])})",
          f"{b['tasks']:,} ({pct(b['share_ge3'])})"),
@@ -827,21 +831,26 @@ def sft_section(cache, base):
         ('Thinking tokens per Qwen turn, mean (median)', f"{r['think_mean']:,.0f} ({r['think_p50']})",
          f"{b['think_mean']:,.0f} ({b['think_p50']})"),
         ('Failure rows with a repeated command', pct(r['fail_repeat'], 1), pct(b['fail_repeat'], 1)),
-        ("Qwen turns that copy `<tool_call>` or `<\\|end_think\\|>` into trained content (rows)",   # escaped pipes keep the table
-         f"{r['marker']:,} ({pct(r['marker'] / r['qturns'])}; {r['marker_rows']} rows)",
-         f"{b['marker']} ({pct(b['marker'] / b['qturns'], 2)}; {b['marker_rows']} rows)"),
-        ('Qwen turns with prose before the JSON', pct(r['preamble']), pct(b['preamble'])),
+        ("Copied markers (`<tool_call>`, `<\\|end_think\\|>`) in trained Qwen turns, before → after the strip",
+         f"{pct(pre['marker_turns'] / pre['qwen_turns'])} → {pct(r['marker'] / r['qturns'], 1)}",   # escaped pipes
+         f"{pct(pre['base_marker_turns'] / pre['base_qwen_turns'], 2)} → {pct(b['marker'] / b['qturns'], 2)}"),
+        ('Qwen turns with prose before the JSON (after a 09-21 turn with prose / without)',
+         f"{pct(r['preamble'])} ({pct(pr['after_prose'][0] / pr['after_prose'][1])} / "
+         f"{pct(pr['after_clean'][0] / pr['after_clean'][1])})", pct(b['preamble'])),
         ("Masked 09-21 turns, share of row tokens (row tokens, median)", f"{pct(r['student_ctx'])} "
          f"({r['row_p50'] / 1e3:.1f}k)", f"0 ({b['row_p50'] / 1e3:.1f}k)"),
     ]
     L = ['', '## SFT arms: quality comparison', '',
-         f"**The relay's tokens sit where 09-21 goes wrong, but {pct(r['marker_trained'] / tr)} of them copy 09-21's "
-         f"format quirks and its failures come from {r['fail_tasks']} tasks against {b['fail_tasks']}.**", '',
+         "**The relay's tokens sit where 09-21 goes wrong; with the copied markers stripped, what is left against it is a "
+         f"narrower failure half ({r['fail_tasks']} tasks against {b['fail_tasks']}) and a copied prose habit.**", '',
+         f"Both arms are now rendered with 09-21's copied chat markers stripped from Qwen's replies (copied markers "
+         f"{pct(pre['marker_turns'] / pre['qwen_turns'])} → {pct(r['marker'] / r['qturns'], 1)} of the relay's Qwen "
+         "turns). The strip only touches text outside the JSON the harness executes, so every action is unchanged.",
+         '',
          '| 907 passes + 907 real failures per arm | Relay | Qwen alone |', '|---|---|---|']
     L += [f'| {a} | {x} | {y} |' for a, x, y in rows]
     L += ['', f'![fig0_sft_tokens.png]({base}fig0_sft_tokens.png)',
-          "*Trained tokens by who wrote them and from where. Hatched: the Qwen turns that carry a chat marker copied "
-          "from 09-21's turns in the context.*", '',
+          "*Trained tokens in the clean sets, by who wrote them and from where.*", '',
           "*Why the relay could be better.* At eval 09-21 spends its turns in states Qwen alone never reaches (a "
           "32k context of its own wandering, a premature done claim, a reply the parser rejects), and the baseline "
           f"never shows it what to do there. In the relay **{pct(q_in / tr)} of the trained tokens are Qwen working "
@@ -852,12 +861,13 @@ def sft_section(cache, base):
           f"its first done claim in {pct(r['checked'])} of passes against {pct(b['checked'])}). In the "
           f"{hr['relay'] + hr['baseline']} failures I read by hand, neither arm rubber-stamps a done claim; both miss "
           'by trusting their own tests or explaining away a warning.', '',
-          "*What could make it worse.* **Qwen copies 09-21's format quirks from the context** (`<tool_call>` or "
-          "`<|end_think|>` inside the reply, the hatched part of the chart), which teaches 09-21 its own bug back. "
-          "The failure half is narrower "
+          "*What could make it worse.* The failure half is narrower "
           f"({r['fail_tasks']} tasks against {b['fail_tasks']}, up to {r['rpt_max']} rows on one task), and all "
-          f"{r['tasks']} relay tasks are ones Qwen can solve. Only the SFT and the held-out and TB2 evals settle which "
-          'effect wins. Stripping the copied markers at render time before SFT is a cheap fix for the format cost.']
+          f"{r['tasks']} relay tasks are ones Qwen can solve. **Qwen still copies 09-21's prose-before-JSON habit** "
+          f"({pct(pr['after_prose'][0] / pr['after_prose'][1])} of its turns after a 09-21 turn with prose, "
+          f"{pct(pr['after_clean'][0] / pr['after_clean'][1])} after one without, {pct(b['preamble'])} alone). The "
+          "harness accepts it with a warning, and I left it in. Only the SFT and the held-out and TB2 evals settle "
+          'which effect wins.']
     return L
 
 

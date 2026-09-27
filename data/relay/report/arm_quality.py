@@ -2,8 +2,9 @@
 """arm_quality.py — per-row quality facts for the two final SFT arms (relay vs Qwen alone), for the status gist.
 
 Runs on the Jupiter login node with the snowball env's python (needs `tokenizers`; no torch). Read-only: it reads each
-arm's final_manifest.jsonl and final_rendered_think16k.jsonl (the training set) and 09-21's tokenizer, and writes one
-JSON line per row to stdout. status_figs.py aggregates them.
+arm's final_manifest.jsonl and the rendered training set (default final_rendered_think16k_clean.jsonl, the copied
+09-21 markers stripped; --rendered final_rendered_think16k.jsonl for the set before the strip) and 09-21's tokenizer,
+and writes one JSON line per row to stdout. status_figs.py aggregates them.
 
     OMP_NUM_THREADS=1 RAYON_NUM_THREADS=1 $PY arm_quality.py > arm_quality.jsonl
     $PY arm_quality.py --dump <sid> [<sid> ...]     # the decoded row, turn by turn, for hand-reading
@@ -21,6 +22,7 @@ import sys
 
 RUNS = '/e/fscratch/reformo/lee27/experiments/relay/pilot/runs'
 ARMS = {'relay': 'relay_full_relaym_20260926', 'baseline': 'relay_full_baseline6m_20260926'}
+RENDERED = 'final_rendered_think16k_clean.jsonl'
 TOKENIZER = '/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921/tokenizer.json'
 END, EOT = '<|end_think|>', '<|eot_id|>'
 MARKERS = ('<|start_think|>', '<|end_think|>', '<tool_call>', '<|eot_id|>')   # chat markers that never belong in a reply's content
@@ -173,7 +175,7 @@ def iter_arm(arm):
     for line in open(os.path.join(d, 'final_manifest.jsonl')):
         m = json.loads(line)
         man[m['sid']] = m
-    for line in open(os.path.join(d, 'final_rendered_think16k.jsonl')):
+    for line in open(os.path.join(d, RENDERED)):
         r = json.loads(line)
         yield man[r['sid']], r
 
@@ -204,10 +206,13 @@ def dump(sids, tok, width=1500):
 
 
 def main():
+    global RENDERED
     ap = argparse.ArgumentParser()
     ap.add_argument('--dump', nargs='*')
+    ap.add_argument('--rendered', help=f'rendered file name in each run dir (default {RENDERED})')
     ap.add_argument('--procs', type=int, default=6, help='worker processes (single-threaded each; login-node pid limit)')
     a = ap.parse_args()
+    RENDERED = a.rendered or RENDERED
     if a.dump:
         dump(a.dump, load_tok())
         return

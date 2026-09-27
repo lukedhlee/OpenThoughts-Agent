@@ -1141,3 +1141,33 @@ gist section "SFT arms: quality comparison" is generated from its output by `sta
   is expected"). Both arms have one row hunting for the grader, and both have a trained thinking span of about 10k
   tokens. The one baseline timeout row spends about 13 trained turns waiting on a frozen screen. The relay rows add
   the copied markers and 09-21's messy turns in the masked context.
+
+## Copied 09-21 markers stripped from Qwen's replies, both arms re-rendered (Luke's go, 2026-09-27 14:40 PT)
+
+**Result.** Both final sets are re-rendered as `final_rendered_think16k_clean.jsonl` (the old files are kept). In the
+relay, trained Qwen turns carrying a copied `<tool_call>` or `<|end_think|>` go from 3,782 (22 %) to 10 (0.1 %). Every
+stripped turn still parses with Terminus-2's parser and runs the same commands and task_complete. Every row's reasoning
+split is unchanged. Trained tokens are relay 14,964,894 and baseline 15,774,392, with 0 rows over 65,536.
+- **How.** The strip is `render_think_limit.py --strip-copied-markers --terminus-parser <harbor-terminus2-relay parser>`
+  (7969dca6, run from worktree `ota-relay-v13`). It imports `render.py` from `ota-relay-v8` (d0ddd237) unchanged, with
+  the 16,384 think limit. It runs inside `render.episode_turns`, after the router-record join, on teacher turns only.
+  - It removes `COPIED_MARKERS` (09-21's special tokens, chat headers as a unit, and the pseudo tool tags), but only
+    outside the JSON object Terminus-2 executes.
+  - In the 81 relay turns where the parser's brace scan finds no object (prose with an unbalanced brace, which the
+    harness auto-fixes), it removes only markers that directly open or close a JSON object.
+  - Prose, reasoning, student turns and observations are untouched.
+  - Each episode is also rendered unstripped for the check.
+- **Stripped.**
+  - Relay: 3,825 turns in 621 rows. `<tool_call>` 3,434, `<|end_think|>` 643, `</tool_call>` 77, `</parameter>` 63,
+    `</final>` 58, `</function>` 40, `</assistant>` 27, headers 26, `</think>` 17, and 43 more of the rarer tags.
+  - Baseline: 12 turns in 5 rows (`<tool_call>` 10, `</think>` 2).
+- **Checks.** All 3,837 stripped turns parse with no error and give identical actions (0 kept as served). The split
+  check found 0 rows changed on either arm (1,814 + 1,814 compared). Trained tokens fell by 8,109 in the relay and 26
+  in the baseline.
+- **Left in on purpose.** About 20 relay turns keep a marker or tag inside no-object prose (not adjacent to a brace),
+  plus 2 inside JSON strings. Content-word tags such as `<CLS>` or `<file>` in prose stay, and so does HTML.
+- **Prose before the JSON is a copied habit too.** 54 % of relay Qwen turns have it, against 23 % for Qwen alone.
+  After a 09-21 turn with prose it is 69 % (6,435 of 9,304), and after one without it is 40 % (2,870 of 7,191). The
+  harness accepts it with a warning; it stays in, per the coordinator.
+- The gist now reads the clean sets (`arm_quality.py` defaults to `final_rendered_think16k_clean.jsonl`).
+  `render_think16k_clean.json` in each run dir has the full strip stats.
