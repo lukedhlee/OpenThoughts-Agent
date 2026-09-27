@@ -1401,3 +1401,46 @@ def test_merge_runs_per_task_slots_three_runs(tmp_path):
     assert len(rows) == 9 and sum(t['harness_error'] for t in rows) == 2
     rv = readout.router_view(str(out / 'router_relay_repair'))
     assert set(rv['eps']) == {t['sid'] for t in rows}
+
+
+def test_merge_runs_per_task_seven_and_stop_rule_failure_count(tmp_path):
+    """Attempt 5 (Luke 2026-09-27): merge_runs.py --per-task 7 lists tries 5-7 for a task scored 4 times (and more for
+    a task with unscored slots), keeps up to 7 scored trials per task over the runs; stop_rule.py prints the run's real
+    failures (scored, reward < 1) as the last field, wait lines included, and reads --harness-exclude-tasks."""
+    import subprocess
+    merge = str(HERE.parent.parent / 'pilot' / 'merge_runs.py')
+    stop = str(HERE.parent.parent / 'pilot' / 'stop_rule.py')
+    runs = tmp_path / 'runs'
+
+    def run(name, trials, nh=1.0):
+        d = runs / name
+        (d / 'router_relay_repair').mkdir(parents=True)
+        (d / 'router_relay_repair' / 'turns.jsonl').write_text('')
+        for trial, task, reward, exc in trials:
+            _result(d / 'jobs' / f'{name}_relay_repair' / trial, task, reward, exc)
+        (d / 'run.meta').write_text(f'nodes=8\nnode_hours={nh}\n')
+        return str(d)
+    r4 = run('a4', [(f'p{i}', 'cf-a', 1.0, None) for i in range(4)]
+             + [('q1', 'cf-b', 0.0, None), ('q2', 'cf-b', 1.0, None), ('q3', 'cf-b', None, 'TmuxBatchProtocolError')])
+    tasks = tmp_path / 'tasks.txt'
+    tasks.write_text('cf-a\ncf-b\n')
+    rem = tmp_path / 'rem.txt'
+    res = subprocess.run([sys.executable, merge, '--arm', 'relay_repair', '--per-task', '7', '--remaining', str(rem),
+                          '--tasks', str(tasks), r4], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    assert rem.read_text().split() == ['cf-a'] * 3 + ['cf-b'] * 5
+    r5 = run('a5', [(f's{i}', 'cf-a', 0.0 if i < 2 else 1.0, None) for i in range(4)]
+             + [(f't{i}', 'cf-b', 0.0, None) for i in range(3)] + [('t9', 'cf-b', None, 'TmuxBatchProtocolError')])
+    out = runs / 'am'
+    res = subprocess.run([sys.executable, merge, '--out', str(out), '--arm', 'relay_repair', '--per-task', '7', r4, r5],
+                         capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    m = json.loads((out / 'MERGED.json').read_text())
+    assert [x['trial'] for x in m['per_task']['cf-a']] == ['p0', 'p1', 'p2', 'p3', 's0', 's1', 's2']
+    assert len(m['scored_twice']) == 1 and m['scored_slots'] == 12
+    sr = lambda *a: subprocess.run([sys.executable, stop, r5, 'a5', 'relay_repair', *a], capture_output=True, text=True).stdout.split()
+    assert sr('--after', '100') == ['wait', '7', '5']
+    excl = tmp_path / 'excl.txt'
+    excl.write_text('cf-b\n')
+    o = sr('--after', '1', '--harness-exclude-tasks', str(excl))
+    assert o[0] == 'ok' and o[4] == '0.0000' and o[-1] == '5' and o[6] == '0.1250'

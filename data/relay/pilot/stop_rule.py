@@ -17,6 +17,9 @@ kill, and their errored trials are excluded from the data anyway). Overflow and 
 limit stays. Without the option, <run dir>/harness_exclude_tasks.txt is used when it exists (so a live driver picks it
 up); with neither, the rule is unchanged. Every call appends both harness-error rates (judged and all-task) to
 <run dir>/stop_rule.log, and the printed line carries the all-task rate and trial count as two extra fields.
+
+The last field of every printed line (wait lines too) is the run's real failures so far: scored (usable) episodes with
+reward < 1, readout.py's real_failures before deadline censoring. run_pilot.sh TARGET_FAIL ends the run on it.
 """
 import argparse
 import glob
@@ -44,7 +47,7 @@ def main():
     cache = {}
     if os.path.exists(cache_p):
         for r in readout.read_jsonl(cache_p):
-            if 'task' in r:                          # rows cached before the task was recorded are re-read
+            if 'task' in r and 'reward' in r:        # rows cached before task / reward were recorded are re-read
                 cache[r['key']] = r
     new = []
     for d in readout.arm_job_dirs(a.run_dir, a.name, a.arm):
@@ -55,7 +58,7 @@ def main():
         for t in readout.trials(d, only=todo):
             key = f'{os.path.basename(d)}/{t["trial"]}'
             if t['trial'] in todo and key not in cache:
-                r = dict(key=key, task=t['task'], exc=t['exc'], usable=readout.usable(t), harness_error=t['harness_error'],
+                r = dict(key=key, task=t['task'], reward=t['reward'], exc=t['exc'], usable=readout.usable(t), harness_error=t['harness_error'],
                          steps=len(t['steps']), bad=sum(1 for s in t['steps'] if s['parse_error_obs']))
                 cache[key] = r
                 new.append(r)
@@ -65,8 +68,9 @@ def main():
                 f.write(json.dumps(r) + '\n')
     rows = list(cache.values())
     scored = [r for r in rows if r['usable'] or r['exc'] == 'ContextLengthExceededError']
+    real_fail = sum(1 for r in rows if r['usable'] and (r['reward'] or 0) < 1)
     if len(scored) < a.after:
-        print('wait', len(scored))
+        print('wait', len(scored), real_fail)
         return
     ovf = sum(1 for r in scored if r['exc'] == 'ContextLengthExceededError') / len(scored)
     steps = sum(r['steps'] for r in rows)
@@ -79,9 +83,10 @@ def main():
         f.write(json.dumps(dict(ts=time.time(), scored=len(scored), ovf=round(ovf, 4), fmt=round(fmt, 4),
                                 herr_judged=round(herr, 4), judged_trials=len(judged), herr_all=round(herr_all, 4),
                                 all_trials=len(rows), exclude_file=excl_p if excl is not None else None,
-                                verdict='stop' if stop else 'ok', all_task_rule='stop' if (ovf > a.ovf_max or fmt < a.fmt_min
+                                real_failures=real_fail, verdict='stop' if stop else 'ok', all_task_rule='stop' if (ovf > a.ovf_max or fmt < a.fmt_min
                                                                                            or herr_all > a.herr_max) else 'ok')) + '\n')
-    print('%s %d %.4f %.4f %.4f %d %.4f %d' % ('stop' if stop else 'ok', len(scored), ovf, fmt, herr, len(judged), herr_all, len(rows)))
+    print('%s %d %.4f %.4f %.4f %d %.4f %d %d' % ('stop' if stop else 'ok', len(scored), ovf, fmt, herr, len(judged), herr_all,
+                                              len(rows), real_fail))
 
 
 if __name__ == '__main__':

@@ -19,6 +19,9 @@
 # TOPUP=<list> (attempt 3 on, Luke 2026-09-26 16:20 PT): run only the (task, rollout) slots the earlier attempts did not
 # score: the list (merge_runs.py --remaining) holds each solvable task once per unscored slot, run_pilot.sh runs it round
 # by round at 1 rollout per entry, so no slot is paid for twice. CAP_NODE_H is then what the 30 leaves.
+# Attempt 5 on (Luke 2026-09-27, 2,000 kept per arm): ROLLOUTS=7 (tries 5-7 via merge_runs.py --per-task 7 --remaining),
+# HERR_EXCLUDE (stop_rule.py --harness-exclude-tasks) and TARGET_FAIL / TARGET_BASE (end the run on the merged arm's
+# real-failure count) pass through to run_pilot.sh.
 set -uo pipefail
 NAME=${1:?relay run name}
 C=/e/project1/transfernetx/lee27/code
@@ -65,5 +68,6 @@ log "serve job $JOB submitted ($NODES nodes: 4 x 09-21 + 4 x Qwen per-GPU 128k, 
 tmux new -d -s relay_full_relay "ARMS=relay_repair CLOCK=repair CTX_BUDGET=32000 ROW_MAX=65536 ROW_RESERVE=8192 MAX_INPUT=131072 \
 TEACHER_MAX_TOKENS=32768 BALANCE=active STAGGER_SEC=180 GATE_MIN=15 GATE_LAT=30 GATE_KV=0.90 TEACHER_GUARD=1 VERIFY_NOTE=1 \
 CONC=$CONC NODES=$NODES CAP_NODE_H=$CAP_NODE_H NTASKS=2043 TREE=$TREE TASK_LIST=$TASKS N_ATTEMPTS=$ROLLOUTS \
-STOP_AFTER=300 STOP_OVF=0.30 STOP_FMT=0.98 STOP_HERR=0.10 JOBS_ROOT=$JOBS_ROOT bash $HERE/run_pilot.sh $JOB $NAME"
+STOP_AFTER=300 STOP_OVF=0.30 STOP_FMT=0.98 STOP_HERR=0.10 HERR_EXCLUDE=${HERR_EXCLUDE:-} TARGET_FAIL=${TARGET_FAIL:-0} TARGET_BASE=${TARGET_BASE:-0} \
+JOBS_ROOT=$JOBS_ROOT bash $HERE/run_pilot.sh $JOB $NAME"
 log "LAUNCHED: driver in tmux relay_full_relay (run $NAME, serve job $JOB)"

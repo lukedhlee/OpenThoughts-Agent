@@ -58,6 +58,10 @@ OVF_AFTER=${OVF_AFTER:-0}; OVF_MAX=${OVF_MAX:-0.20}   # relay backstop: cancel w
 STOP_AFTER=${STOP_AFTER:-0}; STOP_OVF=${STOP_OVF:-0.30}; STOP_FMT=${STOP_FMT:-0.98}; STOP_HERR=${STOP_HERR:-0.10}; STOP_EVERY=${STOP_EVERY:-900}
                                   # full run's stop rule (stop_rule.py): from STOP_AFTER scored relay episodes on, every STOP_EVERY s,
                                   # cancel on overflow > STOP_OVF, valid format < STOP_FMT or harness errors > STOP_HERR (0 = off)
+HERR_EXCLUDE=${HERR_EXCLUDE:-}     # stop_rule.py --harness-exclude-tasks: judge harness errors only on tasks not in this list
+TARGET_FAIL=${TARGET_FAIL:-0}; TARGET_BASE=${TARGET_BASE:-0}   # TARGET_FAIL>0: at each stop-rule check (from STOP_AFTER's first
+                                  # call on), end the run normally (harbor stopped, servers released, final readout) once
+                                  # TARGET_BASE (earlier attempts' real failures) + this run's real failures >= TARGET_FAIL
 RUN_KIND=${RUN_KIND:-pilot}
 STUDENT_TOKENIZER=${STUDENT_TOKENIZER:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921/tokenizer.json}   # the cap on older teacher reasoning   # pilot: TASKS.txt must be disjoint from the held-out split; heldout: it must BE the split
 KEYF=${KEYF:-/e/fscratch/reformo/lee27/keys/daytona_eval.env}
@@ -94,7 +98,7 @@ cleanup_sandboxes() {
   [ ${#jobs[@]} -gt 0 ] && $PY $HERE/cleanup_sandboxes.py --key-file $KEYF --delete "${jobs[@]}" 2>&1 | tail -3
 }
 abort() { log "ABORT: $*"; echo "$*" > $R/ABORT; stop_harbor; stop_routers; release_serve "abort"; cleanup_sandboxes; write_meta; exit 1; }
-log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE failover_5xx=$FAILOVER_5XX max_input=$MAX_INPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR"
+log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE failover_5xx=$FAILOVER_5XX max_input=$MAX_INPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR herr_exclude=${HERR_EXCLUDE:-none} target_fail=$TARGET_FAIL base=$TARGET_BASE"
 
 # ---- 1. pre-flight --------------------------------------------------------------------------------------------------
 [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = "$HARBOR_SHA" ] || { log "harbor at ${HARBOR_SRC%/src} is not $HARBOR_SHA"; scancel $JOB; exit 1; }
@@ -221,7 +225,7 @@ PY
   fi
   log "harbor $arm started (pid ${HPID[$arm]}) -> $JOBS_ROOT/${NAME}_$arm"
 done
-T0=$(date +%s); EARLY_DONE=0; LAST_N=0; LAST_CHANGE=$T0; RELEASED_AT=""; OVF_DONE=0; STOP_LAST=0
+T0=$(date +%s); EARLY_DONE=0; LAST_N=0; LAST_CHANGE=$T0; RELEASED_AT=""; OVF_DONE=0; STOP_LAST=0; TARGET_HIT=0
 
 # ---- 5. watch -------------------------------------------------------------------------------------------------------
 while :; do
@@ -289,8 +293,16 @@ PY
   fi
   if [ $STOP_AFTER -gt 0 ] && [ $SERVE_RELEASED = 0 ] && [ $((NOW - STOP_LAST)) -ge $STOP_EVERY ]; then
     for arm in $ARMS; do case $arm in relay*) ;; *) continue;; esac
-      SR=$(timeout 600 $PY $HERE/stop_rule.py $R $NAME $arm --after $STOP_AFTER --ovf-max $STOP_OVF --fmt-min $STOP_FMT --herr-max $STOP_HERR 2>>$R/stop_rule.err)
+      SR=$(timeout 600 $PY $HERE/stop_rule.py $R $NAME $arm --after $STOP_AFTER --ovf-max $STOP_OVF --fmt-min $STOP_FMT --herr-max $STOP_HERR \
+           $([ -n "$HERR_EXCLUDE" ] && echo --harness-exclude-tasks $HERR_EXCLUDE) 2>>$R/stop_rule.err)
       set -- ${SR:-error}
+      if [ $TARGET_FAIL -gt 0 ] && [ "$1" != stop ] && [ $# -ge 3 ] && [ "${!#}" -eq "${!#}" ] 2>/dev/null; then
+        TF=$((TARGET_BASE + ${!#})); log "failure target: $TF real failures ($TARGET_BASE earlier + ${!#} this run) of $TARGET_FAIL"
+        if [ $TF -ge $TARGET_FAIL ]; then
+          echo "$TF" > $R/TARGET_REACHED; log "failure target $TARGET_FAIL reached ($TF); stopping harbor and finishing the run"
+          stop_harbor; TARGET_HIT=1; break
+        fi
+      fi
       case $1 in
         wait) STOP_LAST=$((NOW - STOP_EVERY + 120)); log "stop rule $arm: $2 scored episodes (< $STOP_AFTER)";;   # re-check in 2 min
         ok) STOP_LAST=$NOW; log "stop rule $arm: ok over $2 scored (overflow $3, format $4, harness errors $5 of $6 trials)";;
@@ -298,6 +310,7 @@ PY
         *) STOP_LAST=$NOW; log "stop rule $arm: evaluation failed (${SR:-no output}; see stop_rule.err)";;
       esac
     done
+    [ $TARGET_HIT = 1 ] && break
   fi
   if [ $EARLY_DONE = 0 ] && [ $((NOW - T0)) -ge $((EARLY_MIN*60)) ]; then
     EARLY_DONE=1
@@ -312,6 +325,9 @@ PY
 done
 
 # ---- 6. finish ------------------------------------------------------------------------------------------------------
+if [ $TARGET_HIT = 1 ]; then   # let the interrupted harbor jobs write their results before the readout (at most 5 min)
+  for i in $(seq 1 30); do A=0; for k in "${!HPID[@]}"; do kill -0 ${HPID[$k]} 2>/dev/null && A=1; done; [ $A = 0 ] && break; sleep 10; done
+fi
 stop_routers
 release_serve "harbor done"
 sleep 20; write_meta
