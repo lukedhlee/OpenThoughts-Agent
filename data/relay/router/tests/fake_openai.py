@@ -23,6 +23,7 @@ SUMMARY_PREFIX = 'You are about to hand off your work to another AI agent.'
 QUESTIONS_PREFIX = 'You are picking up work from a previous AI agent on this task:'
 ANSWERS_PREFIX = 'The next agent has a few questions for you'
 CONFIRM_MARK = 'Are you sure you want to mark the task as complete?'
+GATE_MARK = 'A reviewer checked your work'
 
 
 def t2(analysis, cmds=(), done=False, plan='next'):
@@ -75,6 +76,9 @@ def student_json(scenario, n):
                 '{"name": "bash", "arguments": {"command": "echo hi > out.txt"}}</tool_call>',
                 '<|start_think|>NOACTION prose only<|end_think|>The task looks complete to me.',
                 t2('I am done', [], True), t2('confirm', [], True)][min(n, 4)]
+    if scenario == 'claimgate':     # claims done; if the confirmation says a reviewer doubts it, works on, claims again
+        return [t2('look', ['ls -la\n']), t2('write', ['echo hi > out.txt\n']), t2('I am done', [], True),
+                None, t2('fixed, done again', [], True), t2('confirm again', [], True)][min(n, 5)]
     if scenario == 'gaveup':        # gives up in words at its 3rd reply (gave_up is a decision trigger when enabled)
         if n == 2:
             return t2('The requirement is impossible without internet, so we cannot solve the task as specified.',
@@ -108,6 +112,9 @@ class FakeServer:
         self.fail_model = None      # set to make chat answer 404 (a served-name change mid-run)
         self.engine_dead = False    # set to make chat answer vLLM's EngineCore 500 (a crashed engine, API server up)
         self.on_script = None       # called with this server after a scripted reply is taken (e.g. to kill the server)
+        self.completions = []       # /v1/completions bodies (the claim judge)
+        self.judge_top = {'Yes': -0.1, ' yes': -4.0, 'No': -2.4}   # top_logprobs[0] the judge answers with
+        self.judge_status = 200     # set to make /v1/completions fail
         self.runner = None
         self.url = None
 
@@ -115,6 +122,7 @@ class FakeServer:
         app = web.Application(client_max_size=256 * 1024 * 1024)
         app.router.add_get('/v1/models', self.models)
         app.router.add_post('/v1/chat/completions', self.chat)
+        app.router.add_post('/v1/completions', self.complete)
         app.router.add_post('/tokenize', self.tokenize)
         app.router.add_get('/metrics', self.metrics)
         return app
@@ -142,6 +150,24 @@ class FakeServer:
         if self.count_fn is not None:
             count = self.count_fn(msgs)
         return web.json_response({'count': count, 'max_model_len': self.max_model_len, 'tokens': []})
+
+    async def complete(self, request):
+        """vLLM /v1/completions with logprobs: the first token and its top_logprobs."""
+        body = await request.json()
+        self.completions.append(body)
+        if self.judge_status != 200:
+            return web.json_response({'error': {'message': 'judge down', 'code': self.judge_status}},
+                                     status=self.judge_status)
+        if body.get('model') != self.model:
+            return web.json_response({'error': {'message': f"The model `{body.get('model')}` does not exist.",
+                                                'code': 404}}, status=404)
+        top = dict(self.judge_top)
+        tok = max(top, key=top.get) if top else 'Maybe'
+        return web.json_response({'id': f'cmpl-{len(self.completions)}', 'object': 'text_completion', 'model': self.model,
+                                  'choices': [{'index': 0, 'text': tok, 'finish_reason': 'length', 'logprobs': {
+                                      'tokens': [tok], 'token_logprobs': [top.get(tok, -0.01)], 'text_offset': [0],
+                                      'top_logprobs': [top]}}],
+                                  'usage': {'prompt_tokens': 100, 'completion_tokens': 1, 'total_tokens': 101}})
 
     async def chat(self, request):
         body = await request.json()
@@ -177,6 +203,9 @@ class FakeServer:
         elif self.role == 'student':
             n = sum(1 for m in msgs if m.get('role') == 'assistant' and '"analysis"' in text_of(m.get('content')))
             j = student_json(scenario_of(msgs), n)
+            if j is None:            # claimgate's reply to its first confirmation
+                j = (t2('the reviewer doubts it: re-check', ['cat out.txt\n']) if GATE_MARK in last
+                     else t2('confirm', [], True))
             content = j if j.startswith('<|start_think|>') else f'<|start_think|>student thinking {n}<|end_think|>' + j
         else:
             k = sum(1 for m in msgs if m.get('role') == 'assistant' and 'teacher-step' in text_of(m.get('content')))

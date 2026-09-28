@@ -54,6 +54,16 @@ who answers each request:
     takeover's confirmation request, in --mode teacher on the episode's first Terminus-2 confirmation request
     (once per episode in both arms: a note on every confirmation kept Qwen re-verifying until the timeout). Only the teacher's body changes: harbor's history, the student's view and the
     training rows keep Terminus-2's own message. Logged as verify_note=True.
+  * Claim-judge gate (--judge-gate, --mode student only, off by default; 2026-09-28): each episode is put in the
+    'treat' or 'control' arm at creation (sha256(--judge-seed + session id) / 2**256 < --judge-treat-frac). On the
+    episode's FIRST Terminus-2 confirmation request, before the student is asked, the judge (--judge-url, a Qwen vLLM
+    /v1/completions) scores the student's claim with opd_ref_judge.py's claim prompt (claim_judge.py; the history up
+    to the claim, normalized to the dump shape) as log P(Yes) - log P(No). In the treat arm, a score below
+    --judge-threshold replaces the student's view of that confirmation message with GATE_NOTE (its "Current terminal
+    state:" part kept), in that request and every later one of the episode; harbor's history and trajectory keep
+    Terminus-2's text. Later confirmations pass through. A judge failure (60 s x 3 attempts) passes the confirmation
+    through, logged and counted. Logged: gate_arm, judge_logit, judge_p_yes, judge_low, gated, gate_turn,
+    judge_latency_sec, judge_error per request; the verdict on the episode record and in events.jsonl.
 
 Episode identity: the X-Harbor-Session-Id header that Terminus-2 sends with `llm_session_header` set (harbor branch
 lukedhlee/terminus2-relay). It is per trial attempt and equals trajectory.json's session_id. `/tokenize` calls carry no
@@ -125,9 +135,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'triggers'))
 import relay_triggers as rt  # noqa: E402
 sys.path.insert(0, HERE)
 import autofix as af  # noqa: E402
+import claim_judge as cj  # noqa: E402
 import reasoning_cap as rcap  # noqa: E402
 
-ROUTER_VERSION = 'relay-router/1 (2026-09-26 teacher format guard, verify note)'
+ROUTER_VERSION = 'relay-router/1 (2026-09-28 claim-judge gate)'
 SESSION_HEADER = 'X-Harbor-Session-Id'
 
 # Terminus-2 prompt openings (harbor terminus_2.py; stable across the v0.1 pin and lukedhlee/terminus2-relay)
@@ -146,6 +157,12 @@ VERIFY_NOTE = ("Note: another agent did the previous work, and its claim that th
                "confirming, run commands that check the task's key requirements (outputs, files, tests).")
 # --mode teacher: the claim is the teacher's own, so the note drops the "another agent" framing (rest byte-identical)
 VERIFY_NOTE_OWN = VERIFY_NOTE.replace('another agent did the previous work, and its claim', 'the claim', 1)
+# --judge-gate: what the student sees instead of Terminus-2's "Are you sure?" when the judge doubts its first claim
+# (the "Current terminal state:" part before it is kept)
+GATE_NOTE = ("A reviewer checked your work and thinks the issue is not fixed yet: the hidden tests would likely fail. "
+             "Do not mark the task as complete now. Re-read the issue, check your change against it (run the relevant "
+             "code or tests), fix what is wrong, and only then mark the task as complete again. Reply in the same JSON "
+             'format as before, with "task_complete": false and the commands for your next step.')
 
 
 def sha(s):
@@ -240,6 +257,10 @@ class Episode:
         self.paused_at_takeover = 0.0
         self.repair_confirm = False       # the teacher claimed done in a repair turn: it answers that confirmation
         self.note_turn = None             # --verify-note: the turn of the done_claim takeover's confirmation request
+        self.gate_arm = None              # --judge-gate: 'treat' | 'control', fixed at creation
+        self.judged = False               # the first confirmation request has been judged (or the judge failed)
+        self.judge = None                 # the judge's verdict on the first claim (logged on the episode)
+        self.gate = None                  # {'index', 'orig_sha', 'content', 'turn'}: the rewritten confirmation
 
     def summary(self):
         return dict(episode=self.idx, sid=self.sid, task_id=(self.task or {}).get('task_id'), owner=self.owner,
@@ -247,7 +268,9 @@ class Episode:
                     takeover={k: v for k, v in (self.takeover or {}).items() if k != 'discarded_student_reply'} or None,
                     ending=self.ending, turns=self.sc.turn, n_requests=self.n_requests, repairs=self.n_repairs,
                     paused_sec=round(self.paused_sec, 1), pinned=dict(self.pinned),
-                    started=self.t0, last=self.last_t, owners=self.owners)
+                    started=self.t0, last=self.last_t, owners=self.owners,
+                    **(dict(gate_arm=self.gate_arm, judge=self.judge, gated=self.gate is not None,
+                            gate_turn=(self.gate or {}).get('turn')) if self.gate_arm else {}))
 
 
 class Router:
@@ -286,6 +309,10 @@ class Router:
                            view_count_errors=0, context_hard_ends=0, teacher_checked=0, teacher_parse_errors=0,
                            teacher_autofix=0, teacher_resample=0, teacher_unparseable_passed=0, verify_notes=0,
                            upstream_5xx_failover=0)
+        self.judge_urls = [u.strip().rstrip('/') for u in (a.judge_url or '').split(',') if u.strip()]
+        if a.judge_gate:
+            self.counts.update(judge_calls=0, judge_errors=0, judge_low=0, judge_nan=0, gated=0, gate_applied=0,
+                               gate_missing=0)
         os.makedirs(a.log_dir, exist_ok=True)
         os.makedirs(os.path.join(a.log_dir, 'bodies'), exist_ok=True)
         # one os.write per line on an O_APPEND fd: readers (the driver's gates) never see a half-written line
@@ -406,9 +433,12 @@ class Router:
             self.n_episodes += 1
             ep = Episode(sid, self.n_episodes, first, task, 'teacher' if self.mode == 'teacher' else 'student')
             ep.student_think = self.a.student_think
+            if self.a.judge_gate:
+                ep.gate_arm = cj.arm_of(self.a.judge_seed, sid, self.a.judge_treat_frac)
             self.episodes[sid] = ep
             self.by_first.setdefault(ep.first_sha, []).append(sid)
-            self.event('episode_start', episode=ep.idx, sid=sid, task=task, student_think=self.a.student_think)
+            self.event('episode_start', episode=ep.idx, sid=sid, task=task, student_think=self.a.student_think,
+                       **({'gate_arm': ep.gate_arm} if ep.gate_arm else {}))
         ep.last_t = time.time()
         return ep
 
@@ -477,6 +507,8 @@ class Router:
         the way the SFT converter renders teacher turns for 09-21: the teacher's reasoning inside 09-21's think
         markers, then the content, no newlines around the span, no separate reasoning field."""
         stats = dict(teacher_turns_inline=0, teacher_turns_without_reasoning=0, cuts=[])
+        if ep is not None and ep.gate is not None:
+            messages, stats['gate_applied'] = self.apply_gate(ep, messages)
         teacher_idx = [i for i, m in enumerate(messages) if m.get('role') == 'assistant' and ep
                        and (ep.replies.get(sha(text_of(m.get('content')))) or {}).get('owner') == 'teacher']
         last_teacher = teacher_idx[-1] if teacher_idx else None
@@ -505,6 +537,82 @@ class Router:
                     stats['cuts'].append(dict(content_sha=sha(content), reasoning_chars=len(r.strip()), cut_at=at))
             out.append(m2)
         return out, stats
+
+    def apply_gate(self, ep, messages):
+        """--judge-gate: the rewritten confirmation replaces Terminus-2's in every request of the episode (harbor
+        re-sends its own text). Matched by the original text's hash, at its recorded index or, after the history was
+        rearranged, wherever it is. -> (messages, applied?)"""
+        g = ep.gate
+        idx = [g['index']] if g['index'] < len(messages) else []
+        idx += [i for i in range(len(messages)) if i != g['index']]
+        for i in idx:
+            m = messages[i]
+            if m.get('role') == 'user' and sha(text_of(m.get('content'))) == g['orig_sha']:
+                out = list(messages)
+                out[i] = dict(m, content=g['content'])
+                return out, True
+        return messages, False
+
+    async def judge_claim(self, ep, messages, rec, t):
+        """--judge-gate, on the episode's first confirmation request: Qwen judges the student's claim (claim_judge's
+        prompt, opd_ref_judge's claim mode) before the student is asked. Treat arm + logit < threshold -> the student's
+        view of this confirmation becomes GATE_NOTE (kept for every later request). A judge failure passes the
+        confirmation through unchanged."""
+        ep.judged = True
+        j = dict(gate_arm=ep.gate_arm, turn=t, logit=None, p_yes=None, yes=None, no=None, low=False, gated=False,
+                 latency_sec=None, error=None, attempts=0, url=None)
+        ep.judge = j
+        t0 = time.time()
+        prompt, notes = cj.claim_prompt(messages[:-1])
+        j['norm'] = notes
+        if prompt is None:
+            j['error'] = f'no prompt: {notes}'
+        else:
+            j['prompt_chars'], j['prompt_sha'] = len(prompt), sha(prompt)
+            body = dict(model=self.a.judge_model, prompt=prompt, max_tokens=1, temperature=0, logprobs=20)
+            self.write_body(ep, rec['seq'], 'judge', body)
+            u = self.judge_urls[(ep.idx - 1) % len(self.judge_urls)]
+            j['url'] = u
+            self.counts['judge_calls'] += 1
+            for attempt in range(1 + self.a.judge_retries):
+                j['attempts'] += 1
+                try:
+                    async with self.http.post(u + '/completions', json=body,
+                                              timeout=ClientTimeout(total=self.a.judge_timeout)) as resp:
+                        status, data = resp.status, await resp.read()
+                    if status != 200:
+                        raise RuntimeError(f'HTTP {status}: {data[:300].decode("utf-8", "replace")}')
+                    top = json.loads(data)['choices'][0]['logprobs']['top_logprobs'][0]
+                    logit, p_yes, yes, no = cj.score(top)
+                    j.update(logit=None if logit != logit else round(logit, 4),
+                             p_yes=None if p_yes != p_yes else round(p_yes, 4),
+                             yes=None if yes == -float('inf') else round(yes, 4),
+                             no=None if no == -float('inf') else round(no, 4), error=None)
+                    if logit != logit:
+                        self.counts['judge_nan'] += 1
+                    j['low'] = logit == logit and logit < self.a.judge_threshold
+                    break
+                except Exception as e:  # noqa: BLE001 - a judge failure must not end the episode
+                    j['error'] = repr(e)[:500]
+                    if attempt < self.a.judge_retries:
+                        await asyncio.sleep(min(10, 2 ** attempt))
+        j['latency_sec'] = round(time.time() - t0, 3)
+        if self.a.pause_model_calls:
+            ep.paused_sec += time.time() - t0
+            rec['paused_this_turn_sec'] = round(rec.get('paused_this_turn_sec', 0) + time.time() - t0, 3)
+        if j['error']:
+            self.counts['judge_errors'] += 1
+            self.event('judge_error', episode=ep.idx, sid=ep.sid, turn=t, error=j['error'])
+        self.counts['judge_low'] += bool(j['low'])
+        if j['low'] and ep.gate_arm == 'treat':
+            last = text_of(messages[-1].get('content'))
+            k = last.find(CONFIRM_MARK)
+            ep.gate = dict(index=len(messages) - 1, orig_sha=sha(last), content=last[:k] + GATE_NOTE, turn=t)
+            j['gated'] = True
+            self.counts['gated'] += 1
+        rec.update(judge_logit=j['logit'], judge_p_yes=j['p_yes'], judge_low=j['low'], judge_latency_sec=j['latency_sec'],
+                   judge_error=j['error'], gate_turn=t if j['gated'] else None, judge=j)
+        self.event('judge', episode=ep.idx, sid=ep.sid, **j)
 
     def upstream_body(self, who, body, messages):
         if who == 'teacher':
@@ -796,6 +904,18 @@ class Router:
             rec['verify_note'] = True     # the teacher confirms a claim: the done_claim takeover's, or control's first
         return await self.answer(ep, 'teacher', body, messages, rec, main=True)
 
+    def gate_rec(self, ep, rec, stats):
+        """--judge-gate: the episode's arm and whether this request's student view carries the rewritten confirmation."""
+        if not ep.gate_arm:
+            return
+        applied = bool(stats.get('gate_applied'))
+        rec.update(gate_arm=ep.gate_arm, gated=applied)
+        if ep.gate is not None:
+            self.counts['gate_applied' if applied else 'gate_missing'] += 1
+        if ep.judge is not None and 'judge_logit' not in rec:
+            rec.update(judge_logit=ep.judge['logit'], judge_p_yes=ep.judge['p_yes'], judge_low=ep.judge['low'],
+                       gate_turn=(ep.gate or {}).get('turn'))
+
     async def count_student_view(self, ep, body, messages, rec):
         """Tokens in 09-21's rendered prompt for this request: the student-bound body (for_student: its own turns as
         sent, teacher turns inline with older reasoning cut) on the student server's /tokenize, i.e. the prompt_tokens
@@ -860,8 +980,11 @@ class Router:
 
     async def answer_student(self, ep, body, messages, rec, t, now):
         rec['owner'] = 'student'
+        if self.a.judge_gate and rec['request_kind'] == 'confirm' and not ep.judged:
+            await self.judge_claim(ep, messages, rec, t)
         msgs, sstats = self.for_student(ep, messages)
         rec['student_view'] = sstats
+        self.gate_rec(ep, rec, sstats)
         b = self.upstream_body('student', body, msgs)
         rec['sent_body'] = self.write_body(ep, rec['seq'], 'student', b)
         t1 = time.time()
@@ -942,6 +1065,7 @@ class Router:
         else:
             msgs, stats = self.for_student(ep, messages)
             rec['student_view'] = stats
+            self.gate_rec(ep, rec, stats)
         b = self.upstream_body(who, body, msgs)
         rec['sent_body'] = self.write_body(ep, rec['seq'], who, b)
         t1 = time.time()
@@ -1193,6 +1317,19 @@ def parse_args(argv=None):
     p.add_argument('--verify-note', action='store_true',
                    help="append VERIFY_NOTE to the teacher's confirmation request (relay: the done_claim takeover's; "
                         "--mode teacher: the episode's first)")
+    p.add_argument('--judge-gate', action='store_true',
+                   help="--mode student: on each episode's first Terminus-2 confirmation, Qwen judges the claim "
+                        "(claim_judge.py); in the treat arm a low score replaces the student's confirmation with GATE_NOTE")
+    p.add_argument('--judge-url', default=None, help='judge vLLM base URL(s), comma list (http://host:8000/v1); '
+                                                     'round-robin by episode')
+    p.add_argument('--judge-model', default='qwen38')
+    p.add_argument('--judge-threshold', type=float, default=-2.25,
+                   help='log P(Yes) - log P(No) below this is low')
+    p.add_argument('--judge-treat-frac', type=float, default=0.5,
+                   help='share of episodes in the treat arm (sha256(seed + session id))')
+    p.add_argument('--judge-seed', default='claimgate1')
+    p.add_argument('--judge-timeout', type=float, default=60.0, help='seconds per judge attempt')
+    p.add_argument('--judge-retries', type=int, default=2)
     p.add_argument('--context-budget-tokens', type=int, default=None,
                    help='context_budget takeover (sticky): the teacher takes the episode once the student view of a '
                         'request (counted on the student /tokenize) reaches this many tokens; off by default (32000 '
@@ -1224,6 +1361,8 @@ def parse_args(argv=None):
     p.add_argument('--status-every', type=float, default=60.0)
     a = p.parse_args(argv)
     a.arm = a.arm or a.mode
+    if a.judge_gate and (a.mode != 'student' or not a.judge_url):
+        p.error('--judge-gate needs --mode student and --judge-url')
     for who in {'relay': ('student', 'teacher'), 'teacher': ('teacher',), 'student': ('student',)}[a.mode]:
         if not getattr(a, f'{who}_url') or not getattr(a, f'{who}_model'):
             p.error(f'--mode {a.mode} needs --{who}-url and --{who}-model')
@@ -1240,7 +1379,10 @@ async def serve(a, ready_event=None):
                  student_row_max_tokens=a.student_row_max_tokens, student_row_reserve=a.student_row_reserve,
                  terminus_parser=router.parser_path, terminus_parser_sha256=router.parser_sha,
                  teacher_format_guard=a.teacher_format_guard, teacher_resamples=a.teacher_resamples,
-                 verify_note=a.verify_note, verify_note_text=router.note_text if a.verify_note else None)
+                 verify_note=a.verify_note, verify_note_text=router.note_text if a.verify_note else None,
+                 **(dict(judge_gate=True, judge_urls=router.judge_urls, judge_model=a.judge_model,
+                         judge_threshold=a.judge_threshold, judge_treat_frac=a.judge_treat_frac, judge_seed=a.judge_seed,
+                         gate_note=GATE_NOTE) if a.judge_gate else {}))
     if not a.skip_health:
         ok, report = await router.health_check()
         print(json.dumps(report, indent=1), flush=True)

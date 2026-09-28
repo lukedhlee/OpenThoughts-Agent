@@ -51,7 +51,7 @@ class Stack:
 
     def __init__(self, tmp, mode='relay', router_args=(), teacher_key='reasoning', student_delay=0.0,
                  budgets=None, teacher_model='qwen38', strict=True, skip_health=False, teacher_delay=0.0,
-                 two_teachers=False, teacher_long=0):
+                 two_teachers=False, teacher_long=0, judge_args=None, no_tasks=False):
         self.tmp = Path(tmp)
         self.mode, self.router_args = mode, list(router_args)
         self.student = fake_openai.FakeServer('student', 'snowball', delay=student_delay)
@@ -60,6 +60,9 @@ class Stack:
         self.teacher2 = fake_openai.FakeServer('teacher', 'qwen38', delay=teacher_delay) if two_teachers else None
         self.teacher_model, self.strict, self.skip_health = teacher_model, strict, skip_health
         self.budgets = budgets or {}
+        self.no_tasks = no_tasks                # start the router without --tasks
+        self.judge_args = judge_args            # not None: a fake judge (/v1/completions) and --judge-gate
+        self.judge = fake_openai.FakeServer('judge', 'qwen38') if judge_args is not None else None
         self.log_dir = self.tmp / 'router'
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
@@ -83,14 +86,17 @@ class Stack:
         if self.teacher2:
             t_url += ',' + await self.teacher2.start()
         tasks = [dict(task_id=f'cf-{sc}', instruction=instruction(sc, tag), agent_timeout_sec=self.budgets.get(sc, 1000))
-                 for sc in ('selfdone', 'done', 'loop', 'wait', 'budget', 'summ', 'gaveup', 'repair', 'repairs', 'autofix')
+                 for sc in ('selfdone', 'done', 'loop', 'wait', 'budget', 'summ', 'gaveup', 'repair', 'repairs', 'autofix',
+                            'claimgate')
                  for tag in [''] + [f'-{i}' for i in range(8)]]
         tf = self.tmp / 'tasks.json'
         tf.write_text(json.dumps(tasks))
-        args = ['--mode', self.mode, '--port', '0', '--log-dir', str(self.log_dir), '--tasks', str(tf),
+        args = ['--mode', self.mode, '--port', '0', '--log-dir', str(self.log_dir)] + ([] if self.no_tasks else ['--tasks', str(tf)]) + [
                 '--student-url', s_url, '--student-model', 'snowball', '--teacher-url', t_url,
                 '--teacher-model', self.teacher_model, '--health-retries', '1', '--health-wait', '0',
                 '--connect-retries', '0'] + self.router_args
+        if self.judge is not None:
+            args += ['--judge-gate', '--judge-url', await self.judge.start()] + list(self.judge_args)
         if not self.strict:
             args.append('--no-strict-smoke')
         self.a = rr.parse_args(args)
@@ -110,6 +116,8 @@ class Stack:
         await self.teacher.stop()
         if self.teacher2:
             await self.teacher2.stop()
+        if self.judge:
+            await self.judge.stop()
 
     def turns(self, sid=None):
         p = self.log_dir / 'turns.jsonl'
@@ -1493,3 +1501,187 @@ def test_guard_passes_the_served_reply_when_the_resample_gets_no_answer(tmp_path
         assert rows[0]['upstream_status'] == 200 and rows[0]['teacher_unparseable_passed']
         assert getattr(r.stop, 'value', r.stop) == 'task_complete' and len(rows) >= 2
         assert st.router.counts['teacher_resample_failed'] == 1
+
+
+# ---- claim-judge gate (--judge-gate, --mode student) ------------------------------------------------------------------
+import claim_judge as cj  # noqa: E402
+
+LOW = {'No': -0.05, 'Yes': -3.5, ' no': -6.0}      # logit ~ -3.45 (< -2.25)
+HIGH = {'Yes': -0.1, ' yes': -4.0, 'No': -2.4}     # logit ~ +2.3
+
+
+def _gate_stack(tmp, frac, top=None, extra=(), no_tasks=False):
+    st = Stack(tmp, mode='student', judge_args=['--judge-treat-frac', str(frac)] + list(extra), no_tasks=no_tasks)
+    if top is not None:
+        st.judge.judge_top = top
+    return st
+
+
+def test_claim_judge_score_and_arms():
+    logit, p, yes, no = cj.score(LOW)
+    assert abs(logit - (-3.5 - rr_logaddexp(-0.05, -6.0))) < 1e-9 and p < 0.05
+    assert cj.score({'Maybe': -0.1})[0] != cj.score({'Maybe': -0.1})[0]          # neither word: nan
+    assert cj.score({'Yes': -0.2})[0] == -0.2 + 40                                 # a missing side clips at -40
+    arms = [cj.arm_of('claimgate1', f'sid-{i}', 0.5) for i in range(400)]
+    assert 150 < arms.count('treat') < 250 and arms == [cj.arm_of('claimgate1', f'sid-{i}', 0.5) for i in range(400)]
+    assert set(cj.arm_of('s', f'x{i}', 1.0) for i in range(50)) == {'treat'}
+    assert set(cj.arm_of('s', f'x{i}', 0.0) for i in range(50)) == {'control'}
+    import hashlib
+    u = int(hashlib.sha256(b'claimgate1abc').hexdigest(), 16) / 2 ** 256
+    assert cj.arm_of('claimgate1', 'abc', 0.5) == ('treat' if u < 0.5 else 'control')
+
+
+def rr_logaddexp(a, b):
+    import math
+    return max(a, b) + math.log1p(math.exp(-abs(a - b)))
+
+
+def test_judge_prompt_equals_opd_ref_claim_item():
+    """(4) the router's judge prompt for a harbor-shaped request == opd_ref_judge.claim_item on the dump-shaped
+    conversation (dump: think markers on their own lines; harbor: inline spans, a leading system message, list parts)."""
+    import importlib
+    sys.path.insert(0, str(HERE.parent.parent.parent / 'opd_ref'))
+    ref = importlib.import_module('opd_ref_judge')
+    prompt = ('You are an AI assistant tasked with solving command-line tasks.\n\nTask Description:\n'
+              '<issue_description>\nparse() drops the last field\n</issue_description>\n\nCurrent terminal state:\n'
+              'root@box:/testbed# ')
+    acts = [t2 for t2 in (fake_openai.t2('look', ['grep -n parse src/x.py\n']),
+                          fake_openai.t2('edit', ['sed -i s/a/b/ src/x.py\n']),
+                          fake_openai.t2('I am done', [], True))]
+    obs = ['New Terminal Output:\n\n' + 'x' * 5000, 'New Terminal Output:\n\nok']
+    dump = [dict(role='user', content=prompt)]
+    harbor = [dict(role='system', content='ignored'), dict(role='user', content=[{'type': 'text', 'text': prompt}])]
+    for k, a in enumerate(acts):
+        dump.append(dict(role='assistant', content='<|start_think|>\nthinking %d\n<|end_think|>\n\n%s' % (k, a)))
+        harbor.append(dict(role='assistant', content='<|start_think|>thinking %d<|end_think|>%s' % (k, a)))
+        if k < len(obs):
+            dump.append(dict(role='user', content=obs[k]))
+            harbor.append(dict(role='user', content=obs[k]))
+    want = ref.claim_item({'messages': dump})
+    got, notes = cj.claim_prompt(harbor)
+    assert want is not None and got == want and notes == ['dropped_system']
+    assert '<issue_description>' in got and '[... ' in got and 'thinking' not in got
+    assert cj.claim_prompt(harbor[:-1])[0] is None                                # no claim in the history
+
+
+def _claim_rows(st, sid):
+    return [x for x in st.turns(sid) if x.get('turn') is not None]
+
+
+@needs_harbor
+def test_gate_treat_low_rewrites_the_confirmation_and_the_episode_goes_on(tmp_path):
+    """(1) treat + low: the student sees GATE_NOTE at its first confirmation (terminal state kept), replies
+    task_complete false with a command, Terminus-2 goes on; every later request carries the rewrite; the second claim's
+    confirmation passes through and ends the episode. Harbor's history keeps Terminus-2's text."""
+    with _gate_stack(tmp_path, 1.0, LOW) as st:
+        r = run_agent(st, 'claimgate', tmp_path)
+        assert r.exc is None and getattr(r.stop, 'value', r.stop) == 'task_complete'
+        rows = _claim_rows(st, r.sid)
+        assert [x['request_kind'] for x in rows] == ['initial', 'main', 'main', 'confirm', 'main', 'confirm']
+        assert all(x['owner'] == 'student' and x['gate_arm'] == 'treat' for x in rows)
+        conf = rows[3]
+        assert conf['judge_low'] is True and conf['judge_logit'] < -2.25 and conf['gate_turn'] == conf['turn']
+        assert conf['judge_error'] is None and conf['judge']['gated'] and conf['judge_latency_sec'] is not None
+        assert [x['gated'] for x in rows] == [False, False, False, True, True, True]
+        assert len(st.judge.completions) == 1                                   # the second claim is not judged
+        jb = st.judge.completions[0]
+        assert jb['max_tokens'] == 1 and jb['temperature'] == 0 and jb['logprobs'] == 20 and jb['model'] == 'qwen38'
+        sb = _student_bodies(st, 'SCENARIO=claimgate.')
+        assert len(sb) == 6
+        gate_msg = sb[3]['messages'][-1]['content']
+        assert gate_msg.startswith('Current terminal state:\n') and gate_msg.endswith(rr.GATE_NOTE)
+        assert rr.CONFIRM_MARK not in gate_msg
+        for b in sb[4:]:                                                         # re-applied at the same index
+            assert b['messages'][len(sb[3]['messages']) - 1]['content'] == gate_msg
+        assert rr.CONFIRM_MARK in sb[5]['messages'][-1]['content']              # the second confirmation untouched
+        assert sum(rr.CONFIRM_MARK in fake_openai.text_of(m.get('content')) for m in sb[5]['messages']) == 1
+        assert 'cat out.txt' in r.term.sent                                      # the student worked on
+        assert rr.GATE_NOTE not in json.dumps(r.traj)                            # harbor's history is Terminus-2's
+        ep = json.loads(json.dumps(st.router.episodes[r.sid].summary()))
+        assert ep['gate_arm'] == 'treat' and ep['gated'] and ep['gate_turn'] == conf['turn'] and ep['judge']['low']
+        c = st.router.counts
+        assert c['judge_calls'] == 1 and c['gated'] == 1 and c['judge_errors'] == 0 and c['gate_missing'] == 0
+        # the judge's prompt is claim_item's on this request's history up to the claim
+        import importlib
+        sys.path.insert(0, str(HERE.parent.parent.parent / 'opd_ref'))
+        ref = importlib.import_module('opd_ref_judge')
+        hist = sb[3]['messages'][:-1]                                             # up to and including the claim
+        assert hist[-1]['role'] == 'assistant' and '"task_complete": true' in hist[-1]['content']
+        want = ref.claim_item({'messages': [dict(role=m['role'], content=fake_openai.text_of(m.get('content')))
+                                            for m in hist]})
+        assert jb['prompt'] == want and 'the agent declares the task complete' in want
+
+
+@needs_harbor
+def test_gate_control_low_is_unchanged(tmp_path):
+    """(2) control + low: judged and logged, nothing changes; the student confirms and the episode ends."""
+    with _gate_stack(tmp_path, 0.0, LOW) as st:
+        r = run_agent(st, 'claimgate', tmp_path)
+        assert getattr(r.stop, 'value', r.stop) == 'task_complete'
+        rows = _claim_rows(st, r.sid)
+        assert [x['request_kind'] for x in rows] == ['initial', 'main', 'main', 'confirm']
+        assert rows[3]['judge_low'] is True and rows[3]['gate_turn'] is None and not any(x['gated'] for x in rows)
+        assert all(x['gate_arm'] == 'control' for x in rows) and len(st.judge.completions) == 1
+        assert rr.CONFIRM_MARK in _student_bodies(st, 'SCENARIO=claimgate.')[3]['messages'][-1]['content']
+        assert 'cat out.txt' not in r.term.sent and st.router.counts['gated'] == 0
+
+
+@needs_harbor
+def test_gate_treat_high_is_unchanged(tmp_path):
+    """(3) treat + high: nothing changes."""
+    with _gate_stack(tmp_path, 1.0, HIGH) as st:
+        r = run_agent(st, 'claimgate', tmp_path)
+        rows = _claim_rows(st, r.sid)
+        assert [x['request_kind'] for x in rows] == ['initial', 'main', 'main', 'confirm']
+        assert rows[3]['judge_low'] is False and rows[3]['judge_logit'] > 2 and not any(x['gated'] for x in rows)
+        assert rows[3]['gate_arm'] == 'treat' and st.router.counts['gated'] == 0
+        assert getattr(r.stop, 'value', r.stop) == 'task_complete'
+
+
+@needs_harbor
+def test_gate_judge_error_passes_the_confirmation_through(tmp_path):
+    """(5) the judge answers 500 on every attempt (1 + 2 retries): logged and counted, the confirmation passes."""
+    with _gate_stack(tmp_path, 1.0, LOW) as st:
+        st.judge.judge_status = 500
+        r = run_agent(st, 'claimgate', tmp_path)
+        rows = _claim_rows(st, r.sid)
+        assert [x['request_kind'] for x in rows] == ['initial', 'main', 'main', 'confirm']
+        conf = rows[3]
+        assert 'HTTP 500' in conf['judge_error'] and conf['judge']['attempts'] == 3 and not conf['gated']
+        assert conf['judge_logit'] is None and conf['judge_low'] is False and len(st.judge.completions) == 3
+        assert st.router.counts['judge_errors'] == 1 and st.router.counts['gated'] == 0
+        assert getattr(r.stop, 'value', r.stop) == 'task_complete'
+        ev = [json.loads(l) for l in (st.log_dir / 'events.jsonl').read_text().splitlines()]
+        assert any(e['event'] == 'judge_error' for e in ev)
+
+
+def test_judge_gate_needs_student_mode_and_a_url():
+    with pytest.raises(SystemExit):
+        rr.parse_args(['--mode', 'relay', '--port', '0', '--log-dir', '/tmp/x', '--student-url', 'u', '--student-model',
+                       's', '--teacher-url', 'u', '--teacher-model', 't', '--judge-gate', '--judge-url', 'u'])
+    with pytest.raises(SystemExit):
+        rr.parse_args(['--mode', 'student', '--port', '0', '--log-dir', '/tmp/x', '--student-url', 'u',
+                       '--student-model', 's', '--judge-gate'])
+    a = rr.parse_args(['--mode', 'student', '--port', '0', '--log-dir', '/tmp/x', '--student-url', 'u',
+                       '--student-model', 's'])
+    assert not a.judge_gate and a.judge_threshold == -2.25 and a.judge_treat_frac == 0.5 and a.judge_seed == 'claimgate1'
+
+
+@needs_harbor
+def test_gate_treat_low_without_tasks(tmp_path):
+    """R2E-Gym instructions share a long prefix, so the real run has no --tasks: every episode is unmatched
+    (task None), which is counted but never fatal, and the gate works the same end to end."""
+    with _gate_stack(tmp_path, 1.0, LOW, no_tasks=True) as st:
+        assert st.router.tasks == []
+        # the real run's agent settings (strict_json_parser is passed only where this harbor has it)
+        kw = dict(enable_summarize=False, collect_rollout_details=False)
+        if 'strict_json_parser' in inspect.signature(Terminus2.__init__).parameters:
+            kw['strict_json_parser'] = True
+        r = run_agent(st, 'claimgate', tmp_path, interleaved=False, **kw)
+        assert r.exc is None and getattr(r.stop, 'value', r.stop) == 'task_complete'
+        rows = _claim_rows(st, r.sid)
+        assert [x['request_kind'] for x in rows] == ['initial', 'main', 'main', 'confirm', 'main', 'confirm']
+        assert all(x['task_id'] is None for x in rows) and rows[3]['judge_low'] and rows[3]['gated']
+        assert [x['gated'] for x in rows] == [False, False, False, True, True, True]
+        assert 'cat out.txt' in r.term.sent and not (st.log_dir / 'FATAL').exists()
+        assert st.router.counts['no_task_match'] == 1 and st.router.counts['gated'] == 1
