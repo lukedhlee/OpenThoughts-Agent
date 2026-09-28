@@ -18,6 +18,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from opd_ref_probe import load_scores  # noqa: E402
+from opd_ref_judge import classify  # noqa: E402
 
 
 def auc_pm(rows, key, n_boot=2000, seed=0):
@@ -36,6 +37,8 @@ def auc_pm(rows, key, n_boot=2000, seed=0):
     rng = np.random.default_rng(seed)
     bs = [one([r for t in rng.choice(eps, len(eps)) for r in by[t]]) for _ in range(n_boot)]
     bs = [b for b in bs if np.isfinite(b)]
+    if not bs:
+        return dict(auc=float('nan'), lo=float('nan'), hi=float('nan'), n_pos=0, n_neg=0, n_eps=len(eps))
     return dict(auc=est, lo=float(np.percentile(bs, 2.5)), hi=float(np.percentile(bs, 97.5)),
                 n_pos=sum(r['label'] > 0 for r in ok), n_neg=sum(r['label'] < 0 for r in ok), n_eps=len(eps))
 
@@ -70,10 +73,13 @@ def main():
             t, kind, sl, sh, ql, qh = [ch[:, j] for j in range(6)]
             lq = {m: (lambda c: c[qh] - c[ql])(np.cumsum(np.r_[0, np.nan_to_num(sc[m][i])])) for m in sc}
             n = (sh - sl).astype(float)
+            offs, text = e['s_offs'], e['s_text']
             for k in range(e['n_turns']):
                 m = (t == k) & (kind == 1)
                 if m.any():
+                    act = text[int(offs[sl[m].min()][0]):int(offs[sh[m].max() - 1][1])]
                     comp[(e['trial'], k + 1)] = dict(
+                        shorter=-float(n[m].sum()), cls=classify(act),
                         teacher=float(lq['teacher'][m].sum() / n[m].sum()),
                         **{'compass_' + r: float((lq['teacher'][m] - lq[r][m]).sum() / n[m].sum()) for r in refs})
     rows = []
@@ -88,7 +94,7 @@ def main():
                     r['dV'] = V[(trial, k)] - V[(trial, k - 1)]
             r.update(comp.get((trial, k), {}))
             rows.append(r)
-    keys = ['dV', 'V'] + sorted({k for c in comp.values() for k in c})
+    keys = ['dV', 'V'] + sorted({k for c in comp.values() for k in c if k != 'cls'})
     M: dict = dict(n_episodes=len(labs), n_turns=len(rows),
              label_counts={str(l): sum(r['label'] == l for r in rows) for l in (1, 0, -1)}, auc={}, abs_dv={})
     L = ['# judge the judge: auditor labels vs per-turn scores', '',
@@ -101,6 +107,22 @@ def main():
         M['auc'][k] = m
         L.append('| %s | %.2f [%.2f, %.2f] | %d / %d | %d |' % (k, m['auc'], m['lo'], m['hi'], m['n_pos'], m['n_neg'],
                                                                m['n_eps']))
+    L += ['', '## within one kind of turn (so a score cannot win by telling edits from reads)', '',
+          '| score | edit turns | read turns |', '|---|---|---|']
+    M['auc_by_class'] = {}
+    for k in keys:
+        cells = []
+        for c in ('edit', 'read'):
+            m = auc_pm([r for r in rows if r.get('cls') == c], k)
+            M['auc_by_class']['%s_%s' % (k, c)] = m
+            cells.append('%.2f [%.2f, %.2f] (%d/%d)' % (m['auc'], m['lo'], m['hi'], m['n_pos'], m['n_neg'])
+                         if np.isfinite(m['auc']) else '–')
+        L.append('| %s | %s | %s |' % (k, *cells))
+    kinds = {}
+    for r in rows:
+        kinds[(r.get('cls'), r['label'])] = kinds.get((r.get('cls'), r['label']), 0) + 1
+    L += ['', 'turn kinds x label: ' + ', '.join('%s %+d: %d' % (c, l, n) for (c, l), n in sorted(kinds.items(),
+                                                                                                    key=str))]
     L += ['', '## size of the judge\'s per-turn change by auditor label', '', '| label | n | median abs dV | mean dV |',
           '|---|---|---|---|']
     for lab in (1, 0, -1):
