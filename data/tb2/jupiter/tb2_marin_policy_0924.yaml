@@ -1,0 +1,76 @@
+# Terminal-Bench 2 on Daytona from a Jupiter login node, under the Marin Eval Policy of 2026-09-24 (marin-community/marin#9409;
+# its durable harbor-configs/tb2-recovery.yaml and common.sh launch overrides in the HF dataset
+# open-athena/marin-eval-policy-2026-09-24). This is tb2_marin_policy.yaml (v0.1) with the policy's changes and nothing else:
+#   1. one fixed budget for every task: agents[].override_timeout_sec 1800 (AgentTimeoutError is scored: harbor keeps the
+#      agent's work and runs the verifier), override_setup_timeout_sec 360 (retryable), verifier.override_timeout_sec 300;
+#   2. the 09-24 retry list (adds ContainerRegistryThrottledError, AgentSetupTimeoutError, DaytonaSandboxStopError,
+#      DaytonaProcessError, ArtifactWriteTimeoutError and the two tau3 types); the model outcomes AgentTimeoutError,
+#      ContextLengthExceededError, TurnCapExhaustedError and NonZeroAgentExitCodeError stay off it, so they are scored;
+#   3. harbor marin-community/harbor @ 761fb516 (run_tb2.sh with HARBOR_SRC=<code>/harbor-p0924/src HARBOR_SHA=761fb516).
+# Unchanged, and the policy's own values: terminus-2, Daytona, 16 concurrent trials, one trial per task per run, 32,768 input /
+# 8,192 output tokens per turn, thinking at the model default (no chat_template_kwargs: the Grug Datakit 09-21 template
+# defaults to /think), no sampler override (the server's temperature 1.0).
+# Ours, as in every earlier Snowball TB2 run: auto_snapshot (the eval org refuses declarative builds), skip_special_tokens=false
+# (Snowball's think delimiters are special tokens), EAGLE-3 draft and DP4 on one GH200 node (serve_snowball.sbatch).
+# One logging-only addition: trajectory_config.raw_content=true writes each turn's raw completion (think span included) into
+# trajectory.json instead of the parsed analysis+plan. terminus_2.py @ 761fb516 reads it only when it builds trajectory
+# steps; the conversation the model sees and the commands it runs are unchanged.
+#
+# run_tb2.sh fills __JOB_NAME__ and __API_BASE__.
+job_name: __JOB_NAME__
+jobs_dir: /e/data1/mmlaion/lee27/experiments/tb2_jobs
+n_attempts: 1
+n_concurrent_trials: 16
+timeout_multiplier: 1.0
+quiet: true
+release_trial_payloads_in_memory: true
+retry:
+  max_retries: 10
+  include_exceptions:
+    - InternalServerError
+    - APIConnectionError
+    - APITimeoutError
+    - ArtifactUploadTimeoutError
+    - ArtifactWriterBacklogError
+    - CancelledError
+    - ContextManagementInfrastructureError
+    - LLMRequestTimeoutError
+    - SandboxBuildFailedError
+    - ContainerRegistryThrottledError
+    - AgentSetupTimeoutError
+    - DaytonaSandboxStopError
+    - DaytonaProcessError
+    - TrialTimeoutError
+    - ArtifactWriteTimeoutError
+    - Tau3RuntimeInfrastructureError
+    - Tau3TargetInfrastructureError
+  exclude_exceptions: []
+  wait_multiplier: 2.0
+  min_wait_sec: 1.0
+  max_wait_sec: 60.0
+environment:
+  type: daytona
+  force_build: false
+  kwargs:
+    auto_snapshot: true
+agents:
+  - name: terminus-2
+    model_name: hosted_vllm/snowball
+    override_setup_timeout_sec: 360
+    override_timeout_sec: 1800
+    kwargs:
+      api_base: __API_BASE__
+      # the policy's standalone --ak model_info, verbatim
+      model_info:
+        max_input_tokens: 32768
+        max_output_tokens: 8192
+        input_cost_per_token: 0.0
+        output_cost_per_token: 0.0
+      extra_body:
+        skip_special_tokens: false
+      trajectory_config:
+        raw_content: true
+verifier:
+  override_timeout_sec: 300
+datasets:
+  - path: /e/fscratch/reformo/lee27/tasks/terminal_bench_2

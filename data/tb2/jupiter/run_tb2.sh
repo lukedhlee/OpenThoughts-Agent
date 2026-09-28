@@ -17,6 +17,8 @@ NTASKS=${NTASKS:-89}
 # SHARD=i/n splits the task list across servers (same 16-wide concurrency per server; merge the job dirs to score)
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1   # login-node pid cap
 [ "$HARBOR_SRC" != /e/fscratch/reformo/lee27/code/harbor-v01/src ] || [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = 7b18505a ] || { echo "harbor-v01 is not at the v0.1 pin 7b18505a"; exit 1; }
+# HARBOR_SHA=<8+ hex> pins any other HARBOR_SRC clone (the 09-24 policy: harbor-p0924 @ 761fb516)
+[ -z "${HARBOR_SHA:-}" ] || [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = "${HARBOR_SHA:0:8}" ] || { echo "$HARBOR_SRC is not at $HARBOR_SHA"; exit 1; }
 [ "$(ls -d $TASKS/*/ | wc -l)" = "$NTASKS" ] || { echo "task tree at $TASKS does not have $NTASKS tasks"; exit 1; }
 URL=$(cat $E/endpoints/$JOB 2>/dev/null) || { echo "no endpoint file for job $JOB (server not up, or gone)"; exit 1; }
 squeue -h -j $JOB -o %T | grep -q RUNNING || { echo "serve job $JOB is not RUNNING"; exit 1; }
@@ -63,6 +65,9 @@ names = sorted((d for d in os.listdir(tasks) if os.path.isfile(f"{tasks}/{d}/tas
 shard = os.environ.get("SHARD")   # SHARD=i/n: take every n-th task starting at i (interleaved so shards are alike)
 if shard:
     i, n = map(int, shard.split("/")); names = names[i::n]
+skip = [t for t in os.environ.get("EXCLUDE_TASKS", "").split(",") if t]   # EXCLUDE_TASKS=a,b: tasks that cannot run (count them as infra losses)
+if skip:
+    names = [t for t in names if t not in skip]; print(f"excluded: {skip}")
 c.pop("datasets", None); c["tasks"] = [{"path": f"{tasks}/{t}"} for t in names]
 yaml.safe_dump(c, open(p, "w"), sort_keys=False); print(f"{len(names)} tasks, longest agent timeout first ({names[0]} {agent_timeout(names[0]):.0f}s ... {names[-1]} {agent_timeout(names[-1]):.0f}s)")
 PY
