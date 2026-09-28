@@ -4,7 +4,8 @@
 # then analyze. Stages whose outputs exist are skipped, so a resubmission resumes.
 #   teacher  Qwen3.8-27B            4 shards, TP1 each
 #   refs     Qwen3.5-{0.8,2,4,9}B   4 shards, TP1 each
-#   student  the probed Snowball    TP4 + expert parallel (serve_ab.sbatch's tp4ep layout)
+#   student  the probed Snowball    through a vLLM server, TP1 x DP4 x EP as serve_node.sh serves it (GrugMoE refuses
+#            TP>1; job 2100734), no EAGLE-3 draft
 # Env copied by diff from data/relay/pilot/serve_node.sh (EAGLE-3 vLLM overlay, relay-extra torchvision for qwen3_5).
 #
 #   RUN=<name> SESSION=<eval session dir> STUDENT=<model dir> sbatch opd_ref_probe.sbatch
@@ -52,19 +53,35 @@ qwen4() {  # qwen4 <name> <model dir>: four TP1 shards, one per GPU
   if [ "$(ls $OUT/scores/$name.*.pkl 2>/dev/null | wc -l)" = 4 ]; then echo "$name: done already"; return 0; fi
   for g in 0 1 2 3; do
     CUDA_VISIBLE_DEVICES=$g VLLM_PORT=$((29500 + 100 * g)) $PY $HERE/opd_ref_probe.py score --out $OUT --name $name \
-      --model $model --family qwen --shard $g --nshards 4 --max-len 98304 --batched-tokens 8192 \
+      --model $model --family qwen --shard $g --nshards 4 --max-len 98304 --batched-tokens 2048 \
       > $OUT/logs/$name.$g.log 2>&1 & pids+=($!)
   done
   local rc=0; for p in "${pids[@]}"; do wait $p || rc=1; done
-  echo "$name: exit $rc ($(date -Is))"; tail -2 $OUT/logs/$name.*.log
+  echo "$name: exit $rc ($(date -Is))"; for f in $OUT/logs/$name.*.log; do tail -n 1 $f; done
 }
 
 qwen4 teacher $TEACHER
 for r in ${REFS//,/ }; do qwen4 $r $M/Qwen3.5-$r; done
 if [ ! -f $OUT/scores/student.0.pkl ]; then
-  $PY $HERE/opd_ref_probe.py score --out $OUT --name student --model $STUDENT --family snowball --tp 4 \
-    --max-len 65536 --batched-tokens 16384 > $OUT/logs/student.log 2>&1
-  echo "student: exit $? ($(date -Is))"; tail -2 $OUT/logs/student.log
+  for try in 1 2 3; do
+    $PY -m vllm.entrypoints.openai.api_server --model $STUDENT --served-model-name snowball --port 8000 \
+      --tensor-parallel-size 1 --data-parallel-size 4 --enable-expert-parallel \
+      --max-model-len 65536 --hf-overrides '{"max_position_embeddings": 65536, "max_seq_len": 65536}' \
+      --max-num-seqs 8 --gpu-memory-utilization 0.80 --max-num-batched-tokens 4096 \
+      > $OUT/logs/student_server.$try.log 2>&1 & SPID=$!
+    up=0; for i in $(seq 1 120); do
+      kill -0 $SPID 2>/dev/null || break
+      curl -sf --max-time 5 localhost:8000/health >/dev/null && { up=1; break; }; sleep 10
+    done
+    [ $up = 1 ] && break
+    echo "student server not healthy (try $try)"; kill $SPID 2>/dev/null; wait $SPID 2>/dev/null; sleep 20
+  done
+  if [ $up = 1 ]; then
+    $PY $HERE/opd_ref_probe.py score-http --out $OUT --name student --family snowball --concurrency 16 \
+      > $OUT/logs/student.log 2>&1
+    echo "student: exit $? ($(date -Is))"; tail -n 1 $OUT/logs/student.log
+  fi
+  kill $SPID 2>/dev/null; wait $SPID 2>/dev/null
 fi
 $PY $HERE/opd_ref_probe.py analyze --out $OUT --refs $REFS
 echo "opd_ref_probe done ($(date -Is))"

@@ -257,12 +257,14 @@ def cmd_score(a):
     mine = list(range(a.shard, len(eps), a.nshards))
     out = os.path.join(a.out, 'scores', '%s.%d.pkl' % (a.name, a.shard))
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    kw: dict = dict(model=a.model, tensor_parallel_size=a.tp, max_model_len=a.max_len, gpu_memory_utilization=0.85,
+    # prompt logprobs take a float32 log_softmax over the whole vocabulary for every token of a prefill chunk
+    # (2048 x 248k x 4 B = 2 GB for Qwen), outside vLLM's memory budget: keep chunks small and leave headroom
+    # (8192-token chunks OOMed at 0.85 in job 2100734)
+    kw: dict = dict(model=a.model, tensor_parallel_size=a.tp, max_model_len=a.max_len, gpu_memory_utilization=0.78,
               enable_prefix_caching=False, max_num_batched_tokens=a.batched_tokens, max_num_seqs=a.max_seqs,
               seed=0)
     if a.family == 'snowball':
-        kw.update(hf_overrides={'max_position_embeddings': a.max_len, 'max_seq_len': a.max_len},
-                  enable_expert_parallel=a.tp > 1)
+        kw.update(hf_overrides={'max_position_embeddings': a.max_len, 'max_seq_len': a.max_len})
     else:
         kw.update(limit_mm_per_prompt={'image': 0, 'video': 0})
     t0 = time.time()
@@ -289,7 +291,55 @@ def cmd_score(a):
         print('%s shard %d: %d/%d episodes, %.0f tok/s' % (a.name, a.shard, len(res), len(mine), ntok / t_score),
               flush=True)
     pickle.dump(dict(scores=res, tokens=ntok, t_load=t_load, t_score=t_score), open(out, 'wb'))
-    print('%s shard %d done: %d tokens, load %.0f s, score %.0f s' % (a.name, a.shard, ntok, t_load, t_score))
+    print('%s shard %d done: %d tokens, load %.0f s, score %.0f s, missing logprobs %d' % (
+        a.name, a.shard, ntok, t_load, t_score, sum(int(np.isnan(v[1:]).sum()) for v in res.values())))
+
+
+def cmd_score_http(a):
+    """Score through a running vLLM OpenAI server (GrugMoE serves only as TP1 x DP x EP, which the offline LLM class
+    does not give us): /v1/completions with the token ids as the prompt, max_tokens=1, prompt_logprobs=0."""
+    import urllib.request
+    from concurrent.futures import ThreadPoolExecutor
+    eps = pickle.load(open(os.path.join(a.out, 'episodes.pkl'), 'rb'))
+    key = 's_ids' if a.family == 'snowball' else 'q_ids'
+    out = os.path.join(a.out, 'scores', '%s.0.pkl' % a.name)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+
+    def one(i):
+        ids = eps[i][key]
+        body = json.dumps(dict(model=a.served_name, prompt=ids.tolist(), max_tokens=1, temperature=0.0,
+                               prompt_logprobs=0)).encode()
+        for attempt in range(3):
+            try:
+                req = urllib.request.Request(a.url.rstrip('/') + '/v1/completions', data=body,
+                                             headers={'Content-Type': 'application/json'})
+                r = json.loads(urllib.request.urlopen(req, timeout=1800).read())
+                break
+            except Exception as ex:
+                if attempt == 2:
+                    raise
+                print('retry', i, repr(ex)[:120], flush=True)
+                time.sleep(10)
+        pl = r['choices'][0]['prompt_logprobs']
+        lp = np.full(len(ids), np.nan, dtype=np.float32)
+        for j, d in enumerate(pl):
+            if d:
+                lp[j] = d[str(int(ids[j]))]['logprob']
+        return i, lp
+
+    t0 = time.time()
+    res, ntok = {}, 0
+    with ThreadPoolExecutor(a.concurrency) as ex:
+        for i, lp in ex.map(one, range(len(eps))):
+            res[i] = lp
+            ntok += len(lp)
+            if len(res) % 32 == 0:
+                print('%s: %d/%d episodes, %.0f tok/s' % (a.name, len(res), len(eps), ntok / (time.time() - t0)),
+                      flush=True)
+    t_score = time.time() - t0
+    pickle.dump(dict(scores=res, tokens=ntok, t_load=0.0, t_score=t_score), open(out, 'wb'))
+    print('%s done: %d tokens, score %.0f s, missing logprobs %d' % (
+        a.name, ntok, t_score, sum(int(np.isnan(v[1:]).sum()) for v in res.values())))
 
 
 # ==== analyze =======================================================================================================
@@ -458,13 +508,20 @@ def main():
     q.add_argument('--shard', type=int, default=0)
     q.add_argument('--nshards', type=int, default=1)
     q.add_argument('--max-len', type=int, default=131072)
-    q.add_argument('--batched-tokens', type=int, default=8192)
+    q.add_argument('--batched-tokens', type=int, default=2048)
     q.add_argument('--max-seqs', type=int, default=8)
+    q = sub.add_parser('score-http')
+    q.add_argument('--out', required=True)
+    q.add_argument('--name', required=True)
+    q.add_argument('--family', choices=['snowball', 'qwen'], required=True)
+    q.add_argument('--url', default='http://localhost:8000')
+    q.add_argument('--served-name', default='snowball')
+    q.add_argument('--concurrency', type=int, default=16)
     q = sub.add_parser('analyze')
     q.add_argument('--out', required=True)
     q.add_argument('--refs', default='')
     a = p.parse_args()
-    dict(prep=cmd_prep, score=cmd_score, analyze=cmd_analyze)[a.cmd](a)
+    dict(prep=cmd_prep, score=cmd_score, analyze=cmd_analyze, **{'score-http': cmd_score_http})[a.cmd](a)
 
 
 if __name__ == '__main__':
