@@ -104,6 +104,9 @@ def main():
     ap.add_argument('--strip-copied-markers', action='store_true',
                     help="remove 09-21's chat/tool markers from teacher content outside the executed JSON (see above)")
     ap.add_argument('--terminus-parser', help="harbor terminus_json_plain_parser.py (required with the strip)")
+    ap.add_argument('--autofix-loss', choices=('content', 'none'), default='content',
+                    help="render_episode's autofix_loss: 'content' (render.py's default) trains an autofixed 09-21 turn's "
+                         "rewritten action; 'none' masks it like every other 09-21 turn (relay SFT arm A, 2026-09-28)")
     a = ap.parse_args()
     if a.strip_copied_markers and not a.terminus_parser:
         ap.error('--strip-copied-markers needs --terminus-parser')
@@ -159,9 +162,9 @@ def main():
                     continue
                 if a.strip_copied_markers:
                     strip['on'] = False
-                    ref = render.render_episode(traj, recs[sid], tok, tpl, bos, think_limit=a.think_limit)
+                    ref = render.render_episode(traj, recs[sid], tok, tpl, bos, think_limit=a.think_limit, autofix_loss=a.autofix_loss)
                     strip['on'], strip['row_hit'] = True, False
-                row = render.render_episode(traj, recs[sid], tok, tpl, bos, think_limit=a.think_limit)
+                row = render.render_episode(traj, recs[sid], tok, tpl, bos, think_limit=a.think_limit, autofix_loss=a.autofix_loss)
                 render.check_row(row, tok)
                 if a.strip_copied_markers:
                     st['rows_stripped'] += strip['row_hit']
@@ -191,7 +194,7 @@ def main():
         st['strip'] = dict(turns=strip['turns'], markers=dict(strip['markers'].most_common()),
                            checks=dict(strip['checks']), not_same=strip['bad'][:50], n_not_same=len(strip['bad']))
     res = dict(st, over_64k_rows=over, max_reasoning_tokens_per_turn=max_think, missing=len(want - done),
-               think_limit=a.think_limit,
+               think_limit=a.think_limit, autofix_loss=a.autofix_loss,
                render_dir=os.path.abspath(a.render_dir))
     print(json.dumps(res, indent=1, default=str))
 
