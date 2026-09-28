@@ -2,8 +2,13 @@
 
     python ifeval_gen.py --url http://localhost:8000/v1 --model snowball --inp ifeval_input_data.jsonl --out <tag>.jsonl
 
-Greedy (temperature 0), one response per prompt, raw content kept (think spans stripped at scoring time on the Mac,
-score_ifeval.py). 32 concurrent requests = the server's --max-num-seqs. Resumable: prompts already in --out are skipped.
+Greedy by default (temperature 0), one response per prompt, raw content kept (think spans stripped at scoring time on
+the Mac, score_ifeval.py). 32 concurrent requests = one suite's share of the server's slots. Resumable: (prompt,
+sample) pairs already in --out are skipped.
+
+2026-09-28: --n N draws N samples per prompt (use with --temperature > 0). Every row carries "sample" (0..N-1), and
+requests go out sample-major (every prompt's sample 0, then sample 1, ...), so a job cut short by its wall still leaves
+whole samples that the scorers can use.
 """
 import argparse, json, os, sys, time, threading
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +19,7 @@ ap.add_argument("--url", required=True); ap.add_argument("--model", default="sno
 ap.add_argument("--inp", required=True); ap.add_argument("--out", required=True)
 ap.add_argument("--max-tokens", type=int, default=8192); ap.add_argument("--conc", type=int, default=32)
 ap.add_argument("--temperature", type=float, default=0.0)
+ap.add_argument("--n", type=int, default=1)   # samples per prompt, each its own request
 ap.add_argument("--thinking", choices=["default", "off"], default="default")   # off = chat_template_kwargs enable_thinking=false
 a = ap.parse_args()
 EXTRA = {"skip_special_tokens": False}
@@ -22,28 +28,29 @@ if a.thinking == "off": EXTRA["chat_template_kwargs"] = {"enable_thinking": Fals
 rows = [json.loads(l) for l in open(a.inp)]
 done = set()
 if os.path.exists(a.out):
-    done = {json.loads(l)["key"] for l in open(a.out)}
-todo = [r for r in rows if r["key"] not in done]
-print(f"prompts {len(rows)} done {len(done)} todo {len(todo)}", flush=True)
+    done = {(d["key"], d.get("sample", 0)) for d in map(json.loads, open(a.out))}
+todo = [(s, r) for s in range(a.n) for r in rows if (r["key"], s) not in done]
+print(f"prompts {len(rows)} x {a.n} samples, done {len(done)} todo {len(todo)}", flush=True)
 client = OpenAI(base_url=a.url, api_key="x", timeout=1800, max_retries=2)
 lock = threading.Lock(); t0 = time.time(); n = [0]
 
-def one(r):
+def one(job):
+    s, r = job
     for attempt in range(3):
         try:
             resp = client.chat.completions.create(model=a.model, messages=[{"role": "user", "content": r["prompt"]}],
                 max_tokens=a.max_tokens, temperature=a.temperature,
                 extra_body=EXTRA)
             ch = resp.choices[0]
-            rec = {"key": r["key"], "prompt": r["prompt"], "response": ch.message.content or "",
+            rec = {"key": r["key"], "sample": s, "prompt": r["prompt"], "response": ch.message.content or "",
                    "reasoning": getattr(ch.message, "reasoning_content", None) or getattr(ch.message, "reasoning", None),
                    "finish_reason": ch.finish_reason, "usage": resp.usage.model_dump() if resp.usage else None,
                    "instruction_id_list": r["instruction_id_list"], "kwargs": r["kwargs"]}
             break
         except Exception as e:
-            print(f"key {r['key']} attempt {attempt} error {e!r}", flush=True); time.sleep(5)
+            print(f"key {r['key']} sample {s} attempt {attempt} error {e!r}", flush=True); time.sleep(5)
     else:
-        rec = {"key": r["key"], "prompt": r["prompt"], "response": "", "finish_reason": "error", "usage": None,
+        rec = {"key": r["key"], "sample": s, "prompt": r["prompt"], "response": "", "finish_reason": "error", "usage": None,
                "instruction_id_list": r["instruction_id_list"], "kwargs": r["kwargs"]}
     with lock:
         with open(a.out, "a") as f: f.write(json.dumps(rec) + "\n")

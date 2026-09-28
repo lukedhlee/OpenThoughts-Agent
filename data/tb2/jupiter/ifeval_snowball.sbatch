@@ -10,6 +10,10 @@
 # 32 in flight each (the server has 4 DP ranks x 32 seqs), so start-up is paid once. THINK_OFF=1 adds a second round
 # with chat_template_kwargs enable_thinking=false -> <TAG>_nothink[_ifbench].jsonl (the Grug Datakit /nothink mode).
 #
+# 2026-09-28: NSAMP=<n> draws n samples per prompt (with TEMP=1.0; rows carry "sample"), MAX_TOKENS/CONC as before
+# (CONC is per generator; above 128 in total the server queues the rest, which keeps every slot busy to the end).
+# PAR_ROUNDS=1 runs the thinking-off round alongside the default one instead of after it.
+#
 # The marin vLLM fork with the adapted EAGLE-3 draft (Luke's 2026-09-12 policy: every job uses the draft), the arm's
 # geometry (TP1 x DP4 x EP4, 65k context), and marin's eval-policy sampler (#8151: temperature 0.7, top_p 1.0,
 # repetition_penalty 1.1) applied server-side, so harbor's terminus-2 sends no sampling parameters of its own.
@@ -55,7 +59,7 @@ export VLLM_ALLREDUCE_USE_SYMM_MEM=0
 CACHE=/e/fscratch/reformo/lee27/cache; mkdir -p $CACHE/vllm $CACHE/xdg $CACHE/triton $CACHE/inductor $CACHE/flashinfer $CACHE/tmp
 export VLLM_CACHE_ROOT=$CACHE/vllm XDG_CACHE_HOME=$CACHE/xdg TRITON_CACHE_DIR=$CACHE/triton TORCHINDUCTOR_CACHE_DIR=$CACHE/inductor FLASHINFER_WORKSPACE_BASE=$CACHE/flashinfer TMPDIR=$CACHE/tmp
 export PATH=$C/envs/snowball-v2/bin:$PATH   # ninja for FlashInfer JIT
-echo "node=$(hostname) job=$SLURM_JOB_ID model=$MODEL policy=$POLICY gen=$GEN"
+echo "node=$(hostname) job=$SLURM_JOB_ID model=$MODEL policy=$POLICY gen=$GEN temp=${TEMP:-0} nsamp=${NSAMP:-1} max_tokens=${MAX_TOKENS:-8192} conc=${CONC:-32} par_rounds=${PAR_ROUNDS:-0}"
 nvidia-smi --query-gpu=name,memory.total --format=csv
 $PY -c "import vllm,torch;print('vllm',vllm.__file__,vllm.__version__,'torch',torch.__version__)"
 CHAT=(); [ -f "$MODEL/chat_template.jinja" ] && CHAT=(--chat-template "$MODEL/chat_template.jinja")
@@ -84,12 +88,17 @@ gen() {   # gen <suite> <thinking> : one suite's generation, IFEval keeps its 09
   local inp=$IFE/ifeval_input_data.jsonl out=$IFE/$t.jsonl
   [ "$suite" = ifbench ] && { inp=$IFE/ifbench_input_data.jsonl; out=$IFE/${t}_ifbench.jsonl; t=${t}_ifbench; }
   $PY $C/tb2/ifeval_gen.py --url http://localhost:8000/v1 --model "$SERVED" --inp $inp --out $out --thinking $think \
-      --max-tokens ${MAX_TOKENS:-8192} --conc ${CONC:-32} --temperature ${TEMP:-0} > $LOGS/gen_${t}_$SLURM_JOB_ID.log 2>&1
+      --max-tokens ${MAX_TOKENS:-8192} --conc ${CONC:-32} --temperature ${TEMP:-0} --n ${NSAMP:-1} > $LOGS/gen_${t}_$SLURM_JOB_ID.log 2>&1
   echo "IFEVAL_DONE $t $(wc -l < $out) rows $(date -Is)"
 }
 ROUNDS=default; [ "${THINK_OFF:-0}" = 1 ] && ROUNDS="default off"
+if [ "${PAR_ROUNDS:-0}" = 1 ]; then   # every round x suite at once
+  P=(); for think in $ROUNDS; do for suite in ${SUITES:-ifbench ifeval}; do gen $suite $think & P+=($!); done; done
+  wait "${P[@]}"
+else
 for think in $ROUNDS; do
   P=(); for suite in ${SUITES:-ifbench ifeval}; do gen $suite $think & P+=($!); done
   wait "${P[@]}"   # the generators only: a bare wait would also wait on the server
 done
+fi
 echo "ALL_DONE $TAG"

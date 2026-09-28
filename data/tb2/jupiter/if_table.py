@@ -6,8 +6,14 @@ Each row: name | saw if-v2 | IFBench scored file | IFEval scored file. Prints a 
 strict accuracy with 95 % percentile-bootstrap CIs over prompts (10,000 resamples), truncation % and mean completion
 tokens over both suites, then paired differences (B − A, same prompts resampled jointly) for every --pair, or every
 pair against the first row when none is given.
+
+2026-09-28: multi-sample files (one scored row per prompt and sample). A prompt's score is the mean over its samples,
+and the bootstrap resamples prompts, so the CIs stay over prompts. Sample indices that do not cover every prompt (a
+job cut by its wall) are dropped and reported. Extra columns: responses ending inside an unclosed think span, responses
+of 8,192+ tokens (what an 8,192 cap would have truncated), samples per prompt.
 """
 import argparse, json
+from collections import defaultdict
 import numpy as np
 
 ap = argparse.ArgumentParser()
@@ -17,7 +23,22 @@ a = ap.parse_args()
 rng = np.random.default_rng(a.seed)
 
 def load(path):
-    return {r["key"]: r for r in map(json.loads, open(path))}
+    """{key: per-prompt means} over the sample indices that cover every prompt in the file."""
+    recs = [json.loads(l) for l in open(path)]
+    keys = {r["key"] for r in recs}
+    cover = defaultdict(set)
+    for r in recs: cover[r.get("sample", 0)].add(r["key"])
+    full = {s for s, ks in cover.items() if ks == keys}
+    if len(full) < len(cover): print(f"<!-- {path}: dropped partial samples {sorted(set(cover) - full)} -->")
+    g = defaultdict(list)
+    for r in recs:
+        if r.get("sample", 0) in full: g[r["key"]].append(r)
+    mean = lambda xs: float(np.mean(xs))
+    return {k: dict(loose=mean([x["loose"] for x in v]), strict=mean([x["strict"] for x in v]),
+                    trunc=mean([x["finish_reason"] == "length" for x in v]),
+                    over8k=mean([x["completion_tokens"] >= 8192 for x in v]),
+                    unclosed=mean([x["unclosed"] for x in v]) if all("unclosed" in x for x in v) else float("nan"),
+                    tokens=mean([x["completion_tokens"] for x in v]), n=len(v)) for k, v in g.items()}
 
 rows = {}
 for spec in a.row:
@@ -29,17 +50,21 @@ def ci(v):
     b = v[idx].mean(1); return v.mean() * 100, np.percentile(b, 2.5) * 100, np.percentile(b, 97.5) * 100
 
 fmt = lambda t: f"{t[0]:.1f} [{t[1]:.1f}, {t[2]:.1f}]"
-print("| checkpoint | IFBench loose | IFBench strict | IFEval loose | IFEval strict | truncated % (IFBench / IFEval) | mean tokens (IFBench / IFEval) | saw if-v2? |")
-print("|---|---|---|---|---|---|---|---|")
+both = lambda r, f, spec: " / ".join(spec.format(f(r[s])) for s in ("ifbench", "ifeval"))
+print("| checkpoint | IFBench loose | IFBench strict | IFEval loose | IFEval strict | truncated % (IFBench / IFEval) "
+      "| ≥ 8,192 tokens % | unclosed think % | mean tokens | samples / prompt | saw if-v2? |")
+print("|---|---|---|---|---|---|---|---|---|---|---|")
 for name, r in rows.items():
     cells = []
     for suite in ("ifbench", "ifeval"):
         d = r[suite]; keys = sorted(d)
         for m in ("loose", "strict"):
             cells.append(fmt(ci([d[k][m] for k in keys])))
-    tr = [100 * np.mean([x["finish_reason"] == "length" for x in r[s].values()]) for s in ("ifbench", "ifeval")]
-    tk = [np.mean([x["completion_tokens"] for x in r[s].values()]) for s in ("ifbench", "ifeval")]
-    print(f"| {name} | " + " | ".join(cells) + f" | {tr[0]:.0f} / {tr[1]:.0f} | {tk[0]:,.0f} / {tk[1]:,.0f} | {r['ifv2']} |")
+    col = lambda f: (lambda d: 100 * np.mean([x[f] for x in d.values()]))
+    tok = lambda d: np.mean([x["tokens"] for x in d.values()])
+    smp = lambda d: "{}".format(min(x["n"] for x in d.values())) + ("" if len({x["n"] for x in d.values()}) == 1 else "+")
+    print(f"| {name} | " + " | ".join(cells) + f" | {both(r, col('trunc'), '{:.0f}')} | {both(r, col('over8k'), '{:.0f}')} "
+          f"| {both(r, col('unclosed'), '{:.0f}')} | {both(r, tok, '{:,.0f}')} | {both(r, smp, '{}')} | {r['ifv2']} |")
 
 names = list(rows)
 pairs = a.pair or [(names[0], n) for n in names[1:]]
