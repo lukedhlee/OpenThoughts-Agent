@@ -402,6 +402,10 @@ def cmd_analyze(a):
     for i in keep:
         e = eps[i]
         ch = e['chunks']
+        if a.drop_first_chunk:
+            # 95 % of the probed Snowball's turns carry no think block; Qwen expects <think> there and charges the
+            # turn's first chunk ~-30 nats. Dropping each segment's first chunk removes that format artifact.
+            ch = ch[ch[:, 6] > 0]
         if len(ch) == 0:
             continue
         t_idx, kind, sl, sh, ql, qh, cl, chh, is_done = [ch[:, k] for k in range(9)]
@@ -453,8 +457,8 @@ def cmd_analyze(a):
         m['mean_per_token'] = float(np.nanmean([r['%s/all' % s] for r in rows]))
         metrics['signals'][s] = m
     # agreement between the signals, chunk by chunk (sign agreement of teacher-vs-ref and opd)
-    json.dump(metrics, open(os.path.join(a.out, 'metrics.json'), 'w'), indent=1)
-    pickle.dump(rows, open(os.path.join(a.out, 'rows.pkl'), 'wb'))
+    json.dump(metrics, open(os.path.join(a.out, 'metrics%s.json' % a.tag), 'w'), indent=1)
+    pickle.dump(rows, open(os.path.join(a.out, 'rows%s.pkl' % a.tag), 'wb'))
 
     def f(d):
         if not d or d.get('auc') is None:
@@ -485,7 +489,7 @@ def cmd_analyze(a):
             lines.append('- %.1f [%s] …%s⟦%s⟧' % (v, 'think' if k == 0 else 'action',
                                                     ctx.replace('\n', '⏎')[-50:], txt.replace('\n', '⏎')[:80]))
         lines.append('')
-    open(os.path.join(a.out, 'report.md'), 'w').write('\n'.join(lines))
+    open(os.path.join(a.out, 'report%s.md' % a.tag), 'w').write('\n'.join(lines))
     print('\n'.join(lines[:12 + len(signals)]))
 
 
@@ -520,6 +524,8 @@ def main():
     q = sub.add_parser('analyze')
     q.add_argument('--out', required=True)
     q.add_argument('--refs', default='')
+    q.add_argument('--drop-first-chunk', action='store_true')
+    q.add_argument('--tag', default='', help='suffix for metrics/report/rows file names')
     a = p.parse_args()
     dict(prep=cmd_prep, score=cmd_score, analyze=cmd_analyze, **{'score-http': cmd_score_http})[a.cmd](a)
 
