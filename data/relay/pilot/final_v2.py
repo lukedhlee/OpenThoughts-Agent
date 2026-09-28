@@ -7,7 +7,10 @@ ONE rule, applied identically, so they differ only in who played the early turns
 
 Per arm (candidates = select_kept.arm_rows: scored episodes; the relay's teacher-wrote-a-turn and S5 filters):
   1. strict labels: quarantined tasks dropped, weak timeouts dropped (match_kept.weak_timeout), rows over 65,536
-     rendered tokens dropped (rendered.jsonl of the run dir, the d0ddd237 render);
+     rendered tokens dropped (rendered.jsonl of the run dir, the d0ddd237 render), and rows whose verifier never ran
+     the tests dropped (QA 2026-09-28: test.sh could not install its tools, "curl: command not found", "uvx: No such
+     file", HTTP 403 on the uv download; pytest never started, so the 0 reward is the harness, not the agent; 11-14 %
+     of the v2 failures in both arms, and no pass);
   2. at most 2 rows per task: a task with more eligible rows keeps 2 drawn uniformly (seeded; the relay's old pool has
      up to 7 tries per task, attempt 6 and the baseline have 2);
 Both arms:
@@ -24,6 +27,7 @@ import collections
 import json
 import os
 import random
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -32,6 +36,14 @@ import match_kept  # noqa: E402
 import select_kept  # noqa: E402
 
 MAX_TOKENS = 65536
+RAN = re.compile(r'test session starts|\b\d+ (passed|failed|errors?)\b|^[.FEsx]+\s+\[100%\]', re.M)
+
+
+def verifier_ran(run, arm, trial):
+    """Did the verifier's pytest actually run (its session header, a pass/fail count, or the -q progress line)?"""
+    p = os.path.join(run, 'jobs', f'{os.path.basename(os.path.normpath(run))}_{arm}', trial, 'result.json')
+    so = ((json.load(open(p)).get('verifier_result') or {}).get('stdout') or '') if os.path.exists(p) else ''
+    return bool(RAN.search(so))
 
 
 def row_tokens(path, sids):
@@ -59,6 +71,8 @@ def eligible(run, arm, quarantine, rng, per_task=2):
             drop['not_rendered'] += 1
         elif n_tok[r['sid']] > MAX_TOKENS:
             drop['over_64k'] += 1
+        elif not verifier_ran(run, arm, r['trial']):
+            drop['verifier_never_ran'] += 1
         else:
             ok.append(dict(r, n_tokens=n_tok[r['sid']]))
     by_task = collections.defaultdict(list)
