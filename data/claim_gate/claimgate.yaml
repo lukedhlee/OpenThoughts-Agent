@@ -1,0 +1,56 @@
+# Claim gate main run (and stage C smoke): Snowball ns_c step-24 on mid-pass-rate R2E-Gym train tasks, JSC apptainer
+# through bridge 9930, every LLM call through the relay router in --mode student --judge-gate (research note
+# 2026-09-28_opd_ref_evidence.md § "Claim gate test"). Agent settings are the RL arm's (snowball_ttband_ns_c_lr5e7_c
+# hydra args) except: the chat path (collect_rollout_details false, so the router sees every turn as chat) and the
+# session header the router keys episodes by. The RL arm's strict_json_parser=true is left out: this Terminus-2 has no such
+# parameter (BaseAgent swallows unknown kwargs), so it was a no-op in RL too. run_claimgate.sh fills the __X__ fields and the tasks.
+job_name: __JOB_NAME__
+jobs_dir: __JOBS_DIR__
+n_attempts: __N_ATTEMPTS__
+n_concurrent_trials: __CONC__
+timeout_multiplier: 1.0
+quiet: true
+release_trial_payloads_in_memory: true
+retry:
+  max_retries: 3
+  include_exceptions:
+  - BridgeOutageError
+  - BridgeOperationError
+  - EnvironmentStartTimeoutError
+  - NetworkError
+  exclude_exceptions: []
+  wait_multiplier: 2.0
+  min_wait_sec: 60.0
+  max_wait_sec: 600.0
+environment:
+  type: apptainer
+  force_build: false
+  delete: true
+  override_cpus: 2
+  override_memory_mb: 4096
+  override_storage_mb: 4096
+  kwargs:
+    bridge_url: http://127.0.0.1:9930
+verifier:
+  override_timeout_sec: 2400
+agents:
+- name: terminus-2
+  model_name: hosted_vllm/relay
+  override_timeout_sec: 1800
+  kwargs:
+    api_base: __API_BASE__
+    model_info:
+      max_input_tokens: 49152
+      max_output_tokens: 16384
+      input_cost_per_token: 0.0
+      output_cost_per_token: 0.0
+    extra_body:
+      skip_special_tokens: false
+    enable_summarize: false
+    interleaved_thinking: false
+    collect_rollout_details: false
+    store_all_messages: true
+    llm_session_header: X-Harbor-Session-Id
+    trajectory_config:
+      raw_content: true
+tasks: []
