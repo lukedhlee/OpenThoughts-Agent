@@ -25,10 +25,13 @@ before any training job or eval of this comparison was submitted (only the two d
 - Terminus-2 strict. Harbor `harbor-terminus2-relay` at 89098635 for all four models.
 - One trial per task.
 
-**TB2.** The current Marin TB2 policy with only the token limits changed.
+**TB2.1.** The current Marin TB2 policy with only the token limits changed, on the TB2.1 tasks (Luke 2026-09-28, set
+at 12:03 PT before any TB2 result).
+- TB2.1 is laude-institute/terminal-bench-2 at 53ff2b8 ("Various task fixes for TB2.1"). It changes 7 files over 2.0 and no
+  task image. Local tree: `/e/fscratch/reformo/lee27/tasks/terminal_bench_2_1` (`TASKS=` in the chain).
 - `tb2_marin_policy_0924_65k16k.yaml`: harbor-p0924 at 761fb516, 65,536 input and 16,384 output tokens, 1,800 s agent
   budget, Daytona, 16 concurrent.
-- 89 tasks, one trial per task. `serve_snowball.sbatch` on 1 node (EAGLE-3 draft, DP4), thinking at the model default.
+- 89 tasks (train-fasttext excluded, as in every 0924 run: its image is gone; counted as an infra loss), one trial per task. `serve_snowball.sbatch` on 1 node (EAGLE-3 draft, DP4), thinking at the model default.
 
 **Analysis.** `data/relay/sft/paired_eval.py` as committed in f9aa523d, unchanged.
 - Pass rates carry a Wilson 95 % CI. Paired differences use the tasks both models scored, with a bootstrap 95 % CI over
