@@ -1171,3 +1171,14 @@ split is unchanged. Trained tokens are relay 14,964,894 and baseline 15,774,392,
   harness accepts it with a warning; it stays in, per the coordinator.
 - The gist now reads the clean sets (`arm_quality.py` defaults to `final_rendered_think16k_clean.jsonl`).
   `render_think16k_clean.json` in each run dir has the full strip stats.
+
+## Decision rule for the SFT comparison (Luke 2026-09-27 ~07:50 PT, set before any result)
+
+**The end is a choice of which trace recipe to scale for Snowball SFT.** A relay trace costs about 2.5× a Qwen-alone
+trace, so the relay has to win clearly. The arms are rebuilt so that they differ only in who played the early turns:
+the same CalibForge tasks, at most 2 rows per task, 1:1 passes and real failures, the clean-marker render (relay
+attempt 6 covers the ~1,050 tasks the relay had not touched, 2 tries each).
+- **The relay wins** if the SFT'd relay arm beats the SFT'd baseline arm on the 300 held-out tasks (paired, 95 % CI
+  above zero) and is not worse on TB2, both under the 65k/16k policy. Then scale the relay.
+- **Otherwise** scale Qwen-alone traces.
+- **Sanity:** both arms must beat 09-21 itself. If neither does, the SFT failed and the comparison says nothing.
