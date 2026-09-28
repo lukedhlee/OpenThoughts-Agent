@@ -88,6 +88,9 @@ def main():
     p.add_argument('--mix-refs', default='2B,9B', help='references for the teacher - beta * ref sweep')
     p.add_argument('--drop-first-chunk', action='store_true')
     p.add_argument('--no-student', action='store_true', help='runs scored without the student (no opd/student)')
+    p.add_argument('--pmi-dir', default='',
+                   help='opd_ref_branch.py prep --swap-issue run of the same trials, scored by the teacher: adds pmi = '
+                        'teacher(reply | own issue) - teacher(reply | another task\'s issue)')
     p.add_argument('--same-state-only', action='store_true',
                    help='episodes are prefixes (opd_ref_branch.py prep): report only the turn1 / branch tests')
     p.add_argument('--tag', default='')
@@ -106,6 +109,13 @@ def main():
     mix_refs = [r for r in a.mix_refs.split(',') if r in refs]
     for r in mix_refs:
         signals += ['mix%.2f_%s' % (b, r) for b in BETAS]
+    swap = {}
+    if a.pmi_dir:
+        sw_eps = pickle.load(open(os.path.join(a.pmi_dir, 'episodes.pkl'), 'rb'))
+        sw_sc = load_scores(a.pmi_dir, 'teacher')[0]
+        swap = {sw_eps[k]['trial']: (sw_eps[k], sw_sc[k]) for k in sw_sc}
+        signals += ['pmi'] + (['pmi+compass_9B'] if '9B' in refs else [])
+        print('pmi: %d swapped trials scored' % len(swap), flush=True)
 
     E = []   # per episode: task, passed, per-turn sums per signal/view, per-turn token counts, signatures, claim
     for i in keep:
@@ -132,6 +142,17 @@ def main():
         for r in mix_refs:
             for b in BETAS:
                 sig['mix%.2f_%s' % (b, r)] = lq['teacher'] - b * lq[r]
+        if a.pmi_dir:
+            pm = np.full(len(ch), np.nan)
+            if e['trial'] in swap:
+                se, ss = swap[e['trial']]
+                sch = se['chunks'][se['chunks'][:, 6] > 0] if a.drop_first_chunk else se['chunks']
+                if len(sch) == len(ch) and np.array_equal(sch[:, [0, 1, 6, 7]], ch[:, [0, 1, 6, 7]]):
+                    cq = np.cumsum(np.concatenate([[0.0], np.nan_to_num(ss)]))
+                    pm = lq['teacher'] - (cq[sch[:, 5]] - cq[sch[:, 4]])
+            sig['pmi'] = pm
+            if '9B' in refs:
+                sig['pmi+compass_9B'] = pm + sig['compass_9B']
         T = int(e['n_turns'])
         ntok = (sh - sl).astype(float)
         masks = dict(all=np.ones(len(ch), bool), think=kind == 0, action=kind == 1)
@@ -259,7 +280,7 @@ def main():
         sv, nv = [], []
         for x in E:
             for t in range(x['T']):
-                if x['tok']['action'][t] > 0:
+                if x['tok']['action'][t] > 0 and np.isfinite(x['tsum'][s]['action'][t]):
                     sv.append(x['tsum'][s]['action'][t] / x['tok']['action'][t])
                     nv.append(x['tok']['action'][t])
         rs = np.argsort(np.argsort(sv)).astype(float)

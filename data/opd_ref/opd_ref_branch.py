@@ -8,7 +8,11 @@ Episodes are keyed task = '<uid>@<step>' so groups of different steps never mix.
 
     scan  count groups / nodes / kept prefix characters, no tokenizer (login node is fine)
     prep  the same selection -> episodes.pkl in opd_ref_probe.py's format (tokenizers; run in the job)
+          --swap-issue: the same trials with the task's <issue_description> replaced by another task's (the next
+          task of the same step), for a task-relevance score: the teacher's log-likelihood of a reply under its own
+          issue minus under a wrong one. Style and format cancel (same model, same reply text).
 """
+import re
 import argparse
 import glob
 import json
@@ -21,6 +25,34 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from opd_ref_probe import load_dump_row, prep_episode, split_reply  # noqa: E402
 from opd_ref_turns import signature  # noqa: E402
+
+
+def paths_of(dump):
+    """Comma-separated globs -> sorted unique paths."""
+    return sorted({p for g in dump.split(',') for p in glob.glob(g.strip())})
+
+
+ISSUE_RE = re.compile(r'<issue_description>.*?</issue_description>', re.S)
+
+
+def swap_issues(kept):
+    """Replace each trial's issue block with the next task's (same step, tasks in sorted order); trials whose prompt
+    has no issue block are dropped."""
+    by_step = {}
+    for tr in kept:
+        m = ISSUE_RE.search(tr['messages'][0]['content'])
+        if m:
+            by_step.setdefault(tr['task'].rsplit('@', 1)[1], {}).setdefault(tr['task'], m.group(0))
+    out = []
+    for tr in kept:
+        step = tr['task'].rsplit('@', 1)[1]
+        tasks = sorted(by_step.get(step, {}))
+        if tr['task'] not in tasks or len(tasks) < 2:
+            continue
+        other = by_step[step][tasks[(tasks.index(tr['task']) + 1) % len(tasks)]]
+        first = dict(tr['messages'][0], content=ISSUE_RE.sub(lambda _: other, tr['messages'][0]['content'], count=1))
+        out.append(dict(tr, messages=[first] + tr['messages'][1:]))
+    return out
 
 
 def action_of(content):
@@ -96,17 +128,21 @@ def select(paths, max_depth, keep_messages=True):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('cmd', choices=['scan', 'prep'])
-    p.add_argument('--dump', required=True, help='glob of *_train_rollouts.jsonl')
+    p.add_argument('--dump', required=True, help='comma-separated globs of *_train_rollouts.jsonl')
     p.add_argument('--max-depth', type=int, default=12, help='deepest branch point kept (0 = first turns only)')
     p.add_argument('--snowball-tok', default='')
     p.add_argument('--qwen-tok', default='')
     p.add_argument('--out', default='')
     p.add_argument('--max-s-len', type=int, default=65535)
+    p.add_argument('--swap-issue', action='store_true')
     a = p.parse_args()
-    kept, summ = select(sorted(glob.glob(a.dump)), a.max_depth, keep_messages=a.cmd == 'prep')
+    kept, summ = select(paths_of(a.dump), a.max_depth, keep_messages=a.cmd == 'prep')
     print(json.dumps(summ, indent=1), flush=True)
     if a.cmd == 'scan':
         return
+    if a.swap_issue:
+        kept = swap_issues(kept)
+        summ['swapped_trials'] = len(kept)
     from transformers import AutoTokenizer
     stok = AutoTokenizer.from_pretrained(a.snowball_tok)
     qtok = AutoTokenizer.from_pretrained(a.qwen_tok)
