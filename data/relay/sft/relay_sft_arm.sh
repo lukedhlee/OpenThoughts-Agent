@@ -1,6 +1,6 @@
 #!/bin/bash
 # relay_sft_arm.sh — one arm of the relay SFT comparison on Grug Datakit 09-21 (ARM=relay: 09-21's episodes with Qwen3.8
-# taking over; ARM=qwen: Qwen3.8 alone), through the Levanter Grug chain (snowball_sft_chain.sh via ota_lane.sh), the
+# taking over; ARM=qwen: Qwen3.8 alone; ARM=relayaf: relay with the autofixed 09-21 actions trained), through the Levanter Grug chain (snowball_sft_chain.sh via ota_lane.sh), the
 # way bespoke_arm.sh ran the Bespoke SFT. What differs from bespoke_arm.sh:
 #   data      the rendered rows themselves (render.py / render_think_limit.py jsonl: ids + a per-token loss), converted
 #             by relay_rows_to_parquet.py and cached by the prerendered stage relay_<ARM> (marin
@@ -20,8 +20,10 @@ S=/e/data1/mmlaion/lee27/snowball-sft
 C=/e/project1/transfernetx/lee27/code/snowball
 MARIN=/e/project1/transfernetx/lee27/code/marin-sft
 PYM=/e/project1/transfernetx/lee27/code/envs/marin-grug-sft/bin/python
-: "${ARM:?relay | qwen}"
-case $ARM in relay|qwen) ;; *) echo "unknown ARM=$ARM" >&2; exit 1;; esac
+: "${ARM:?relay | qwen | relayaf}"
+# relay = arm A (every 09-21 turn masked, render --autofix-loss none), qwen = arm B, relayaf = arm C (the relay rows
+# with the autofixed 09-21 actions trained, render --autofix-loss content); marin stages relay_relay/relay_qwen/relay_relayaf
+case $ARM in relay|qwen|relayaf) ;; *) echo "unknown ARM=$ARM" >&2; exit 1;; esac
 STAGE=relay_$ARM
 DATA_REV=${DATA_REV:-v2}
 RUN=$STAGE$([ "$DATA_REV" = v2 ] || echo "_$DATA_REV")
