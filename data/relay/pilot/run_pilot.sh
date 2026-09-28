@@ -42,6 +42,7 @@ TASK_LIST=${TASK_LIST:-}          # a subset of the tree to run (default: the tr
                                   # listed k times runs k times (round by round), e.g. a top-up of unscored rollout slots
 N_ATTEMPTS=${N_ATTEMPTS:-1}       # rollouts per task
 MAX_INPUT=${MAX_INPUT:-65536}     # harbor's max_input_tokens; 131072 when Qwen serves 128k (the router reports it)
+MAX_OUTPUT=${MAX_OUTPUT:-8192}    # harbor's max_output_tokens; 16384 under the 65k/16k eval policy (the SFT arms and their 09-21 reference)
 TEACHER_MAX_TOKENS=${TEACHER_MAX_TOKENS:-32768}
 CLOCK=${CLOCK:-paused}            # paused: the router's budgets, clock paused on model calls; wall: harbor's own 1x agent timeout;
                                   # repair: the router's budgets, the student's clock paused only while a teacher repair is in flight
@@ -100,7 +101,7 @@ cleanup_sandboxes() {
   [ ${#jobs[@]} -gt 0 ] && $PY $HERE/cleanup_sandboxes.py --key-file $KEYF --delete "${jobs[@]}" 2>&1 | tail -3
 }
 abort() { log "ABORT: $*"; echo "$*" > $R/ABORT; stop_harbor; stop_routers; release_serve "abort"; cleanup_sandboxes; write_meta; exit 1; }
-log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE failover_5xx=$FAILOVER_5XX max_input=$MAX_INPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR herr_exclude=${HERR_EXCLUDE:-none} target_fail=$TARGET_FAIL base=$TARGET_BASE shuffle=${SHUFFLE_SEED:-off}"
+log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE failover_5xx=$FAILOVER_5XX max_input=$MAX_INPUT max_output=$MAX_OUTPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR herr_exclude=${HERR_EXCLUDE:-none} target_fail=$TARGET_FAIL base=$TARGET_BASE shuffle=${SHUFFLE_SEED:-off}"
 
 # ---- 1. pre-flight --------------------------------------------------------------------------------------------------
 [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = "$HARBOR_SHA" ] || { log "harbor at ${HARBOR_SRC%/src} is not $HARBOR_SHA"; scancel $JOB; exit 1; }
@@ -180,7 +181,7 @@ log "routers ready: $(for arm in $ARMS; do printf '%s:%s ' $arm ${PORT[$arm]}; d
 export PYTHONPATH=$HARBOR_SRC
 for arm in $ARMS; do
   CFG=$R/${NAME}_$arm.yaml
-  sed "s#__JOB_NAME__#${NAME}_$arm#; s#__JOBS_DIR__#$JOBS_ROOT#; s#__API_BASE__#http://127.0.0.1:${PORT[$arm]}/v1#; s#__CONC__#$CONC#; s#__MAX_INPUT__#$MAX_INPUT#; s#__AGENT_MULT__#$AGENT_MULT#" $HERE/relay_pilot.yaml > $CFG
+  sed "s#__JOB_NAME__#${NAME}_$arm#; s#__JOBS_DIR__#$JOBS_ROOT#; s#__API_BASE__#http://127.0.0.1:${PORT[$arm]}/v1#; s#__CONC__#$CONC#; s#__MAX_INPUT__#$MAX_INPUT#; s#__MAX_OUTPUT__#$MAX_OUTPUT#; s#__AGENT_MULT__#$AGENT_MULT#" $HERE/relay_pilot.yaml > $CFG
   $PY - "$CFG" "$TREE" "$MODE" "${TASK_LIST:-$TREE/TASKS.txt}" "$N_ATTEMPTS" "$SHUFFLE_SEED" <<'PY' || abort "config for $arm does not validate"
 import os, random, re, sys, yaml
 p, tree, mode, lst, att, seed = sys.argv[1:7]

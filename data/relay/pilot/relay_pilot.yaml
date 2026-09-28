@@ -14,6 +14,7 @@
 # __AGENT_MULT__: 1.0 for wall-clock budgets as the TB2 eval (harbor's own agent timeout ends the episode); 8.0 when
 # the router enforces the agent timeout (1x the task budget on the owner's clock, which
 # pauses during every model call from 21:15 PT on), so harbor's own hard stop is only a backstop far above it.
+# __MAX_OUTPUT__: 8,192 (run 3 on), or 16,384 under the 65k/16k eval policy (MAX_OUTPUT in run_pilot.sh).
 # __MAX_INPUT__: 65,536, or 131,072 for relay runs whose Qwen serves 128k (09-21 stays at 65,536; its requests end with
 # a context 400 at its own limit, which harbor scores as ContextLengthExceededError).
 # Retries cover sandbox and upload infrastructure only. LLM-path errors (router 5xx, connect errors, timeouts) are left
@@ -60,7 +61,7 @@ agents:
     api_base: __API_BASE__
     model_info:
       max_input_tokens: __MAX_INPUT__
-      max_output_tokens: 8192
+      max_output_tokens: __MAX_OUTPUT__
       input_cost_per_token: 0.0
       output_cost_per_token: 0.0
     extra_body:
