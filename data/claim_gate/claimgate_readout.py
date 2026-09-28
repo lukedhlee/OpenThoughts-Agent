@@ -50,12 +50,15 @@ def diff_ci(rows, n_boot=2000, seed=0):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--run', required=True)
+    p.add_argument('--run', required=True, nargs='+', help='one or more run dirs (chunks of one experiment)')
     a = p.parse_args()
-    snap = json.load(open(os.path.join(a.run, 'router', 'episodes.json')))
-    eps = {e['sid']: e for e in snap['episodes'] if e.get('gate_arm')}
+    eps, counts = {}, collections.Counter()
+    for run in a.run:
+        snap = json.load(open(os.path.join(run, 'router', 'episodes.json')))
+        eps.update({e['sid']: e for e in snap['episodes'] if e.get('gate_arm')})
+        counts.update({k: v for k, v in snap.get('counts', {}).items() if isinstance(v, (int, float))})
     rows, miss = [], collections.Counter()
-    for jd in sorted(glob.glob(os.path.join(a.run, 'jobs', '*'))):
+    for jd in sorted(g for run in a.run for g in glob.glob(os.path.join(run, 'jobs', '*'))):
         for t in trials(jd):
             e = eps.get(t['sid'])
             if e is None:
@@ -74,8 +77,8 @@ def main():
     for r in rows:
         r['pass'] = r.pop('pass_flag')
         r.pop('pass_')
-    L = ['# claim gate readout: %s' % os.path.basename(a.run.rstrip('/')), '',
-         'router counts: %s' % json.dumps(snap.get('counts', {})),
+    L = ['# claim gate readout: %s' % ', '.join(os.path.basename(r.rstrip('/')) for r in a.run), '',
+         'router counts: %s' % json.dumps(dict(counts)),
          'episodes scored: %d (excluded: %s)' % (len(rows), dict(miss)), '']
     L += ['| group | treat n | treat pass | control n | control pass |', '|---|---|---|---|---|']
     groups = [('all episodes', lambda r: True), ('claimed (judged)', lambda r: r['judged']),
