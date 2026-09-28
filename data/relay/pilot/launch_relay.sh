@@ -21,7 +21,9 @@
 # by round at 1 rollout per entry, so no slot is paid for twice. CAP_NODE_H is then what the 30 leaves.
 # Attempt 5 on (Luke 2026-09-27, 2,000 kept per arm): ROLLOUTS=7 (tries 5-7 via merge_runs.py --per-task 7 --remaining),
 # HERR_EXCLUDE (stop_rule.py --harness-exclude-tasks) and TARGET_FAIL / TARGET_BASE (end the run on the merged arm's
-# real-failure count) pass through to run_pilot.sh.
+# real-failure count) pass through to run_pilot.sh. Attempt 6: SHUFFLE_SEED passes through (list = the TOPUP list's own
+# order: two rounds of the tasks without relay trials, shuffled with seed 20260927), and TASKS_CHECK=pool checks the
+# top-up against full_pool.txt instead of the solvable list.
 set -uo pipefail
 NAME=${1:?relay run name}
 C=/e/project1/transfernetx/lee27/code
@@ -52,6 +54,7 @@ $PY $HERE/relay_plan.py --baseline $RUNS/$BASE --check $RUNS/$CHECK --check-deci
 diff -q <(sort $TASKS) <(sort $RUNS/$NAME.solvable_recomputed.txt) >/dev/null || { log "solvable list $TASKS differs from the baseline's passes"; exit 1; }
 log "plan (projection only; the cap is the ceiling): $(tr -d '\n' < $RUNS/$NAME.plan.json | cut -c1-700)"
 if [ -n "${TOPUP:-}" ]; then
+  [ "${TASKS_CHECK:-solvable}" = pool ] && TASKS=$HERE/full_pool.txt
   $PY - $TOPUP $TASKS $ROLLOUTS <<'PY' || { log "top-up list $TOPUP is not a subset of the solvable slots"; exit 1; }
 import collections, sys
 top = collections.Counter(l.strip() for l in open(sys.argv[1]) if l.strip()); sol = {l.strip() for l in open(sys.argv[2]) if l.strip()}
@@ -68,6 +71,6 @@ log "serve job $JOB submitted ($NODES nodes: 4 x 09-21 + 4 x Qwen per-GPU 128k, 
 tmux new -d -s relay_full_relay "ARMS=relay_repair CLOCK=repair CTX_BUDGET=32000 ROW_MAX=65536 ROW_RESERVE=8192 MAX_INPUT=131072 \
 TEACHER_MAX_TOKENS=32768 BALANCE=active STAGGER_SEC=180 GATE_MIN=15 GATE_LAT=30 GATE_KV=0.90 TEACHER_GUARD=1 VERIFY_NOTE=1 \
 CONC=$CONC NODES=$NODES CAP_NODE_H=$CAP_NODE_H NTASKS=2043 TREE=$TREE TASK_LIST=$TASKS N_ATTEMPTS=$ROLLOUTS \
-STOP_AFTER=300 STOP_OVF=0.30 STOP_FMT=0.98 STOP_HERR=0.10 HERR_EXCLUDE=${HERR_EXCLUDE:-} TARGET_FAIL=${TARGET_FAIL:-0} TARGET_BASE=${TARGET_BASE:-0} \
+STOP_AFTER=300 STOP_OVF=0.30 STOP_FMT=0.98 STOP_HERR=0.10 HERR_EXCLUDE=${HERR_EXCLUDE:-} TARGET_FAIL=${TARGET_FAIL:-0} TARGET_BASE=${TARGET_BASE:-0} SHUFFLE_SEED=${SHUFFLE_SEED:-} \
 JOBS_ROOT=$JOBS_ROOT bash $HERE/run_pilot.sh $JOB $NAME"
 log "LAUNCHED: driver in tmux relay_full_relay (run $NAME, serve job $JOB)"

@@ -107,6 +107,7 @@ class FakeServer:
         self.summarized = set()
         self.fail_model = None      # set to make chat answer 404 (a served-name change mid-run)
         self.engine_dead = False    # set to make chat answer vLLM's EngineCore 500 (a crashed engine, API server up)
+        self.on_script = None       # called with this server after a scripted reply is taken (e.g. to kill the server)
         self.runner = None
         self.url = None
 
@@ -183,6 +184,8 @@ class FakeServer:
             if self.script and 'Print hello' not in last:
                 item = self.script.pop(0)
                 content = content if item is None else item
+                if self.on_script is not None:
+                    self.on_script(self)
             reasoning = f'teacher reasoning {k}' + ''.join(f'. Sentence {j} of step {k} is here'
                                                             for j in range(self.long_reasoning)) + ('.' if self.long_reasoning else '')
         msg = {'role': 'assistant', 'content': content}

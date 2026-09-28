@@ -1444,3 +1444,52 @@ def test_merge_runs_per_task_seven_and_stop_rule_failure_count(tmp_path):
     excl.write_text('cf-b\n')
     o = sr('--after', '1', '--harness-exclude-tasks', str(excl))
     assert o[0] == 'ok' and o[4] == '0.0000' and o[-1] == '5' and o[6] == '0.1250'
+
+
+@needs_harbor
+def test_guard_resample_fails_over_when_the_pinned_teacher_dies(tmp_path):
+    """Attempt 5 (2026-09-27 03:43 PT): 39 guard resamples came back 502 'teacher unreachable' while the main path
+    failed over. Here the pinned teacher serves one unfixable reply and then refuses connections; the guard's resample
+    must go to the other teacher and the turn must reach harbor as a parsed reply."""
+    with Stack(tmp_path, mode='teacher', two_teachers=True,
+               router_args=GUARD + ['--failover-5xx', '--connect-retries', '2']) as st:
+        def die(srv):
+            other = st.teacher2 if srv is st.teacher else st.teacher
+            other.script = []
+            srv.on_script = None
+            asyncio.get_event_loop().call_later(0.05, lambda: asyncio.ensure_future(srv.stop()))
+        for srv in (st.teacher, st.teacher2):
+            srv.script = [QWEN_UNFIXABLE]
+            srv.on_script = die
+        r = run_agent(st, 'done', tmp_path)
+        rows = _main_rows(st, r.sid)
+        g = rows[0]['teacher_guard']
+        assert g['outcome'] == 'resampled_ok' and g['attempts'] == 2, g
+        assert all(x['upstream_status'] == 200 for x in rows) and getattr(r.stop, 'value', r.stop) == 'task_complete'
+        assert st.router.counts['upstream_errors'] == 0
+
+
+@needs_harbor
+def test_guard_passes_the_served_reply_when_the_resample_gets_no_answer(tmp_path):
+    """Every teacher fails the resample (here: 500s with no retries left): the guard passes the reply it already has
+    as served (like unparseable_passed) instead of a 5xx, Terminus-2 asks again, and the episode goes on."""
+    with Stack(tmp_path, mode='teacher', two_teachers=True,
+               router_args=GUARD + ['--failover-5xx', '--connect-retries', '0']) as st:
+        def dead_for_a_moment(srv):
+            srv.on_script = None
+            for x in (st.teacher, st.teacher2):
+                x.engine_dead = True
+                x.script = []
+            def revive():
+                st.teacher.engine_dead = st.teacher2.engine_dead = False
+            asyncio.get_event_loop().call_later(0.3, revive)
+        for srv in (st.teacher, st.teacher2):
+            srv.script = [QWEN_UNFIXABLE]
+            srv.on_script = dead_for_a_moment
+        r = run_agent(st, 'done', tmp_path)
+        rows = _main_rows(st, r.sid)
+        g = rows[0]['teacher_guard']
+        assert g['outcome'] == 'resample_http_500_passed' and g['attempts'] == 2, g
+        assert rows[0]['upstream_status'] == 200 and rows[0]['teacher_unparseable_passed']
+        assert getattr(r.stop, 'value', r.stop) == 'task_complete' and len(rows) >= 2
+        assert st.router.counts['teacher_resample_failed'] == 1

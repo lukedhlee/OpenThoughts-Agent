@@ -1027,9 +1027,19 @@ class Router:
         rec['teacher_guard'] = g
         status = data = None
         for attempt in range(1 + self.a.teacher_resamples):
+            prev = data if status == 200 else None
             status, data, b = await self.teacher_call(ep, b, rec)
             g['attempts'] += 1
             if status != 200:
+                if prev is not None:
+                    # a resample that got no answer (every server failed post()'s retries; attempt 5, 2026-09-27
+                    # 03:43 PT: 32 turns) passes the reply already served, as when no sample parses, instead of
+                    # ending the episode on the error; Terminus-2 then asks again as for any unparseable reply
+                    self.counts['teacher_resample_failed'] = self.counts.get('teacher_resample_failed', 0) + 1
+                    self.counts['teacher_unparseable_passed'] += 1
+                    rec.update(teacher_unparseable_passed=True, teacher_resample_error=data[:300].decode('utf-8', 'replace'))
+                    g['outcome'] = f'resample_http_{status}_passed'
+                    return 200, prev
                 g['outcome'] = f'http_{status}'
                 return status, data
             resp = json.loads(data)
