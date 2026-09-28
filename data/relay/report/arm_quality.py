@@ -8,6 +8,8 @@ and writes one JSON line per row to stdout. status_figs.py aggregates them.
 
     OMP_NUM_THREADS=1 RAYON_NUM_THREADS=1 $PY arm_quality.py > arm_quality.jsonl
     $PY arm_quality.py --dump <sid> [<sid> ...]     # the decoded row, turn by turn, for hand-reading
+    $PY arm_quality.py --relay-dir relay_full_relaym6_20260928 --manifest final_v2_manifest.jsonl \
+        --rendered final_v2_rendered_think16k_clean.jsonl         # the v2 arms (one build rule, attempt 6)
 
 A rendered row has ids, loss and per-assistant-turn char spans into the rendered text, not the text itself. The text is
 recovered with tok.decode(ids) and re-encoded for token offsets; the re-encoded ids must equal the stored ones (checked
@@ -23,6 +25,7 @@ import sys
 RUNS = '/e/fscratch/reformo/lee27/experiments/relay/pilot/runs'
 ARMS = {'relay': 'relay_full_relaym_20260926', 'baseline': 'relay_full_baseline6m_20260926'}
 RENDERED = 'final_rendered_think16k_clean.jsonl'
+MANIFEST = 'final_manifest.jsonl'
 TOKENIZER = '/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921/tokenizer.json'
 END, EOT = '<|end_think|>', '<|eot_id|>'
 MARKERS = ('<|start_think|>', '<|end_think|>', '<tool_call>', '<|eot_id|>')   # chat markers that never belong in a reply's content
@@ -172,7 +175,7 @@ def row_facts(arm, m, r, tok):
 def iter_arm(arm):
     d = os.path.join(RUNS, ARMS[arm])
     man = {}
-    for line in open(os.path.join(d, 'final_manifest.jsonl')):
+    for line in open(os.path.join(d, MANIFEST)):
         m = json.loads(line)
         man[m['sid']] = m
     for line in open(os.path.join(d, RENDERED)):
@@ -206,13 +209,19 @@ def dump(sids, tok, width=1500):
 
 
 def main():
-    global RENDERED
+    global RENDERED, MANIFEST
     ap = argparse.ArgumentParser()
     ap.add_argument('--dump', nargs='*')
     ap.add_argument('--rendered', help=f'rendered file name in each run dir (default {RENDERED})')
+    ap.add_argument('--manifest', help=f'manifest file name in each run dir (default {MANIFEST})')
+    ap.add_argument('--relay-dir', help=f"relay run dir name (default {ARMS['relay']})")
+    ap.add_argument('--baseline-dir', help=f"baseline run dir name (default {ARMS['baseline']})")
     ap.add_argument('--procs', type=int, default=6, help='worker processes (single-threaded each; login-node pid limit)')
     a = ap.parse_args()
     RENDERED = a.rendered or RENDERED
+    MANIFEST = a.manifest or MANIFEST
+    ARMS['relay'] = a.relay_dir or ARMS['relay']
+    ARMS['baseline'] = a.baseline_dir or ARMS['baseline']
     if a.dump:
         dump(a.dump, load_tok())
         return

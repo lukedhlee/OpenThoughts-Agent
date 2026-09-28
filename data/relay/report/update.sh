@@ -16,6 +16,9 @@ OWNER=lukedhlee
 R=/e/fscratch/reformo/lee27/experiments/relay/pilot/runs
 V=/e/fscratch/reformo/lee27/experiments/relay/verify_note
 JPY=/e/project1/transfernetx/lee27/code/envs/snowball/bin/python   # has `tokenizers` (arm_quality.py); no torch
+# the final SFT arms arm_quality.py reads: v2 (one build rule over relay attempts 1-6 and the baseline, 2026-09-28);
+# AQ_ARGS="" gives the v1 arms. Delete $CACHE/arm_quality.jsonl to refresh after a change.
+AQ_ARGS=${AQ_ARGS---relay-dir relay_full_relaym6_20260928 --manifest final_v2_manifest.jsonl --rendered final_v2_rendered_think16k_clean.jsonl}
 CACHE=$WORK/cache; OUT=$WORK/out
 mkdir -p "$CACHE/runs" "$CACHE/verify_note" "$OUT"
 
@@ -28,7 +31,7 @@ for f in classified.jsonl replies.jsonl; do   # the replay is finished; fetch on
 done
 if [ ! -s "$CACHE/arm_quality.jsonl" ]; then   # the final SFT arms are fixed; per-row facts once (~1 min, 6 procs)
   ssh -o BatchMode=yes jupiter "OMP_NUM_THREADS=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false nice $JPY -" \
-    < "$HERE/arm_quality.py" > "$CACHE/arm_quality.jsonl.tmp"
+    $AQ_ARGS < "$HERE/arm_quality.py" > "$CACHE/arm_quality.jsonl.tmp"
   mv "$CACHE/arm_quality.jsonl.tmp" "$CACHE/arm_quality.jsonl"
 fi
 ssh -o BatchMode=yes jupiter python3 - < "$HERE/live_status.py" > "$CACHE/live_status.json.tmp"
