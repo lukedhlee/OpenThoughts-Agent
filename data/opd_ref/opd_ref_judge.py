@@ -7,6 +7,9 @@ answer token. The same same-state and done-claim tests as opd_ref_turns.py, so t
            Items = the rollouts of GRPO groups with both outcomes (opd_ref_branch.py's --max-depth 0 selection).
     claim  the session up to the rollout's first task_complete:true (actions and terminal output, thinking dropped):
            "is the issue actually fixed?"
+    value  the session after its first k turns (k in --ks, rollouts still working, no claim yet): "is the agent on
+           track to a correct fix?" Compared within task at the same k, so it asks whether the teacher can see
+           mid-episode what its log-likelihood could not (CompassOPD's first-k-turn AUCs were ~0.50).
 
     python opd_ref_judge.py score --mode turn1 --dump '<glob>[,<glob>]' --model <qwen dir> --out <dir> --shard g --nshards 4
     python opd_ref_judge.py analyze --out <dir>
@@ -64,9 +67,9 @@ def turn1_item(tr):
                   'issue? Answer with one word, Yes or No.' % (issue_of(tr['messages'][0]['content']), step))
 
 
-def claim_item(tr):
-    msgs = tr['messages']
-    steps, k = [], None
+def session_steps(msgs, upto=None):
+    """-> (step texts up to the first claim or the first `upto` turns, claimed?)"""
+    steps = []
     for j in range(1, len(msgs), 2):
         act = ''.join(t for kd, t in split_reply(msgs[j]['content'].strip()) if kd == 'action').strip()
         claimed = bool(DONE_RE.search(act))
@@ -74,11 +77,12 @@ def claim_item(tr):
         if not claimed and j + 1 < len(msgs):
             s += '\n[terminal output]\n' + cut(msgs[j + 1]['content'])
         steps.append(s)
-        if claimed:
-            k = j
-            break
-    if k is None:
-        return None
+        if claimed or (upto is not None and len(steps) == upto):
+            return steps, claimed
+    return steps, False
+
+
+def fit(steps):
     body = '\n\n'.join(steps)
     if len(body) > MAX_CHARS:            # keep the first step and the latest ones
         keep, n = [steps[0]], len(steps[0])
@@ -89,6 +93,15 @@ def claim_item(tr):
             tail.append(s)
             n += len(s)
         body = '\n\n'.join(keep + ['[... %d earlier steps omitted ...]' % (len(steps) - 1 - len(tail))] + tail[::-1])
+    return body
+
+
+def claim_item(tr):
+    msgs = tr['messages']
+    steps, claimed = session_steps(msgs)
+    if not claimed:
+        return None
+    body = fit(steps)
     return render('A coding agent worked on the task below in a Linux terminal, in a checkout of the repository at '
                   '/testbed, and has now declared the task complete. Hidden tests will check whether the issue is '
                   'actually fixed.\n\n<task>\n%s\n</task>\n\n<session>\n%s\n</session>\n\nBased on the session, is '
@@ -96,10 +109,25 @@ def claim_item(tr):
                   % (issue_of(msgs[0]['content']), body))
 
 
-def items(mode, dump):
+def value_item(tr, k):
+    msgs = tr['messages']
+    if sum(m['role'] == 'assistant' for m in msgs) <= k:
+        return None                      # finished by turn k: nothing left to predict
+    steps, claimed = session_steps(msgs, upto=k)
+    if claimed or len(steps) < k:
+        return None
+    return render('A coding agent is working on the task below in a Linux terminal, in a checkout of the repository '
+                  'at /testbed. It is not finished yet. Here is its session so far.\n\n<task>\n%s\n</task>\n\n'
+                  '<session>\n%s\n</session>\n\nJudge the work so far as an expert engineer would: is the agent on '
+                  'track to fix the issue correctly, so that the hidden tests will pass when it is done? Answer with '
+                  'one word, Yes or No.' % (issue_of(msgs[0]['content']), fit(steps)))
+
+
+def items(mode, dump, ks=(3, 6, 10)):
     if mode == 'turn1':
         kept, _ = select(paths_of(dump), 0)
-        return [dict(trial=tr['trial'], task=tr['task'], reward=tr['reward'], prompt=turn1_item(tr)) for tr in kept]
+        return [dict(trial=tr['trial'], task=tr['task'], reward=tr['reward'], k=0, prompt=turn1_item(tr))
+                for tr in kept]
     out = []
     for p in paths_of(dump):
         for line in open(p):
@@ -107,17 +135,23 @@ def items(mode, dump):
             tr = load_dump_row(d)
             if tr is None:
                 continue
-            pr = claim_item(tr)
-            if pr is not None:
-                out.append(dict(trial=tr['trial'], task='%s@%s' % (d['uid'], d.get('step')), reward=tr['reward'],
-                                prompt=pr))
+            task = '%s@%s' % (d['uid'], d.get('step'))
+            if mode == 'claim':
+                pr = claim_item(tr)
+                if pr is not None:
+                    out.append(dict(trial=tr['trial'], task=task, reward=tr['reward'], k=-1, prompt=pr))
+                continue
+            for k in ks:
+                pr = value_item(tr, k)
+                if pr is not None:
+                    out.append(dict(trial=tr['trial'], task=task, reward=tr['reward'], k=k, prompt=pr))
     return out
 
 
 def cmd_score(a):
     from vllm import LLM, SamplingParams
     from vllm.inputs import TokensPrompt
-    its = items(a.mode, a.dump)
+    its = items(a.mode, a.dump, tuple(int(k) for k in a.ks.split(',')))
     mine = [it for it in its if zlib.crc32(it['task'].encode()) % a.nshards == a.shard]   # a task's items share
     # a shard, so its common prompt prefix is served from the prefix cache
     out = os.path.join(a.out, 'judge', '%s.%d.pkl' % (a.mode, a.shard))
@@ -145,7 +179,7 @@ def cmd_score(a):
                 yes = np.logaddexp(yes, lp.logprob)
             elif w == 'no':
                 no = np.logaddexp(no, lp.logprob)
-        res.append(dict(trial=it['trial'], task=it['task'], reward=it['reward'], n_tokens=it['n_tokens'],
+        res.append(dict(trial=it['trial'], task=it['task'], reward=it['reward'], k=it['k'], n_tokens=it['n_tokens'],
                         yes=float(yes), no=float(no), logit=float(np.clip(yes, -40, 0) - np.clip(no, -40, 0))))
     pickle.dump(res, open(out, 'wb'))
     print('%s shard %d: %d items, %d over length, %.0f s, %d tokens' % (a.mode, a.shard, len(res), over,
@@ -153,11 +187,37 @@ def cmd_score(a):
                                                                        sum(r['n_tokens'] for r in res)))
 
 
+def matched_auc(rs, ratio=1.25, n_boot=2000):
+    """Within-task AUC over pass/fail pairs whose prompts differ in length by less than `ratio`."""
+    by = {}
+    for r in rs:
+        by.setdefault(r['task'], []).append(r)
+    per = []
+    for x in by.values():
+        pr = [(p, f) for p in x if p['reward'] > 0 for f in x if f['reward'] <= 0
+              if abs(np.log(p['n_tokens'] / f['n_tokens'])) < np.log(ratio)]
+        if pr:
+            per.append(np.mean([(p['logit'] > f['logit']) + 0.5 * (p['logit'] == f['logit']) for p, f in pr]))
+    if not per:
+        return None
+    per = np.asarray(per)
+    rng = np.random.default_rng(0)
+    bs = [per[rng.integers(0, len(per), len(per))].mean() for _ in range(n_boot)]
+    return dict(auc=float(per.mean()), lo=float(np.percentile(bs, 2.5)), hi=float(np.percentile(bs, 97.5)),
+                n_tasks=len(per))
+
+
 def cmd_analyze(a):
     M, L = {}, ['# teacher-as-judge (Qwen3.8-27B, thinking off, log P(Yes) - log P(No))', '']
-    for mode in ('turn1', 'claim'):
+    groups = []
+    for mode in ('turn1', 'claim', 'value'):
         rs = [r for p in sorted(glob.glob(os.path.join(a.out, 'judge', '%s.*.pkl' % mode)))
               for r in pickle.load(open(p, 'rb'))]
+        if mode == 'value':
+            groups += [('value_k%d' % k, [r for r in rs if r['k'] == k]) for k in sorted({r['k'] for r in rs})]
+        elif rs:
+            groups.append((mode, rs))
+    for mode, rs in groups:
         if not rs:
             continue
         v = [r['logit'] for r in rs]
@@ -165,12 +225,16 @@ def cmd_analyze(a):
         tk = [r['task'] for r in rs]
         M[mode] = dict(n=len(rs), n_pass=int(sum(lab)), within=grouped_auc(v, lab, tk, tk), pooled=pooled_auc(v, lab),
                        frac_yes=float(np.mean([r['yes'] > r['no'] for r in rs])),
-                       missing=int(sum(not np.isfinite(r['yes']) and not np.isfinite(r['no']) for r in rs)))
+                       missing=int(sum(not np.isfinite(r['yes']) and not np.isfinite(r['no']) for r in rs)),
+                       length_matched=matched_auc(rs))
         w = M[mode]['within']
-        L.append('- %s: %d items (%d pass), within-task AUC %s, pooled %.2f, says Yes on %.0f %%, no Yes/No in top-20 %d'
+        lm = M[mode]['length_matched']
+        L.append('- %s: %d items (%d pass), within-task AUC %s, length-matched (1.25x) %s, pooled %.2f, says Yes on '
+                 '%.0f %%, no Yes/No in top-20 %d'
                  % (mode, len(rs), sum(lab), '%.2f [%.2f, %.2f]' % (w['auc'], w['lo'], w['hi']) if w.get('auc')
-                    is not None else '–', M[mode]['pooled']['auc'] or float('nan'), 100 * M[mode]['frac_yes'],
-                    M[mode]['missing']))
+                    is not None else '–', '%.2f [%.2f, %.2f] (%d tasks)' % (lm['auc'], lm['lo'], lm['hi'],
+                                                                          lm['n_tasks']) if lm else '–',
+                    M[mode]['pooled']['auc'] or float('nan'), 100 * M[mode]['frac_yes'], M[mode]['missing']))
     json.dump(M, open(os.path.join(a.out, 'judge.json'), 'w'), indent=1)
     open(os.path.join(a.out, 'judge.md'), 'w').write('\n'.join(L) + '\n')
     print('\n'.join(L))
@@ -180,21 +244,25 @@ def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest='cmd', required=True)
     q = sub.add_parser('score')
-    q.add_argument('--mode', choices=['turn1', 'claim'], required=True)
+    q.add_argument('--mode', choices=['turn1', 'claim', 'value'], required=True)
     q.add_argument('--dump', required=True)
+    q.add_argument('--ks', default='3,6,10')
     q.add_argument('--model', required=True)
     q.add_argument('--out', required=True)
     q.add_argument('--shard', type=int, default=0)
     q.add_argument('--nshards', type=int, default=1)
     q.add_argument('--max-len', type=int, default=65536)
     q = sub.add_parser('dry')
-    q.add_argument('--mode', choices=['turn1', 'claim'], required=True)
+    q.add_argument('--mode', choices=['turn1', 'claim', 'value'], required=True)
     q.add_argument('--dump', required=True)
+    q.add_argument('--ks', default='3,6,10')
     q = sub.add_parser('analyze')
     q.add_argument('--out', required=True)
     a = p.parse_args()
     if a.cmd == 'dry':
-        its = items(a.mode, a.dump)
+        its = items(a.mode, a.dump, tuple(int(k) for k in a.ks.split(',')))
+        import collections
+        print(collections.Counter(i['k'] for i in its))
         print(len(its), 'items; chars mean %.0f max %d' % (np.mean([len(i['prompt']) for i in its]),
                                                             max(len(i['prompt']) for i in its)))
         print(its[0]['prompt'][:3000])

@@ -5,7 +5,8 @@
 # and judged Yes/No by the teacher; plus the teacher judging done-claims on the probe's rerun steps.
 # Stages whose outputs exist are skipped, so a resubmission resumes. Env and qwen4 copied from opd_ref_probe.sbatch.
 #
-#   RUN=<name> [STEPS='1 4 ...'] [CLAIM_STEPS='25 26'] OPD_REF_DIR=<code dir> sbatch opd_ref_turn1.sbatch
+#   RUN=<name> [STEPS='1 4 ...'] [CLAIM_STEPS='25 26'] [VALUE_STEPS='25 26 27 28'] OPD_REF_DIR=<code dir> sbatch opd_ref_turn1.sbatch
+#   VALUE_STEPS adds the mid-episode judge (opd_ref_judge.py --mode value: "on track?" after turns 3, 6, 10).
 #
 #SBATCH --job-name=opd_ref_turn1
 #SBATCH --time=02:30:00
@@ -83,6 +84,7 @@ judge4 turn1 "$DUMP"
 qwen4 $OUT/t1swap teacher $TEACHER
 for r in ${REFS//,/ }; do qwen4 $OUT/t1 $r $M/Qwen3.5-$r; done
 judge4 claim "$CLAIM_DUMP"
+[ -n "${VALUE_STEPS:-}" ] && judge4 value "$(dumps $VALUE_STEPS)"
 
 $PY $HERE/opd_ref_turns.py --out $OUT/t1 --refs $REFS --mix-refs 2B,9B --no-student --same-state-only \
   --pmi-dir $OUT/t1swap > $OUT/logs/turns.log 2>&1; tail -n 25 $OUT/logs/turns.log
