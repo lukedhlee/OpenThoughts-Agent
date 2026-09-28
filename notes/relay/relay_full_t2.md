@@ -275,6 +275,77 @@ No gate or stop rule fired. After select_kept the relay arm has 979 usable failu
   6,526 rows; `render.py` identical to d0ddd237). The quarantine and prior-error lists are there too.
   Attempt 5's `stop_rule.log` has both rates and the real-failure count per check.
 
+**Attempt 6 and the final_v2 arms (2026-09-28): both arms rebuilt with one rule, 808 passes + 808 real failures
+each, SFT-ready.** Attempt 6 ran the relay on the tasks it had never played, so both arms draw from the same pool. One
+rule, applied identically, then gave 808 + 808 per arm. The QA found a label defect, which the rule now excludes: about
+12 % of "failures" in both arms were scored 0 without the tests ever running. Every row passes the SFT chain's own cache
+check.
+- **Attempt 6** (`relay_full_relay6a_20260927` + `relay_full_relay6b_20260928`, ota 267abe53 / 58b23512, worktree
+  `ota-relay-v14`).
+  - **Pool.** 1,044 tasks: `full_pool.txt` minus the 999 tasks with any relay trial, a set that already contains the
+    35 quarantined ones. Pinned in `relay_full_relay6_20260927.tasks.txt`.
+  - **Order.** 2 tries per task, round by round in shuffled order (seed 20260927, `SHUFFLE_SEED=list`).
+  - **Settings.** As attempt 5, 128 concurrent, with `CLOCK=repair`.
+  - **Stop-rule override** (coordinator, 22:40 PT): `stop_rule_override.json` `{"herr_max": 0.25, "ovf_max": 0.40}`.
+    These are the harder tasks, and the baseline's failures on them are about 40 % overflow.
+  - **Split around the maintenance.** The first submit pended behind a whole-machine reservation, 00:00–08:00 PT;
+    reservations were not checked before submitting. So the run went in two parts:
+    - Part 1 ran 22:08–23:59 PT (14.09 node-h, 702 scored). Harbor was stopped by hand at 23:59 PT.
+    - The remaining 1,386 slots were written to fscratch.
+    - Part 2 ran 01:06–03:57 PT (18.10 node-h, 945 scored) after the maintenance was cancelled.
+  - **Outcome.** 1,647 scored, pass 0.455, 898 real failures (false done 440, overflow 338, timeout 105, tests failed
+    15), harness errors 3–8 %. No gate or stop rule fired, and the early gates passed at 22:40 and 01:42 PT.
+  - **Spend.** 32.19 node-h. The relay arm's total is 108.0 node-h.
+- **Router change** (267abe53). Attempt 5's 39 lost turns were not a missing failover: a test shows the guard's
+  resample already moves to a live teacher. Every server had refused all 5 connect attempts. Now a resample that gets no
+  answer passes the reply already served (`resample_http_<status>_passed`, like `unparseable_passed`) instead of a 502
+  that ends the episode. 62 router tests pass.
+- **Build rule** (`pilot/final_v2.py`, 8ecea21c; both arms alike):
+  - candidates are `select_kept.arm_rows`;
+  - strict labels: quarantine, weak timeouts, rows over 65,536 and rows whose verifier never ran pytest are dropped;
+  - at most 2 rows per task, drawn uniformly (seed 20260927);
+  - only tasks eligible in both arms (1,726);
+  - N = the largest 1:1 both arms can meet, which is **808**. The baseline's 808 eligible failures bind.
+  - Rendered with `render_think_limit.py --strip-copied-markers --think-limit 16384` on the d0ddd237 render into
+    `final_v2_rendered_think16k_clean.jsonl`. The old `final_*` files are untouched.
+- **The label defect the QA found.** In the first v2 draw (N 939) the hand-read turned up a failure whose `test.sh`
+  failed to download uv (HTTP 403) and never ran pytest.
+  - A scan found 108 relay and 130 baseline v2 failures like it: `curl: command not found`, `uvx: No such file`, or
+    403. Every pass ran pytest.
+  - These are verifier-install artifacts, not model failures. The rule now drops them (131 relay and 144 baseline
+    candidates), and N fell from 939 to 808.
+  - The pre-fix files are kept as `*.pre_verifier_filter`.
+- **QA of the two final_v2 arms** (`sft/qa_final.py`, `qa_final.json` in both run dirs):
+
+  | per arm | relay (`relay_full_relaym6_20260928`) | Qwen alone (`relay_full_baseline6m_20260926`) |
+  |---|---|---|
+  | rows (passes + failures) | 1,616 (808 + 808) | 1,616 (808 + 808) |
+  | unique tasks; rows per task (1 / 2) | 1,225; 834 / 391 | 1,194; 772 / 422 |
+  | task overlap of the final rows | 871 in both, 354 relay only, 323 Qwen only (same 1,726-task pool, independent draws) | |
+  | failure mix | false done 434, overflow 349, tests failed 14, timeout 11 | false done 437, overflow 365, tests failed 3, timeout 3 |
+  | failures on the attempt-6 (new) tasks | 564 (70 %) | 627 (78 %) |
+  | trained tokens (min per row) | 14.69 M (325) | 14.18 M (1,158) |
+  | rows over 65,536 / rows under 200 trained tokens | 0 / 0 | 0 / 0 |
+  | trained Qwen turns with a copied marker outside the executed JSON | 24 of 16,813 (0.14 %); 10 more inside JSON strings | 0 of 18,939; 14 inside JSON |
+  | trained Qwen turns Terminus-2's parser rejects | 11 (0.07 %) | 6 (0.03 %) |
+  | trained tokens in 09-21 turns | 0 in unfixed turns; **1.08 M (7.3 %) in autofixed 09-21 turns** | 0 |
+
+  - **Labels.** Hand-reads of 5 passes and 5 failures from the new relay tasks all hold. The passes passed all 2–6
+    tests. The failures failed real tests: 1 of 11, 1 of 5, 18 of 18, 2 of 3 and 6 of 6.
+  - **SFT readiness** (Mac CPU, marin 3a5ae99a88, `relay_rows_to_parquet.py` then `verify_relay_cache.py --prepare`):
+    both files convert with no refusal.
+    - Relay: 1,616 rows equal in ids and loss as the trainer draws them, trained tokens 14,690,948 = 14,690,948.
+    - Qwen alone: 1,616 rows equal, 14,182,902 = 14,182,902.
+    - No weight on a row boundary, and every row appears exactly once.
+- **Open, for Luke.**
+  - **Autofixed 09-21 turns.** The relay arm trains 1.08 M tokens (7.3 %) on autofixed 09-21 turns, which is
+    `render.py`'s default, training the rewritten action. That is 09-21's own action, so it is not strictly "Qwen only
+    on the early turns". The alternative is `autofix_loss='none'`, which masks them.
+  - **Task-matched draws.** The final rows share 871 of their tasks. Task-matched draws would raise that overlap, at the
+    cost of N.
+- **Stall, 05:46–09:36 PT.** The build finished at 05:46 PT, but my watcher's `pgrep -f` matched its own command line,
+  so nothing reported for about 4 h.
+
 ## Context-budget check (Luke 2026-09-26 12:50 PT): pass rule pre-registered, not submitted
 
 **Why.** In the last relay check 09-21 wandered slowly: about 21 turns per episode against about 9 for Qwen alone.

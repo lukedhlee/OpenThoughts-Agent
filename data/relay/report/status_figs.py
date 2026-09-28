@@ -72,7 +72,7 @@ FAIL_RUNS = [
     ('Qwen alone, baseline 4\nper-GPU serving, stopped at 25 min', 'relay_full_baseline4_20260926', 'control'),
     ('Relay, context budget 2\n100 pilot tasks', 'relay_ctxb2_20260926', 'relay_repair'),
     ('Qwen alone, final pool (6 + 6b–6e)\n2,026 tasks x up to 2', 'relay_full_baseline6m_20260926', 'control'),
-    ('Relay, final pool (5 attempts)\n910 tasks x up to 7', 'relay_full_relaym_20260926', 'relay_repair'),
+    ('Relay, final pool (6 attempts)\n1,879 tasks x up to 7', 'relay_full_relaym6_20260928', 'relay_repair'),
 ]
 # Compute spend. Runs with a run.meta are read from it; the rest exist only in the notes.
 SPEND_RUNS = [  # (label, run dir, date)
@@ -82,7 +82,7 @@ SPEND_RUNS = [  # (label, run dir, date)
     ('Re-check', 'relay_recheck_20260925', '09-25'), ('Baseline rerun', 'relay_full_baseline2_20260925', '09-26'),
     ('Baseline 4', 'relay_full_baseline4_20260926', '09-26'), ('Context budget 1', 'relay_ctxb_20260926', '09-26'),
     ('Baseline 5', 'relay_full_baseline5_20260926', '09-26'), ('Context budget 2', 'relay_ctxb2_20260926', '09-26'),
-    ('Relay full run, 5 attempts', 'relay_full_relaym_20260926', '09-26/27'),     # merged run.meta = sum of attempts
+    ('Relay full run, 6 attempts', 'relay_full_relaym6_20260928', '09-26/28'),     # merged run.meta = sum of attempts
     ('Qwen-alone arm, 6 + 6b–6e', 'relay_full_baseline6m_20260926', '09-26/27'),
 ]
 NOTES_SPEND = [  # (label, node-h, status, date, source)
@@ -109,8 +109,9 @@ LIVE_WHAT = {'relay_full_relay_20260926': 'Relay full run (945 solvable tasks x 
              'relay_full_baseline6_20260926': 'Baseline 6, Qwen alone (2,043 tasks)'}
 
 # ---- narrative (edit when the state changes; numbers come from the data) ----
-VERDICT = ('Both SFT arms are final at 907 passes + 907 real failures each, every row within 65,536 tokens. Nothing is '
-           'running; the next step is SFT of 09-21 on each arm.')
+VERDICT = ('Both SFT arms are final (v2, one build rule) at 808 passes + 808 real failures each, drawn from the same '
+           '1,726 tasks, every row within 65,536 tokens and every failure verified by a test run. Nothing is running; '
+           'the next step is SFT of 09-21 on each arm.')
 BULLETS = [
     'Full runs: the relay passes {relay_full:.1%} of {relay_scored:,} scored episodes on the {relay_tasks} Qwen-solvable '
     'tasks (up to 7 tries each); Qwen alone passes {base_full:.1%} of {base_scored:,} on {base_tasks:,} tasks (up to 2).',
@@ -122,7 +123,7 @@ BULLETS = [
     'superseded.',
 ]
 NEXT = [
-    ('SFT 09-21 on each arm (907 + 907 rows, 16k thinking-loss limit)', 'next'),
+    ('SFT 09-21 on each arm (808 + 808 rows, final_v2, 16k thinking-loss limit)', 'next'),
     ('Eval both SFT models on the 300 held-out CalibForge tasks and on TB2, under the 65k/16k policy', 'after SFT'),
 ]
 # Hand-read of failed rows in the final arms (notes/relay/relay_full_t2.md, "SFT arms: quality comparison").
@@ -132,7 +133,7 @@ NOTES_HANDREAD = dict(relay=7, baseline=6, rubber_stamp=0)
 NOTES_PRESTRIP = dict(marker_turns=3782, qwen_turns=17524, trained_share=0.199, base_marker_turns=10,
                       base_qwen_turns=21796)
 NOTES_PROSE = dict(after_prose=(6435, 9304), after_clean=(2870, 7191))
-POOL_TASKS = dict(relay=910, baseline=2026)   # tasks with a scored trial in each merged pool (relay_full_t2.md)
+POOL_TASKS = dict(relay=1879, baseline=2026)   # tasks with a scored trial in each merged pool (relay_full_t2.md)
 
 
 # ---- helpers ----
@@ -765,7 +766,7 @@ def fig_sft_tokens(cache, out):
     ax.set_yticks([1, 0])
     ax.set_yticklabels([f"Relay\n{tr / 1e6:.2f} M", f"Qwen alone\n{base['trained'] / 1e6:.2f} M"], fontsize=10)
     ax.set_ylim(-0.45, 1.6)
-    ax.set_xlabel('trained tokens (millions), 907 passes + 907 failures per arm')
+    ax.set_xlabel(f"trained tokens (millions), {rel['rows'] // 2} passes + {rel['rows'] // 2} failures per arm")
     tidy(ax, xgrid=True)
     ax.grid(axis='y', visible=False)
     qwen_share = (tr - rel['by']['student']) / tr
@@ -814,7 +815,7 @@ def sft_section(cache, base):
         ('Tasks (rows from tasks with ≥ 3 rows)', f"{r['tasks']:,} ({pct(r['share_ge3'])})",
          f"{b['tasks']:,} ({pct(b['share_ge3'])})"),
         ('Rows per task, p90 / max', f"{r['rpt_p90']} / {r['rpt_max']}", f"{b['rpt_p90']} / {b['rpt_max']}"),
-        ('Tasks behind the 907 failures', f"{r['fail_tasks']}", f"{b['fail_tasks']}"),
+        (f"Tasks behind the {r['rows'] // 2} failures", f"{r['fail_tasks']}", f"{b['fail_tasks']}"),
         ('Trained tokens (Qwen inside 09-21\'s episodes)', f"{tr / 1e6:.2f} M ({pct(q_in / tr)})",
          f"{b['trained'] / 1e6:.2f} M (0 %)"),
         ('Rows with repairs only, no takeover (their trained tokens)',
@@ -841,13 +842,14 @@ def sft_section(cache, base):
          f"({r['row_p50'] / 1e3:.1f}k)", f"0 ({b['row_p50'] / 1e3:.1f}k)"),
     ]
     L = ['', '## SFT arms: quality comparison', '',
-         "**The relay's tokens sit where 09-21 goes wrong; with the copied markers stripped, what is left against it is a "
-         f"narrower failure half ({r['fail_tasks']} tasks against {b['fail_tasks']}) and a copied prose habit.**", '',
+         "**Both arms come from one build rule (same task pool, at most 2 rows per task, strict and test-verified "
+         "labels, 1:1), so they differ mainly in who played the early turns; the relay's tokens sit where 09-21 goes "
+         f"wrong. Its failures come from {r['fail_tasks']} tasks against {b['fail_tasks']}.**", '',
          f"Both arms are now rendered with 09-21's copied chat markers stripped from Qwen's replies (copied markers "
          f"{pct(pre['marker_turns'] / pre['qwen_turns'])} → {pct(r['marker'] / r['qturns'], 1)} of the relay's Qwen "
          "turns). The strip only touches text outside the JSON the harness executes, so every action is unchanged.",
          '',
-         '| 907 passes + 907 real failures per arm | Relay | Qwen alone |', '|---|---|---|']
+         f"| {r['rows'] // 2} passes + {r['rows'] // 2} real failures per arm | Relay | Qwen alone |", '|---|---|---|']
     L += [f'| {a} | {x} | {y} |' for a, x, y in rows]
     L += ['', f'![fig0_sft_tokens.png]({base}fig0_sft_tokens.png)',
           "*Trained tokens in the clean sets, by who wrote them and from where.*", '',
