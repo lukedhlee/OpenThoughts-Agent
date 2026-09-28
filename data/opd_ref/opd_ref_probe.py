@@ -67,6 +67,48 @@ def load_trial(tdir):
     return dict(task=name.rsplit('__', 1)[0], trial=name, reward=float(reward), exc=exc, messages=msgs)
 
 
+ROLE_RE = re.compile(r'\n(assistant|user)\n')
+JSON_START_RE = re.compile(r'\n\{\s*"analysis"')
+
+
+def load_dump_row(d):
+    """One SkyRL train-rollout dump row -> trial dict, or None. The dump decodes with special tokens skipped, so the
+    think markers and turn headers are gone: 'assistant\\n<think text>\\n\\n\\n{json}\\nuser\\n<obs>\\nassistant\\n...'.
+    Turns are cut at the role lines (a role line that breaks the assistant/user alternation is kept as text), and each
+    reply is cut at its last '{"analysis"' object; the markers are put back around the text before it."""
+    prompt = d['prompt']
+    if not prompt.startswith('user\n'):
+        return None
+    parts = ROLE_RE.split('\n' + d['response'])
+    if parts[0] != '' or len(parts) < 3:
+        return None
+    turns = []                                  # [role, text]
+    for role, text in zip(parts[1::2], parts[2::2]):
+        want = 'assistant' if not turns or turns[-1][0] == 'user' else 'user'
+        if role == want:
+            turns.append([role, text])
+        else:
+            turns[-1][1] += '\n%s\n' % role + text
+    msgs = [dict(role='user', content=prompt[len('user\n'):])]
+    for role, text in turns:
+        if role == 'assistant':
+            ms = list(JSON_START_RE.finditer('\n' + text.lstrip('\n')))
+            body = text.lstrip('\n')
+            if ms:
+                j = ms[-1].start()               # offset in '\n' + body; the '\n' before '{' is at j
+                think, act = body[:max(j - 1, 0)].strip('\n'), body[j:].strip()
+                text = (START_THINK + '\n' + think + '\n' + END_THINK + '\n\n' + act) if think else act
+            else:
+                text = body.strip()
+        msgs.append(dict(role=role, content=text))
+    while msgs and msgs[-1]['role'] != 'assistant':
+        msgs.pop()
+    if len(msgs) < 2:
+        return None
+    return dict(task=d['uid'], trial=d.get('trajectory_id') or d['uid'], reward=float(d['reward'] or 0.0),
+                exc=d.get('stop_reason') or '', messages=msgs)
+
+
 def split_reply(c):
     """Assistant content (trimmed) -> [(kind, text)], markers excluded. kind = think | action."""
     if c.startswith(START_THINK) and END_THINK in c:
@@ -213,12 +255,17 @@ def cmd_prep(a):
     from transformers import AutoTokenizer
     stok = AutoTokenizer.from_pretrained(a.snowball_tok)
     qtok = AutoTokenizer.from_pretrained(a.qwen_tok)
-    trials = sorted(d for d in glob.glob(os.path.join(a.session, '*__*')) if os.path.isdir(d))
+    if a.dump:
+        trials = [json.loads(line) for p in sorted(glob.glob(a.dump)) for line in open(p)]
+        load = load_dump_row
+    else:
+        trials = sorted(d for d in glob.glob(os.path.join(a.session, '*__*')) if os.path.isdir(d))
+        load = load_trial
     if a.limit:
         trials = trials[:a.limit]
     eps, skipped = [], {}
     for i, d in enumerate(trials):
-        tr = load_trial(d)
+        tr = load(d)
         if tr is None:
             skipped['infra_or_unreadable'] = skipped.get('infra_or_unreadable', 0) + 1
             continue
@@ -497,7 +544,8 @@ def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest='cmd', required=True)
     q = sub.add_parser('prep')
-    q.add_argument('--session', required=True)
+    q.add_argument('--session', default='')
+    q.add_argument('--dump', default='', help='glob of SkyRL *_train_rollouts.jsonl dumps (full thinking kept)')
     q.add_argument('--snowball-tok', required=True)
     q.add_argument('--qwen-tok', required=True)
     q.add_argument('--out', required=True)

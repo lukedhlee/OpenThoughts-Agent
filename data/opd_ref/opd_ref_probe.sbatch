@@ -9,6 +9,8 @@
 # Env copied by diff from data/relay/pilot/serve_node.sh (EAGLE-3 vLLM overlay, relay-extra torchvision for qwen3_5).
 #
 #   RUN=<name> SESSION=<eval session dir> STUDENT=<model dir> sbatch opd_ref_probe.sbatch
+#   RUN=<name> DUMP='<glob of *_train_rollouts.jsonl>' STUDENT=<model dir> sbatch opd_ref_probe.sbatch
+#     (RL train dumps keep every turn's thinking; the eval ATIF logs keep it on turn 1 only)
 #
 #SBATCH --job-name=opd_ref_probe
 #SBATCH --time=02:00:00
@@ -37,15 +39,17 @@ export VLLM_CACHE_ROOT=$CACHE/vllm XDG_CACHE_HOME=$CACHE/xdg TRITON_CACHE_DIR=$C
 
 M=/e/data1/mmlaion/lee27/models
 RUN=${RUN:?RUN=<name>}
-SESSION=${SESSION:?SESSION=<eval session dir>}
+SESSION=${SESSION:-}; DUMP=${DUMP:-}
+[ -n "$SESSION$DUMP" ] || { echo "set SESSION or DUMP"; exit 2; }
+if [ -n "$DUMP" ]; then SRC=(--dump "$DUMP"); else SRC=(--session "$SESSION"); fi
 STUDENT=${STUDENT:?STUDENT=<model dir>}
 TEACHER=${TEACHER:-$M/Qwen3.8-27B}
 REFS=${REFS:-0.8B,2B,4B,9B}
 OUT=/e/data1/mmlaion/lee27/experiments/opd_ref/$RUN; mkdir -p $OUT/logs
-echo "opd_ref_probe $RUN on $(hostname) job=$SLURM_JOB_ID ($(date -Is)) session=$SESSION student=$STUDENT"
+echo "opd_ref_probe $RUN on $(hostname) job=$SLURM_JOB_ID ($(date -Is)) source=$SESSION$DUMP student=$STUDENT"
 nvidia-smi --query-gpu=name,memory.total --format=csv
 
-[ -f $OUT/episodes.pkl ] || $PY $HERE/opd_ref_probe.py prep --session $SESSION --snowball-tok $STUDENT \
+[ -f $OUT/episodes.pkl ] || $PY $HERE/opd_ref_probe.py prep "${SRC[@]}" --snowball-tok $STUDENT \
   --qwen-tok $TEACHER --out $OUT || { echo "prep failed"; exit 1; }
 
 qwen4() {  # qwen4 <name> <model dir>: four TP1 shards, one per GPU
