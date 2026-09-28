@@ -10,6 +10,11 @@ answer token. The same same-state and done-claim tests as opd_ref_turns.py, so t
     value  the session after its first k turns (k in --ks, rollouts still working, no claim yet): "is the agent on
            track to a correct fix?" Compared within task at the same k, so it asks whether the teacher can see
            mid-episode what its log-likelihood could not (CompassOPD's first-k-turn AUCs were ~0.50).
+    dense  the same question after EVERY turn before the first done-claim, for a per-turn reward
+           r_t = V_t - V_{t-1} (V = P(Yes)). dense-analyze asks whether those changes are clean enough to credit
+           single turns: how much V moves on turns that change nothing (read-only commands), and whether, among
+           rollouts of a task with the same V before turn t, the one whose turn t raised V passes more often.
+    export transcripts of chosen rollouts with numbered turns, for an independent turn-by-turn audit.
 
     python opd_ref_judge.py score --mode turn1 --dump '<glob>[,<glob>]' --model <qwen dir> --out <dir> --shard g --nshards 4
     python opd_ref_judge.py analyze --out <dir>
@@ -123,6 +128,55 @@ def value_item(tr, k):
                   'one word, Yes or No.' % (issue_of(msgs[0]['content']), fit(steps)))
 
 
+EDIT_RE = re.compile(r'(sed\s+-i|perl\s+-[a-z]*i|\btee\b|\bpatch\b|git\s+(apply|checkout|stash|reset)|\brm\s|\bmv\s|'
+                     r'\bcp\s|>\s*[^&/\s]|>>|<<\s*[\'"]?EOF|open\([^)]*[\'"][wa]\+?[\'"])')
+TEST_RE = re.compile(r'(\bpytest\b|\bpython3?\s+(-m\s+pytest|-m\s+unittest|[\w./-]+\.py)|\btox\b|\bmake\s+test)')
+KEYS_RE = re.compile(r'"keystrokes"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def classify(action):
+    """edit > test > read: what the turn's commands do to the sandbox (keystrokes only; a heuristic)."""
+    keys = ' ; '.join(KEYS_RE.findall(action)).replace('2>&1', '').replace('>/dev/null', '').replace('> /dev/null', '')
+    if not keys.strip():
+        return 'none'
+    if EDIT_RE.search(keys):
+        return 'edit'
+    if TEST_RE.search(keys):
+        return 'test'
+    return 'read'
+
+
+VALUE_Q = ('Judge the work so far as an expert engineer would: is the agent on track to fix the issue correctly, so '
+           'that the hidden tests will pass when it is done? Answer with one word, Yes or No.')
+VALUE_Q2 = ('Suppose the agent keeps working from this point. As an experienced reviewer, do you expect its final patch to '
+            'resolve the issue and pass the hidden tests? Reply Yes or No, one word.')
+
+
+def info_lines(obs):
+    """Lines of terminal output that are not the echoed prompt/commands or blank: 0 = the turn showed nothing new."""
+    return sum(1 for ln in obs.splitlines() if ln.strip() and not ln.startswith('$')
+               and not ln.startswith('New Terminal Output') and not ln.startswith('Current Terminal Screen'))
+
+
+def dense_items(tr, para_every=8):
+    """(k, prompt, class of turn k, info lines of its output, paraphrased?) after every turn before the first
+    done-claim; every para_every-th turn is asked twice (a reworded question) to measure the judge's own wobble."""
+    msgs = tr['messages']
+    steps, claimed = session_steps(msgs)
+    n = len(steps) - (1 if claimed else 0)
+    out = []
+    for k in range(1, n + 1):
+        act = ''.join(t for kd, t in split_reply(msgs[2 * k - 1]['content'].strip()) if kd == 'action')
+        info = info_lines(msgs[2 * k]['content']) if 2 * k < len(msgs) else 0
+        head = ('A coding agent is working on the task below in a Linux terminal, in a checkout of the repository at '
+                '/testbed. It is not finished yet. Here is its session so far.\n\n<task>\n%s\n</task>\n\n<session>\n'
+                '%s\n</session>\n\n' % (issue_of(msgs[0]['content']), fit(steps[:k])))
+        out.append((k, render(head + VALUE_Q), classify(act), info, False))
+        if k % para_every == 0:
+            out.append((k, render(head + VALUE_Q2), classify(act), info, True))
+    return out, n
+
+
 def items(mode, dump, ks=(3, 6, 10)):
     if mode == 'turn1':
         kept, _ = select(paths_of(dump), 0)
@@ -136,6 +190,11 @@ def items(mode, dump, ks=(3, 6, 10)):
             if tr is None:
                 continue
             task = '%s@%s' % (d['uid'], d.get('step'))
+            if mode == 'dense':
+                its, n = dense_items(tr)
+                out += [dict(trial=tr['trial'], task=task, reward=tr['reward'], k=k, n_turns=n, cls=c, info=inf,
+                             para=pa, prompt=pr) for k, pr, c, inf, pa in its]
+                continue
             if mode == 'claim':
                 pr = claim_item(tr)
                 if pr is not None:
@@ -156,8 +215,13 @@ def cmd_score(a):
     # a shard, so its common prompt prefix is served from the prefix cache
     out = os.path.join(a.out, 'judge', '%s.%d.pkl' % (a.mode, a.shard))
     os.makedirs(os.path.dirname(out), exist_ok=True)
+    # dense: each rollout's queries share a growing prefix. Prefix caching on this hybrid model works per 784-token
+    # block (mamba 'align' mode) and only for blocks already computed, so rollouts go in groups of G with at most G
+    # requests in flight, each group ordered by turn: a rollout's next query starts after its previous one is cached.
+    G = 8
     llm = LLM(model=a.model, max_model_len=a.max_len, gpu_memory_utilization=0.85, enable_prefix_caching=True,
-              max_num_batched_tokens=16384, max_num_seqs=32, limit_mm_per_prompt={'image': 0, 'video': 0}, seed=0)
+              max_num_batched_tokens=16384, max_num_seqs=G if a.mode == 'dense' else 32,
+              limit_mm_per_prompt={'image': 0, 'video': 0}, seed=0)
     tok = llm.get_tokenizer()
     sp = SamplingParams(max_tokens=1, temperature=0.0, logprobs=20)
     prompts, over = [], 0
@@ -169,7 +233,22 @@ def cmd_score(a):
         prompts.append(TokensPrompt(prompt_token_ids=ids))
         it['n_tokens'] = len(ids)
     t0 = time.time()
-    outs = llm.generate(prompts, sp, use_tqdm=False)
+    if a.mode == 'dense':
+        trials = list(dict.fromkeys(it['trial'] for it in mine))
+        rank = {t: j for j, t in enumerate(trials)}
+        outs = [None] * len(mine)
+        ntok = 0
+        for g0 in range(0, len(trials), G):
+            idx = sorted((j for j, it in enumerate(mine) if g0 <= rank[it['trial']] < g0 + G),
+                         key=lambda j: (mine[j]['k'], mine[j].get('para', False), rank[mine[j]['trial']]))
+            for j, o in zip(idx, llm.generate([prompts[j] for j in idx], sp, use_tqdm=False)):
+                outs[j] = o
+                ntok += mine[j]['n_tokens']
+            if (g0 // G) % 4 == 0:
+                print('dense shard %d: %d/%d rollouts, %.0f prompt tok/s' % (
+                    a.shard, min(g0 + G, len(trials)), len(trials), ntok / (time.time() - t0)), flush=True)
+    else:
+        outs = llm.generate(prompts, sp, use_tqdm=False)
     res = []
     for it, o in zip(mine, outs):
         yes = no = -np.inf
@@ -180,6 +259,7 @@ def cmd_score(a):
             elif w == 'no':
                 no = np.logaddexp(no, lp.logprob)
         res.append(dict(trial=it['trial'], task=it['task'], reward=it['reward'], k=it['k'], n_tokens=it['n_tokens'],
+                        cls=it.get('cls'), n_turns=it.get('n_turns'), info=it.get('info'), para=it.get('para', False),
                         yes=float(yes), no=float(no), logit=float(np.clip(yes, -40, 0) - np.clip(no, -40, 0))))
     pickle.dump(res, open(out, 'wb'))
     print('%s shard %d: %d items, %d over length, %.0f s, %d tokens' % (a.mode, a.shard, len(res), over,
@@ -240,11 +320,119 @@ def cmd_analyze(a):
     print('\n'.join(L))
 
 
+def cmd_dense_analyze(a):
+    allr = [r for p in sorted(glob.glob(os.path.join(a.out, 'judge', 'dense.*.pkl'))) for r in pickle.load(open(p, 'rb'))]
+    rs = [r for r in allr if not r.get('para')]
+    para = {(r['trial'], r['k']): r for r in allr if r.get('para')}
+    tr = {}
+    for r in rs:
+        r['v'] = float(1 / (1 + np.exp(-r['logit'])))
+        tr.setdefault(r['trial'], []).append(r)
+    for x in tr.values():
+        x.sort(key=lambda r: r['k'])
+        for j, r in enumerate(x):
+            r['dv'] = r['v'] - x[j - 1]['v'] if j > 0 and x[j - 1]['k'] == r['k'] - 1 else np.nan
+            r['v_prev'] = x[j - 1]['v'] if j > 0 else np.nan
+    L = ['# dense judge: per-turn changes of V = P(on track)', '',
+         '%d turns judged in %d rollouts (%d pass)' % (len(rs), len(tr), sum(x[0]['reward'] > 0 for x in tr.values())),
+         '', '## 1. how much V moves, by what the turn did (|dV| median / mean dV)', '',
+         '| turn kind | n | passing rollouts | failing rollouts |', '|---|---|---|---|']
+    M = {'by_class': {}}
+    for r in rs:
+        if r['cls'] != 'none' and r.get('info') == 0:
+            r['cls'] = 'no-info'          # commands ran but printed nothing new
+    for c in ('read', 'test', 'edit', 'no-info', 'none'):
+        cell = []
+        for lab in (True, False):
+            d = np.array([r['dv'] for r in rs if r['cls'] == c and (r['reward'] > 0) == lab and np.isfinite(r['dv'])])
+            M['by_class']['%s_%s' % (c, 'pass' if lab else 'fail')] = dict(
+                n=len(d), med_abs=float(np.median(np.abs(d))) if len(d) else None,
+                mean=float(d.mean()) if len(d) else None)
+            cell.append('%.3f / %+.3f (n %d)' % (np.median(np.abs(d)), d.mean(), len(d)) if len(d) else '–')
+        L.append('| %s | %d | %s | %s |' % (c, sum(r['cls'] == c for r in rs), cell[0], cell[1]))
+    # 1b. the judge's own wobble: the same session asked with a reworded question
+    pr = [(r['v'], 1 / (1 + np.exp(-para[(r['trial'], r['k'])]['logit']))) for r in rs if (r['trial'], r['k']) in para]
+    if pr:
+        d = np.array([x - y for x, y in pr])
+        M['retest'] = dict(n=len(d), med_abs=float(np.median(np.abs(d))),
+                           corr=float(np.corrcoef([x for x, _ in pr], [y for _, y in pr])[0, 1]))
+        L += ['', 'Reworded question on the same session (%d pairs): median |V - V\'| %.3f, correlation %.2f' % (
+            len(d), M['retest']['med_abs'], M['retest']['corr'])]
+    # 2. matched credit: same task, same turn t, same V before t (|diff| < eps): does the bigger dV_t pass more?
+    by = {}
+    for r in rs:
+        if np.isfinite(r['dv']):
+            by.setdefault((r['task'], r['k']), []).append(r)
+    L += ['', '## 2. matched credit (same task, same turn, V before the turn within eps; AUC of dV_t for pass vs fail)',
+          '']
+    for eps in (0.03, 0.05, 0.10, 1.0):
+        per = {}
+        for (task, k), x in by.items():
+            for p_ in x:
+                if p_['reward'] <= 0:
+                    continue
+                for f in x:
+                    if f['reward'] > 0 or abs(p_['v_prev'] - f['v_prev']) >= eps:
+                        continue
+                    per.setdefault(task, []).append((p_['dv'] > f['dv']) + 0.5 * (p_['dv'] == f['dv']))
+        if not per:
+            continue
+        pt = np.array([np.mean(v) for v in per.values()])
+        rng = np.random.default_rng(0)
+        bs = [pt[rng.integers(0, len(pt), len(pt))].mean() for _ in range(2000)]
+        M['matched_eps%.2f' % eps] = dict(auc=float(pt.mean()), lo=float(np.percentile(bs, 2.5)),
+                                          hi=float(np.percentile(bs, 97.5)), n_tasks=len(pt),
+                                          n_pairs=int(sum(len(v) for v in per.values())))
+        L.append('- eps %.2f: %.2f [%.2f, %.2f] over %d tasks, %d pairs' % (eps, pt.mean(), np.percentile(bs, 2.5),
+                                                                          np.percentile(bs, 97.5), len(pt),
+                                                                          M['matched_eps%.2f' % eps]['n_pairs']))
+    # 3. V by turn, pass vs fail (the trajectory the reward would follow)
+    L += ['', '## 3. mean V after turn k, passing vs failing rollouts', '', '| k | pass | fail |', '|---|---|---|']
+    for k in (1, 2, 3, 5, 8, 12, 16, 24, 32):
+        vp = [r['v'] for r in rs if r['k'] == k and r['reward'] > 0]
+        vf = [r['v'] for r in rs if r['k'] == k and r['reward'] <= 0]
+        if vp and vf:
+            L.append('| %d | %.2f (n %d) | %.2f (n %d) |' % (k, np.mean(vp), len(vp), np.mean(vf), len(vf)))
+    pickle.dump({t: [(r['k'], r['v'], r['cls']) for r in x] for t, x in tr.items()},
+                open(os.path.join(a.out, 'dense_table.pkl'), 'wb'))
+    json.dump(M, open(os.path.join(a.out, 'dense.json'), 'w'), indent=1)
+    open(os.path.join(a.out, 'dense.md'), 'w').write('\n'.join(L) + '\n')
+    print('\n'.join(L))
+
+
+def cmd_export(a):
+    """Numbered transcripts (issue, then per turn: the agent's JSON and the terminal output) up to and including the
+    first done-claim, one file per trial, for the turn-by-turn audit. Thinking is left out, as in the judge's view."""
+    want = set(a.trials.split(','))
+    os.makedirs(a.out, exist_ok=True)
+    n = 0
+    for p in paths_of(a.dump):
+        for line in open(p):
+            d = json.loads(line)
+            if (d.get('trajectory_id') or d['uid']) not in want:
+                continue
+            tr = load_dump_row(d)
+            msgs = tr['messages']
+            parts = ['TASK\n' + issue_of(msgs[0]['content']), '']
+            for j in range(1, len(msgs), 2):
+                act = ''.join(t for kd, t in split_reply(msgs[j]['content'].strip()) if kd == 'action').strip()
+                parts.append('=== TURN %d ===\n%s' % ((j + 1) // 2, act))
+                if DONE_RE.search(act):
+                    break
+                if j + 1 < len(msgs):
+                    parts.append('--- terminal output after turn %d ---\n%s' % ((j + 1) // 2,
+                                                                              cut(msgs[j + 1]['content'], 2000, 3000)))
+            parts.append('\nFINAL RESULT: the hidden tests %s.' % ('PASSED' if tr['reward'] > 0 else 'FAILED'))
+            open(os.path.join(a.out, tr['trial'] + '.txt'), 'w').write('\n'.join(parts))
+            n += 1
+    print('wrote', n, 'transcripts to', a.out)
+
+
 def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest='cmd', required=True)
     q = sub.add_parser('score')
-    q.add_argument('--mode', choices=['turn1', 'claim', 'value'], required=True)
+    q.add_argument('--mode', choices=['turn1', 'claim', 'value', 'dense'], required=True)
     q.add_argument('--dump', required=True)
     q.add_argument('--ks', default='3,6,10')
     q.add_argument('--model', required=True)
@@ -253,10 +441,16 @@ def main():
     q.add_argument('--nshards', type=int, default=1)
     q.add_argument('--max-len', type=int, default=65536)
     q = sub.add_parser('dry')
-    q.add_argument('--mode', choices=['turn1', 'claim', 'value'], required=True)
+    q.add_argument('--mode', choices=['turn1', 'claim', 'value', 'dense'], required=True)
     q.add_argument('--dump', required=True)
     q.add_argument('--ks', default='3,6,10')
     q = sub.add_parser('analyze')
+    q.add_argument('--out', required=True)
+    q = sub.add_parser('dense-analyze')
+    q.add_argument('--out', required=True)
+    q = sub.add_parser('export')
+    q.add_argument('--dump', required=True)
+    q.add_argument('--trials', required=True, help='comma-separated trajectory ids')
     q.add_argument('--out', required=True)
     a = p.parse_args()
     if a.cmd == 'dry':
@@ -269,7 +463,7 @@ def main():
         print('.....')
         print(its[0]['prompt'][-1500:])
         return
-    dict(score=cmd_score, analyze=cmd_analyze)[a.cmd](a)
+    dict(score=cmd_score, analyze=cmd_analyze, export=cmd_export, **{'dense-analyze': cmd_dense_analyze})[a.cmd](a)
 
 
 if __name__ == '__main__':
