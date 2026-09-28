@@ -1,0 +1,82 @@
+# Terminal-Bench 2 with mini-swe-agent-host in TOOL mode (upstream mini-swe-agent 2.4.6's default: mini.yaml + the
+# `litellm` tool-calling model, bash tool schema in every request), for the 09-21 Datakit SFT checkpoint with thinking on.
+# Rendered by msa4_chain.sh (Jupiter login node), which fills __JOB_NAME__ and __API_BASE__ and writes the task list.
+#
+# Everything the 09-24 policy fixes is copied from tb2_marin_policy_0924.yaml: one 1,800 s agent budget for every task
+# (AgentTimeoutError, ContextLengthExceededError, TurnCapExhaustedError, NonZeroAgentExitCodeError are scored), setup 360 s,
+# verifier 300 s, the 09-24 retry list, Daytona with auto_snapshot (the eval org refuses declarative builds), 16 concurrent
+# trials per server, one trial per task per run, no sampler override (serve_snowball.sbatch POLICY=trained: temperature 1.0),
+# thinking at the template default (/think, no chat_template_kwargs), skip_special_tokens=false (the think markers are
+# special tokens), EAGLE-3 draft and DP4 on one GH200 node.
+#
+# Only the agent block differs, and it is the harness under test:
+# - agent mini-swe-agent-host (harbor lukedhlee/mini-swe-host-exec-isolation @ 6feb3759 = cdd5b008 + the exec-isolation fix), config_file mini.yaml, model_class litellm;
+#   upstream loaded verbatim: no step limit, 30 s per command, 3 consecutive format errors end the episode
+#   (RepeatedFormatError), no summarization.
+# - tool_choice "none": the Grug serve runs no vLLM tool parser, so vLLM renders the bash tool into the prompt and the agent
+#   parses the model's own <tool_call>{...}</tool_call> blocks from the sampled text.
+# - interleaved_thinking true: every prior reply's reasoning is re-sent (as reasoning_content and reasoning) and the 09-21
+#   template re-renders it in <|start_think|>...<|end_think|> for every assistant turn, the way the harness intends tool mode.
+# - model_info carries the policy's 32,768 / 8,192 for parity, but on this path (chat completions with the full message list)
+#   harbor sends no max_tokens and checks no input budget, so the served 65,536-token window is the only limit on a prompt
+#   plus its reply. The Terminus-2 chat path behaves the same (single v0.1 replies reach ~60k tokens); Terminus-2 differs in
+#   that it summarizes near 32k.
+job_name: __JOB_NAME__
+jobs_dir: /e/data1/mmlaion/lee27/experiments/tb2_jobs
+n_attempts: 1
+n_concurrent_trials: 16
+timeout_multiplier: 1.0
+quiet: true
+release_trial_payloads_in_memory: true
+retry:
+  max_retries: 10
+  include_exceptions:
+    - InternalServerError
+    - APIConnectionError
+    - APITimeoutError
+    - ArtifactUploadTimeoutError
+    - ArtifactWriterBacklogError
+    - CancelledError
+    - ContextManagementInfrastructureError
+    - LLMRequestTimeoutError
+    - SandboxBuildFailedError
+    - ContainerRegistryThrottledError
+    - AgentSetupTimeoutError
+    - DaytonaSandboxStopError
+    - DaytonaProcessError
+    - TrialTimeoutError
+    - ArtifactWriteTimeoutError
+    - Tau3RuntimeInfrastructureError
+    - Tau3TargetInfrastructureError
+  exclude_exceptions: []
+  wait_multiplier: 2.0
+  min_wait_sec: 1.0
+  max_wait_sec: 60.0
+environment:
+  type: daytona
+  force_build: false
+  kwargs:
+    auto_snapshot: true
+agents:
+  - name: mini-swe-agent-host
+    model_name: hosted_vllm/snowball
+    override_setup_timeout_sec: 360
+    override_timeout_sec: 1800
+    kwargs:
+      config_file: mini.yaml
+      model_class: litellm
+      llm_call_kwargs:
+        tool_choice: "none"
+      api_base: __API_BASE__
+      model_info:
+        max_input_tokens: 32768
+        max_output_tokens: 8192
+        input_cost_per_token: 0.0
+        output_cost_per_token: 0.0
+      extra_body:
+        skip_special_tokens: false
+      interleaved_thinking: true
+verifier:
+  override_timeout_sec: 300
+datasets:
+  - path: /e/fscratch/reformo/lee27/tasks/terminal_bench_2
