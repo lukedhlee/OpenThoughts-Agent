@@ -41,7 +41,13 @@ def main():
     ap.add_argument('--herr-max', type=float, default=0.10)
     ap.add_argument('--harness-exclude-tasks', help='judge harness errors only on tasks not listed here')
     a = ap.parse_args()
-    excl_p = a.harness_exclude_tasks or os.path.join(a.run_dir, 'harness_exclude_tasks.txt')
+    # a live run's limits can be changed without restarting its driver: <run dir>/stop_rule_override.json
+    # ({"herr_max": .., "ovf_max": .., "fmt_min": ..}) replaces the flags, and the log line records it
+    ovr_p = os.path.join(a.run_dir, 'stop_rule_override.json')
+    ovr = json.load(open(ovr_p)) if os.path.exists(ovr_p) else None
+    for k, v in (ovr or {}).items():
+        setattr(a, k, float(v))
+    excl_p =a.harness_exclude_tasks or os.path.join(a.run_dir, 'harness_exclude_tasks.txt')
     excl = {l.strip() for l in open(excl_p) if l.strip()} if os.path.exists(excl_p) else None
     cache_p = os.path.join(a.run_dir, 'stop_rule_cache.jsonl')
     cache = {}
@@ -83,7 +89,7 @@ def main():
         f.write(json.dumps(dict(ts=time.time(), scored=len(scored), ovf=round(ovf, 4), fmt=round(fmt, 4),
                                 herr_judged=round(herr, 4), judged_trials=len(judged), herr_all=round(herr_all, 4),
                                 all_trials=len(rows), exclude_file=excl_p if excl is not None else None,
-                                real_failures=real_fail, verdict='stop' if stop else 'ok', all_task_rule='stop' if (ovf > a.ovf_max or fmt < a.fmt_min
+                                real_failures=real_fail, override=ovr, verdict='stop' if stop else 'ok', all_task_rule='stop' if (ovf > a.ovf_max or fmt < a.fmt_min
                                                                                            or herr_all > a.herr_max) else 'ok')) + '\n')
     print('%s %d %.4f %.4f %.4f %d %.4f %d %d' % ('stop' if stop else 'ok', len(scored), ovf, fmt, herr, len(judged), herr_all,
                                               len(rows), real_fail))
