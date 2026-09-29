@@ -29,18 +29,19 @@ serve() {  # serve <vllm args...>   (PORT env, default 8000)
   done
   exit 1
 }
-module load GCC/14.3.0
-module load nvidia-compilers/25.9-CUDA-13
-C=/e/project1/transfernetx/lee27/code
-PY=$C/envs/snowball-v2/bin/python
-export PYTHONPATH=$C/src/marin_vllm_eagle3${PYTHONPATH:+:$PYTHONPATH}   # the EAGLE-3 overlay shadows the venv's vllm
-export PATH=$C/envs/snowball-v2/bin:$PATH
+# Site knobs: the defaults are Jupiter's; data/relay/horizon/serve_env.sh sets Horizon's (SERVE_MODULES="" loads none).
+for m in ${SERVE_MODULES-GCC/14.3.0 nvidia-compilers/25.9-CUDA-13}; do module load $m; done
+C=${SERVE_CODE:-/e/project1/transfernetx/lee27/code}
+VENV=${SERVE_VENV:-$C/envs/snowball-v2}
+PY=$VENV/bin/python
+export PYTHONPATH=${SERVE_OVERLAY:-$C/src/marin_vllm_eagle3}${PYTHONPATH:+:$PYTHONPATH}   # the EAGLE-3 overlay shadows the venv's vllm
+export PATH=$VENV/bin:$PATH
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export OMP_NUM_THREADS=8
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export VLLM_ALLREDUCE_USE_SYMM_MEM=0
-CACHE=/e/fscratch/reformo/lee27/cache; mkdir -p $CACHE/vllm $CACHE/xdg $CACHE/triton $CACHE/inductor $CACHE/flashinfer $CACHE/tmp
+CACHE=${SERVE_CACHE:-/e/fscratch/reformo/lee27/cache}; mkdir -p $CACHE/vllm $CACHE/xdg $CACHE/triton $CACHE/inductor $CACHE/flashinfer $CACHE/tmp
 export VLLM_CACHE_ROOT=$CACHE/vllm XDG_CACHE_HOME=$CACHE/xdg TRITON_CACHE_DIR=$CACHE/triton TORCHINDUCTOR_CACHE_DIR=$CACHE/inductor FLASHINFER_WORKSPACE_BASE=$CACHE/flashinfer TMPDIR=$CACHE/tmp
 echo "serve_node $ROLE on $(hostname) job=$SLURM_JOB_ID step=$SLURM_STEP_ID ($(date -Is))"
 nvidia-smi --query-gpu=name,memory.total --format=csv
@@ -59,7 +60,7 @@ case $ROLE in
       --speculative-config "{\"method\":\"eagle3\",\"model\":\"$DRAFT\",\"num_speculative_tokens\":3}" \
       --override-generation-config "$GEN" "${CHAT[@]}";;
   teacher)
-    export PYTHONPATH=$PYTHONPATH:$C/envs/relay-extra   # torchvision for vLLM's qwen3_5 import (qwen_bench.sbatch)
+    export PYTHONPATH=$PYTHONPATH:${RELAY_EXTRA:-$C/envs/relay-extra}   # torchvision for vLLM's qwen3_5 import (qwen_bench.sbatch)
     MODEL=${TEACHER_MODEL:-/e/data1/mmlaion/lee27/models/Qwen3.8-27B}
     [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
     $PY -c "import torchvision, vllm.model_executor.models.qwen3_5; print('torchvision', torchvision.__version__, 'qwen3_5 import ok')" || { echo "qwen3_5 import failed"; exit 1; }
