@@ -20,10 +20,11 @@ S=/e/data1/mmlaion/lee27/snowball-sft
 C=/e/project1/transfernetx/lee27/code/snowball
 MARIN=/e/project1/transfernetx/lee27/code/marin-sft
 PYM=/e/project1/transfernetx/lee27/code/envs/marin-grug-sft/bin/python
-: "${ARM:?relay | qwen | relayaf}"
+: "${ARM:?relay | qwen | relayaf | mix}"
 # relay = arm A (every 09-21 turn masked, render --autofix-loss none), qwen = arm B, relayaf = arm C (the relay rows
-# with the autofixed 09-21 actions trained, render --autofix-loss content); marin stages relay_relay/relay_qwen/relay_relayaf
-case $ARM in relay|qwen|relayaf) ;; *) echo "unknown ARM=$ARM" >&2; exit 1;; esac
+# with the autofixed 09-21 actions trained, render --autofix-loss content), mix = arm A rows + arm B rows in one file;
+# marin stages relay_relay/relay_qwen/relay_relayaf/relay_mix
+case $ARM in relay|qwen|relayaf|mix) ;; *) echo "unknown ARM=$ARM" >&2; exit 1;; esac
 STAGE=relay_$ARM
 DATA_REV=${DATA_REV:-v2}
 RUN=$STAGE$([ "$DATA_REV" = v2 ] || echo "_$DATA_REV")
