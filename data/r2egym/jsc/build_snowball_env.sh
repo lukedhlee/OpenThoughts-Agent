@@ -17,7 +17,7 @@
 #   ROOT=/e/project1/reformo/$USER/snowball bash build_snowball_env.sh check      # verify modules + every download, build nothing
 #   ROOT=/e/project1/reformo/$USER/snowball bash build_snowball_env.sh            # = all steps, each skipped when already done
 #   ROOT=... bash build_snowball_env.sh vllm trainer                              # re-run named steps only
-# Steps, in order: tools python clones torch vllm trainer overlay smoke
+# Steps, in order: tools python clones torch vllm trainer overlay smoke (+ opt-in eagle3: the EAGLE-3 overlay, after vllm)
 # Knobs: SCRATCH (default /e/fscratch/reformo/$USER; caches + experiments), CACHE (default $SCRATCH/cache/snowball_build),
 #        MAX_JOBS (16), STAGE_MODULE (Stages/2026).
 # Quotas: ROOT gets ~170k files / ~16 GB (venv 109k, vLLM tree 62k); the build caches are another ~150k files and go to CACHE.
@@ -43,6 +43,8 @@ HARBOR_BRANCH=lukedhlee/snowball-r2egym; HARBOR_SHA=${HARBOR_SHA:-b964a5f6} # 20
 OTA_REPO=https://github.com/lukedhlee/OpenThoughts-Agent.git
 OTA_BRANCH=lukedhlee/rl_acceleration;    OTA_SHA=${OTA_SHA:-f3edec45}    # the launcher branch checked out on Jupiter
 JSC_BRANCH=lukedhlee/vista-moe-grpo-30b                      # data/r2egym/jsc lives here (mirror of Jupiter's code/snowball)
+EAGLE3_REPO=https://github.com/lukedhlee/vllm.git                # EAGLE-3 for GrugMoE: 5 Python-only commits on $VLLM_SHA
+EAGLE3_BRANCH=lukedhlee/grugmoe-eagle3; EAGLE3_SHA=${EAGLE3_SHA:-00d81ae11}
 TORCH_SPEC="torch==2.11.0"; TORCH_INDEX=https://download.pytorch.org/whl/cu130
 UV_VERSION=0.11.31; PY_VERSION=3.12.13
 FA_WHL=flash_attn-2.8.3+cu130torch2.11-cp312-cp312-manylinux_2_34_aarch64.whl
@@ -251,6 +253,11 @@ PY
   if [ -s "$ROOT/envs/snowball.pindown.in" ]; then
     "$UV" pip install -p "$PY" --no-deps -r "$ROOT/envs/snowball.pindown.in" --index-strategy unsafe-best-match || die "pin-down install"
   fi
+  # nvidia-cutlass-dsl-libs-base and -libs-cu13 write the same files, and uv installs wheels in parallel, so a venv can end
+  # up with base's compiled library next to cu13's bindings (Horizon 09-29; Jupiter's happened to be all cu13). FA4 / CuTe
+  # DSL kernels then die (Qwen3.8's ViT memory-profile pass on sm_100). Reinstalling cu13 alone makes its files win.
+  local CUTE; CUTE=$("$UV" pip list -p "$PY" --format=freeze 2>/dev/null | grep -i '^nvidia-cutlass-dsl-libs-cu13==')
+  if [ -n "$CUTE" ]; then "$UV" pip install -p "$PY" --reinstall --no-deps "$CUTE" || die "cutlass-dsl cu13 reinstall"; fi
   # MarinSkyRL on sys.path via .pth files (never `pip install -e` its root: that copies skyrl_train into site-packages and shadows the checkout)
   local SP; SP=$("$PY" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
   rm -rf "$SP/skyrl_gym" "$SP/skyrl_train"
@@ -314,6 +321,19 @@ EOF
   if [ -d "$OTA/hpc/dotenv" ] && [ ! -f "$OTA/hpc/dotenv/jupiter.local.env" ]; then cp "$OV" "$OTA/hpc/dotenv/jupiter.local.env"; say "overlay: installed into $OTA/hpc/dotenv/"; fi
 }
 
+step_eagle3() { # opt-in (not in the default list): the EAGLE-3 overlay that serve scripts put first on PYTHONPATH
+  done_marker eagle3 && { say "eagle3: done"; return; }
+  done_marker vllm || die "eagle3 needs the compiled base (step vllm)"
+  local D=$ROOT/src/marin_vllm_eagle3
+  clone_pin "$D" "$EAGLE3_REPO" "$EAGLE3_BRANCH" "$EAGLE3_SHA"
+  # The overlay commits are Python-only, so it borrows every git-ignored build product of the base tree (*.so,
+  # vllm_flash_attn/*, _version.py, ...): copying only vllm/*.so leaves out _vllm_fa2_C/_vllm_fa3_C and vLLM dies at start.
+  say "eagle3: copy the base build's generated files into the overlay"
+  ( cd "$SRC" && git ls-files --others --ignored --exclude-standard vllm | grep -v __pycache__ | tar -cf - -T - ) | tar -xf - -C "$D" || die "copy generated files"
+  OMP_NUM_THREADS=1 PYTHONPATH=$D "$PY" -c "import vllm, vllm.vllm_flash_attn; assert vllm.__file__.startswith('$D'), vllm.__file__" || die "overlay import"
+  mark_done eagle3
+}
+
 step_smoke() {
   say "smoke: imports on the login node (no GPU)"
   OMP_NUM_THREADS=1 SRC="$SRC" HB="$ROOT/harbor-marin" MS="$ROOT/marinskyrl-marin" "$PY" - <<'PY'
@@ -342,8 +362,8 @@ STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(tools python clones torch vllm tr
 say "build_snowball_env.sh ROOT=$ROOT SCRATCH=$SCRATCH CACHE=$CACHE steps: ${STEPS[*]}"
 for s in "${STEPS[@]}"; do
   case "$s" in
-    check|all|tools|python|clones|torch|vllm|trainer|overlay|smoke) ;;
-    *) die "unknown step '$s' (check tools python clones torch vllm trainer overlay smoke)";;
+    check|all|tools|python|clones|torch|vllm|trainer|overlay|eagle3|smoke) ;;
+    *) die "unknown step '$s' (check tools python clones torch vllm trainer overlay eagle3 smoke)";;
   esac
   if [ "$s" = all ]; then for t in tools python clones torch vllm trainer overlay smoke; do "step_$t"; done; else "step_$s"; fi
 done
