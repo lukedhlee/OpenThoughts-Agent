@@ -69,27 +69,27 @@ Solved / all tasks, one try each. A task that ended without a verdict (sandbox o
 - **Scale the relay rows on clean tasks.** After removing what 09-21 already trained on and broken tasks, the clean pools are the unused CalibForge tasks (~2,660, ready now), a filtered TMax set (~3,100 strict) and non-Python SWE-smith. R2E-Gym is out: its non-sympy tasks are in 09-21's SFT mix and its sympy tasks overlap the SWE-bench eval.
 - **Find where the long thinking comes from** before scaling, since the clock now decides most failures.
 
-<details><summary>Every run, task by task outcome counts</summary>
+<details><summary>Every run: tasks, attempts, reruns, outcomes</summary>
 
-One try per task; the last attempt counts (after any recovery pass). "Hit 30-min clock": still working when time ran out, tests run on what it left. "Context full": only on held-out, which runs without summarization. "Infra": no verdict (sandbox or tmux errors), left out of the pass rate.
+One final outcome per task. "Attempts made" counts harbor's immediate retries after an infrastructure error. "Rerun after an infra loss" counts the recovery pass, which reruns a server's tasks that ended without a verdict when they exceed 10 % of its tasks (a rerun replaces the lost attempt, so the task count stays the same). On TB2.1 B and C got reruns and A did not, which works against A.
 
-| benchmark | model | trials | scored | passed | pass rate | hit 30-min clock | context full | other fail | infra (no verdict) |
-|---|---|---|---|---|---|---|---|---|---|
-| held-out 300 | 09-21 | 300 | 291 | 18 | 6.2% | 186 | 38 | 49 | 9 |
-| held-out 300 | A | 300 | 287 | 29 | 10.1% | 117 | 123 | 18 | 13 |
-| held-out 300 | B | 300 | 289 | 26 | 9.0% | 120 | 127 | 16 | 11 |
-| held-out 300 | C | 300 | 286 | 26 | 9.1% | 120 | 118 | 22 | 14 |
-| TB2.1 (88) | 09-21 | 88 | 85 | 5 | 5.9% | 27 | 0 | 53 | 3 |
-| TB2.1 (88) | A | 88 | 80 | 9 | 11.2% | 60 | 0 | 11 | 8 |
-| TB2.1 (88) | B | 88 | 85 | 4 | 4.7% | 62 | 0 | 19 | 3 |
-| TB2.1 (88) | C | 88 | 86 | 8 | 9.3% | 68 | 0 | 10 | 2 |
-| TB2.1 (88) | MIX | 88 | 79 | 9 | 11.4% | 52 | 0 | 18 | 9 |
-| SWE-bench (100) | 09-21 | 100 | 96 | 9 | 9.4% | 25 | 0 | 62 | 4 |
-| SWE-bench (100) | A | 100 | 97 | 30 | 30.9% | 54 | 0 | 13 | 3 |
-| SWE-bench (100) | B | 100 | 95 | 17 | 17.9% | 51 | 0 | 27 | 5 |
-| SWE-bench (100) | MIX | 100 | 93 | 32 | 34.4% | 46 | 0 | 15 | 7 |
-| TB-Lite (100) | A | 100 | 94 | 17 | 18.1% | 64 | 0 | 13 | 6 |
-| TB-Lite (100) | B | 100 | 97 | 12 | 12.4% | 56 | 0 | 29 | 3 |
+| benchmark | model | tasks | attempts made | tasks rerun after an infra loss | passed | scored | no verdict |
+|---|---|---|---|---|---|---|---|
+| held-out | 09-21 | 300 | 300 | 0 | 18 | 291 | 9 |
+| held-out | A | 300 | 327 | 0 | 29 | 287 | 13 |
+| held-out | B | 300 | 320 | 0 | 26 | 289 | 11 |
+| held-out | C | 300 | 318 | 0 | 26 | 286 | 14 |
+| TB2.1 | 09-21 | 88 | 88 | 0 | 5 | 85 | 3 |
+| TB2.1 | A | 88 | 88 | 0 | 9 | 80 | 8 |
+| TB2.1 | B | 88 | 88 | 8 | 4 | 85 | 3 |
+| TB2.1 | C | 88 | 88 | 12 | 8 | 86 | 2 |
+| TB2.1 | MIX | 88 | 117 | 4 (cut off) | 9 | 79 | 9 |
+| SWE | 09-21 | 100 | 100 | 0 | 9 | 96 | 4 |
+| SWE | A | 100 | 100 | 5 | 30 | 97 | 3 |
+| SWE | B | 100 | 100 | 0 | 17 | 95 | 5 |
+| SWE | MIX | 100 | 100 | 0 | 32 | 93 | 7 |
+| TB-Lite | A | 100 | 100 | 8 | 17 | 94 | 6 |
+| TB-Lite | B | 100 | 100 | 11 | 12 | 97 | 3 |
 
 </details>
 
