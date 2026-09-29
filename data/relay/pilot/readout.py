@@ -34,7 +34,7 @@ import relay_triggers as rt  # noqa: E402
 
 AGENT_ENDS = {'AgentTimeoutError', 'ContextLengthExceededError', 'TurnCapExhaustedError'}
 VERIFIER_TIMEOUT = 'VerifierTimeoutError'
-RELAY_ARMS = ('relay', 'relay_keep', 'relay_repair')
+RELAY_ARMS = ('relay', 'relay_keep', 'relay_repair', 'relay_claim')
 SERVED = {'student': 'snowball', 'teacher': 'qwen38', 'router': 'relay-router'}
 TAIL_BYTES = 4 << 20
 
@@ -671,7 +671,7 @@ def main():
     p.add_argument('--json', help='write the readout here too')
     a = p.parse_args()
     name = a.name or os.path.basename(os.path.normpath(a.run_dir))
-    arm_names = [arm for arm in ('relay', 'control', 'relay_keep', 'relay_repair', 'student_only', 'guided', 'clean', 'recovery') if os.path.isdir(os.path.join(a.run_dir, f'router_{arm}'))]
+    arm_names = [arm for arm in ('relay', 'control', 'relay_keep', 'relay_repair', 'relay_claim', 'student_only', 'guided', 'clean', 'recovery') if os.path.isdir(os.path.join(a.run_dir, f'router_{arm}'))]
     arm_names += sorted(os.path.basename(d)[len('router_'):] for d in glob.glob(os.path.join(a.run_dir, 'router_cand_*')) if os.path.isdir(d))
     arms = {}
     for arm in arm_names:
@@ -698,7 +698,7 @@ def main():
             o['student'] = student_view(rv)
             o['takeovers'] = relay_takeovers(rv, rows)
             o['context_budget'] = context_budget_view(rv, rows)
-            if arm == 'relay_repair':
+            if arm in ('relay_repair', 'relay_claim'):
                 o['repair'] = repair_view(rv, rows)
         else:
             o['would_fire_on_teacher'] = would_fire(rv, rows)

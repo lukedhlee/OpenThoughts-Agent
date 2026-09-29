@@ -158,7 +158,7 @@ PARSER=$HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py
 for arm in $ARMS; do
   TARGS=(); [ -n "$TURL" ] && TARGS=(--teacher-url $TURL --teacher-model qwen38 --teacher-max-tokens $TEACHER_MAX_TOKENS)
   if [ -n "$TURL" ] && [ "$TEACHER_GUARD" = 1 ]; then TARGS+=(--teacher-format-guard --teacher-resamples $TEACHER_RESAMPLES)
-    case $arm in relay_repair) ;; *) TARGS+=(--terminus-parser $PARSER);; esac; fi   # relay_repair passes the parser below
+    case $arm in relay_repair|relay_claim) ;; *) TARGS+=(--terminus-parser $PARSER);; esac; fi   # relay_repair / relay_claim pass the parser below
   [ -n "$TURL" ] && [ "$VERIFY_NOTE" = 1 ] && TARGS+=(--verify-note)
   [ "$MAX_INPUT" != 65536 ] && TARGS+=(--report-max-model-len $MAX_INPUT)
   SARGS=(); [ -n "$SURL" ] && SARGS=(--student-url $SURL --student-model snowball)   # empty on a teacher-only serve
@@ -174,6 +174,10 @@ for arm in $ARMS; do
       [ -n "${TEACHER_REMINDER_FILE:-}" ] && M+=(--teacher-reminder-file $TEACHER_REMINDER_FILE);; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
     relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $PARSER
                   --autofix --student-tokenizer $STUDENT_TOKENIZER);;
+    relay_claim) C=${CAND_DIR:?CAND_DIR for arm $arm}/${CAND:?CAND for arm $arm}   # PedaGEPA: relay_repair + a teacher prompt
+      M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $PARSER --autofix
+         --student-tokenizer $STUDENT_TOKENIZER --teacher-system-file $C/system.md --leak-check --leak-resamples ${LEAK_RESAMPLES:-2})
+      [ -f $C/reminder.txt ] && M+=(--teacher-reminder-file $C/reminder.txt);;
     *) abort "unknown arm $arm";; esac
   case $arm in relay*)
     [ -n "$CTX_BUDGET" ] && M+=(--context-budget-tokens $CTX_BUDGET)
