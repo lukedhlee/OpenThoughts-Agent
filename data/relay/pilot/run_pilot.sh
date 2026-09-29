@@ -33,7 +33,8 @@
 # STUDENT_TOKENIZER TASK_LIST; E also from the serve side's RELAY_EXP_DIR; STUDENT_TOKENIZER=meta = the tokenizer.json of
 # the student the serve job loaded, from its endpoints .meta), and the driver may run in its own compute-node job (data/relay/horizon/driver.sbatch):
 # DRIVER_JOB / DRIVER_NODES make the node-hour cap, the deadline and run.meta count that job too (unset = Jupiter's
-# accounting, unchanged). With HTTPS_PROXY set, the model hosts are added to NO_PROXY once the endpoints are known.
+# accounting, unchanged). With HTTPS_PROXY set, the model hosts are added to NO_PROXY once the endpoints are known, and
+# CLEANUP_PY names a sandbox cleanup that honors the proxy (the sync SDK's cleanup_sandboxes.py connects straight out).
 # ARM_GATES=1 runs data/relay/horizon/arm_gates.py every ARM_GATES_EVERY s (the finetuned-student gates): the takeover
 # rate over finished relay episodes against [TAKEOVER_MIN, TAKEOVER_MAX] once TAKEOVER_AFTER are in (TAKEOVER_ACTION
 # flag|stop), and the student's EAGLE-3 mean acceptance length from its servers' /metrics (flag below ACCEPT_FLAG, stop
@@ -116,7 +117,7 @@ write_meta() {
 }
 cleanup_sandboxes() {
   local jobs=(); for arm in $ARMS; do for d in $JOBS_ROOT/${NAME}_$arm $JOBS_ROOT/${NAME}_${arm}_p2; do [ -d $d ] && jobs+=($d); done; done
-  [ ${#jobs[@]} -gt 0 ] && $PY $HERE/cleanup_sandboxes.py --key-file $KEYF --delete "${jobs[@]}" 2>&1 | tail -3
+  [ ${#jobs[@]} -gt 0 ] && $PY ${CLEANUP_PY:-$HERE/cleanup_sandboxes.py} --key-file $KEYF --delete "${jobs[@]}" 2>&1 | tail -3
 }
 abort() { log "ABORT: $*"; echo "$*" > $R/ABORT; stop_harbor; stop_routers; release_serve "abort"; cleanup_sandboxes; write_meta; exit 1; }
 log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE failover_5xx=$FAILOVER_5XX max_input=$MAX_INPUT max_output=$MAX_OUTPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR herr_exclude=${HERR_EXCLUDE:-none} target_fail=$TARGET_FAIL base=$TARGET_BASE shuffle=${SHUFFLE_SEED:-off}"
