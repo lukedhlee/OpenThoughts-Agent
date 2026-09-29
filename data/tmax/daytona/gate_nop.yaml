@@ -1,0 +1,40 @@
+# harbor no-op gate for the TMax Daytona tree (build_tree.py --gate): nop agent on every task. gate.py run fills in
+# job_name, jobs_dir, n_concurrent_trials and the dataset path. Run with the hook-enabled harbor (setup_files/setup.sh
+# is what replays each task's Dockerfile on the shared base):
+#   export PYTHONPATH=/Users/lukedhlee/harbor-wt/snowball-r2egym/src
+#   python gate.py run --tree <gate tree> --tasks <list> --jobs <dir> --conc <n>
+# The key comes from ~/.config/otagent/daytona_eval.env (gate.py loads it; never the shell's). The shared snapshot must
+# already be ACTIVE (snapshot_census.py --tree <tree>): with auto_snapshot a missing one is BUILT on the first trial,
+# which the eval org's 40-snapshot cap refuses.
+# Sandbox resources and the setup window match the relay (relay_pilot.yaml): 2 CPUs, 4 GB, 10 GB disk, 4x the 600 s
+# build timeout for setup.sh (the v2 tasks' base_install.sh installs a CPU torch stack).
+job_name: tmax_nop
+jobs_dir: JOBS_DIR
+n_attempts: 1
+n_concurrent_trials: 20
+quiet: false
+timeout_multiplier: 1.0
+environment_build_timeout_multiplier: 4.0
+retry:
+  max_retries: 2
+  include_exceptions:
+  - DaytonaRateLimitError
+  - EnvironmentStartTimeoutError
+  - DaytonaSandboxStopError
+  - SetupScriptError        # a transient apt/PyPI failure gets one more try; gate_rows.json records attempts
+environment:
+  type: daytona
+  force_build: false
+  delete: true
+  override_cpus: 2
+  override_memory_mb: 4096
+  override_storage_mb: 10240
+  kwargs:
+    auto_snapshot: true      # without it the org rejects the per-sandbox Dockerfile build
+verifier:
+  override_timeout_sec: 900
+agents:
+- name: nop
+  override_timeout_sec: 60
+datasets:
+- path: TREE_DIR
