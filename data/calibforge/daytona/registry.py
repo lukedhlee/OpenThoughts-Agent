@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as cf
 import hashlib
+import http.client
 import json
 import threading
 import time
@@ -74,7 +75,7 @@ class Hub:
                         self._tokens.pop(repo, None)
                 if e.code < 500 and e.code != 401:
                     raise
-            except (urllib.error.URLError, TimeoutError, ConnectionError):
+            except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException):  # e.g. IncompleteRead
                 pass
             time.sleep(2 * (attempt + 1))
         raise RuntimeError(f"GET {repo}/{path} failed after {tries} tries")
