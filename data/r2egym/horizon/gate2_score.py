@@ -277,6 +277,27 @@ def compare(a):
         if all(i in other for i in ids):
             noise[name] = statistics.fmean(per_prompt(ids, base, other)[0])
     res["same_config_rerun_gap"] = noise
+    # Noise-matched version of the rule. Each gap above mixes each run's own nondeterminism with any systematic
+    # difference, and the layouts are not equally noisy, so the raw gaps compare unlike things. Per prompt: excess =
+    # mean cross-config gap over both reps x both reps - mean of the two same-config rerun gaps. The Horizon excess
+    # (Horizon vs Jupiter-DP4) must not be significantly larger than the layout excess (Jupiter-DP4 vs the second layout).
+    if len(noise) == 3:
+        reps = {n: [load_scores(p, r)[0] for r in (0, 1)] for n, p in (("h", a.horizon), ("d", a.dp4), ("t", a.j2))}
+
+        def excess(x, y):
+            cross = [statistics.fmean(v) for v in zip(*[per_prompt(ids, reps[x][r], reps[y][s])[0]
+                                                         for r in (0, 1) for s in (0, 1)])]
+            wx, wy = (per_prompt(ids, reps[n][0], reps[n][1])[0] for n in (x, y))
+            return [c - (u + v) / 2 for c, u, v in zip(cross, wx, wy)], statistics.fmean(cross)
+        ex_h, cross_h = excess("h", "d")
+        ex_l, cross_l = excess("d", "t")
+        dm = [u - v for u, v in zip(ex_h, ex_l)]
+        lo2, hi2 = boot_ci(dm, a.boot, a.seed)
+        res["noise_matched"] = {
+            "cross_horizon_jdp4": cross_h, "cross_jdp4_j2": cross_l,
+            "excess_horizon": statistics.fmean(ex_h), "excess_horizon_ci95": list(boot_ci(ex_h, a.boot, a.seed)),
+            "excess_layout": statistics.fmean(ex_l), "excess_layout_ci95": list(boot_ci(ex_l, a.boot, a.seed)),
+            "mean_diff": statistics.fmean(dm), "ci95": [lo2, hi2], "verdict": "PASS" if lo2 <= 0 else "FAIL"}
     # sanity: the probe's own sampled logprobs (decode path, Jupiter, September) vs today's Jupiter DP4 prefill scores
     if all(r.get("orig_logprobs") for r in rows):
         O = {r["id"]: r["orig_logprobs"] for r in rows}
