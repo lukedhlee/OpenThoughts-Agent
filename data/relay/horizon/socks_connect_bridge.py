@@ -92,12 +92,16 @@ class Upstreams:
         if not self.rdns:
             dest_host = await self.dns.resolve(dest_host)
         for i, p in enumerate(self.order()[:2]):
+            self.open[p] += 1   # counted from the pick, so a burst waiting on one DNS lookup still spreads out
             try:
                 sock = await self.proxies[p].connect(dest_host=dest_host, dest_port=dest_port, timeout=timeout)
                 self.stats['handshake'].append(time.monotonic() - t)
                 self.stats['retried'] += i > 0
                 return p, sock
-            except Exception as exc:  # noqa: BLE001
+            except BaseException as exc:  # noqa: BLE001  (a cancelled handshake must not leak its count either)
+                self.open[p] -= 1
+                if not isinstance(exc, Exception):
+                    raise
                 err = exc
         raise err
 
@@ -117,8 +121,7 @@ async def handle(reader, writer, up):
                 await writer.drain()
                 return
             host, dport = authority.rsplit(':', 1)
-            port, sock = await up.connect(host.strip('[]'), int(dport), timeout=20)
-            up.open[port] += 1
+            port, sock = await up.connect(host.strip('[]'), int(dport), timeout=20)   # counts it in up.open
             counted = True
             try:
                 upstream_reader, upstream = await asyncio.open_connection(sock=sock)
@@ -134,8 +137,8 @@ async def handle(reader, writer, up):
     except (Exception,) as exc:
         if not established:
             up.stats['errors'] += 1
-        # after the CONNECT succeeded, an error is one side closing mid-stream (418 OSErrors on 2,162 tunnels in the
-        # 09-29 load test, which had 0 failed calls): logged as stream_reset, apart from failed connects
+        # after the CONNECT succeeded, an error is the close racing the other side (09-29 load tests: OSError errno 107,
+        # ENOTCONN, on the half-close when the client had already gone; 0 failed calls): stream_reset, not a failure
         print(json.dumps({'event': 'stream_reset' if established else 'connection_error', 'type': type(exc).__name__,
                           'errno': getattr(exc, 'errno', None), 'upstream': port, 'established': established,
                           'seconds': round(time.monotonic() - start, 4)}), flush=True)

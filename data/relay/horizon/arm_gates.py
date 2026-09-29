@@ -7,8 +7,8 @@ not cancel; --takeover-action stop / --accept-stop turn them into stops.
         [--takeover-min 0.50 --takeover-max 0.95 --takeover-after 100 --takeover-action flag] [--accept-flag 1.8 --accept-stop 0]
 
 Takeover rate = finished relay episodes with a sticky takeover / finished relay episodes. Finished = the trial wrote
-result.json and it is not a harness error (a context overflow counts: it is the student's episode running out of
-room). The takeover comes from the router's events.jsonl ("takeover" events, by session id), the episode's session id
+result.json, it is not a harness error (a context overflow counts: it is the student's episode running out of
+room) and the run's deadline did not end it (router "ending" event "deadline"). The takeover comes from the router's events.jsonl ("takeover" events, by session id), the episode's session id
 from its trajectory.json, as readout.py joins them. Judged once --takeover-after episodes have finished; until then
 "wait". 09-21's rate with the 32k context budget was 0.78-0.85 of uncensored episodes (full runs 09-26 to 09-28), 0.28
 without it (run 3, done_claim only).
@@ -52,7 +52,8 @@ def trajectory_sid(tdir):
 
 
 def new_events(path, st):
-    """Takeover events appended since the last call: {sid: trigger}. Only whole lines; the offset is kept in st."""
+    """Takeover events ({sid: trigger}) and deadline endings (sids) appended since the last call. Only whole lines; the
+    offset is kept in st."""
     off = st['offsets'].get(path, 0)
     if not os.path.exists(path):
         return
@@ -61,7 +62,7 @@ def new_events(path, st):
         data = f.read()
     end = data.rfind(b'\n') + 1
     for line in data[:end].splitlines():
-        if b'"takeover"' not in line:
+        if b'"takeover"' not in line and b'"deadline"' not in line:
             continue
         try:
             e = json.loads(line)
@@ -69,6 +70,8 @@ def new_events(path, st):
             continue
         if e.get('event') == 'takeover' and e.get('sid'):
             st['takeovers'].setdefault(e['sid'], e.get('trigger'))
+        elif e.get('event') == 'ending' and e.get('ending') == 'deadline' and e.get('sid'):
+            st.setdefault('deadline', {})[e['sid']] = 1
     st['offsets'][path] = off + end
 
 
@@ -110,7 +113,8 @@ def main():
             vt = exc == readout.VERIFIER_TIMEOUT
             herr = not vt and ((reward is None and exc != 'ContextLengthExceededError') or (exc is not None and exc not in readout.AGENT_ENDS))
             st['trials'][key] = [trajectory_sid(os.path.dirname(rj)), not herr]
-    fin = [sid for sid, ok in st['trials'].values() if ok and sid]
+    dead = st.get('deadline') or {}   # episodes the run's deadline ended are censored, as in readout.py
+    fin = [sid for sid, ok in st['trials'].values() if ok and sid and sid not in dead]
     tk = [st['takeovers'][s] for s in fin if s in st['takeovers']]
     rate = round(len(tk) / len(fin), 4) if fin else None
     trig = {}
