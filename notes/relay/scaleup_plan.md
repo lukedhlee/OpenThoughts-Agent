@@ -42,7 +42,7 @@ match with the Qwen-alone arm and the 2-per-task cap, not because of generation.
 2. **Pilot: 1,000 tasks × 2 tries ≈ 2,000 episodes, ~30–40 node-h**, with the existing early gates plus two new ones:
    takeover rate and draft acceptance on the finetuned student.
 3. If the pilot holds: the remaining ~1,600 tasks × 2, ~50–65 node-h more.
-4. Next pool: R2E-Gym v3 without sympy once 11 snapshot slots are free.
+4. Next pool: the filtered TMax set (see the filtering pass below). R2E-Gym is out: its non-sympy tasks are in 09-21's mix and its sympy tasks collide with the SWE-bench eval.
 
 ## Filtering pass (2026-09-28 ~23:50 PT): overlap with 09-21's SFT mix and TMax validity
 
