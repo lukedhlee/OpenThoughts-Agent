@@ -23,11 +23,13 @@
 
 | | held-out CalibForge (300) | TB2.1 (88) | SWE-bench Verified (100) | OpenThoughts-TBLite (100) |
 |---|---|---|---|---|
-| 09-21, before SFT | 6.2 % | 5.9 % | 9.4 % | not run |
-| A, relay | **10.1 %** | **11.3 %** | **30.9 %** | **18.1 %** |
-| B, Qwen alone | 9.0 % | 4.7 % | 17.9 % | 12.4 % |
-| C, relay + autofix loss | 9.1 % | 9.3 % | not run | not run |
-| MIX, relay + Qwen-alone rows | not run | 11.4 % | 34.4 % | not run |
+| 09-21, before SFT | 18 / 291 (6.2 %) | 5 / 85 (5.9 %) | 9 / 96 (9.4 %) | not run |
+| A, relay | **29 / 287 (10.1 %)** | **9 / 80 (11.3 %)** | **30 / 97 (30.9 %)** | **17 / 94 (18.1 %)** |
+| B, Qwen alone | 26 / 289 (9.0 %) | 4 / 85 (4.7 %) | 17 / 95 (17.9 %) | 12 / 97 (12.4 %) |
+| C, relay + autofix loss | 26 / 286 (9.1 %) | 8 / 86 (9.3 %) | not run | not run |
+| MIX, relay + Qwen-alone rows | not run | 9 / 79 (11.4 %) | 32 / 93 (34.4 %) | not run |
+
+Solved / scored tasks, one try each. A task without a verdict (sandbox or tmux error) is left out of both numbers.
 
 - **SWE-bench, same 93 tasks.** Relay gains 13 tasks and loses 2, +11.8 points (the range consistent with the data runs +4.3 to +19.4). Against 09-21 the relay arm gains 24 tasks and loses 4 (+21.3 points), the Qwen-alone arm 11 against 4 (+7.6).
 - **OpenThoughts-TBLite, same 92 tasks.** Relay gains 11 and loses 4, +7.6 points (+0.0 to +16.3).
