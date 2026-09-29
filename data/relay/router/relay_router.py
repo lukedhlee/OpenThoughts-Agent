@@ -136,6 +136,14 @@ QUESTIONS_PREFIX = 'You are picking up work from a previous AI agent on this tas
 ANSWERS_PREFIX = 'The next agent has a few questions for you'
 HANDOFF_PREFIX = 'Here are the answers the other agent provided.'
 CONFIRM_MARK = 'Are you sure you want to mark the task as complete?'
+# PedaGEPA (2026-09-29): words that show a reply is addressed to a learner or talks about the setup instead of the task.
+# Checked on the teacher's content and reasoning; a word that already occurs in the task instruction does not count.
+LEAK_RE = re.compile(r"\b(students?|learners?|teach(?:ing|er|es)?|lessons?|demonstrat\w*|deliberately|on purpose|"
+                     r"intentionally|purposely|simulat\w*|as instructed|the instruction(?:s)? (?:say|said|tell|told)|"
+                     r"i (?:was|am) (?:told|asked|instructed) to|for (?:the )?(?:reader|audience))\b", re.I)
+INJECT_ERR_RE = re.compile(r"(Traceback \(most recent call last\)|\bError\b|error:|FAILED|No such file|command not found|"
+                           r"Segmentation fault|cannot |failed|exit code [1-9])", re.I)
+INJECT_WRITE_RE = re.compile(r"((?<![0-9&])>>?\s*(?!/dev/null)(?!&)[\w./~$-]+|\bsed\s+-i|\btee\s+[\w./~-]+|\bpatch\b|cat\s*>)")
 AUX_KINDS = ('summary', 'questions', 'answers')
 
 THINK_SPAN_RE = re.compile(r'<\|start_think\|>.*?<\|end_think\|>|<think>.*?</think>', re.S)
@@ -240,6 +248,10 @@ class Episode:
         self.paused_at_takeover = 0.0
         self.repair_confirm = False       # the teacher claimed done in a repair turn: it answers that confirmation
         self.note_turn = None             # --verify-note: the turn of the done_claim takeover's confirmation request
+        self.inject = None                # --inject-plan: the mode chosen for this episode (dict) or None (clean)
+        self.inject_decided = False
+        self.inject_target = None         # turn_range trigger: the agent turn to inject at
+        self.injected_at = None           # the turn that got the injection (its reply is loss-masked later)
 
     def summary(self):
         return dict(episode=self.idx, sid=self.sid, task_id=(self.task or {}).get('task_id'), owner=self.owner,
@@ -273,6 +285,8 @@ class Router:
         self.tasks = self._load_tasks(a.tasks)
         self.tok = rcap.load_tokenizer(a.student_tokenizer) if a.student_tokenizer else None
         self.note_text = VERIFY_NOTE if a.mode == 'relay' else VERIFY_NOTE_OWN
+        self.guidance = open(a.teacher_system_file).read().strip() if a.teacher_system_file else None
+        self.inject_plan = json.load(open(a.inject_plan)) if a.inject_plan else None
         self.parser = self.parser_path = self.parser_sha = None
         if a.repair_on_parse_error or a.teacher_format_guard:
             self.parser, self.parser_path, self.parser_sha = load_terminus_parser(a.terminus_parser)
@@ -285,7 +299,8 @@ class Router:
                            repair_reply_rejected=0, repinned=0, autofixes=0, teacher_cut_at_cap=0,
                            view_count_errors=0, context_hard_ends=0, teacher_checked=0, teacher_parse_errors=0,
                            teacher_autofix=0, teacher_resample=0, teacher_unparseable_passed=0, verify_notes=0,
-                           upstream_5xx_failover=0)
+                           upstream_5xx_failover=0, teacher_system=0, injections=0, inject_not_triggered=0,
+                           leak_hits=0, leak_resamples=0, leak_passed=0)
         os.makedirs(a.log_dir, exist_ok=True)
         os.makedirs(os.path.join(a.log_dir, 'bodies'), exist_ok=True)
         # one os.write per line on an O_APPEND fd: readers (the driver's gates) never see a half-written line
@@ -928,6 +943,70 @@ class Router:
             self.event('done_claim', episode=ep.idx, sid=ep.sid, turn=t)
         return self.finish(ep, 'student', resp, rec, t, main=True)
 
+    def with_guidance(self, msgs):
+        """--teacher-system-file: the guidance as the teacher's system message (merged into an existing one). Only the
+        teacher's request carries it; harbor's history and trajectory never see it."""
+        if msgs and msgs[0].get('role') == 'system':
+            return [dict(msgs[0], content=self.guidance + '\n\n' + text_of(msgs[0].get('content')))] + msgs[1:]
+        return [dict(role='system', content=self.guidance)] + msgs
+
+    def _h(self, ep, salt):
+        return int(hashlib.sha256(f"{self.inject_plan.get('seed', '')}|{salt}|{ep.sid}".encode()).hexdigest(), 16)
+
+    def maybe_inject(self, ep, messages, rec):
+        """--inject-plan: pick this episode's mode once (clean with clean_frac, else by weight), then return the mode
+        on the one agent turn its trigger fires (turn_range: a turn drawn in [lo, hi]; after_error: the first turn from
+        min_turn on whose new terminal output shows an error; after_write: the first turn from min_turn on after a reply
+        that wrote a file). Never on confirmations, summaries or repairs. Deterministic per (seed, session id)."""
+        plan, t = self.inject_plan, rec.get('turn') or 0
+        if not ep.inject_decided:
+            ep.inject_decided = True
+            u = (self._h(ep, 'clean') % 10 ** 8) / 1e8
+            if u >= plan.get('clean_frac', 0.0):
+                modes = plan['modes']; tot = sum(m['weight'] for m in modes)
+                x = (self._h(ep, 'mode') % 10 ** 8) / 1e8 * tot
+                for m in modes:
+                    x -= m['weight']
+                    if x < 0:
+                        ep.inject = m; break
+                else:
+                    ep.inject = modes[-1]
+                tr = ep.inject['trigger']
+                if tr['type'] == 'turn_range':
+                    ep.inject_target = tr['lo'] + self._h(ep, 'turn') % (tr['hi'] - tr['lo'] + 1)
+            self.event('inject_plan', episode=ep.idx, sid=ep.sid, mode=(ep.inject or {}).get('name', 'clean'),
+                       target_turn=ep.inject_target)
+        m = ep.inject
+        if not m or ep.injected_at is not None:
+            return None
+        tr = m['trigger']
+        if t > tr.get('max_turn', 40):
+            if ep.injected_at is None and not getattr(ep, 'inject_gave_up', False):
+                ep.inject_gave_up = True; self.counts['inject_not_triggered'] += 1
+                self.event('inject_not_triggered', episode=ep.idx, sid=ep.sid, mode=m['name'], turn=t)
+            return None
+        last = text_of(messages[-1].get('content')) if messages else ''
+        prev = next((text_of(x.get('content')) for x in reversed(messages) if x.get('role') == 'assistant'), '')
+        fire = (tr['type'] == 'turn_range' and t >= ep.inject_target) or \
+               (tr['type'] == 'after_error' and t >= tr.get('min_turn', 2) and INJECT_ERR_RE.search(last[-4000:])) or \
+               (tr['type'] == 'after_write' and t >= tr.get('min_turn', 3) and INJECT_WRITE_RE.search(prev))
+        if not fire:
+            return None
+        ep.injected_at = t
+        self.counts['injections'] += 1
+        self.event('inject', episode=ep.idx, sid=ep.sid, mode=m['name'], turn=t)
+        return m
+
+    def leak_hits(self, messages, resp_bytes):
+        """Leak words in the teacher's reply (content + reasoning) that the task instruction itself does not use."""
+        try:
+            msg = json.loads(resp_bytes)['choices'][0]['message']
+        except (ValueError, KeyError, IndexError, TypeError):
+            return []
+        txt = text_of(msg.get('content')) + '\n' + (msg.get('reasoning_content') or msg.get('reasoning') or '')
+        instr = text_of(messages[0].get('content')).lower() if messages else ''
+        return sorted({h.group(0).lower() for h in LEAK_RE.finditer(txt) if h.group(0).lower() not in instr})
+
     async def answer(self, ep, who, body, messages, rec, main):
         if who == 'teacher':
             msgs, stats = self.for_teacher(ep, messages)
@@ -939,6 +1018,16 @@ class Router:
                     self.counts['verify_notes'] += 1
                 else:
                     rec['verify_note'] = False
+            if self.guidance:
+                msgs = self.with_guidance(msgs)
+                rec['teacher_system'] = True
+                self.counts['teacher_system'] += 1
+            if self.inject_plan and main and rec.get('request_kind') in ('main', 'initial') and not rec.get('repair'):
+                inj = self.maybe_inject(ep, messages, rec)
+                if inj:
+                    last = msgs[-1]
+                    msgs = msgs[:-1] + [dict(last, content=text_of(last.get('content')) + '\n\n' + inj['text'])]
+                    rec['injected'] = inj['name']
         else:
             msgs, stats = self.for_student(ep, messages)
             rec['student_view'] = stats
@@ -968,6 +1057,21 @@ class Router:
                 break
             self.counts['repair_reply_rejected'] += 1
             rec.setdefault('repair_rejected_replies', []).append(json.loads(data))
+        if who == 'teacher' and main and status == 200 and self.a.leak_check and not rec.get('injected'):
+            hits = self.leak_hits(messages, data)
+            n = 0
+            while hits and n < self.a.leak_resamples:
+                self.counts['leak_hits'] += 1
+                rec.setdefault('leak_hits', []).append(hits)
+                n += 1; self.counts['leak_resamples'] += 1
+                status2, data2 = (await self.guarded_teacher(ep, b, rec)) if guard else (await self.post(who, '/chat/completions', b, ep))
+                if status2 != 200:
+                    break
+                status, data = status2, data2
+                hits = self.leak_hits(messages, data)
+            if hits:
+                self.counts['leak_passed'] += 1
+                rec['leak_passed'] = hits
         if rec.get('repair') and self.parser is not None and status == 200:
             c = text_of(json.loads(data)['choices'][0]['message'].get('content'))
             pr = self.parser.parse_response(c)
@@ -1193,6 +1297,13 @@ def parse_args(argv=None):
     p.add_argument('--verify-note', action='store_true',
                    help="append VERIFY_NOTE to the teacher's confirmation request (relay: the done_claim takeover's; "
                         "--mode teacher: the episode's first)")
+    p.add_argument('--teacher-system-file', default=None,
+                   help='PedaGEPA: text sent as the system message of every teacher request (never in harbor history)')
+    p.add_argument('--inject-plan', default=None,
+                   help='PedaGEPA: JSON {seed, clean_frac, modes:[{name, weight, trigger:{type, ...}, text}]}; one '
+                        'mode per episode, appended to the teacher view of the one agent request its trigger fires on')
+    p.add_argument('--leak-check', action='store_true', help='PedaGEPA: log teacher replies that address a learner')
+    p.add_argument('--leak-resamples', type=int, default=0, help='PedaGEPA: resample a leaking teacher reply up to N times')
     p.add_argument('--context-budget-tokens', type=int, default=None,
                    help='context_budget takeover (sticky): the teacher takes the episode once the student view of a '
                         'request (counted on the student /tokenize) reaches this many tokens; off by default (32000 '

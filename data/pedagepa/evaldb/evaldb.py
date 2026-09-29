@@ -24,7 +24,7 @@ from facts import facts as t2_facts, tests as t_tests  # noqa: E402
 from condense import load_trial  # noqa: E402
 
 DB = '/e/data1/mmlaion/lee27/experiments/pedagepa/evaldb/pedagepa.sqlite'
-ITEMS = ['P0', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'T1', 'S1', 'S2', 'S3', 'S4']
+ITEMS = ['P0', 'P1', 'P2', 'P3', 'P4', 'P5', 'P5a', 'P5b', 'P6', 'P7', 'P8', 'P9', 'P10', 'T1', 'S1', 'S2', 'S3', 'S4']
 
 SCHEMA = """
 CREATE TABLE models (model_id TEXT PRIMARY KEY, role TEXT, hf TEXT, path TEXT, config TEXT);
@@ -252,7 +252,7 @@ def report(db, out):
 
 
 NAMES = {'P0': 'harness feedback', 'P1': 'read the contract', 'P2': "look it up", 'P3': 'build incrementally',
-         'P4': 'checkable steps', 'P5': 'manage context', 'P6': 'grounded state', 'P7': 'error recovery',
+         'P4': 'checkable steps', 'P5': 'manage context', 'P5a': 'bounds tool output', 'P5b': 'short own replies', 'P6': 'grounded state', 'P7': 'error recovery',
          'P8': 'progress control', 'P9': 'verify before done', 'P10': 'honest completion', 'T1': 'long jobs/services',
          'S1': 'repro fails first', 'S2': 'fix at the origin', 'S3': 'minimal checked edit', 'S4': "repo's own tests"}
 KIND = {'K1': 'tool/package', 'K2': 'format/internals', 'K3': 'where things live', 'K4': 'domain method', 'K5': 'repo fact'}

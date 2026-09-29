@@ -7,6 +7,8 @@
 #   relay_repair  student -> teacher: parse_error repairs (non-sticky, one teacher turn) plus the sticky takeovers
 #                 done_claim / loop / no_progress_wait; the student's thinking stripped from the teacher's view
 #   relay         sticky takeovers only, thinking stripped;  relay_keep  the same, thinking kept (--student-think keep)
+#   guided / clean  teacher from scratch with TEACHER_SYSTEM_FILE as a teacher-only system prompt, leak filter on (PedaGEPA)
+#   recovery      teacher with RECOVERY_SYSTEM_FILE + INJECT_PLAN (one simulated student mistake per episode), leak filter on
 #
 #   1. pre-flight (no GPU time spent yet): harbor clone at the pinned commit, task tree + router task file, Daytona key,
 #      the three CalibForge snapshots ACTIVE (a missing one would make harbor build a new snapshot into a 39/40 org),
@@ -152,7 +154,9 @@ for arm in $ARMS; do
   [ -n "$TURL" ] && [ "$VERIFY_NOTE" = 1 ] && TARGS+=(--verify-note)
   [ "$MAX_INPUT" != 65536 ] && TARGS+=(--report-max-model-len $MAX_INPUT)
   SARGS=(); [ -n "$SURL" ] && SARGS=(--student-url $SURL --student-model snowball)   # empty on a teacher-only serve
-  case $arm in control) M=(--mode teacher);; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
+  case $arm in control) M=(--mode teacher);;
+    guided|clean) M=(--mode teacher --teacher-system-file ${TEACHER_SYSTEM_FILE:?TEACHER_SYSTEM_FILE for arm $arm} --leak-check --leak-resamples ${LEAK_RESAMPLES:-2});;
+    recovery) M=(--mode teacher --teacher-system-file ${RECOVERY_SYSTEM_FILE:?RECOVERY_SYSTEM_FILE} --inject-plan ${INJECT_PLAN:?INJECT_PLAN} --leak-check --leak-resamples ${LEAK_RESAMPLES:-2});; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
     relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $PARSER
                   --autofix --student-tokenizer $STUDENT_TOKENIZER);;
     *) abort "unknown arm $arm";; esac

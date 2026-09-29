@@ -41,7 +41,18 @@ def tests(att):
         txt = open(ts, errors='replace').read()
         for m in re.finditer(r'^(\S+::\S+)\s+(PASSED|FAILED|ERROR)', txt, re.M):
             (out['passed'] if m.group(2) == 'PASSED' else out['failed']).append(m.group(1))
-        out['grader_ran'] = bool(re.search(r'=+ .*(passed|failed|error).* in [\d.]+s', txt)) or bool(out['passed'] or out['failed'])
+        out['grader_ran'] = (bool(re.search(r'=+ .*(passed|failed|error).* in [\d.]+s', txt)) or bool(out['passed'] or out['failed'])
+                             or 'SWEBench results starts here' in txt or bool(re.search(r'^Ran \d+ tests? in', txt, re.M)))
+    rj = os.path.join(att, 'verifier', 'report.json')
+    if os.path.exists(rj):
+        out['grader_ran'] = True
+        try:
+            rep = json.load(open(rj)); rep = next(iter(rep.values())) if len(rep) == 1 else rep
+            ts_ = rep.get('tests_status') or {}
+            for k in ('FAIL_TO_PASS', 'PASS_TO_PASS'):
+                out.setdefault('swe', {})[k] = {kk: len(v) for kk, v in (ts_.get(k) or {}).items()}
+        except Exception:
+            pass
     return out
 
 

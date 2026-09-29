@@ -670,7 +670,7 @@ def main():
     p.add_argument('--json', help='write the readout here too')
     a = p.parse_args()
     name = a.name or os.path.basename(os.path.normpath(a.run_dir))
-    arm_names = [arm for arm in ('relay', 'control', 'relay_keep', 'relay_repair', 'student_only') if os.path.isdir(os.path.join(a.run_dir, f'router_{arm}'))]
+    arm_names = [arm for arm in ('relay', 'control', 'relay_keep', 'relay_repair', 'student_only', 'guided', 'clean', 'recovery') if os.path.isdir(os.path.join(a.run_dir, f'router_{arm}'))]
     arms = {}
     for arm in arm_names:
         rv = router_view(os.path.join(a.run_dir, f'router_{arm}'))
