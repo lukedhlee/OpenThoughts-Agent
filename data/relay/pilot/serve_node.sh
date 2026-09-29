@@ -41,7 +41,12 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export OMP_NUM_THREADS=8
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export VLLM_ALLREDUCE_USE_SYMM_MEM=0
-CACHE=${SERVE_CACHE:-/e/fscratch/reformo/lee27/cache}; mkdir -p $CACHE/vllm $CACHE/xdg $CACHE/triton $CACHE/inductor $CACHE/flashinfer $CACHE/tmp
+CACHE=${SERVE_CACHE:-/e/fscratch/reformo/lee27/cache}
+# SERVE_CACHE_LOCAL (Horizon): compile caches on node-local disk, one dir per job. Horizon's /scratch is NFS, and 8 nodes
+# compiling into one shared cache read each other's half-written kernels (hzcheck_a 09-29: a student died on "@jit
+# functions should be defined in a Python file", teachers logged "Stale file handle"). Cold compile costs ~4 min per start.
+[ -n "${SERVE_CACHE_LOCAL:-}" ] && { CACHE=$SERVE_CACHE_LOCAL/$USER-sbcache-${SLURM_JOB_ID:-0}; df -h $SERVE_CACHE_LOCAL | tail -1; }
+mkdir -p $CACHE/vllm $CACHE/xdg $CACHE/triton $CACHE/inductor $CACHE/flashinfer $CACHE/tmp
 export VLLM_CACHE_ROOT=$CACHE/vllm XDG_CACHE_HOME=$CACHE/xdg TRITON_CACHE_DIR=$CACHE/triton TORCHINDUCTOR_CACHE_DIR=$CACHE/inductor FLASHINFER_WORKSPACE_BASE=$CACHE/flashinfer TMPDIR=$CACHE/tmp
 echo "serve_node $ROLE on $(hostname) job=$SLURM_JOB_ID step=$SLURM_STEP_ID ($(date -Is))"
 nvidia-smi --query-gpu=name,memory.total --format=csv

@@ -7,6 +7,7 @@ export SERVE_CODE=$R SERVE_VENV=$R/envs/snowball SERVE_OVERLAY=$R/src/marin_vllm
 export SERVE_MODULES=""                 # the login env (nvidia/26.9, cuda/13.x) rides along; nothing to load
 export CC=gcc CXX=g++                   # nvidia/26.9 sets CC=nvc, which rejects -Wno-psabi when Triton JIT-builds cuda_utils.c
 export SERVE_CACHE=$S/cache HF_HOME=$S/cache/hf
+export SERVE_CACHE_LOCAL=${SERVE_CACHE_LOCAL-/tmp}   # compile caches node-local: a shared NFS cache breaks multi-node starts
 export RELAY_PILOT_DIR=${RELAY_PILOT_DIR:-$R/ota/data/relay/pilot} RELAY_EXP_DIR=${RELAY_EXP_DIR:-$S/experiments/relay/pilot}
 export NODE_SUFFIX=${NODE_SUFFIX-}      # short names (c101-003) resolve on login and compute nodes
 export TEACHER_MODEL=${TEACHER_MODEL:-$(_snap Qwen--Qwen3.8-27B 1d4bf0f2)}
