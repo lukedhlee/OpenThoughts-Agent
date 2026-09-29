@@ -17,7 +17,9 @@ Loss (per token, 1 = trained):
     autofixed student turn: the rewritten action (content + <|eot_id|>) is trained, its reasoning span never;
   * student turn: masked, except an autofixed one (label autofix=True): with autofix_loss='content' (default) its
     rewritten action/format (content + <|eot_id|>) is trained, never its reasoning; 'none' masks it;
-  * router turns (budget endings), system header and user turns: masked.
+  * router turns (budget endings), system header and user turns: masked;
+  * PedaGEPA recovery rollouts: the teacher turn the router injected a simulated student mistake into (record
+    injected=<mode>) is masked whole, reasoning and action; the recovery turns after it are trained as teacher turns.
 
     row = render_episode(trajectory, router_records, tok, template, bos)       # dict(ids, loss, turns, n_tokens)
 
@@ -76,7 +78,7 @@ def episode_turns(traj, records):
             raise ValueError(f'agent step {k} has no router record (content sha {sha(msg)})')
         turns.append(('assistant', msg, dict(owner=rec['owner'], reasoning=s.get('reasoning_content'),
                                              autofix=bool(rec.get('autofix')), repair=bool(rec.get('repair')),
-                                             turn=rec.get('turn'))))
+                                             turn=rec.get('turn'), injected=rec.get('injected'))))
         if k < len(agent) - 1:
             turns.append(('user', _obs_text(s), {}))
     return turns
@@ -95,7 +97,8 @@ def render_episode(traj, records, tok, template, bos, autofix_loss='content', ca
             n_think = len(tok.encode(r_full, add_special_tokens=False).ids) if r_full else 0
             info.append(dict(i=i, owner='teacher', repair=m['repair'], cut_at=at, reasoning_chars=len(r_full),
                              reasoning_tokens=n_think, has_reasoning=bool(r_full), autofix=m['autofix'],
-                             think_trained=bool(r_full) and at is None and n_think <= think_limit and not m['autofix']))
+                             think_trained=bool(r_full) and at is None and n_think <= think_limit and not m['autofix'],
+                             injected=m.get('injected')))
         else:
             messages.append(dict(role=role, content=text))
             if role == 'assistant':
@@ -114,7 +117,9 @@ def render_episode(traj, records, tok, template, bos, autofix_loss='content', ca
         a += 1
         # a student reply may open a span it never closes (the parser still accepted its JSON): no think span then
         think_end = start + body.index(END) + len(END) if (body.startswith(START) and END in body) else start
-        if meta['owner'] == 'teacher':
+        if meta['owner'] == 'teacher' and meta.get('injected'):
+            pass                                               # PedaGEPA: the simulated mistake itself is never trained
+        elif meta['owner'] == 'teacher':
             if meta['think_trained'] or think_end == start:
                 loss_ranges.append((start, end))               # reasoning (uncut, <= limit) + content + eot
             else:

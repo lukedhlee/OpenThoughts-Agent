@@ -134,10 +134,32 @@ def parse_turns(traj):
         rejected = obs.lstrip().startswith(PARSE_ERR) or ('parsing errors' in obs[:200] and 'ERROR' in obs[:300])
         obj = _json_obj(body)
         cmds = obj.get('commands', []) if isinstance(obj, dict) and isinstance(obj.get('commands'), list) else []
+        tc_done = False
+        tcs = s.get('tool_calls')
+        if isinstance(tcs, str):
+            try:
+                tcs = ast.literal_eval(tcs)
+            except Exception:
+                tcs = None
+        if isinstance(tcs, list) and tcs:   # harbor's native tool-call path (v0.1 pin): bash_command / mark_task_complete
+            for tc in tcs:
+                fn = (tc or {}).get('function_name') or ((tc or {}).get('function') or {}).get('name')
+                args = (tc or {}).get('arguments') or ((tc or {}).get('function') or {}).get('arguments') or {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {}
+                if fn in ('bash_command', 'bash') and isinstance(args, dict):
+                    cmds.append(dict(keystrokes=args.get('keystrokes', ''), duration=args.get('duration')))
+                elif fn == 'mark_task_complete':
+                    tc_done = True
+            rejected = rejected and not cmds and not tc_done
         turns.append(dict(
             model=s.get('model_name'), rejected=rejected,
-            analysis=str(obj.get('analysis', '')) if obj else '', plan=str(obj.get('plan', '')) if obj else '',
-            cmds=cmds, task_complete=bool(obj.get('task_complete')) if obj else False,
+            analysis=str(obj.get('analysis', '')) if obj else ('' if not tcs else body[:2000]),
+            plan=str(obj.get('plan', '')) if obj else '',
+            cmds=cmds, task_complete=(bool(obj.get('task_complete')) if obj else False) or tc_done,
             think=(reasoning or think), completion_tokens=met.get('completion_tokens') or 0,
             prompt_tokens=met.get('prompt_tokens') or 0, obs=obs, raw=body))
     return instr.strip(), turns
