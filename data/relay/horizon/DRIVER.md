@@ -39,7 +39,7 @@ can be overridden from the environment.
   - The node-hour cap counts both jobs (`DRIVER_JOB` / `DRIVER_NODES`). The router deadline reserves the driver's
     time before the serve job started and its 45 min verify tail. `run.meta` gets `serve_node_hours` and
     `driver_node_hours`.
-- **Why a separate job.** The login node has one core, so the driver cannot run there. It cannot run inside the serve
+- **Why a separate job.** The login node is shared by every user (TACC policy: no long heavy processes), so the driver does not run there. It cannot run inside the serve
   job either, because it cancels that job.
 - **Why tunnels.** Compute nodes have no internet, and `sbatch` is refused there. `squeue`, `sacct` and `scancel` work.
   - `tunnel.sh` runs on the login node and keeps one `ssh -R PORT` per port open to the driver node.

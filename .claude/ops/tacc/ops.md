@@ -433,8 +433,9 @@ shows 1,000 SU (expires 2026-12-31), but the TACC cluster manager told Luke on 2
 now** (early operations). Confirm once that the balance did not drop after the first jobs.
 
 - **Login:** `ssh horizon` (alias in `~/.ssh/config`, user `lukedhlee`, password + TOTP, ControlMaster for 4h).
-  Host `horizon.tacc.utexas.edu` (`login1`). `$HOME=/home1/11584/lukedhlee`. **The login node gives you 1 core**, so
-  downloads and clones are fine there but compiles are not.
+  Host `horizon.tacc.utexas.edu` (`login1`). `$HOME=/home1/11584/lukedhlee`. `nproc` says 1 only because TACC sets
+  `OMP_NUM_THREADS=1`; a session can use many of login1's 144 cores and 237 GB (measured 09-29: 4 busy processes ran at
+  full speed each, no per-user cgroup cap). It is shared with every user, so keep compiles and GPU work on compute nodes.
 - **Partition:** `debug` (Exclusive=NODE; `debug-shared` is the shared variant). There are 1,000 nodes. QOS `qdebug`
   allows 1,000 nodes per user, 48h per job, 20 running and 40 submitted jobs. Submit with `-A CCR24067`: the TACC
   filter rejects lowercase `ccr24067`. The `gb`/`gb-dev`/`gb-large` queues in the docs do not exist yet.

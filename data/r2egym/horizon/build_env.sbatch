@@ -1,6 +1,6 @@
 #!/bin/bash
 # build_env.sbatch — compile the Snowball runtime for Horizon (GB200 = sm_100) on one compute node.
-# The login node has 1 core, so only the download steps (tools python clones torch) run there; this job runs the rest
+# The login node is shared (TACC policy: no heavy builds there), so only the download steps (tools python clones torch) run there; this job runs the rest
 # (vllm trainer overlay smoke) with 64 build jobs, reaching the internet through tunnel.sh on the login node.
 #   sbatch build_env.sbatch  ->  setsid nohup bash tunnel.sh <jobid> > ~/tunnel.<jobid>.log 2>&1 &
 #SBATCH -J sb_build
