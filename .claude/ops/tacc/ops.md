@@ -458,3 +458,11 @@ now** (early operations). Confirm once that the balance did not drop after the f
   files incl. `vllm_flash_attn/*`), not just `vllm/*.so`. Otherwise vLLM dies on `_vllm_fa2_C`.
 - **Port verified 09-29:** gate 1 (same SHAs + 340/340 pinned packages) and a DP4-EP EAGLE-3 serve smoke passed
   (up in 340 s). Pass rules: `ai_memory/active/horizon-port/objective.md`.
+- **Never share a compile cache across nodes (09-29).** `/scratch` is NFS, and it only guarantees close-to-open
+  consistency between clients. When 8 nodes compiled into one Triton/Inductor/vLLM cache, one node read another's
+  half-written kernel file and died at its first real batch ("@jit functions should be defined in a Python file";
+  the teachers logged "Stale file handle"). The file was intact a minute later. Multi-node serves set
+  `SERVE_CACHE_LOCAL=/tmp` (`data/relay/horizon/serve_env.sh`), which gives one node-local cache per job at ~4 min of
+  cold compile. Single-node jobs on the shared cache are fine.
+- **Daytona org load (09-29 13:36 PT):** the eval org held 780 sandboxes before our runs. The deal allows ~1,000
+  concurrent, so check the count before stacking a 128-seat relay run on top of other users' runs.
