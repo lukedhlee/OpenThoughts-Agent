@@ -430,7 +430,7 @@ Procedure and paths: `ai_memory/active/snowball-sft/runbooks/vista_levanter_sft.
 TACC's docs page is out of date. Horizon has **4 GB200s per node** (~185 GiB each, 2 Grace CPUs with 144 cores, 1.6 TB of
 RAM), so a node has about twice Jupiter's GPU memory. Early operations run on one `debug` partition. Project `CCR24067`
 shows 1,000 SU (expires 2026-12-31), but the TACC cluster manager told Luke on 2026-09-29 that Horizon is **free for
-now** (early operations). Confirm once that the balance did not drop after the first jobs.
+now** (early operations). Confirmed 09-29: the balance still read 1,000 SU after ~10 node-h of jobs.
 
 - **Login:** `ssh horizon` (alias in `~/.ssh/config`, user `lukedhlee`, password + TOTP, ControlMaster for 4h).
   Host `horizon.tacc.utexas.edu` (`login1`). `$HOME=/home1/11584/lukedhlee`. `nproc` says 1 only because TACC sets
@@ -444,7 +444,10 @@ now** (early operations). Confirm once that the balance did not drop after the f
   Jobs set `ALL_PROXY=socks5h://127.0.0.1:PORT`, and curl, git, uv and cargo all work through it. The first ssh can hit
   `pam_slurm_adopt` before the job is adopted, so tunnel.sh retries.
 - **Storage (checked 09-29):** `/scratch` (1.4 PB, shared across all projects) and `/home1` are NFS mounts. `/work` is
-  not mounted. Scratch dir is `/scratch/11584/lukedhlee`. The banner shows a 0 quota, which on Vista means no quota (not
+  not mounted. **`/scratch` purges files whose access time is over 10 days old and is not backed up** (TACC docs;
+  deliberately touching files to dodge the purge is prohibited), so code and venvs stay in `/home1` (backed up daily,
+  46.6 GB / 500k files; 43 % / 45 % used on 09-29) and only regenerable data goes on scratch; push rollouts to HF
+  promptly. Scratch dir is `/scratch/11584/lukedhlee`. The banner shows a 0 quota, which on Vista means no quota (not
   yet verified by a write here). HF downloads from the login node ran at about 600 MB/s (126 GB in about 4 minutes).
 - **Visibility:** `sacct -a` and `sacctmgr` show only your own jobs and associations, but `squeue` shows everyone's.
 - **Snowball runtime:** `data/r2egym/horizon/` holds `build_env.sbatch` (vLLM for sm_100 + the trainer layer via
