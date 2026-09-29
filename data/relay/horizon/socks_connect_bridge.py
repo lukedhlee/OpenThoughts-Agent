@@ -6,8 +6,11 @@ By diff from data/r2egym/daytona_artifacts/async_socks_connect_proxy.py (the Jup
     tunnels, and a failed SOCKS handshake is retried once on another upstream. On Horizon each port is one login-side
     `ssh -R` (data/r2egym/horizon/tunnel.sh), so this spreads the driver's Daytona traffic over several ssh processes
     and rides over one of them dropping (tunnel.sh reopens it within 20 s).
-  - SOCKS credentials are optional (an `ssh -R` SOCKS5 has none); --rdns lets the upstream resolve names (the compute
-    node then needs no DNS for the outside world).
+  - a DNS cache (--dns-ttl, default 300 s; IPv4; a stale entry is served while one refresh runs): Horizon's first
+    nameserver never answers for outside names, so every uncached lookup costs 5 s (glibc's timeout) on compute AND
+    login nodes (2026-09-29). The upstream gets the address, never the name, so the login-side ssh (whose SOCKS
+    resolver blocks its whole event loop) never resolves either.
+  - SOCKS credentials are optional (an `ssh -R` SOCKS5 has none); --rdns sends names instead (and skips the cache).
   - --stats-every N prints one JSON line every N s: open tunnels per upstream, connects, errors, handshake p50/p99.
 Bind to loopback. Set HTTPS_PROXY to this listener and NO_PROXY for internal services. Credentials are never logged.
 """
@@ -16,8 +19,11 @@ import asyncio
 import contextlib
 import itertools
 import json
+import ipaddress
 import os
 from pathlib import Path
+import random
+import socket
 import time
 
 from python_socks import ProxyType
@@ -32,10 +38,44 @@ async def relay(reader, writer):
         writer.write_eof()
 
 
+class DNSCache:
+    def __init__(self, ttl):
+        self.ttl, self.c, self.pending = ttl, {}, {}
+        self.stats = dict(lookups=0, lookup_s=[])
+
+    async def _lookup(self, host):
+        t = time.monotonic()
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(host, 443, family=socket.AF_INET, type=socket.SOCK_STREAM)
+            addrs = sorted({i[4][0] for i in infos})
+            self.c[host] = (addrs, time.monotonic() + self.ttl)
+            return addrs
+        finally:
+            self.stats['lookups'] += 1
+            self.stats['lookup_s'].append(time.monotonic() - t)
+            self.pending.pop(host, None)
+
+    async def resolve(self, host):
+        with contextlib.suppress(ValueError):
+            ipaddress.ip_address(host)
+            return host
+        hit = self.c.get(host)
+        if hit and time.monotonic() < hit[1]:
+            return random.choice(hit[0])
+        if host not in self.pending:
+            self.pending[host] = asyncio.ensure_future(self._lookup(host))
+            self.pending[host].add_done_callback(lambda f: f.cancelled() or f.exception())   # no unretrieved warnings
+        if hit:   # stale: serve it while the refresh runs
+            return random.choice(hit[0])
+        return random.choice(await asyncio.shield(self.pending[host]))
+
+
 class Upstreams:
-    def __init__(self, host, ports, rdns):
+    def __init__(self, host, ports, rdns, dns_ttl):
         user, pw = os.environ.get('SOCKS_USER') or None, os.environ.get('SOCKS_PASS') or None
         self.ports = ports
+        self.rdns = rdns
+        self.dns = DNSCache(dns_ttl)
         self.proxies = {p: Proxy(ProxyType.SOCKS5, host, p, username=user, password=pw, rdns=rdns) for p in ports}
         self.open = {p: 0 for p in ports}
         self.rr = itertools.count()
@@ -49,6 +89,8 @@ class Upstreams:
         """(port, sock): the least-loaded upstream first, one retry on the next."""
         err = None
         t = time.monotonic()
+        if not self.rdns:
+            dest_host = await self.dns.resolve(dest_host)
         for i, p in enumerate(self.order()[:2]):
             try:
                 sock = await self.proxies[p].connect(dest_host=dest_host, dest_port=dest_port, timeout=timeout)
@@ -114,14 +156,16 @@ async def report(up, every):
         h = sorted(up.stats['handshake'])
         up.stats['handshake'] = []
         q = (lambda f: round(h[int(f * (len(h) - 1))], 4) if h else None)
+        ls, up.dns.stats['lookup_s'] = up.dns.stats['lookup_s'], []
         print(json.dumps(dict(event='stats', ts=round(time.time(), 1), open=dict(up.open), connects=up.stats['connects'],
                               errors=up.stats['errors'], retried=up.stats['retried'], handshakes=len(h),
-                              handshake_p50=q(.5), handshake_p99=q(.99))), flush=True)
+                              handshake_p50=q(.5), handshake_p99=q(.99), dns_lookups=up.dns.stats['lookups'],
+                              dns_max_s=round(max(ls), 3) if ls else None, dns_hosts=len(up.dns.c))), flush=True)
 
 
 async def main(args):
     ports = [int(p) for p in str(args.socks_port).split(',') if p]
-    up = Upstreams(args.socks_host, ports, args.rdns)
+    up = Upstreams(args.socks_host, ports, args.rdns, args.dns_ttl)
     server = await asyncio.start_server(lambda r, w: handle(r, w, up), '127.0.0.1', args.port, limit=16384)
     print(json.dumps(dict(event='listening', port=args.port, upstreams=ports, rdns=args.rdns)), flush=True)
     if args.stats_every:
@@ -138,6 +182,7 @@ if __name__ == '__main__':
     p.add_argument('--socks-host', default='127.0.0.1')
     p.add_argument('--socks-port', default='18080', help='one port or a comma-separated list')
     p.add_argument('--rdns', action='store_true', help='let the SOCKS upstream resolve host names')
+    p.add_argument('--dns-ttl', type=float, default=300)
     p.add_argument('--stats-every', type=float, default=0)
     p.add_argument('--ready')
     asyncio.run(main(p.parse_args()))
