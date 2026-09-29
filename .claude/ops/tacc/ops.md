@@ -30,8 +30,9 @@ source $SCRATCH/miniconda3/bin/activate otagent
 - DCFT shared (read-only): `/scratch/08002/gsmyrnis/dcft_shared/`
 - Negin/Richard eval traces: `/scratch/08134/negin/dc-agent-shared/dc-agent/eval/tacc/jobs/`
 
-> **⚠ Allocation**: `CCR24067` — **107,765 SUs** available, **expires 2025-12-31**. Monitor periodically
-> (SUs are consumed per GPU-hour). Check balance: `bbalance`.
+> **Allocation**: `CCR24067`, renewed — **105,757 SUs on 2026-09-08, expires 2026-12-31**. Luke (2026-09-15): Vista
+> node-hours are not a constraint; state the cost in a line and proceed for ordinary jobs. Luke's own user is
+> `lukedhlee` (`ssh vista`, TOTP; `$SCRATCH=/scratch/11584/lukedhlee`), `-A CCR24067` on `sbatch` works.
 >
 > **⚠ Use `gg` for builds/installs.** The login node is shared and under heavy load — `uv` and other
 > Rust-based tools crash with OOM. Reserve a compute node via `srun -p gg` for any install or build.
@@ -398,3 +399,62 @@ setfacl -R -d -m o::--- /path/to/dir
 - **SkyRL TACC setup**: <https://github.com/NovaSky-AI/SkyRL/blob/arm/skyrl-train/scripts/tacc_setup.sh>
   (the `arm` branch has TACC-specific setup).
 - **SUs expire 2025-12-31.** Check `bbalance` periodically; request renewal if running low.
+
+## Levanter Grug SFT on Vista (2026-09-15) — what the login node forbids, what the env needs
+
+Procedure and paths: `ai_memory/active/snowball-sft/runbooks/vista_levanter_sft.md`. Cluster facts learned:
+
+- **Login node virtual memory is capped at 8 GB per process** (`ulimit -v 8388608`): this, not load, is why
+  `uv sync` and the Hugging Face xet downloader die with `memory allocation of N bytes failed`. `hf download`
+  works on the login node with `HF_HUB_DISABLE_XET=1` (127 GB in ~12 min); builds go to a compute node.
+- **Lmod hierarchy:** `cuda/12.8` and `cuda/13.x` appear only after `module load gcc/13.2.0` (bare
+  `module avail cuda` stops at 12.6). The Grug launchers load `gcc/13.2.0 cuda/12.8` and set
+  `CUDA_HOME=$TACC_CUDA_DIR`, `TRITON_CC=gcc`, `LD_PRELOAD=libstdc++.so.6` from that gcc.
+- **`uv` 0.11 with a managed CPython 3.12.13 already sits in `~/.local`**; the marin workspace lock resolves
+  fully from wheels on aarch64 (every compiled dep has a `manylinux_*_aarch64` wheel; FA4/cuTe/quack are pure
+  Python). Env build from the lock: ~8 min on a gh-dev node, 11 GB. Override `nvidia-nccl-cu13` to 2.30.7
+  after the sync (the lock pins 2.28.9, which wedges on aarch64 — marin #7344).
+- **gh-dev runs one job per user** (a second gh-dev submission queues behind the first even when idle nodes
+  exist); gates and env builds serialize there. `gh` multi-node: 64-node request sat 171st→244th of ~500
+  pending over the evening of 09-15 with no start estimate; plan on overnight.
+- **After `srun` tears down a JAX job**, ranks print `WatchTasksAsync failed … Connection refused` — noise
+  once rank 0 has exited; read the probe/exit lines instead.
+- **A 64-node `gh` request can sit in the queue for a day with no estimate:** 999358 went 171st → 244th → 257th of
+  ~500 pending between 19:07 PT 09-15 and 09:50 PT 09-16 and never started; the same chain ran on Jupiter in 50 min.
+  Treat Vista as the fallback for Snowball SFT, not the primary.
+- **Mrinal's scratch (`/scratch/11694/mkumar73`) is mode 700 and empty**; nothing of his env or checkpoints
+  is readable. His branch is the recipe, not his files.
+
+## Horizon (checked 2026-09-28, corrected 2026-09-29)
+
+TACC's docs page is out of date. Horizon has **4 GB200s per node** (~185 GiB each, 2 Grace CPUs with 144 cores, 1.6 TB of
+RAM), so a node has about twice Jupiter's GPU memory. Early operations run on one `debug` partition. Project `CCR24067`
+shows 1,000 SU (expires 2026-12-31), but the TACC cluster manager told Luke on 2026-09-29 that Horizon is **free for
+now** (early operations). Confirm once that the balance did not drop after the first jobs.
+
+- **Login:** `ssh horizon` (alias in `~/.ssh/config`, user `lukedhlee`, password + TOTP, ControlMaster for 4h).
+  Host `horizon.tacc.utexas.edu` (`login1`). `$HOME=/home1/11584/lukedhlee`. **The login node gives you 1 core**, so
+  downloads and clones are fine there but compiles are not.
+- **Partition:** `debug` (Exclusive=NODE; `debug-shared` is the shared variant). There are 1,000 nodes. QOS `qdebug`
+  allows 1,000 nodes per user, 48h per job, 20 running and 40 submitted jobs. Submit with `-A CCR24067`: the TACC
+  filter rejects lowercase `ccr24067`. The `gb`/`gb-dev`/`gb-large` queues in the docs do not exist yet.
+- **No internet on compute nodes.** Compute-to-login ssh asks for TOTP, so the tunnel has to start on the login side:
+  `data/r2egym/horizon/tunnel.sh <jobid>` runs `ssh -R PORT node`, which puts a SOCKS5 proxy on the node's localhost.
+  Jobs set `ALL_PROXY=socks5h://127.0.0.1:PORT`, and curl, git, uv and cargo all work through it. The first ssh can hit
+  `pam_slurm_adopt` before the job is adopted, so tunnel.sh retries.
+- **Storage (checked 09-29):** `/scratch` (1.4 PB, shared across all projects) and `/home1` are NFS mounts. `/work` is
+  not mounted. Scratch dir is `/scratch/11584/lukedhlee`. The banner shows a 0 quota, which on Vista means no quota (not
+  yet verified by a write here). HF downloads from the login node ran at about 600 MB/s (126 GB in about 4 minutes).
+- **Visibility:** `sacct -a` and `sacctmgr` show only your own jobs and associations, but `squeue` shows everyone's.
+- **Snowball runtime:** `data/r2egym/horizon/` holds `build_env.sbatch` (vLLM for sm_100 + the trainer layer via
+  `build_snowball_env.sh` overrides), `tunnel.sh` and `serve_smoke.sbatch`. The code lives under `$HOME/snowball` (same
+  layout as the build script), and models are in `$SCRATCH/hf_hub` (Stage-3 step 1888 + the EAGLE-3 draft, both from `laion/`).
+- **Compilers (09-29):** TACC's login env loads `nvidia/26.9`, which sets `CC=nvc` and `CXX=nvc++`, and sbatch inherits
+  them. The build fails under `nvc++` (torch `Half.h` `float16_t`), so `build_env.sbatch` sets `SNOWBALL_CC=gcc`.
+  Serving fails too: Triton's JIT builds `cuda_utils.c` with `$CC`, and `nvc` rejects `-Wno-psabi`, so every engine dies
+  at startup. Every Horizon job that runs vLLM or Triton must `export CC=gcc CXX=g++` (system GCC 14.3).
+- **EAGLE-3 overlay:** the overlay clone (`src/marin_vllm_eagle3`, Python-only commits on the base SHA) needs every
+  git-ignored generated file from the base build (`git ls-files --others --ignored --exclude-standard vllm`, ~970
+  files incl. `vllm_flash_attn/*`), not just `vllm/*.so`. Otherwise vLLM dies on `_vllm_fa2_C`.
+- **Port verified 09-29:** gate 1 (same SHAs + 340/340 pinned packages) and a DP4-EP EAGLE-3 serve smoke passed
+  (up in 340 s). Pass rules: `ai_memory/active/horizon-port/objective.md`.
