@@ -62,7 +62,7 @@ if [ "$NSYS" = 1 ]; then
 fi
 "${NSYSW[@]}" $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name "$SERVED" --port 8000 \
     --tensor-parallel-size 1 --data-parallel-size 4 --enable-expert-parallel \
-    --max-model-len 65536 --hf-overrides '{"max_position_embeddings": 65536, "max_seq_len": 65536}' \
+    --max-model-len ${MAXLEN:-65536} --hf-overrides "{\"max_position_embeddings\": ${MAXLEN:-65536}, \"max_seq_len\": ${MAXLEN:-65536}}" \
     --max-num-seqs 32 --gpu-memory-utilization 0.90 \
     --speculative-config "{\"method\":\"eagle3\",\"model\":\"$DRAFT\",\"num_speculative_tokens\":3}" \
     --override-generation-config "$GEN" "${CHAT[@]}" > $SLOG 2>&1 &

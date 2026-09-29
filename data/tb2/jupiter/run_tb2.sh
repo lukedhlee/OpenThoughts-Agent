@@ -21,6 +21,7 @@ export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1   # login-node
 [ -z "${HARBOR_SHA:-}" ] || [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = "${HARBOR_SHA:0:8}" ] || { echo "$HARBOR_SRC is not at $HARBOR_SHA"; exit 1; }
 [ "$(ls -d $TASKS/*/ | wc -l)" = "$NTASKS" ] || { echo "task tree at $TASKS does not have $NTASKS tasks"; exit 1; }
 URL=$(cat $E/endpoints/$JOB 2>/dev/null) || { echo "no endpoint file for job $JOB (server not up, or gone)"; exit 1; }
+URL=${API_BASE_OVERRIDE:-$URL}   # API_BASE_OVERRIDE=<url>/v1: a proxy in front of the server (e.g. relay/sft/think_cut_proxy.py)
 squeue -h -j $JOB -o %T | grep -q RUNNING || { echo "serve job $JOB is not RUNNING"; exit 1; }
 [ -d $JOBS/$NAME ] && { echo "$JOBS/$NAME exists; pick a new name or resume"; exit 1; }
 mkdir -p $JOBS $W/runs
