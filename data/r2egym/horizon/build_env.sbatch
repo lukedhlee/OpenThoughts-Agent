@@ -20,6 +20,7 @@ curl -sS -m 20 -o /dev/null -w "preflight pypi %{http_code}\n" https://pypi.org/
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader | head -1
 export ROOT=${ROOT:-$HOME/snowball} SCRATCH=${SCRATCH:-/scratch/11584/$USER}
 export SNOWBALL_MODULES="nvidia/26.9 cuda/13.1 cmake/4.4.0" STAGE_MODULE=TACC TORCH_CUDA_ARCH_LIST=10.0 SNOWBALL_RUSTUP=1 MAX_JOBS=64
+export SNOWBALL_CC=gcc SNOWBALL_CXX=g++   # nvidia/26.9 sets CXX=nvc++, which fails on torch Half.h (float16_t); system GCC 14 = Jupiter's
 export MSRL_SHA=${MSRL_SHA:-a03b2773} HARBOR_SHA=${HARBOR_SHA:-dcf609bc}   # what Jupiter runs (2026-09-15 checkouts)
 export CMAKE_POLICY_VERSION_MINIMUM=3.5   # cmake 4 refuses FetchContent deps that declare cmake_minimum_required < 3.5
 bash "$ROOT/snowball/build_snowball_env.sh" ${STEPS:-vllm trainer overlay smoke}

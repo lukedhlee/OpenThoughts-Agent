@@ -52,6 +52,7 @@ DYNSEM_PIN="dynamic-semaphore @ git+https://github.com/penfever/dynamic-semaphor
 STAGE_MODULE=${STAGE_MODULE:-Stages/2026}                        # JSC already exports $STAGES (a path), hence the different name
 read -r -a MODULES <<< "${SNOWBALL_MODULES:-CUDA/13 GCC/14.3.0 CMake Ninja Rust/1.88.0}"  # what the 2026-09-02 build had on PATH (nvcc, gcc 14, cmake, ninja, cargo)
 # Other clusters: SNOWBALL_MODULES="..." TORCH_CUDA_ARCH_LIST=10.0 (Blackwell) SNOWBALL_RUSTUP=1 (no Rust module: rustup into CACHE)
+#                 SNOWBALL_CC=gcc SNOWBALL_CXX=g++ (compiler module sets a non-GNU CC/CXX)
 
 # ----------------------------------------------------------------------------- layout
 : "${ROOT:?set ROOT (e.g. ROOT=/e/project1/reformo/\$USER/snowball) — everything is built under it}"
@@ -79,6 +80,9 @@ load_modules() {
   module load "$STAGE_MODULE" >/dev/null 2>&1 || say "module load $STAGE_MODULE failed (continuing with the default stage)"
   local m; for m in "${MODULES[@]}"; do module load "$m" >/dev/null 2>&1 || say "WARN: module load $m failed"; done
   export CUDA_HOME="$(dirname "$(dirname "$(command -v nvcc || true)")")"; export PATH="$CUDA_HOME/bin:$PATH"
+  # Where the compiler module points CC/CXX at a non-GNU compiler (Horizon's nvidia/26.9 -> nvc++, which lacks aarch64
+  # float16_t and fails on torch's Half.h): SNOWBALL_CC=gcc SNOWBALL_CXX=g++ (also the nvcc host compiler)
+  if [ -n "${SNOWBALL_CC:-}" ]; then export CC=$SNOWBALL_CC CXX=${SNOWBALL_CXX:-g++} CUDAHOSTCXX=${SNOWBALL_CXX:-g++}; fi
 }
 
 quota_line() { # path kind -> the project quota row for that filesystem (jutil is a login-shell function on JSC)
