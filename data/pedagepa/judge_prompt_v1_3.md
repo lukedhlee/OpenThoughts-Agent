@@ -1,4 +1,4 @@
-# Trajectory judge, rubric v1.3 (frozen 2026-09-29 evening)
+# Trajectory judge, rubric v1.3.1 (frozen 2026-09-29 evening; v1.3 + window-share field for P5a)
 
 Changes from v1.2.1: P5 split into P5a/P5b with concrete anchors (P5 failed agreement, QWK 0.35/0.45); P0 covers
 tool-mode format errors; P2 includes using what the environment already provides; P6 includes suspecting its own last
@@ -52,7 +52,8 @@ and P9 as NA. Every numeric score cites the reply number(s) and a note of at mos
 - **P5a bounds tool output.** Score from facts A3 plus the view. 2 = every command whose output could be long is
   bounded (head, tail, grep, wc, -q flags, redirect to a file then inspect part), and it never re-prints a file or
   listing it has already seen unchanged. 1 = one or two unbounded dumps or re-prints. 0 = three or more, or any single
-  output above 25 % of the window (facts `largest_output_share` > 0.25), or verbose dumps (e.g. `tshark -V`, full logs)
+  output above 25 % of the window (facts `largest_output_window_share` > 0.25; `largest_output_share` is its share of the
+  final context, not of the window), or verbose dumps (e.g. `tshark -V`, full logs)
   that visibly crowd the context. NA only if the run had fewer than 3 executed commands.
 - **P5b keeps its own replies short.** Its analysis/plan and any visible reasoning are proportionate to the step.
   2 = no reply generated 8,000+ tokens and no reply re-derives by hand what one command would compute. 1 = one such
@@ -94,7 +95,7 @@ and P9 as NA. Every numeric score cites the reply number(s) and a note of at mos
 - `commands_between_last_edit_and_first_claim: 0` means no command ran after the last file-writing command and before
   the claim (counted per command, so a check in the same reply as the edit counts): P9 cannot score 2.
   (v1.2 as first run on 2026-09-29 used a per-reply count that missed same-reply checks; fixed in v1.2.1.)
-- A3 `overflow_death: true` with `largest_output_share` above 0.25 means P5a cannot score 2; `runaway_replies` >= 2 means P5b cannot score 2.
+- A3 `overflow_death: true` with `largest_output_window_share` above 0.25 means P5a cannot score 2; `runaway_replies` >= 2 means P5b cannot score 2.
 - If `tests.grader_ran` is false, set `task_defect` (below) and still score the behaviour.
 
 ## Knowledge ledger

@@ -140,9 +140,11 @@ CONFIRM_MARK = 'Are you sure you want to mark the task as complete?'
 # Checked on the teacher's content and reasoning; a word that already occurs in the task instruction does not count.
 LEAK_RE = re.compile(r"\b(students?|learners?|teach(?:ing|er|es)?|lessons?|demonstrat\w*|deliberately|on purpose|"
                      r"intentionally|purposely|simulat\w*|as instructed|the instruction(?:s)? (?:say|said|tell|told)|"
-                     r"i (?:was|am) (?:told|asked|instructed) to|for (?:the )?(?:reader|audience))\b", re.I)
-INJECT_ERR_RE = re.compile(r"(Traceback \(most recent call last\)|\bError\b|error:|FAILED|No such file|command not found|"
-                           r"Segmentation fault|cannot |failed|exit code [1-9])", re.I)
+                     r"i (?:was|am) (?:told|asked|instructed) to|for (?:the )?(?:reader|audience)|system prompt|the (?:guidance|guidelines)|"
+                     r"(?:this|the) note|note (?:says|asks|for this reply)|for this reply only)\b", re.I)
+INJECT_ERR_RE = re.compile(r"(Traceback \(most recent call last\)|^\s*[\w.]*(?:Error|Exception): |: command not found|"
+                           r"No such file or directory|Segmentation fault|^E: |^fatal: |^\S+:\d+:(?:\d+:)? error: |"
+                           r"^make(?:\[\d+\])?: \*\*\*|exit (?:status|code) [1-9]|^FAILED |^ERROR )", re.M)
 INJECT_WRITE_RE = re.compile(r"((?<![0-9&])>>?\s*(?!/dev/null)(?!&)[\w./~$-]+|\bsed\s+-i|\btee\s+[\w./~-]+|\bpatch\b|cat\s*>)")
 AUX_KINDS = ('summary', 'questions', 'answers')
 
@@ -450,7 +452,10 @@ class Router:
             rec = ep.replies.get(sha(content)) if ep else None
             owner = rec['owner'] if rec else None
             m2 = {k: v for k, v in m.items() if k not in ('reasoning', 'reasoning_content')}
-            if owner == 'teacher':
+            if owner == 'teacher' and rec.get('injected'):
+                stats['prior_teacher_turns'] += 1          # the simulated-mistake turn: its reasoning is never re-fed
+                stats['injected_reasoning_dropped'] = stats.get('injected_reasoning_dropped', 0) + 1
+            elif owner == 'teacher':
                 stats['prior_teacher_turns'] += 1
                 r = m.get('reasoning') or m.get('reasoning_content')
                 if m.get('reasoning'):
@@ -989,7 +994,8 @@ class Router:
         prev = next((text_of(x.get('content')) for x in reversed(messages) if x.get('role') == 'assistant'), '')
         fire = (tr['type'] == 'turn_range' and t >= ep.inject_target) or \
                (tr['type'] == 'after_error' and t >= tr.get('min_turn', 2) and INJECT_ERR_RE.search(last[-4000:])) or \
-               (tr['type'] == 'after_write' and t >= tr.get('min_turn', 3) and INJECT_WRITE_RE.search(prev))
+               (tr['type'] == 'after_write' and t >= tr.get('min_turn', 3) and INJECT_WRITE_RE.search(prev)) or \
+               (tr['type'] == 'claim_ready' and t >= tr.get('min_turn', 3) and self._claim_ready(ep, messages, tr))
         if not fire:
             return None
         ep.injected_at = t
@@ -997,13 +1003,26 @@ class Router:
         self.event('inject', episode=ep.idx, sid=ep.sid, mode=m['name'], turn=t)
         return m
 
-    def leak_hits(self, messages, resp_bytes):
+    def _claim_ready(self, ep, messages, tr):
+        """premature_done timing: fire once the episode has written files in at least `writes` replies and the last
+        reply ran something (a run or a check, not a write) whose output shows no error: the moment an agent is tempted
+        to call it done. Falls back to after_write once the turn passes `fallback_turn`."""
+        asst = [text_of(x.get('content')) for x in messages if x.get('role') == 'assistant']
+        writes = sum(1 for c in asst if INJECT_WRITE_RE.search(c))
+        prev = asst[-1] if asst else ''
+        last = text_of(messages[-1].get('content')) if messages else ''
+        t = len(asst) + 1
+        if t >= tr.get('fallback_turn', 10 ** 9):
+            return bool(INJECT_WRITE_RE.search(prev) or writes)
+        return writes >= tr.get('writes', 2) and not INJECT_WRITE_RE.search(prev) and not INJECT_ERR_RE.search(last[-4000:])
+
+    def leak_hits(self, messages, resp_bytes, content_only=False):
         """Leak words in the teacher's reply (content + reasoning) that the task instruction itself does not use."""
         try:
             msg = json.loads(resp_bytes)['choices'][0]['message']
         except (ValueError, KeyError, IndexError, TypeError):
             return []
-        txt = text_of(msg.get('content')) + '\n' + (msg.get('reasoning_content') or msg.get('reasoning') or '')
+        txt = text_of(msg.get('content')) + ('' if content_only else '\n' + (msg.get('reasoning_content') or msg.get('reasoning') or ''))
         instr = text_of(messages[0].get('content')).lower() if messages else ''
         return sorted({h.group(0).lower() for h in LEAK_RE.finditer(txt) if h.group(0).lower() not in instr})
 
@@ -1057,8 +1076,8 @@ class Router:
                 break
             self.counts['repair_reply_rejected'] += 1
             rec.setdefault('repair_rejected_replies', []).append(json.loads(data))
-        if who == 'teacher' and main and status == 200 and self.a.leak_check and not rec.get('injected'):
-            hits = self.leak_hits(messages, data)
+        if who == 'teacher' and main and status == 200 and self.a.leak_check:
+            hits = self.leak_hits(messages, data, content_only=bool(rec.get('injected')))
             n = 0
             while hits and n < self.a.leak_resamples:
                 self.counts['leak_hits'] += 1
@@ -1068,7 +1087,7 @@ class Router:
                 if status2 != 200:
                     break
                 status, data = status2, data2
-                hits = self.leak_hits(messages, data)
+                hits = self.leak_hits(messages, data, content_only=bool(rec.get('injected')))
             if hits:
                 self.counts['leak_passed'] += 1
                 rec['leak_passed'] = hits
@@ -1181,7 +1200,8 @@ class Router:
         msg = resp['choices'][0]['message']
         content = text_of(msg.get('content'))
         reasoning = msg.get('reasoning_content') or msg.get('reasoning')
-        ep.replies[sha(content)] = dict(owner=who, turn=t, reasoning=reasoning)
+        ep.replies[sha(content)] = dict(owner=who, turn=t, reasoning=None if rec.get('injected') else reasoning,
+                                        injected=rec.get('injected'))
         if main:
             ep.pending_reply = content
             ep.owners.append((t, who))

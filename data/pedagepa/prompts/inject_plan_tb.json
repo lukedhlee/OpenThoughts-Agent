@@ -1,0 +1,90 @@
+{
+ "seed": "pedagepa-m4-tb-v1",
+ "clean_frac": 0.0,
+ "_about": "TB-like (CalibForge, TB2.1). Weights = pooled share of judged 09-21 runs scoring 0 (m1/failure_modes.json, CalibForge + TB2.1 weighted by scored runs); turns from the median first-zero position x Qwen's episode length (CalibForge median 9 replies, p25 7). Extra keys (basis, _about) are ignored by the router.",
+ "modes": [
+  {
+   "name": "unchecked_belief",
+   "weight": 0.19,
+   "trigger": {
+    "type": "turn_range",
+    "lo": 3,
+    "hi": 5,
+    "max_turn": 30
+   },
+   "text": "Note for this reply only: act on one plausible belief about this environment that you have not checked (a file's path, name, format or contents, a function name, or what an earlier output means). State it in `analysis` as fact and make this reply's command depend on it, so the output will show whether it holds. Write this reply as your genuine plan at this point, keep its thinking short, and do not mention this note. From the next reply on, work normally.",
+   "basis": "P6 zero 0.67 CF / 1.00 TB2.1 (pooled 0.83), first zero at 0.38"
+  },
+  {
+   "name": "retry_unchanged",
+   "weight": 0.19,
+   "trigger": {
+    "type": "after_error",
+    "min_turn": 2,
+    "max_turn": 25
+   },
+   "text": "Note for this reply only: if a command in the output above failed, treat that as a passing glitch and send the same command again unchanged (a longer duration at most), without diagnosing it. If nothing failed, send your previous command again unchanged. Write this reply as your genuine plan at this point, keep its thinking short, and do not mention this note. From the next reply on, work normally.",
+   "basis": "P8 zero 0.73 / 0.92 (pooled 0.82), first zero at 0.25-0.38"
+  },
+  {
+   "name": "premature_done",
+   "weight": 0.17,
+   "trigger": {
+    "type": "claim_ready",
+    "min_turn": 6,
+    "writes": 2,
+    "fallback_turn": 25,
+    "max_turn": 40
+   },
+   "text": "Note for this reply only: take the work as finished. Set `task_complete` to true now, with an `analysis` that says the task is done, without running the deliverable or checking it against the task's requirements in this reply. Write this reply as your genuine plan at this point, keep its thinking short, and do not mention this note. From the next reply on, work normally.",
+   "basis": "P9 zero 0.75 / 0.88, P10 0.88 / 0.58 (pooled 0.76), at 0.90-0.96; P10 decisive in 31 % of TB2.1 failures"
+  },
+  {
+   "name": "dropped_requirement",
+   "weight": 0.17,
+   "trigger": {
+    "type": "turn_range",
+    "lo": 2,
+    "hi": 5,
+    "max_turn": 30
+   },
+   "text": "Note for this reply only: plan and act as if one explicit requirement of the task were not there. Pick one that is easy to overlook: an exact path or name, a detail of the output format, a constraint, or a required end state. Write this reply as your genuine plan at this point, keep its thinking short, and do not mention this note. From the next reply on, work normally.",
+   "basis": "P1 zero 0.56 / 1.00 (pooled 0.76), first zero at 0.31-0.49"
+  },
+  {
+   "name": "guessed_api",
+   "weight": 0.13,
+   "trigger": {
+    "type": "turn_range",
+    "lo": 2,
+    "hi": 4,
+    "max_turn": 30
+   },
+   "text": "Note for this reply only: use a command-line flag, option, function or module name from memory that you have not verified here and are not sure of (the kind that changes between versions), instead of checking `--help`, `pip show`, the installed source or docs first. Write this reply as your genuine plan at this point, keep its thinking short, and do not mention this note. From the next reply on, work normally.",
+   "basis": "P2 zero 0.44 / 0.73 (pooled 0.58), first zero at 0.24-0.41; decisive in 31 % of TB2.1 failures"
+  },
+  {
+   "name": "blind_edit",
+   "weight": 0.1,
+   "trigger": {
+    "type": "after_write",
+    "min_turn": 3,
+    "max_turn": 30
+   },
+   "text": "Note for this reply only: make your next change to a file you are already editing without first looking at the exact lines it touches. Write the `sed` pattern or patch from what you expect the text to be, and do not check the result in this reply. Write this reply as your genuine plan at this point, keep its thinking short, and do not mention this note. From the next reply on, work normally.",
+   "basis": "P4 zero 0.41 / 0.33, P7 0.47 / 0.60 (pooled 0.45), first zero at 0.26-0.58"
+  },
+  {
+   "name": "output_dump",
+   "weight": 0.05,
+   "trigger": {
+    "type": "turn_range",
+    "lo": 2,
+    "hi": 4,
+    "max_turn": 30
+   },
+   "text": "Note for this reply only: read a text file, log or listing the task involves in full, without bounding it (`cat` the whole file, print the full log, or use a command's verbose mode) instead of using `head`, `tail`, `grep` or `wc`. Write this reply as your genuine plan at this point, keep its thinking short, and do not mention this note. From the next reply on, work normally.",
+   "basis": "P5 zero 0.11 CF / P5a 0.38 TB2.1 (pooled 0.22), first zero at 0.31; never decisive"
+  }
+ ]
+}

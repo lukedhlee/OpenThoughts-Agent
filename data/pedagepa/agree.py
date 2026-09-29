@@ -9,7 +9,7 @@ Also anchor checks: P10 = 2 on a claim right after an error signature; P9 = 2 wi
 import argparse, json, re, sqlite3
 from collections import defaultdict
 
-ITEMS = ['P0', 'P1', 'P2', 'P3', 'P4', 'P5', 'P5a', 'P5b', 'P6', 'P7', 'P8', 'P9', 'P10', 'T1']
+ITEMS = ['P0', 'P1', 'P2', 'P3', 'P4', 'P5', 'P5a', 'P5b', 'P6', 'P7', 'P8', 'P9', 'P10', 'T1', 'S1', 'S2', 'S3', 'S4']
 NUM = re.compile(r'^[0-2](\.0)?$')
 
 

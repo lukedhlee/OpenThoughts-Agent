@@ -86,7 +86,9 @@ def facts(trial, refeed=False, limit=65536):
                 A3=dict(limit=limit, peak_prompt=peak, peak_share=round(peak / limit, 3),
                         overflow_death='ContextLength' in (exc or ''), first_reply_past_half=half,
                         composition={k: round(v / tot, 3) for k, v in comp.items()},
-                        largest_output_share=round(max((len(t['obs']) for t in turns), default=0) / tot, 3)),
+                        largest_output_share=round(max((len(t['obs']) for t in turns), default=0) / tot, 3),
+                        # the same output as a share of the WINDOW (context share x peak prompt / limit)
+                        largest_output_window_share=round(max((len(t['obs']) for t in turns), default=0) / tot * peak / limit, 3)),
                 runaway_replies=f['runaway_replies'], loop_fires=f['loop_fires'], wait_fires=f['wait_fires'],
                 last_edit_reply=last_edit, commands_between_last_edit_and_first_claim=checks_after,
                 error_signature_right_before_first_claim=err_before)

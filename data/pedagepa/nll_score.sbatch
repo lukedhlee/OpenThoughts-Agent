@@ -25,9 +25,9 @@ echo "pg_nll on $(hostname) job=$SLURM_JOB_ID ($(date -Is)) model=$MODEL rows=$R
 $PY -m vllm.entrypoints.openai.api_server --model $MODEL --served-model-name snowball --port 8000 \
   --tensor-parallel-size 1 --data-parallel-size 4 --enable-expert-parallel \
   --max-model-len 65536 --hf-overrides '{"max_position_embeddings": 65536, "max_seq_len": 65536}' \
-  --max-num-seqs 16 --gpu-memory-utilization 0.90 --max-logprobs 1 > /e/data1/mmlaion/lee27/experiments/pedagepa/logs/pg_nll_serve_$SLURM_JOB_ID.log 2>&1 &
+  --max-num-seqs 8 --gpu-memory-utilization 0.78 --max-num-batched-tokens 2048 --no-enable-prefix-caching > /e/data1/mmlaion/lee27/experiments/pedagepa/logs/pg_nll_serve_$SLURM_JOB_ID.log 2>&1 &
 SP=$!
 for i in $(seq 1 180); do curl -sf localhost:8000/health >/dev/null && break; kill -0 $SP 2>/dev/null || { echo "server died"; exit 1; }; sleep 10; done
 curl -sf localhost:8000/health >/dev/null || { echo "server not up"; exit 1; }
-$PY $HERE/nll_client.py --url http://localhost:8000/v1 --rows $ROWS --n ${N:-120} --out $OUT --workers 8
+$PY $HERE/nll_client.py --url http://localhost:8000/v1 --rows $ROWS --n ${N:-120} --out $OUT --workers 6
 echo "done $(date -Is)"; kill $SP

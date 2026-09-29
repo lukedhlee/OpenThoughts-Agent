@@ -91,8 +91,9 @@ def render_episode(traj, records, tok, template, bos, autofix_loss='content', ca
     messages, info = [], []
     for i, (role, text, m) in enumerate(turns):
         if role == 'assistant' and m['owner'] == 'teacher':
-            full, _, r_full = rcap.teacher_turn_for_student(text, m['reasoning'], tok, cut=False, cap=cap)
-            shown, at, _ = rcap.teacher_turn_for_student(text, m['reasoning'], tok, cut=(i != final_teacher), cap=cap)
+            reasoning = None if m.get('injected') else m['reasoning']   # the simulated-mistake turn shows no reasoning
+            full, _, r_full = rcap.teacher_turn_for_student(text, reasoning, tok, cut=False, cap=cap)
+            shown, at, _ = rcap.teacher_turn_for_student(text, reasoning, tok, cut=(i != final_teacher), cap=cap)
             messages.append(dict(role='assistant', content=shown))
             n_think = len(tok.encode(r_full, add_special_tokens=False).ids) if r_full else 0
             info.append(dict(i=i, owner='teacher', repair=m['repair'], cut_at=at, reasoning_chars=len(r_full),

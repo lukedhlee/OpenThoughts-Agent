@@ -135,3 +135,5 @@ judgments:
   - {name: cf40_opusA_v1, judge: opus, rubric: checklist v1 (pair reads), kind: pair_reads, files: '${X}/pedagepa/inspect/cf/reads/reader*.json', manifest: '${X}/pedagepa/inspect/cf/manifest.json'}
   - {name: cf40_opusB_v1.2, judge: opus, rubric: judge_prompt_v1_2, kind: judge_jsonl, files: '${X}/pedagepa/inspect/cf/judge/opusB/batch*.jsonl', batches: '${X}/pedagepa/inspect/cf/judge/batch*.json'}
   - {name: cf40_sonnet_v1.2, judge: sonnet, rubric: judge_prompt_v1_2, kind: judge_jsonl, files: '${X}/pedagepa/inspect/cf/judge/sonnet/batch*.jsonl', batches: '${X}/pedagepa/inspect/cf/judge/batch*.json'}
+  - {name: r2_opus1_v1.3, judge: opus, rubric: judge_prompt_v1_3, kind: judge_jsonl, files: '${X}/pedagepa/inspect/r2/opus1/batch*.jsonl', batches: '${X}/pedagepa/inspect/r2/batch*.json'}
+  - {name: r2_opus2_v1.3, judge: opus, rubric: judge_prompt_v1_3, kind: judge_jsonl, files: '${X}/pedagepa/inspect/r2/opus2/batch*.jsonl', batches: '${X}/pedagepa/inspect/r2/batch*.json'}
