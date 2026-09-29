@@ -8,16 +8,18 @@ from paired_eval import tb2_outcomes, rate
 OUT = os.path.dirname(os.path.abspath(__file__))
 J = '/e/data1/mmlaion/lee27/experiments/tb2_jobs'
 res = json.load(open('/e/fscratch/reformo/lee27/experiments/relay/sft_v2/results.json'))
-def swe(m):
+def sharded(p, m):
     o = {}
-    for s in (0, 1): o.update(tb2_outcomes(f'{J}/swe_6516_{m}_s{s}_20260928')[0])
+    for s in (0, 1): o.update(tb2_outcomes(f'{J}/{p}_6516_{m}_s{s}_20260928')[0])
     return rate(o)
-data = {'Held-out CalibForge (300)': res['heldout'], 'TB2.1 (88)': res['tb2'], 'SWE-bench Verified (100)\nA and B only': {'A': swe('A'), 'B': swe('B')}}
+data = {'Held-out CalibForge (300)': res['heldout'], 'TB2.1 (88)': res['tb2'],
+        'SWE-bench Verified (100)': {m: sharded('swe', m) for m in ('0921', 'A', 'B')},
+        'OpenThoughts-TBLite (100)': {m: sharded('tblite', m) for m in ('A', 'B')}}
 models = [('0921', '09-21 (before SFT)', '#9b9a94'), ('A', 'A  relay, 09-21 turns masked', '#2a78d6'),
           ('B', 'B  Qwen alone', '#eb6834'), ('C', 'C  relay + autofix loss', '#1baf7a')]
 INK, MUTED, SURF = '#0b0b0b', '#52514e', '#fcfcfb'
 plt.rcParams.update({'font.size': 10, 'axes.edgecolor': '#d8d7d2', 'axes.labelcolor': MUTED, 'xtick.color': MUTED, 'ytick.color': MUTED})
-fig, ax = plt.subplots(figsize=(9, 4.2), facecolor=SURF); ax.set_facecolor(SURF)
+fig, ax = plt.subplots(figsize=(11, 4.2), facecolor=SURF); ax.set_facecolor(SURF)
 w = 0.2
 for i, (bench, d) in enumerate(data.items()):
     for j, (k, lab, col) in enumerate(models):
