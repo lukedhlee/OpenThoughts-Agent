@@ -37,11 +37,11 @@ VLLM_REPO=https://github.com/marin-community/vllm.git
 VLLM_SHA=fa50698a9a303f7282aa0e969f35717703de4911
 VLLM_VERSION=0.0.0.dev20260804+marin.fa50698a9a30           # setuptools-scm pretend version, same as Jupiter's build
 MSRL_REPO=https://github.com/marin-community/MarinSkyRL.git
-MSRL_BRANCH=lukedhlee/snowball-r2egym;  MSRL_SHA=20032472    # 2026-09-13 (what Jupiter runs); `git pull` later to follow the branch
+MSRL_BRANCH=lukedhlee/snowball-r2egym;  MSRL_SHA=${MSRL_SHA:-20032472}    # 2026-09-13 (what Jupiter runs); `git pull` later to follow the branch
 HARBOR_REPO=https://github.com/marin-community/harbor.git
-HARBOR_BRANCH=lukedhlee/snowball-r2egym; HARBOR_SHA=b964a5f6 # 2026-09-11
+HARBOR_BRANCH=lukedhlee/snowball-r2egym; HARBOR_SHA=${HARBOR_SHA:-b964a5f6} # 2026-09-11
 OTA_REPO=https://github.com/lukedhlee/OpenThoughts-Agent.git
-OTA_BRANCH=lukedhlee/rl_acceleration;    OTA_SHA=f3edec45    # the launcher branch checked out on Jupiter
+OTA_BRANCH=lukedhlee/rl_acceleration;    OTA_SHA=${OTA_SHA:-f3edec45}    # the launcher branch checked out on Jupiter
 JSC_BRANCH=lukedhlee/vista-moe-grpo-30b                      # data/r2egym/jsc lives here (mirror of Jupiter's code/snowball)
 TORCH_SPEC="torch==2.11.0"; TORCH_INDEX=https://download.pytorch.org/whl/cu130
 UV_VERSION=0.11.31; PY_VERSION=3.12.13
@@ -50,7 +50,8 @@ FA_URL=https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/down
 TORCHTITAN_PIN="torchtitan @ git+https://github.com/pytorch/torchtitan@a1fdd7e43694bbfeff5d6ad8ac738c067bb90d41"
 DYNSEM_PIN="dynamic-semaphore @ git+https://github.com/penfever/dynamic-semaphore@4d5f49f290889f4826219b241e1aa42d6466163e"
 STAGE_MODULE=${STAGE_MODULE:-Stages/2026}                        # JSC already exports $STAGES (a path), hence the different name
-MODULES=(CUDA/13 GCC/14.3.0 CMake Ninja Rust/1.88.0)        # what the 2026-09-02 build had on PATH (nvcc, gcc 14, cmake, ninja, cargo)
+read -r -a MODULES <<< "${SNOWBALL_MODULES:-CUDA/13 GCC/14.3.0 CMake Ninja Rust/1.88.0}"  # what the 2026-09-02 build had on PATH (nvcc, gcc 14, cmake, ninja, cargo)
+# Other clusters: SNOWBALL_MODULES="..." TORCH_CUDA_ARCH_LIST=10.0 (Blackwell) SNOWBALL_RUSTUP=1 (no Rust module: rustup into CACHE)
 
 # ----------------------------------------------------------------------------- layout
 : "${ROOT:?set ROOT (e.g. ROOT=/e/project1/reformo/\$USER/snowball) — everything is built under it}"
@@ -62,7 +63,8 @@ OTA=$ROOT/OpenThoughts-Agent
 UV=$ROOT/bin/uv
 export UV_CACHE_DIR=$CACHE/uv PIP_CACHE_DIR=$CACHE/pip TMPDIR=$CACHE/tmp XDG_CACHE_HOME=$CACHE/xdg CARGO_HOME=$CACHE/cargo
 export UV_PYTHON_INSTALL_DIR=$ROOT/envs/uv-python UV_LINK_MODE=copy UV_NO_MODIFY_PATH=1
-export MAX_JOBS=${MAX_JOBS:-16} NVCC_THREADS=2 TORCH_CUDA_ARCH_LIST=9.0 VLLM_TARGET_DEVICE=cuda
+export MAX_JOBS=${MAX_JOBS:-16} NVCC_THREADS=2 TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST:-9.0} VLLM_TARGET_DEVICE=cuda
+export RUSTUP_HOME=$CACHE/rustup PATH=$CACHE/cargo/bin:$PATH   # only populated when SNOWBALL_RUSTUP=1
 export SETUPTOOLS_SCM_PRETEND_VERSION=$VLLM_VERSION
 mkdir -p "$ROOT"/{bin,envs,src,logs} "$CACHE"/{uv,pip,tmp,xdg,cargo}
 exec > >(tee -a "$ROOT/logs/build_snowball_env.log") 2>&1
@@ -110,6 +112,10 @@ step_tools() {
   done_marker tools && { say "tools: done"; return; }
   [ -x "$UV" ] || { say "tools: installing uv $UV_VERSION -> $ROOT/bin"; curl -LsSf "https://astral.sh/uv/$UV_VERSION/install.sh" | env UV_INSTALL_DIR="$ROOT/bin" sh || die "uv install"; }
   "$UV" --version || die "uv broken"
+  if [ "${SNOWBALL_RUSTUP:-0}" = 1 ] && [ ! -x "$CARGO_HOME/bin/cargo" ]; then
+    say "tools: rustup 1.88.0 -> $CARGO_HOME"
+    curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0 --no-modify-path || die "rustup"
+  fi
   mark_done tools
 }
 
