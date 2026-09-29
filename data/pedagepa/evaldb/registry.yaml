@@ -1,0 +1,130 @@
+# PedaGEPA eval database registry: the provenance that is NOT in the harbor job dirs (which model, how it was served,
+# which harness commit, who ran it). Everything else (the full harbor job config, per-trial results, hard facts,
+# judgments) is read from disk by evaldb.py. Add one entry per run; rebuild with `evaldb.py build`.
+X: /e/data1/mmlaion/lee27/experiments
+
+models:
+  snowball-0921:
+    role: student
+    hf: open-athena/Grug-67B-A2B-Datakit-SFT-262K-2026.09.21
+    path: /e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921
+    arch: Snowball 67B-A2B MoE (Grug), Datakit SFT 2026-09-21
+    served_name: snowball
+    engine: vLLM (marin fork, code/src/marin_vllm_eagle3 overlay, env snowball-v2)
+    spec_decode: EAGLE-3 draft /e/data1/mmlaion/lee27/eagle3/probe_adapt_20260911/checkpoints/3, 3 speculative tokens
+    parallel: TP1 x DP4 x EP4, one GH200 node (4 GPUs), 32 seqs per replica
+    max_model_len: 65536
+    sampling: {temperature: 1.0, top_p: 1.0, top_k: -1}   # POLICY=trained
+    chat_template: the model's own chat_template.jinja
+    thinking: template default (/think on); think spans inside content (<|start_think|> ... <|end_think|>)
+    reasoning_parser: none
+    request_extra: {skip_special_tokens: false}
+  qwen38-27b:
+    role: teacher
+    hf: Qwen/Qwen3.8-27B
+    path: /e/data1/mmlaion/lee27/models/Qwen3.8-27B
+    arch: Qwen3.8 27B dense
+    served_name: qwen38
+    engine: vLLM (env snowball-v2 + relay-extra torchvision)
+    spec_decode: MTP, 2 speculative tokens
+    parallel: TP1; DP4 on one node, or one TP1 server per GPU (PER_GPU=1) - see each run
+    max_model_len: 131072 (runs in this DB)
+    sampling: the model's generation_config (no override)
+    chat_template: default
+    thinking: on (default); reasoning returned separately via --reasoning-parser qwen3
+    reasoning_parser: qwen3
+    request_extra: {}
+
+# benchmark ids: calibforge-heldout300, tb2.1, tb2.0, swe100, calibforge-msa8, tb2.0-msa-smoke10
+runs:
+  - id: cf300_0921_6516
+    benchmark: calibforge-heldout300
+    model: snowball-0921
+    jobs_dir: ${X}/relay_pilot_jobs/heldout6516_0921_20260928_student_only
+    harness: terminus-2
+    harness_commit: marin-community/harbor lukedhlee/terminus2-relay @ 89098635
+    policy: 65,536 input / 16,384 output, summarization off, agent budget = task timeout (wall clock), Daytona
+    routing: relay_router --mode student (student_only arm); the model's think spans stripped from later history
+    serve: {job: 2109233, nodes: 1, node_hours: 1.22, layout: one DP4 server}
+    run_dir: /e/fscratch/reformo/lee27/experiments/relay/pilot/runs/heldout6516_0921_20260928
+    collected_by: Teacher Replay SFT session, 2026-09-28
+  - id: cf300_0921_8k
+    benchmark: calibforge-heldout300
+    model: snowball-0921
+    jobs_dir: ${X}/relay_pilot_jobs/heldout0921_20260925_student_only
+    harness: terminus-2
+    harness_commit: marin-community/harbor lukedhlee/terminus2-relay @ 89098635
+    policy: 65,536 input / 8,192 output, summarization off, wall clock, Daytona
+    routing: relay_router --mode student; think spans stripped from later history
+    serve: {job: 2033360, nodes: 1, node_hours: 1.29, layout: one DP4 server}
+    run_dir: /e/fscratch/reformo/lee27/experiments/relay/pilot/runs/heldout0921_20260925
+    collected_by: relay pilot, 2026-09-25
+  - id: cf300_qwen
+    benchmark: calibforge-heldout300
+    model: qwen38-27b
+    jobs_dir: ${X}/relay_pilot_jobs/pg_ho_qwen_20260928_control
+    harness: terminus-2
+    harness_commit: marin-community/harbor lukedhlee/terminus2-relay @ 89098635
+    policy: 65,536 input / 16,384 output, summarization off, clock paused during model calls (router budgets), Daytona
+    routing: relay_router --mode teacher; teacher format guard on (unparseable replies autofixed or resampled up to 2x, so A1 is inflated); reasoning re-fed by harbor (interleaved_thinking)
+    serve: {job: 2110421, nodes: 2, node_hours: 2.92, layout: one TP1 server per GPU, 131072 context}
+    run_dir: /e/fscratch/reformo/lee27/experiments/relay/pilot/runs/pg_ho_qwen_20260928
+    collected_by: PedaGEPA, 2026-09-28
+  - id: tb21_0921_6516
+    benchmark: tb2.1
+    model: snowball-0921
+    jobs_dir: ${X}/tb2_jobs/tb21_6516_0921_20260928
+    harness: terminus-2
+    harness_commit: marin-community/harbor @ 761fb516
+    policy: tb2_marin_policy_0924_65k16k.yaml (0924 Marin policy, 65,536 / 16,384, 1,800 s agent budget, summarization on), Daytona, 16 concurrent
+    routing: direct to the serve (no router); think spans stay in the model's content
+    serve: {job: null, nodes: 1, layout: one DP4 server}
+    collected_by: Teacher Replay SFT session, 2026-09-28
+  - id: tb21_qwen
+    benchmark: tb2.1
+    model: qwen38-27b
+    jobs_dir: ${X}/pedagepa/jobs/pg_qwen_tb21_6516
+    harness: terminus-2
+    harness_commit: marin-community/harbor @ 761fb516
+    policy: same yaml as tb21_0921_6516 with model, api_base and concurrency changed (32 concurrent)
+    routing: direct; reasoning returned separately (not re-fed)
+    serve: {job: 2111528, nodes: 1, layout: one DP4 server shared with swe100_qwen, 131072 context}
+    collected_by: PedaGEPA, 2026-09-29
+  - {id: tb20_0921_p4t1, benchmark: tb2.0, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/tb2p4_0921_t1_p0924_20260928', harness: terminus-2, harness_commit: marin-community/harbor @ 761fb516, policy: tb2_marin_policy_0924.yaml (32,768 / 8,192 model_info, 1,800 s, summarization on), serve: {job: 2101973, nodes: 1}, collected_by: TB2 pass@4 session 2026-09-28}
+  - {id: tb20_0921_p4t2, benchmark: tb2.0, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/tb2p4_0921_t2_p0924_20260928', harness: terminus-2, harness_commit: marin-community/harbor @ 761fb516, policy: tb2_marin_policy_0924.yaml, serve: {job: 2102071, nodes: 1}, collected_by: TB2 pass@4 session 2026-09-28}
+  - {id: tb20_0921_p4t3, benchmark: tb2.0, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/tb2p4_0921_t3_p0924_20260928', harness: terminus-2, harness_commit: marin-community/harbor @ 761fb516, policy: tb2_marin_policy_0924.yaml, serve: {job: 2102072, nodes: 1}, collected_by: TB2 pass@4 session 2026-09-28}
+  - {id: tb20_0921_p4t4, benchmark: tb2.0, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/tb2p4_0921_t4_p0924_20260928', harness: terminus-2, harness_commit: marin-community/harbor @ 761fb516, policy: tb2_marin_policy_0924.yaml, serve: {job: 2102073, nodes: 1}, collected_by: TB2 pass@4 session 2026-09-28}
+  - id: swe100_0921_v01
+    benchmark: swe100
+    model: snowball-0921
+    jobs_dir: ${X}/tb2_jobs/grugdk0921think_swe_t1_v01_20260923
+    harness: terminus-2
+    harness_commit: marin-community/harbor @ 7b18505a (v0.1 pin)
+    policy: v0.1 (32,768 / 8,192, task timeout 3,000 s, summarization on), Daytona, 16 concurrent; thinking on
+    routing: direct
+    serve: {job: null, nodes: 1}
+    collected_by: Bespoke SFT eval session, 2026-09-23
+  - id: swe100_qwen
+    benchmark: swe100
+    model: qwen38-27b
+    jobs_dir: ${X}/pedagepa/jobs/pg_qwen_swe100_v01
+    harness: terminus-2
+    harness_commit: marin-community/harbor @ 7b18505a (v0.1 pin)
+    policy: same yaml as swe100_0921_v01 with model, api_base and concurrency changed (48 concurrent)
+    routing: direct; reasoning returned separately (not re-fed)
+    serve: {job: 2111528, nodes: 1, layout: one DP4 server shared with tb21_qwen, 131072 context}
+    collected_by: PedaGEPA, 2026-09-29
+  - {id: cfmsa8_qwen_tool, benchmark: calibforge-msa8, model: qwen38-27b, jobs_dir: '${X}/mini_swe_host_jobs/msa_s2e_qwen38tool_2024414', harness: mini-swe-agent-host (tool mode), harness_commit: marin-community/harbor lukedhlee/mini-swe-host (09-25), policy: 'mini.yaml, 65,536 context, 900 s, no summarization, reasoning re-fed', serve: {job: 2024414}, collected_by: MSA smoke 2026-09-25}
+  - {id: cfmsa8_0921_tool, benchmark: calibforge-msa8, model: snowball-0921, jobs_dir: '${X}/mini_swe_host_jobs/msa_s3d_dk0921tool_2023105', harness: mini-swe-agent-host (tool mode), harness_commit: marin-community/harbor lukedhlee/mini-swe-host (09-25), policy: 'mini.yaml, 65,536 context, 900 s, no summarization, reasoning re-fed', serve: {job: 2023105}, collected_by: MSA smoke 2026-09-25}
+  - {id: cfmsa8_qwen_text, benchmark: calibforge-msa8, model: qwen38-27b, jobs_dir: '${X}/mini_swe_host_jobs/msa_s2_qwen38_2011216', harness: mini-swe-agent-host (text mode), harness_commit: marin-community/harbor lukedhlee/mini-swe-host (09-25), policy: mini.yaml text mode, serve: {job: 2011216}, collected_by: MSA smoke 2026-09-25}
+  - {id: cfmsa8_0921_text, benchmark: calibforge-msa8, model: snowball-0921, jobs_dir: '${X}/mini_swe_host_jobs/msa_s3c_dk0921_2021265', harness: mini-swe-agent-host (text mode), harness_commit: marin-community/harbor lukedhlee/mini-swe-host (09-25), policy: mini.yaml text mode, serve: {job: 2021265}, collected_by: MSA smoke 2026-09-25}
+  - {id: tb20msa_0921_s1, benchmark: tb2.0-msa-smoke10, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/msa4_0921_smoke_t1_20260928', harness: mini-swe-agent-host (tool mode), harness_commit: marin-community/harbor lukedhlee/mini-swe-host @ cdd5b008, policy: tb2_msa_toolmode_0924.yaml (1,800 s, 65,536 served, no summarization), serve: {job: 2102551}, collected_by: TB2 MSA session 2026-09-28}
+  - {id: tb20msa_0921_s2, benchmark: tb2.0-msa-smoke10, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/msa4_0921_smoke2_t1_20260928', harness: mini-swe-agent-host (tool mode), harness_commit: marin-community/harbor lukedhlee/mini-swe-host-exec-isolation @ 6feb3759, policy: tb2_msa_toolmode_0924.yaml, serve: {job: 2103525}, collected_by: TB2 MSA session 2026-09-28}
+
+task_flags:
+  - {benchmark: calibforge-heldout300, source: '${X}/pedagepa/task_fixes/scan.json'}
+
+judgments:
+  - {name: cf40_opusA_v1, judge: opus, rubric: checklist v1 (pair reads), kind: pair_reads, files: '${X}/pedagepa/inspect/cf/reads/reader*.json', manifest: '${X}/pedagepa/inspect/cf/manifest.json'}
+  - {name: cf40_opusB_v1.2, judge: opus, rubric: judge_prompt_v1_2, kind: judge_jsonl, files: '${X}/pedagepa/inspect/cf/judge/opusB/batch*.jsonl', batches: '${X}/pedagepa/inspect/cf/judge/batch*.json'}
+  - {name: cf40_sonnet_v1.2, judge: sonnet, rubric: judge_prompt_v1_2, kind: judge_jsonl, files: '${X}/pedagepa/inspect/cf/judge/sonnet/batch*.jsonl', batches: '${X}/pedagepa/inspect/cf/judge/batch*.json'}
