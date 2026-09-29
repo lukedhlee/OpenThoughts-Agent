@@ -239,7 +239,8 @@ def reasoning_view(rv):
         for k, v in (r.get('refeed') or {}).items():
             if isinstance(v, int):
                 tgt[k] += v
-    need = ref['prior_teacher_turns'] - ref['teacher_turns_without_reasoning']
+    # a PedaGEPA recovery episode's injected turn never has its reasoning re-sent (by design), so it is not owed one
+    need = ref['prior_teacher_turns'] - ref['teacher_turns_without_reasoning'] - ref['injected_reasoning_dropped']
     comp = [((r.get('usage') or {}).get('completion_tokens')) for r in main]
     cut = [r for r in t if r.get('teacher_cut_at_cap')]
     return dict(teacher_replies=len(main), with_reasoning=sum(1 for r in main if r.get('teacher_reasoning_chars')),
