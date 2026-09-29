@@ -1,6 +1,58 @@
 # Relay SFT on 09-21: results (three arms + 09-21)
 
-Results go here when the evals finish. The pre-registration below was written and committed on 2026-09-28 ~11:53 PT,
+## Result (2026-09-28, 17:58 PT)
+
+**Under the pre-registered rule, A does not win: the held-out A − B gain is +0.011 with a 95 % CI of [−0.029, +0.051],
+which includes 0.** The rule then says to scale Qwen-alone traces. Read plainly, the data give no evidence that
+Qwen-alone data is better, and a lean toward the relay on TB2.1 (A − B +0.064 [+0.000, +0.128]: A solved 6 tasks B
+missed, B solved 1 that A missed). The rule's other conditions: TB2.1 is not worse for A, and the SFT did not fail,
+because A beats 09-21 on held-out (+0.043 [+0.004, +0.083]); B (+0.028) and C (+0.025) point the same way without
+clearing 0.
+
+- **Training on the autofixed 09-21 actions (C) does not help.** C − A is −0.015 [−0.058, +0.029] on held-out and
+  −0.013 [−0.089, +0.063] on TB2.1.
+- **Why pass rates stay near 10 %.** SFT changed how the models fail more than how often they finish. On held-out,
+  context overflow went from 38 to 118–127 of 300 runs, timeouts from 186 to 117–123, and wrong "done" claims from 49 to
+  16–22. The SFT models think far longer per turn (thinking is 63–72 % of their output, against 27 % for 09-21). Earlier
+  turns' thinking stays whole in the history at eval, while the training rows cut it to 1,000 tokens, so about 20 turns
+  fill 65k. Generation is the clock's bottleneck (about 80 % of each run's wall time is waiting on the model, at about
+  60 tokens/s per task), so 30 minutes buys about 15 turns.
+- **Diagnostics running (outside this pre-registration, so they do not change the verdict).** TB2.1 with the 1,000-token
+  history cut at eval (A and B), and A at 128k context. SWE-bench Verified random-100 for A and B was added the same
+  evening. Their results go below when they land.
+
+| model | held-out 300: pass rate [95 % CI] (n) | TB2.1: pass rate [95 % CI] (n) |
+|---|---|---|
+| 09-21 (before) | 0.062 [0.040, 0.096] (291) | 0.059 [0.025, 0.130] (85) |
+| A relay, 09-21 turns masked | 0.101 [0.071, 0.141] (287) | 0.113 [0.060, 0.200] (80) |
+| B Qwen alone | 0.090 [0.062, 0.129] (289) | 0.047 [0.018, 0.115] (85) |
+| C relay + autofix loss | 0.091 [0.063, 0.130] (286) | 0.093 [0.048, 0.173] (86) |
+
+| paired (X - Y, tasks both usable) | held-out diff [95 % CI] (tasks) | TB2.1 diff [95 % CI] (tasks) |
+|---|---|---|
+| A-B | +0.011 [-0.029, +0.051] (277) | +0.064 [+0.000, +0.128] (78) |
+| C-A | -0.015 [-0.058, +0.029] (274) | -0.013 [-0.089, +0.063] (79) |
+| A-0921 | +0.043 [+0.004, +0.083] (278) | +0.063 [-0.013, +0.139] (79) |
+| B-0921 | +0.028 [-0.011, +0.067] (282) | -0.012 [-0.072, +0.048] (83) |
+| C-0921 | +0.025 [-0.014, +0.065] (279) | +0.036 [-0.036, +0.119] (84) |
+
+**Decision rule:** A does not win: scale Qwen-alone traces
+
+TB2.1 CIs here are Wilson (paired_eval.py); summarize_tb2.py prints a normal-approximation CI for the same counts.
+Unscored (infrastructure) trials on TB2.1: 09-21 3, A 8, B 3, C 2 of 88 (B and C after one recovery pass).
+Held-out unusable: 09-21 9, A 13, B 11, C 14 of 300.
+
+**Cost.** 29.75 node-h for the pre-registered job: data prep and cache checks 0.68, training 9.44 (A 3.49, B 2.31,
+C 3.64), 9 exports 2.84 and 9 held-out NLL scores 1.01, held-out evals 4.84, TB2.1 10.94 (09-21 1.81 plus a
+0.12 cancelled TB2.0 start; A 2.65, B 3.19, C 3.16, B and C with a recovery pass). Diagnostics and SWE-bench are extra,
+within the 48 cap.
+
+**Artifacts.** Final exports: `/e/data1/mmlaion/lee27/snowball-sft/experiments/snowball-relay-sft/relay_{relay,qwen,relayaf}/lr3e-4-sched3/export-step{246,147,246}-hf-bf16`
+(A, B, C). Held-out runs: `relay/pilot/runs/heldout6516_{0921,A,B,C}_20260928`. TB2.1 job dirs:
+`tb2_jobs/tb21_6516_{0921,A,B,C}_20260928`. Comparison: `sft_v2/results.json`. Running log:
+`/e/fscratch/reformo/lee27/experiments/relay/sft_v2/STATUS.md`.
+
+The pre-registration below was written and committed on 2026-09-28 ~11:53 PT,
 before any training job or eval of this comparison was submitted (only the two data-prep jobs had been).
 
 ## Pre-registration (fixed before any result)
