@@ -16,16 +16,17 @@ C=/e/project1/transfernetx/lee27/code; W=$C/tb2; E=/e/fscratch/reformo/lee27/exp
 JOBS=/e/data1/mmlaion/lee27/experiments/tb2_jobs; KEYF=/e/fscratch/reformo/lee27/keys/daytona_eval.env
 HARBOR_DIR=${HARBOR_DIR:-$C/harbor-msa4}; HARBOR_SRC=$HARBOR_DIR/src; HARBOR_SHA=${HARBOR_SHA:-6feb3759}
 MSA=$C/envs/msa-2.4.6; PY=$C/envs/snowball-v2/bin/python; HARBOR=$C/envs/snowball-v2/bin/harbor
-TASKS=/e/fscratch/reformo/lee27/tasks/terminal_bench_2; NTASKS=89
+TASKS=${TASKS:-/e/fscratch/reformo/lee27/tasks/terminal_bench_2}; NTASKS=${NTASKS:-89}   # TBLite: TASKS=<tasks>/openthoughts_tblite_2_0 NTASKS=100
+EXPECT_MODEL=${EXPECT_MODEL:-grug-datakit-sft-20260921}   # the checkpoint the serve job must hold (a substring of its model path)
 POLICY_FILE=${POLICY_FILE:-$W/msa4/tb2_msa_toolmode_0924.yaml}
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1   # login-node pid cap
 export PYTHONPATH=$HARBOR_SRC:$MSA
-export EXCLUDE_TASKS=${EXCLUDE_TASKS-train-fasttext}
+export EXCLUDE_TASKS=${EXCLUDE_TASKS-train-fasttext}   # a TB2 name; harmless on other trees
 mkdir -p $E/logs $W/msa4/runs
 LOG=$E/logs/msa4_$NAME.log
 exec > >(tee -a $LOG) 2>&1
 log() { echo "$(date -Is) $*"; }
-release() { log "releasing serve job $JOB"; scancel $JOB; }
+release() { [ "${RELEASE:-1}" = 0 ] && { log "keeping serve job $JOB (RELEASE=0)"; return; }; log "releasing serve job $JOB"; scancel $JOB; }   # RELEASE=0: the node serves another run next
 log "msa4_chain $NAME mode=$MODE n_attempts=$NATT serve=$JOB harbor=$HARBOR_DIR policy=$POLICY_FILE"
 [ "$(git -C $HARBOR_DIR rev-parse --short=8 HEAD)" = "${HARBOR_SHA:0:8}" ] || { log "FAILED: $HARBOR_DIR is not at $HARBOR_SHA"; release; exit 1; }
 [ -z "$(git -C $HARBOR_DIR status --porcelain --untracked-files=no)" ] || { log "FAILED: $HARBOR_DIR has local changes"; release; exit 1; }
@@ -43,8 +44,8 @@ while [ ! -f $E/endpoints/$JOB ]; do
   sleep 30
 done
 URL=$(cat $E/endpoints/$JOB); log "endpoint $URL"; cat $E/endpoints/$JOB.meta
-grep -q "grug-datakit-sft-20260921" $E/endpoints/$JOB.meta && grep -q '"temperature":1.0' $E/endpoints/$JOB.meta \
-  || { log "FAILED: serve job $JOB is not the 09-21 checkpoint at temperature 1.0"; release; exit 1; }
+grep -q "$EXPECT_MODEL" $E/endpoints/$JOB.meta && grep -q '"temperature":1.0' $E/endpoints/$JOB.meta \
+  || { log "FAILED: serve job $JOB is not $EXPECT_MODEL at temperature 1.0"; release; exit 1; }
 for i in $(seq 1 30); do curl -sf --max-time 20 $URL/models | grep -q '"snowball"' && break; sleep 10; done
 curl -sf --max-time 20 $URL/models | grep -q '"snowball"' || { log "FAILED: no model snowball at $URL"; release; exit 1; }
 # the bash tool renders and a reply comes back through the tool_choice "none" path the agent uses

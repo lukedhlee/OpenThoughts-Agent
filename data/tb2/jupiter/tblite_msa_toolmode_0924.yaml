@@ -1,0 +1,65 @@
+# OpenThoughts-TBLite 2.0 with mini-swe-agent-host in TOOL mode: tb2_msa_toolmode_0924.yaml with exactly one change, the task
+# tree (/e/fscratch/reformo/lee27/tasks/openthoughts_tblite_2_0, the 100 registry tasks at f075e463). Rendered by msa4_chain.sh
+# with TASKS=<that dir> NTASKS=100 POLICY_FILE=<this file>. Read tb2_msa_toolmode_0924.yaml's header for the harness settings
+# (mini.yaml, litellm model class, tool_choice "none", interleaved_thinking) and the 09-24 policy values.
+# Thinking is the served template's default: /think on the 09-21 SFT template; the RL exports (e.g. newstack-step24) default
+# to no reasoning mode. Set chat_template_kwargs only as a named deviation.
+job_name: __JOB_NAME__
+jobs_dir: /e/data1/mmlaion/lee27/experiments/tb2_jobs
+n_attempts: 1
+n_concurrent_trials: 16
+timeout_multiplier: 1.0
+quiet: true
+release_trial_payloads_in_memory: true
+retry:
+  max_retries: 10
+  include_exceptions:
+    - InternalServerError
+    - APIConnectionError
+    - APITimeoutError
+    - ArtifactUploadTimeoutError
+    - ArtifactWriterBacklogError
+    - CancelledError
+    - ContextManagementInfrastructureError
+    - LLMRequestTimeoutError
+    - SandboxBuildFailedError
+    - ContainerRegistryThrottledError
+    - AgentSetupTimeoutError
+    - DaytonaSandboxStopError
+    - DaytonaProcessError
+    - TrialTimeoutError
+    - ArtifactWriteTimeoutError
+    - Tau3RuntimeInfrastructureError
+    - Tau3TargetInfrastructureError
+  exclude_exceptions: []
+  wait_multiplier: 2.0
+  min_wait_sec: 1.0
+  max_wait_sec: 60.0
+environment:
+  type: daytona
+  force_build: false
+  kwargs:
+    auto_snapshot: true
+agents:
+  - name: mini-swe-agent-host
+    model_name: hosted_vllm/snowball
+    override_setup_timeout_sec: 360
+    override_timeout_sec: 1800
+    kwargs:
+      config_file: mini.yaml
+      model_class: litellm
+      llm_call_kwargs:
+        tool_choice: "none"
+      api_base: __API_BASE__
+      model_info:
+        max_input_tokens: 32768
+        max_output_tokens: 8192
+        input_cost_per_token: 0.0
+        output_cost_per_token: 0.0
+      extra_body:
+        skip_special_tokens: false
+      interleaved_thinking: true
+verifier:
+  override_timeout_sec: 300
+datasets:
+  - path: /e/fscratch/reformo/lee27/tasks/openthoughts_tblite_2_0
