@@ -71,13 +71,15 @@ calibrated on 09-21 only. So they **flag** by default: a line in the log and in 
 `TAKEOVER_ACTION=stop` and `ACCEPT_STOP=<x>` turn them into stops.
 
 - **Takeover rate: flag outside [0.50, 0.95], judged once 100 relay episodes have finished.**
-  - **What 09-21 did.** With the 32k context budget, 09-21 handed over in 0.78–0.85 of uncensored episodes (full runs,
-    09-26 to 09-28). About 60–80 % of those handovers were context_budget, and most of the rest were done_claim.
+  - **What 09-21 did.** With the 32k context budget, 09-21 handed over in 0.89 of finished episodes on this gate's
+    own measure (attempts 6a and 6b, 09-27/28, the untouched CalibForge tasks; 0.78–0.85 of all uncensored router
+    episodes in the earlier full runs). About three quarters of the handovers were context_budget, most of the rest
+    done_claim.
   - **What to expect from arm A.** A better student should shift handovers from context_budget to done_claim, not
     remove them, because every done claim is handed to the teacher.
   - **Below 0.5.** Most episodes end without a teacher turn. Either the student's claims no longer parse, or it loops
     or times out without claiming done. The rows would then be mostly repair-only.
-  - **Above 0.95.** Nearly every episode hands over. Check the takeover turn (per-trigger turn p50 in the readout)
+  - **Above 0.95.** Nearly every episode hands over, more often than 09-21 did. Check the takeover turn (per-trigger turn p50 in the readout)
     for early false claims.
   - **In the readout.** The final readout's S3 uses the same band (`--takeover-min` / `--takeover-max`). It judges the
     rate without deadline-censored episodes, which are mostly episodes cut before any trigger could fire.

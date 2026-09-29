@@ -8,10 +8,11 @@ not cancel; --takeover-action stop / --accept-stop turn them into stops.
 
 Takeover rate = finished relay episodes with a sticky takeover / finished relay episodes. Finished = the trial wrote
 result.json, it is not a harness error (a context overflow counts: it is the student's episode running out of
-room) and the run's deadline did not end it (router "ending" event "deadline"). The takeover comes from the router's events.jsonl ("takeover" events, by session id), the episode's session id
-from its trajectory.json, as readout.py joins them. Judged once --takeover-after episodes have finished; until then
-"wait". 09-21's rate with the 32k context budget was 0.78-0.85 of uncensored episodes (full runs 09-26 to 09-28), 0.28
-without it (run 3, done_claim only).
+room) and the run's deadline did not end it (router "ending" event "deadline"). The takeover comes from the router's
+events.jsonl ("takeover" events, by session id), the episode's session id from its trajectory.json, as readout.py joins
+them. Judged once --takeover-after episodes have finished; until then "wait". 09-21 with the 32k context budget read
+0.89 on this measure (attempts 6a / 6b, 09-27/28: 703 and 948 finished episodes); 0.28 without the budget (run 3,
+done_claim only).
 
 Draft acceptance = the student servers' mean acceptance length, 1 + accepted / drafts from vLLM's spec-decode counters
 (vllm:spec_decode_num_drafts_total, vllm:spec_decode_num_accepted_tokens_total on /metrics, summed over engines and
