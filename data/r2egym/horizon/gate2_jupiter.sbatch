@@ -1,9 +1,12 @@
 #!/bin/bash
 # gate2_jupiter.sbatch — Horizon port gate 2, configs (b) and (c): score the fixed gate-2 set with prompt logprobs on one
-# Jupiter GH200 node, first DP4 + expert parallel (b), then TP4 + expert parallel (c), one server after the other.
+# Jupiter GH200 node, first DP4 + expert parallel (b), then DP2 + expert parallel on GPUs 0-1 (c), one server after the
+# other. (c) was TP4-EP in the approved rule, but GrugMoE serves only at tensor_parallel_size=1 (vLLM fork grugmoe.py
+# _raise_for_unsupported_modes; job 2116327 died on it), so the second layout changes the EP degree instead (128 vs 64
+# experts per GPU, a 2-rank vs 4-rank all-to-all).
 # Ported from data/tb2/jupiter/serve_snowball.sbatch (modules, env, geometry, trained sampler) with the same two deltas
-# as gate2_horizon.sbatch: no EAGLE-3 draft, --gpu-memory-utilization 0.80. The TP4 server differs from DP4 only in
-# --tensor-parallel-size 4 --data-parallel-size 1. ~0.6 node-hours; exits when both score files are written.
+# as gate2_horizon.sbatch: no EAGLE-3 draft, --gpu-memory-utilization 0.80. The DP2 server differs from DP4 only in
+# --data-parallel-size 2 and CUDA_VISIBLE_DEVICES=0,1. ~0.3 node-hours per layout; LAYOUTS=dp2ep runs one.
 #
 #   sbatch data/r2egym/horizon/gate2_jupiter.sbatch        (from a detached OTA worktree at the pushed SHA)
 #SBATCH --job-name=sb_gate2
@@ -26,7 +29,7 @@ export PYTHONPATH=$C/src/marin_vllm_eagle3${PYTHONPATH:+:$PYTHONPATH}   # the EA
 MODEL=${MODEL:-/e/fscratch/reformo/lee27/models/snowball-s3-nemotron-terminal-step1888}   # sha256 == laion/ HF snapshot
 SERVED=snowball; MAXLEN=${MAXLEN:-65536}
 G=/e/data1/mmlaion/lee27/horizon_gates; SET=${SET:-$G/gate2_set.jsonl}; mkdir -p $G/logs
-LAYOUTS=${LAYOUTS:-"dp4ep tp4ep"}
+LAYOUTS=${LAYOUTS:-"dp4ep dp2ep"}
 GEN='{"temperature":1.0,"top_p":1.0,"top_k":-1}'   # the RL arm's sampler (POLICY=trained)
 [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
 [ -f "$SET" ] || { echo "no gate-2 set at $SET"; exit 1; }
@@ -47,12 +50,12 @@ SPID=
 trap 'kill $SPID 2>/dev/null; pkill -u $USER -f vllm.entrypoints.openai.api_server 2>/dev/null' TERM EXIT
 for L in $LAYOUTS; do
   case $L in
-    dp4ep) PAR=(--tensor-parallel-size 1 --data-parallel-size 4 --enable-expert-parallel);;
-    tp4ep) PAR=(--tensor-parallel-size 4 --data-parallel-size 1 --enable-expert-parallel);;
+    dp4ep) PAR=(--tensor-parallel-size 1 --data-parallel-size 4 --enable-expert-parallel); GPUS=0,1,2,3;;
+    dp2ep) PAR=(--tensor-parallel-size 1 --data-parallel-size 2 --enable-expert-parallel); GPUS=0,1;;
     *) echo "unknown layout $L"; exit 2;;
   esac
   SLOG=$G/logs/gate2_server_${L}.$SLURM_JOB_ID.log
-  $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name "$SERVED" --port 8000 \
+  CUDA_VISIBLE_DEVICES=$GPUS $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name "$SERVED" --port 8000 \
       "${PAR[@]}" \
       --max-model-len $MAXLEN --hf-overrides "{\"max_position_embeddings\": $MAXLEN, \"max_seq_len\": $MAXLEN}" \
       --max-num-seqs 32 --gpu-memory-utilization 0.80 \

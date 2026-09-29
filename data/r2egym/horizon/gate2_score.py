@@ -4,7 +4,8 @@
 Fixed prompts with fixed completions (exact token ids the step-1888 policy sampled in an R2E-Gym probe) are scored with
 vLLM prompt logprobs on each serving config. Per prompt the gap is the mean over completion tokens of |p_A - p_B|
 (probabilities). PASS = gap(Horizon, Jupiter-DP4) is not significantly larger than gap(Jupiter-DP4, Jupiter-TP4)
-(paired 95 % bootstrap over prompts).
+(paired 95 % bootstrap over prompts). TP4 does not exist for GrugMoE (tensor_parallel_size=1 only),
+so the second Jupiter layout is DP2-EP2 (--j2).
 
   build    Jupiter login node, stdlib only: one turn per task from a probe's result.json files -> set JSONL
   score    inside a serve job: POST /v1/completions with prompt_logprobs=0, write the completion-token logprobs
@@ -123,28 +124,45 @@ def score_one(a, row):
     return {"id": row["id"], "lp": lps, "secs": round(time.time() - t0, 2)}
 
 
+NEWLINE = 198
+DOUBLE = [START_THINK, NEWLINE, START_THINK]  # the Horizon smoke 35811 opening: '<|start_think|>\n<|start_think|>\n'
+
+
 def think_probe(a):
-    """The Horizon smoke sample that opened with <|start_think|> twice: P(second <|start_think|>) scored directly, plus
-    the double-opening rate over seeded samples at the RL sampler (temperature 1.0), same seeds on every cluster."""
+    """The Horizon smoke sample (35811, draft on, temperature 1.0) that opened '<|start_think|>\\n<|start_think|>\\n':
+    the target's P of each opening token scored directly (prompt logprobs), and the rate of that opening over seeded
+    samples at the RL sampler (temperature 1.0, top_p 1, top_k -1), the same seeds on every cluster."""
     msgs = [{"role": "user", "content": "Print hello in bash."}]
     ids = post(a.url + "/tokenize", {"model": a.model, "messages": msgs, "add_generation_prompt": True})["tokens"]
-    r = post(a.url + "/v1/completions", {"model": a.model, "prompt": ids + [START_THINK, START_THINK],
-                                         "max_tokens": 1, "temperature": 0.0, "prompt_logprobs": 5})
-    pl = r["choices"][0]["prompt_logprobs"]
-    top = lambda e: sorted(((int(k), round(math.exp(v["logprob"]), 5)) for k, v in e.items()), key=lambda x: -x[1])
-    out = {"prompt_len": len(ids), "p_first_start_think": math.exp(lp_of(pl[len(ids)], START_THINK)),
-           "p_second_start_think": math.exp(lp_of(pl[len(ids) + 1], START_THINK)),
-           "top_after_start_think": top(pl[len(ids) + 1])}
+    top = lambda e: sorted(((int(k), round(math.exp(v["logprob"]), 6)) for k, v in e.items()), key=lambda x: -x[1])[:5]
+    out = {"prompt_len": len(ids)}
+    try:
+        r = post(a.url + "/v1/completions", {"model": a.model, "prompt": ids + DOUBLE, "max_tokens": 1,
+                                             "temperature": 0.0, "prompt_logprobs": 5})
+        pl = r["choices"][0]["prompt_logprobs"]
+        out["p_opening_tokens"] = [math.exp(lp_of(pl[len(ids) + j], t)) for j, t in enumerate(DOUBLE)]
+        out["top5_before_second_start_think"] = top(pl[len(ids) + 2])
+    except Exception as e:  # prompt logprobs with the draft loaded: record, keep sampling
+        out["prompt_logprobs_error"] = str(e)[:200]
     firsts = []
     for seed in range(a.think_samples):
-        g = post(a.url + "/v1/completions", {"model": a.model, "prompt": ids, "max_tokens": 4, "temperature": 1.0,
+        g = post(a.url + "/v1/completions", {"model": a.model, "prompt": ids, "max_tokens": 6, "temperature": 1.0,
                                              "top_p": 1.0, "top_k": -1, "seed": seed, "return_token_ids": True,
                                              "skip_special_tokens": False})
         firsts.append(g["choices"][0].get("token_ids") or [])
     out["samples"] = len(firsts)
-    out["double_start_think"] = sum(1 for t in firsts if t[:2] == [START_THINK, START_THINK])
-    out["first_tokens_by_seed"] = [t[:2] for t in firsts]
+    out["double_start_think"] = sum(1 for t in firsts if t[:3] == DOUBLE)
+    out["single_start_think"] = sum(1 for t in firsts if t[:1] == [START_THINK])
+    out["first_tokens_by_seed"] = [t[:3] for t in firsts]
     return out
+
+
+def think(a):
+    th = think_probe(a)
+    th["label"] = a.label
+    if a.out:
+        open(a.out, "w").write(json.dumps(th) + "\n")
+    print("THINK " + json.dumps({k: v for k, v in th.items() if k != "first_tokens_by_seed"}), flush=True)
 
 
 def score(a):
@@ -219,8 +237,8 @@ def compare(a):
     ids = [r["id"] for r in rows]
     H, thH, mH = load_scores(a.horizon, a.rep)
     D, thD, mD = load_scores(a.dp4, a.rep)
-    T, thT, mT = load_scores(a.tp4, a.rep)
-    for name, s in (("horizon", H), ("dp4", D), ("tp4", T)):
+    T, thT, mT = load_scores(a.j2, a.rep)
+    for name, s in (("horizon", H), ("dp4", D), ("j2", T)):
         missing = [i for i in ids if i not in s]
         if missing:
             sys.exit(f"{name}: {len(missing)} prompts missing (e.g. {missing[:3]})")
@@ -232,11 +250,11 @@ def compare(a):
     ntok = sum(len(r["completion_ids"]) for r in rows)
     res = {
         "n_prompts": len(ids), "completion_tokens": ntok, "rep": a.rep,
-        "gap_horizon_vs_jdp4": statistics.fmean(hd_p), "gap_jdp4_vs_jtp4": statistics.fmean(dt_p),
+        "gap_horizon_vs_jdp4": statistics.fmean(hd_p), "gap_jdp4_vs_j2": statistics.fmean(dt_p),
         "ratio": statistics.fmean(hd_p) / statistics.fmean(dt_p),
         "mean_diff": statistics.fmean(diff), "ci95": [lo, hi],
         "prompts_where_horizon_gap_larger": sum(1 for x in diff if x > 0),
-        "dlogprob_horizon_vs_jdp4": statistics.fmean(hd_l), "dlogprob_jdp4_vs_jtp4": statistics.fmean(dt_l),
+        "dlogprob_horizon_vs_jdp4": statistics.fmean(hd_l), "dlogprob_jdp4_vs_j2": statistics.fmean(dt_l),
         "verdict": verdict,
         "rule": "PASS iff the 95% paired-bootstrap CI of mean(gap_HJ - gap_JJ) has lower bound <= 0",
     }
@@ -249,12 +267,12 @@ def compare(a):
                                                                                        key=lambda kv: int(kv[0].split("-")[0]))}
     # token-weighted means (every completion token equal weight) for context
     tw = lambda x, y: statistics.fmean(abs(math.exp(u) - math.exp(v)) for i in ids for u, v in zip(x[i], y[i]))
-    res["token_weighted"] = {"horizon_vs_jdp4": tw(H, D), "jdp4_vs_jtp4": tw(D, T), "horizon_vs_jtp4": tw(H, T)}
+    res["token_weighted"] = {"horizon_vs_jdp4": tw(H, D), "jdp4_vs_j2": tw(D, T), "horizon_vs_j2": tw(H, T)}
     res["outliers_horizon_vs_jdp4"] = outliers(rows, H, D, a.top)
-    res["outliers_jdp4_vs_jtp4"] = outliers(rows, D, T, a.top)
+    res["outliers_jdp4_vs_j2"] = outliers(rows, D, T, a.top)
     # run-to-run noise inside each config (rep 1 vs rep 0), when present
     noise = {}
-    for name, path, base in (("horizon", a.horizon, H), ("jdp4", a.dp4, D), ("jtp4", a.tp4, T)):
+    for name, path, base in (("horizon", a.horizon, H), ("jdp4", a.dp4, D), ("j2", a.j2, T)):
         other, _, _ = load_scores(path, 1 - a.rep)
         if all(i in other for i in ids):
             noise[name] = statistics.fmean(per_prompt(ids, base, other)[0])
@@ -263,8 +281,8 @@ def compare(a):
     if all(r.get("orig_logprobs") for r in rows):
         O = {r["id"]: r["orig_logprobs"] for r in rows}
         res["sanity_orig_sampled_vs_jdp4"] = statistics.fmean(per_prompt(ids, O, D)[0])
-    res["think"] = {"horizon": thH, "jdp4": thD, "jtp4": thT}
-    res["meta"] = {"horizon": mH, "jdp4": mD, "jtp4": mT}
+    res["think"] = {"horizon": thH, "jdp4": thD, "j2": thT}
+    res["meta"] = {"horizon": mH, "jdp4": mD, "j2": mT}
     s = json.dumps(res, indent=1)
     if a.out:
         open(a.out, "w").write(s)
@@ -290,18 +308,24 @@ def main():
     s.add_argument("--conc", type=int, default=4)
     s.add_argument("--reps", type=int, default=2)
     s.add_argument("--think-samples", type=int, default=32, help="0 skips the <|start_think|> probe")
+    k = sub.add_parser("think", help="only the <|start_think|> opening probe, against any running server")
+    k.add_argument("--url", default="http://localhost:8000")
+    k.add_argument("--model", default="snowball")
+    k.add_argument("--label", required=True)
+    k.add_argument("--out")
+    k.add_argument("--think-samples", type=int, default=64)
     c = sub.add_parser("compare")
     c.add_argument("--set", required=True)
     c.add_argument("--horizon", required=True)
     c.add_argument("--dp4", required=True)
-    c.add_argument("--tp4", required=True)
+    c.add_argument("--j2", required=True, help="the second Jupiter layout (DP2-EP2)")
     c.add_argument("--rep", type=int, default=0)
     c.add_argument("--boot", type=int, default=10000)
     c.add_argument("--seed", type=int, default=0)
     c.add_argument("--top", type=int, default=8)
     c.add_argument("--out")
     a = ap.parse_args()
-    {"build": build, "score": score, "compare": compare}[a.cmd](a)
+    {"build": build, "score": score, "think": think, "compare": compare}[a.cmd](a)
 
 
 if __name__ == "__main__":
