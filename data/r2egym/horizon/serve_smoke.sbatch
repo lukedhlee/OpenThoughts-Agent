@@ -20,6 +20,7 @@ SERVED=snowball; MAXLEN=${MAXLEN:-65536}
 GEN='{"temperature":1.0,"top_p":1.0,"top_k":-1}'   # the RL arm's sampler (POLICY=trained)
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True OMP_NUM_THREADS=8
 export VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_ALLREDUCE_USE_SYMM_MEM=0
+export CC=gcc CXX=g++   # TACC's login env sets CC=nvc, which Triton's JIT rejects (-Wno-psabi)
 C=$S/cache; mkdir -p $C/vllm $C/xdg $C/triton $C/inductor $C/flashinfer $C/tmp
 export VLLM_CACHE_ROOT=$C/vllm XDG_CACHE_HOME=$C/xdg TRITON_CACHE_DIR=$C/triton TORCHINDUCTOR_CACHE_DIR=$C/inductor FLASHINFER_WORKSPACE_BASE=$C/flashinfer TMPDIR=$C/tmp
 echo "node=$(hostname) job=$SLURM_JOB_ID model=$MODEL draft=$DRAFT"
