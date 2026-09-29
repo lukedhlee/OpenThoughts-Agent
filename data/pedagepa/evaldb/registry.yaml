@@ -45,6 +45,7 @@ runs:
     harness_commit: marin-community/harbor lukedhlee/terminus2-relay @ 89098635
     policy: 65,536 input / 16,384 output, summarization off, agent budget = task timeout (wall clock), Daytona
     routing: relay_router --mode student (student_only arm); the model's think spans stripped from later history
+    refeed_reasoning: false
     serve: {job: 2109233, nodes: 1, node_hours: 1.22, layout: one DP4 server}
     run_dir: /e/fscratch/reformo/lee27/experiments/relay/pilot/runs/heldout6516_0921_20260928
     collected_by: Teacher Replay SFT session, 2026-09-28
@@ -56,6 +57,7 @@ runs:
     harness_commit: marin-community/harbor lukedhlee/terminus2-relay @ 89098635
     policy: 65,536 input / 8,192 output, summarization off, wall clock, Daytona
     routing: relay_router --mode student; think spans stripped from later history
+    refeed_reasoning: false
     serve: {job: 2033360, nodes: 1, node_hours: 1.29, layout: one DP4 server}
     run_dir: /e/fscratch/reformo/lee27/experiments/relay/pilot/runs/heldout0921_20260925
     collected_by: relay pilot, 2026-09-25
@@ -66,6 +68,7 @@ runs:
     harness: terminus-2
     harness_commit: marin-community/harbor lukedhlee/terminus2-relay @ 89098635
     policy: 65,536 input / 16,384 output, summarization off, clock paused during model calls (router budgets), Daytona
+    refeed_reasoning: true
     routing: relay_router --mode teacher; teacher format guard on (unparseable replies autofixed or resampled up to 2x, so A1 is inflated); reasoning re-fed by harbor (interleaved_thinking)
     serve: {job: 2110421, nodes: 2, node_hours: 2.92, layout: one TP1 server per GPU, 131072 context}
     run_dir: /e/fscratch/reformo/lee27/experiments/relay/pilot/runs/pg_ho_qwen_20260928
@@ -78,6 +81,7 @@ runs:
     harness_commit: marin-community/harbor @ 761fb516
     policy: tb2_marin_policy_0924_65k16k.yaml (0924 Marin policy, 65,536 / 16,384, 1,800 s agent budget, summarization on), Daytona, 16 concurrent
     routing: direct to the serve (no router); think spans stay in the model's content
+    refeed_reasoning: true
     serve: {job: null, nodes: 1, layout: one DP4 server}
     collected_by: Teacher Replay SFT session, 2026-09-28
   - id: tb21_qwen
@@ -88,12 +92,13 @@ runs:
     harness_commit: marin-community/harbor @ 761fb516
     policy: same yaml as tb21_0921_6516 with model, api_base and concurrency changed (32 concurrent)
     routing: direct; reasoning returned separately (not re-fed)
+    refeed_reasoning: false
     serve: {job: 2111528, nodes: 1, layout: one DP4 server shared with swe100_qwen, 131072 context}
     collected_by: PedaGEPA, 2026-09-29
-  - {id: tb20_0921_p4t1, benchmark: tb2.0, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/tb2p4_0921_t1_p0924_20260928', harness: terminus-2, harness_commit: marin-community/harbor @ 761fb516, policy: tb2_marin_policy_0924.yaml (32,768 / 8,192 model_info, 1,800 s, summarization on), serve: {job: 2101973, nodes: 1}, collected_by: TB2 pass@4 session 2026-09-28}
-  - {id: tb20_0921_p4t2, benchmark: tb2.0, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/tb2p4_0921_t2_p0924_20260928', harness: terminus-2, harness_commit: marin-community/harbor @ 761fb516, policy: tb2_marin_policy_0924.yaml, serve: {job: 2102071, nodes: 1}, collected_by: TB2 pass@4 session 2026-09-28}
-  - {id: tb20_0921_p4t3, benchmark: tb2.0, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/tb2p4_0921_t3_p0924_20260928', harness: terminus-2, harness_commit: marin-community/harbor @ 761fb516, policy: tb2_marin_policy_0924.yaml, serve: {job: 2102072, nodes: 1}, collected_by: TB2 pass@4 session 2026-09-28}
-  - {id: tb20_0921_p4t4, benchmark: tb2.0, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/tb2p4_0921_t4_p0924_20260928', harness: terminus-2, harness_commit: marin-community/harbor @ 761fb516, policy: tb2_marin_policy_0924.yaml, serve: {job: 2102073, nodes: 1}, collected_by: TB2 pass@4 session 2026-09-28}
+  - {id: tb20_0921_p4t1, benchmark: tb2.0, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/tb2p4_0921_t1_p0924_20260928', harness: terminus-2, refeed_reasoning: true, harness_commit: marin-community/harbor @ 761fb516, policy: tb2_marin_policy_0924.yaml (32,768 / 8,192 model_info, 1,800 s, summarization on), serve: {job: 2101973, nodes: 1}, collected_by: TB2 pass@4 session 2026-09-28}
+  - {id: tb20_0921_p4t2, benchmark: tb2.0, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/tb2p4_0921_t2_p0924_20260928', harness: terminus-2, refeed_reasoning: true, harness_commit: marin-community/harbor @ 761fb516, policy: tb2_marin_policy_0924.yaml, serve: {job: 2102071, nodes: 1}, collected_by: TB2 pass@4 session 2026-09-28}
+  - {id: tb20_0921_p4t3, benchmark: tb2.0, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/tb2p4_0921_t3_p0924_20260928', harness: terminus-2, refeed_reasoning: true, harness_commit: marin-community/harbor @ 761fb516, policy: tb2_marin_policy_0924.yaml, serve: {job: 2102072, nodes: 1}, collected_by: TB2 pass@4 session 2026-09-28}
+  - {id: tb20_0921_p4t4, benchmark: tb2.0, model: snowball-0921, jobs_dir: '${X}/tb2_jobs/tb2p4_0921_t4_p0924_20260928', harness: terminus-2, refeed_reasoning: true, harness_commit: marin-community/harbor @ 761fb516, policy: tb2_marin_policy_0924.yaml, serve: {job: 2102073, nodes: 1}, collected_by: TB2 pass@4 session 2026-09-28}
   - id: swe100_0921_v01
     benchmark: swe100
     model: snowball-0921
@@ -101,7 +106,8 @@ runs:
     harness: terminus-2
     harness_commit: marin-community/harbor @ 7b18505a (v0.1 pin)
     policy: v0.1 (32,768 / 8,192, task timeout 3,000 s, summarization on), Daytona, 16 concurrent; thinking on
-    routing: direct
+    routing: direct; think spans stay in the model's content
+    refeed_reasoning: true
     serve: {job: null, nodes: 1}
     collected_by: Bespoke SFT eval session, 2026-09-23
   - id: swe100_qwen
@@ -112,6 +118,7 @@ runs:
     harness_commit: marin-community/harbor @ 7b18505a (v0.1 pin)
     policy: same yaml as swe100_0921_v01 with model, api_base and concurrency changed (48 concurrent)
     routing: direct; reasoning returned separately (not re-fed)
+    refeed_reasoning: false
     serve: {job: 2111528, nodes: 1, layout: one DP4 server shared with tb21_qwen, 131072 context}
     collected_by: PedaGEPA, 2026-09-29
   - {id: cfmsa8_qwen_tool, benchmark: calibforge-msa8, model: qwen38-27b, jobs_dir: '${X}/mini_swe_host_jobs/msa_s2e_qwen38tool_2024414', harness: mini-swe-agent-host (tool mode), harness_commit: marin-community/harbor lukedhlee/mini-swe-host (09-25), policy: 'mini.yaml, 65,536 context, 900 s, no summarization, reasoning re-fed', serve: {job: 2024414}, collected_by: MSA smoke 2026-09-25}

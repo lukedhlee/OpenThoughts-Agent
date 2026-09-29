@@ -12,6 +12,7 @@ Tables
 
   python evaldb.py build  [--registry registry.yaml] [--db DB]     # rebuilds every table from disk (idempotent)
   python evaldb.py report [--db DB] --out DIR                        # one markdown eval log per benchmark
+  python evaldb.py record <trial_key or substring> [--db DB]        # one trajectory's full eval record (markdown)
 Default DB: /e/data1/mmlaion/lee27/experiments/pedagepa/evaldb/pedagepa.sqlite
 """
 import argparse, glob, json, os, re, sqlite3, statistics as st, sys
@@ -89,7 +90,7 @@ def build(reg_path, db):
             r['id'], r['benchmark'], r['model'], r.get('harness'), r.get('harness_commit'), r.get('policy'),
             r.get('routing'), json.dumps(r.get('serve')), jd, r.get('run_dir'), r.get('collected_by'),
             json.dumps(cfg), len(tds), json.dumps(r)))
-        refeed = bool(cfg and cfg['agents'][0].get('kwargs', {}).get('interleaved_thinking'))
+        refeed = r['refeed_reasoning'] if 'refeed_reasoning' in r else bool(cfg and cfg['agents'][0].get('kwargs', {}).get('interleaved_thinking'))
         limit = (cfg or {}).get('agents', [{}])[0].get('kwargs', {}).get('model_info', {}).get('max_input_tokens') or 65536
         for td in tds:
             key = f"{r['id']}/{os.path.basename(td)}"; err = None
@@ -250,9 +251,55 @@ def report(db, out):
         print('wrote', os.path.join(out, f'{bench}.md'))
 
 
+def record(db, q, judgment=None):
+    con = sqlite3.connect(db); con.row_factory = sqlite3.Row
+    t = con.execute('SELECT * FROM trials WHERE trial_key=?', (q,)).fetchone() or \
+        con.execute('SELECT * FROM trials WHERE trial_key LIKE ? OR task LIKE ? ORDER BY trial_key LIMIT 1', (f'%{q}%', f'%{q}%')).fetchone()
+    if not t:
+        return f'no trial matches {q!r}'
+    r = con.execute('SELECT * FROM runs WHERE run_id=?', (t['run_id'],)).fetchone()
+    m = json.loads(con.execute('SELECT config FROM models WHERE model_id=?', (r['model_id'],)).fetchone()['config'])
+    f = json.loads(t['facts'] or '{}'); a3 = f.get('A3') or {}; tests = f.get('tests') or {}
+    serve = json.loads(r['serve'] or 'null') or {}
+    L = [f"### Eval record: {t['task']} · {r['model_id']}", '',
+         '**Where it came from**', '',
+         f"- run `{r['run_id']}` ({r['benchmark']}), trial `{os.path.basename(t['trial_dir'])}`, collected by {r['collected_by']}",
+         f"- harness {r['harness']} @ {r['harness_commit']}; policy: {r['policy']}",
+         f"- routing: {r['routing'] or 'direct'}; serve job {serve.get('job')} {('(' + serve['layout'] + ')') if serve.get('layout') else ''}",
+         f"- model: {m.get('hf')} ({m.get('arch')}); {m.get('engine')}; spec decode {m.get('spec_decode')}; context {m.get('max_model_len')}; "
+         f"sampling {m.get('sampling')}; thinking {m.get('thinking')}", '',
+         '**Hard facts (from the logs)**', '',
+         f"- reward {t['reward']}; exception {t['exception'] or 'none'}; grader ran {tests.get('grader_ran')}; tests passed "
+         f"{len(tests.get('passed') or [])}, failed {len(tests.get('failed') or [])}",
+         f"- replies {f.get('n_replies')}, executed {f.get('n_executed')}; done claims at {f.get('claims')}; last file write in reply "
+         f"{f.get('last_edit_reply')}; commands between it and the claim {f.get('commands_between_last_edit_and_first_claim', f.get('executed_replies_between_last_edit_and_first_claim'))}",
+         f"- A1 replies accepted {pct(f.get('A1_valid_rate'))}; A2 tokens in replies that executed nothing {pct(f.get('A2_nothing_executed_token_share'))}",
+         f"- A3 context: peak {a3.get('peak_prompt')} of {a3.get('limit')} ({pct(a3.get('peak_share'))}), overflow {a3.get('overflow_death')}; "
+         f"filled by " + ', '.join(f"{k.replace('_', ' ')} {pct(v)}" for k, v in (a3.get('composition') or {}).items() if v) , '']
+    J = con.execute('SELECT * FROM judgments WHERE trial_key=?' + (' AND judgment=?' if judgment else ''),
+                    (t['trial_key'],) + ((judgment,) if judgment else ())).fetchall()
+    for jn in sorted({j['judgment'] for j in J}):
+        rows = {j['item']: j for j in J if j['judgment'] == jn}
+        L += [f"**Checklist, judge {rows[next(iter(rows))]['judge']} ({jn})**", '', '| item | score | replies | evidence |', '|---|---|---|---|']
+        for i in ITEMS:
+            if i in rows:
+                j = rows[i]
+                L.append(f"| {i} | {j['score']} | {', '.join(str(x) for x in (json.loads(j['replies'] or 'null') or []))} | {(j['note'] or '').replace('|', '/')} |")
+        K = con.execute('SELECT * FROM knowledge WHERE trial_key=? AND judgment=?', (t['trial_key'], jn)).fetchall()
+        L += ['', '**Missing facts**', ''] + ([f"- {k['fact']} ({k['kind']}; reply {k['reply']}; blocked {k['blocked']}; confirmed by {k['confirmed_by']})" for k in K] or ['- none listed'])
+        L.append('')
+    return '\n'.join(L)
+
+
 if __name__ == '__main__':
-    ap = argparse.ArgumentParser(); ap.add_argument('cmd', choices=['build', 'report'])
+    ap = argparse.ArgumentParser(); ap.add_argument('cmd', choices=['build', 'report', 'record'])
+    ap.add_argument('query', nargs='?'); ap.add_argument('--judgment', default=None)
     ap.add_argument('--registry', default=os.path.join(HERE, 'registry.yaml')); ap.add_argument('--db', default=DB)
     ap.add_argument('--out', default='/e/data1/mmlaion/lee27/experiments/pedagepa/evaldb/logs')
     a = ap.parse_args()
-    build(a.registry, a.db) if a.cmd == 'build' else report(a.db, a.out)
+    if a.cmd == 'build':
+        build(a.registry, a.db)
+    elif a.cmd == 'report':
+        report(a.db, a.out)
+    else:
+        print(record(a.db, a.query, a.judgment))
