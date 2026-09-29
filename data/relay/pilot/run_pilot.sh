@@ -135,8 +135,13 @@ log "pre-flight ok: harbor $HARBOR_SHA, tree $TREE, held-out disjoint, snapshots
 RUNNING_SINCE=""
 while [ ! -f $EP/$JOB.student ] || [ ! -f $EP/$JOB.teacher ]; do   # .teacher is empty on a student-only serve
   [ -f $EP/$JOB.DEAD ] && { log "serve job died: $(cat $EP/$JOB.DEAD)"; exit 1; }
-  ST=$(squeue -h -j $JOB -o %T 2>/dev/null)
-  [ -z "$ST" ] && { log "serve job $JOB gone before its endpoints appeared"; exit 1; }
+  # a Slurm socket timeout also prints nothing: only a final sacct state counts as "gone"; anything else is unknown, retry
+  if ! ST=$(squeue -h -j $JOB -o %T 2>/dev/null); then sleep 30; continue; fi
+  if [ -z "$ST" ]; then
+    FS=$(sacct -j $JOB -X -n -o State 2>/dev/null | head -1 | awk '{print $1}')
+    case "$FS" in COMPLETED|CANCELLED*|FAILED|TIMEOUT|NODE_FAIL|OUT_OF_MEMORY|PREEMPTED|DEADLINE) log "serve job $JOB gone ($FS) before its endpoints appeared"; exit 1;; esac
+    sleep 30; continue
+  fi
   if [ "$ST" = RUNNING ]; then
     RUNNING_SINCE=${RUNNING_SINCE:-$(date +%s)}
     [ $(( $(date +%s) - RUNNING_SINCE )) -gt $UP_WAIT ] && { log "no endpoints $UP_WAIT s after start"; scancel $JOB; exit 1; }
@@ -265,7 +270,10 @@ while :; do
   [ $ALIVE -eq 0 ] && break
   if [ $SERVE_RELEASED = 0 ]; then
     [ -f $EP/$JOB.DEAD ] && abort "serve job reports DEAD: $(cat $EP/$JOB.DEAD)"
-    squeue -h -j $JOB -o %T | grep -q RUNNING || abort "serve job $JOB not RUNNING"
+    if JS=$(squeue -h -j $JOB -o %T 2>/dev/null); then   # a socket timeout (nonzero exit) is unknown, not dead
+      [ -z "$JS" ] && JS=$(sacct -j $JOB -X -n -o State 2>/dev/null | head -1 | awk '{print $1}')
+      case "$JS" in RUNNING|COMPLETING|"") ;; *) abort "serve job $JOB not RUNNING ($JS)";; esac
+    fi
     awk -v a="${NH%% *}" -v b=$CAP_NODE_H 'BEGIN{exit !(a>=b)}' && { release_serve "node-hour cap $CAP_NODE_H reached"; RELEASED_AT=$NOW; }
     if [ $NOW -ge $DEADLINE ] && [ $((NOW - LAST_CHANGE)) -ge 180 ]; then release_serve "past the deadline, no LLM traffic for 3 min"; RELEASED_AT=$NOW; fi
     [ $NOW -lt $DEADLINE ] && [ $((NOW - LAST_CHANGE)) -gt $((STALL_MIN*60)) ] && abort "no router traffic for $STALL_MIN min"
