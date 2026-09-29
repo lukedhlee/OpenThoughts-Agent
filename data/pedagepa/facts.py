@@ -20,6 +20,39 @@ from condense import load_trial, parse_turns, features, _new_output
 # tee to a file, patch / git apply, cp / mv, or a python open(..., 'w')
 WRITE_RE = re.compile(r"((?<![0-9&])>>?\s*(?!/dev/null)(?!&)[\w./~$-]+|\bsed\s+-i|\btee\s+(?!/dev/null)[\w./~-]+|\bpatch\b|"
                       r"\bgit\s+apply\b|\bcp\s|\bmv\s|open\([^)]*['\"][wa]b?['\"])")
+# v1.3.2 (2026-09-29): the anchor works on shell lines, not whole keystroke blocks. Heredoc bodies are not shell lines
+# (`python3 - <<EOF ... assert x > 0` is a check, not a redirect); a body counts as a write only when it writes a file.
+# Quoted text is dropped before the redirect test (`python3 -c "print(a > b)"`, `awk '$1 > 5'`).
+HEREDOC_RE = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?")
+BODY_WRITE_RE = re.compile(r"open\([^)]*['\"][wa]b?\+?['\"]|\.to_csv\(|\.to_json\(|\.to_parquet\(|\.savefig\(|\.write_text\(|"
+                           r"\.write_bytes\(|json\.dump\(|np\.save|\.save\(|shutil\.(copy|move)")
+QUOTED_RE = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
+
+
+def shell_lines(ks):
+    """(line, writes) per shell line of one keystroke block; heredoc bodies fold into their opening line."""
+    out, lines, k = [], ks.split('\n'), 0
+    while k < len(lines):
+        line = lines[k]; k += 1
+        if not line.strip():
+            continue
+        m = HEREDOC_RE.search(line); body = []
+        if m:
+            while k < len(lines) and lines[k].strip() != m.group(1):
+                body.append(lines[k]); k += 1
+            k += 1
+        # a quoted string left open (multi-line `python3 -c "..."`) folds the following lines in until it closes
+        while k < len(lines) and (line.count('"') - line.count('\\"')) % 2 == 1:
+            line += '\n' + lines[k]; k += 1
+        bare = QUOTED_RE.sub("''", line)
+        segs = [s for s in re.split(r"&&|\|\||;", bare) if s.strip()] or [bare]
+        # a write hidden in a heredoc body or a quoted python -c program is credited to the line's first command
+        hidden = bool((body and BODY_WRITE_RE.search('\n'.join(body))) or re.search(r"open\([^)]*['\"][wa]b?\+?['\"]", line))
+        for j, s in enumerate(segs):
+            out.append((s.strip(), bool(WRITE_RE.search(s)) or (hidden and j == 0)))
+    return out
+
+
 ERR_RE = re.compile(r"(Traceback \(most recent call last\)|\bError\b|\berror:|FAILED|No such file|command not found|Segmentation fault|"
                     r"exit code [1-9]|AssertionError|cannot |failed)", re.I)
 
@@ -73,12 +106,12 @@ def facts(trial, refeed=False, limit=65536):
     # command-level: the last file-writing command before the first claim, and how many commands ran after it up to and
     # including the claim reply (a test in the same reply as the edit counts)
     first_claim = claims[0] if claims else None
-    seq = [(i + 1, str(c.get('keystrokes', ''))) for i, t in enumerate(turns) if not t['rejected']
-           for c in t['cmds'] if isinstance(c, dict)]
+    seq = [(i + 1, line, w) for i, t in enumerate(turns) if not t['rejected']
+           for c in t['cmds'] if isinstance(c, dict) for line, w in shell_lines(str(c.get('keystrokes', '')))]
     upto = [x for x in seq if first_claim is None or x[0] <= first_claim]
-    wi = max((k for k, (_, ks) in enumerate(upto) if WRITE_RE.search(ks)), default=None)
+    wi = max((k for k, (_, _, w) in enumerate(upto) if w), default=None)
     last_edit = upto[wi][0] if wi is not None else None
-    checks_after = (sum(1 for _, ks in upto[wi + 1:] if ks.strip()) if (first_claim and wi is not None) else 0)
+    checks_after = (sum(1 for _ in upto[wi + 1:]) if (first_claim and wi is not None) else 0)
     err_before = bool(first_claim and first_claim >= 2 and ERR_RE.search(_new_output(turns[first_claim - 2]['obs'])[-3000:]))
     return dict(trial=trial, task=res.get('task_name'), reward=reward, exception=exc, tests=tests(att),
                 n_replies=f['n_replies'], n_executed=f['n_executed'], claims=claims,
