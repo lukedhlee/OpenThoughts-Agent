@@ -671,6 +671,7 @@ def main():
     a = p.parse_args()
     name = a.name or os.path.basename(os.path.normpath(a.run_dir))
     arm_names = [arm for arm in ('relay', 'control', 'relay_keep', 'relay_repair', 'student_only', 'guided', 'clean', 'recovery') if os.path.isdir(os.path.join(a.run_dir, f'router_{arm}'))]
+    arm_names += sorted(os.path.basename(d)[len('router_'):] for d in glob.glob(os.path.join(a.run_dir, 'router_cand_*')) if os.path.isdir(d))
     arms = {}
     for arm in arm_names:
         rv = router_view(os.path.join(a.run_dir, f'router_{arm}'))

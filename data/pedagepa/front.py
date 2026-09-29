@@ -3,7 +3,7 @@
   python front.py --control control=<judge dir> --cand guided_v2=<judge dir> [--cand ...] \
       [--items P0,P5a,P5b,P9] [--tasks <task list>] [--judge-sub opus1] [--out front.json]
 Each <judge dir> is a make_judge_batches.py output (id_map_PRIVATE.json, in/*.facts.json, <judge-sub>/batch*.jsonl);
-the label before '=' is the arm label inside that dir. Every candidate is paired with the control per task (tasks
+the label before '=' is the arm label inside that dir, optionally `arm@name` to show another name. Every candidate is paired with the control per task (tasks
 judged in both; --tasks restricts to a list). Per candidate: each item's paired mean difference (NA/LD dropped) with a
 task-bootstrap 95 % CI, the composite (mean of the numeric --items per run) difference, and the pass difference.
 Front: a candidate is dropped when another is >= on every item and on pass, and > on one (point estimates).
@@ -20,6 +20,7 @@ keep = set(open(x.tasks).read().split()) if x.tasks else None
 
 def load(spec):
     label, d = spec.split('=', 1)
+    label, name = label.split('@', 1) if '@' in label else (label, label)
     mp = json.load(open(d + '/id_map_PRIVATE.json')); J = {}
     for f in glob.glob(f'{d}/{x.judge_sub}/batch*.jsonl'):
         for l in open(f):
@@ -37,7 +38,7 @@ def load(spec):
                 sc[it] = float(v)
         fct = json.load(open(f'{d}/in/{jid}.facts.json'))
         runs[m['task']] = dict(scores=sc, passed=1.0 if (fct.get('reward') or 0) >= 1 else 0.0)
-    return label, runs
+    return name, runs
 
 
 rnd = random.Random(0)

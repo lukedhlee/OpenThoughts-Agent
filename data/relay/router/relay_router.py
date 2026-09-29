@@ -287,6 +287,8 @@ class Router:
         self.tasks = self._load_tasks(a.tasks)
         self.tok = rcap.load_tokenizer(a.student_tokenizer) if a.student_tokenizer else None
         self.note_text = VERIFY_NOTE if a.mode == 'relay' else VERIFY_NOTE_OWN
+        if a.verify_note_file:      # PedaGEPA prompt search: a candidate's own claim-time note (teacher view only)
+            self.note_text = open(a.verify_note_file).read().strip()
         self.guidance = open(a.teacher_system_file).read().strip() if a.teacher_system_file else None
         self.reminder = open(a.teacher_reminder_file).read().strip() if a.teacher_reminder_file else None
         self.inject_plan = json.load(open(a.inject_plan)) if a.inject_plan else None
@@ -1325,6 +1327,8 @@ def parse_args(argv=None):
     p.add_argument('--verify-note', action='store_true',
                    help="append VERIFY_NOTE to the teacher's confirmation request (relay: the done_claim takeover's; "
                         "--mode teacher: the episode's first)")
+    p.add_argument('--verify-note-file', default=None,
+                   help='with --verify-note: the note text from this file instead of VERIFY_NOTE / VERIFY_NOTE_OWN')
     p.add_argument('--teacher-system-file', default=None,
                    help='PedaGEPA: text sent as the system message of every teacher request (never in harbor history)')
     p.add_argument('--teacher-reminder-file', default=None,
