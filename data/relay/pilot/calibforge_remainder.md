@@ -49,9 +49,15 @@ remainder, then to categories inside each stratum the same way, with a seeded dr
 - **Layers.** setup.sh reads each layer from the HF mirror `laion/calibforge-daytona-layers` first, and falls back to
   Docker Hub's blob endpoint. Blob downloads are not metered pulls, and every layer's sha256 is checked either way.
   Almost none of these layers were on the mirror yet: 9,692 of 9,905 are new (110.7 GB), and the pilot's share is
-  3,764 (42.3 GB). `mirror_upload.py` began uploading them at 12:31 PT on 09-29, the pilot's layers first. Until a
-  layer lands, setup.sh fetches it from Docker Hub.
+  3,764 (42.3 GB).
+  - **Pilot.** All 3,892 of the pilot's layers were on the mirror at 13:10 PT on 09-29 (`mirror_upload.py` verify).
+  - **Rest of the remainder.** 5,928 more layers (68.4 GB) started uploading at 13:10 PT. Until a layer lands, setup.sh
+    fetches it from Docker Hub.
+  - **To finish or check it.** `mirror_upload.py --tree <tree> --repo laion/calibforge-daytona-layers --work <dir>`
+    resumes, and it ends with a `verify: N/N` line.
 - **Manifests.** The manifests and configs are cached in the Mac's calibforge-work dir.
   - They were read by digest from Docker Hub, spread over the Mac (IPv4 and IPv6), Vista, Jupiter and JUWELS logins.
   - About 250 came from `mirror.gcr.io` (`registry.py fetch --registry`), each sha256-checked against its digest.
   - About 2,600 by-digest manifest GETs never moved any source's `ratelimit-remaining` counter off 100, and none got a 429.
+  - `registry_cache.tar.gz` in the HF dataset now holds all 5,146 manifests and configs, so the tree can be rebuilt
+    without Docker Hub.
