@@ -251,13 +251,60 @@ def report(db, out):
         print('wrote', os.path.join(out, f'{bench}.md'))
 
 
-def record(db, q, judgment=None):
+NAMES = {'P0': 'harness feedback', 'P1': 'read the contract', 'P2': "look it up", 'P3': 'build incrementally',
+         'P4': 'checkable steps', 'P5': 'manage context', 'P6': 'grounded state', 'P7': 'error recovery',
+         'P8': 'progress control', 'P9': 'verify before done', 'P10': 'honest completion', 'T1': 'long jobs/services',
+         'S1': 'repro fails first', 'S2': 'fix at the origin', 'S3': 'minimal checked edit', 'S4': "repo's own tests"}
+KIND = {'K1': 'tool/package', 'K2': 'format/internals', 'K3': 'where things live', 'K4': 'domain method', 'K5': 'repo fact'}
+
+
+def _short(x, n):
+    x = ' '.join((x or '').split())
+    return x if len(x) <= n else x[:n - 1].rstrip() + '…'
+
+
+def record_compact(con, t, r, judgment):
+    f = json.loads(t['facts'] or '{}'); a3 = f.get('A3') or {}; comp = a3.get('composition') or {}
+    top = sorted(((v, k) for k, v in comp.items() if v), reverse=True)[:2]
+    L = [f"task: {t['task']}   model: {r['model_id']}   passed: {'yes' if (t['reward'] or 0) > 0 else 'no'}",
+         f"from: {r['run_id']} ({r['benchmark']}) · {r['harness']} @ {(r['harness_commit'] or '').split('@')[-1].strip()} · "
+         f"trial {os.path.basename(t['trial_dir'])}",
+         'policy (0 = absent, 1 = partial, 2 = present, NA = no chance to show it, LD = loop died first)']
+    J = {j['item']: j for j in con.execute('SELECT * FROM judgments WHERE trial_key=? AND judgment=?', (t['trial_key'], judgment))}
+    for i in ITEMS:
+        if i not in J:
+            continue
+        j = J[i]; rp = json.loads(j['replies'] or 'null') or []
+        sc = str(j['score']).replace('.0', '')
+        where = (f"T{rp[0]}" + (f"-T{rp[-1]}" if len(rp) > 1 else '') + ': ') if rp else ''
+        note = _short(j['note'], 78)
+        L.append(f"  {NAMES.get(i, i):20} {sc:3}  " + (f"({note})" if sc in ('NA', 'LD') else where + note))
+    L += [f"  {'valid action (auto)':20} {f.get('A1_valid_rate') or 0:.2f}",
+          f"  {'wasted budget (auto)':20} {f.get('A2_nothing_executed_token_share') or 0:.2f} of generated tokens executed nothing",
+          f"  {'context (auto)':20} peak {pct(a3.get('peak_share'))} of {a3.get('limit')}{', overflowed' if a3.get('overflow_death') else ''}; "
+          + ', '.join(f"{k.replace('_', ' ')} {pct(v)}" for v, k in top),
+          'knowledge gaps']
+    K = con.execute('SELECT * FROM knowledge WHERE trial_key=? AND judgment=?', (t['trial_key'], judgment)).fetchall()
+    for k in K:
+        rp = json.loads(k['reply']) if k['reply'] else None
+        rp = rp[0] if isinstance(rp, list) and rp else rp
+        L += [f'  - "{_short(k["fact"], 150)}"',
+              f"    kind: {KIND.get((k['kind'] or '')[:2], k['kind'])}   turn: T{rp}   blocked the task: {k['blocked']}"]
+    if not K:
+        L.append('  - none')
+    return '\n'.join(L)
+
+
+def record(db, q, judgment=None, compact=False):
     con = sqlite3.connect(db); con.row_factory = sqlite3.Row
     t = con.execute('SELECT * FROM trials WHERE trial_key=?', (q,)).fetchone() or \
         con.execute('SELECT * FROM trials WHERE trial_key LIKE ? OR task LIKE ? ORDER BY trial_key LIMIT 1', (f'%{q}%', f'%{q}%')).fetchone()
     if not t:
         return f'no trial matches {q!r}'
     r = con.execute('SELECT * FROM runs WHERE run_id=?', (t['run_id'],)).fetchone()
+    if compact:
+        jn = judgment or (con.execute('SELECT judgment FROM judgments WHERE trial_key=? LIMIT 1', (t['trial_key'],)).fetchone() or [None])[0]
+        return record_compact(con, t, r, jn)
     m = json.loads(con.execute('SELECT config FROM models WHERE model_id=?', (r['model_id'],)).fetchone()['config'])
     f = json.loads(t['facts'] or '{}'); a3 = f.get('A3') or {}; tests = f.get('tests') or {}
     serve = json.loads(r['serve'] or 'null') or {}
@@ -293,7 +340,7 @@ def record(db, q, judgment=None):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(); ap.add_argument('cmd', choices=['build', 'report', 'record'])
-    ap.add_argument('query', nargs='?'); ap.add_argument('--judgment', default=None)
+    ap.add_argument('query', nargs='?'); ap.add_argument('--judgment', default=None); ap.add_argument('--compact', action='store_true')
     ap.add_argument('--registry', default=os.path.join(HERE, 'registry.yaml')); ap.add_argument('--db', default=DB)
     ap.add_argument('--out', default='/e/data1/mmlaion/lee27/experiments/pedagepa/evaldb/logs')
     a = ap.parse_args()
@@ -302,4 +349,4 @@ if __name__ == '__main__':
     elif a.cmd == 'report':
         report(a.db, a.out)
     else:
-        print(record(a.db, a.query, a.judgment))
+        print(record(a.db, a.query, a.judgment, a.compact))
