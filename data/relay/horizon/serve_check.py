@@ -41,7 +41,7 @@ def main():
     ap.add_argument("job")
     ap.add_argument("--exp", default=os.environ.get("RELAY_EXP_DIR", f"/scratch/11584/{os.environ.get('USER')}/experiments/relay/pilot"))
     ap.add_argument("--conc", type=int, default=1)
-    ap.add_argument("--max-tokens", type=int, default=6000)
+    ap.add_argument("--max-tokens", type=int, default=24000)
     a = ap.parse_args()
     ep = os.path.join(a.exp, "endpoints", a.job)
     urls = {role: [u for u in open(f"{ep}.{role}").read().strip().split(",") if u] if os.path.exists(f"{ep}.{role}") else []
@@ -65,7 +65,8 @@ def main():
             print(f"{role.upper()} {u} pass={nok}/{len(rows)} tok={toks} tok/s={toks / max(r[3] for r in rows):.0f} "
                   f"first: {dt:.1f}s finish={fin} usage={us} reasoning_chars={len(rs)}")
             if rs:
-                print("  reasoning[:300] =", repr(rs[:300]))
+                print("  reasoning[:200] =", repr(rs[:200]))
+                print("  reasoning[-300:] =", repr(rs[-300:]))
             print("  content[:500]   =", repr(c[:500]))
         print(f"{role} wall {wall:.1f}s for {len(jobs)} requests")
     print("SERVE_CHECK", "PASS" if bad == 0 else f"FAIL ({bad} bad)")
