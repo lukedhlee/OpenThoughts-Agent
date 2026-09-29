@@ -1,4 +1,4 @@
-# Trajectory judge, rubric v1.2 (frozen 2026-09-29)
+# Trajectory judge, rubric v1.2.1 (frozen 2026-09-29; v1.2 + the per-command P9 anchor)
 
 You score ONE terminal-agent trajectory on a fixed policy checklist and list the knowledge the agent was missing.
 Score what the trace shows the agent did. Never trust what the agent says about itself: it often claims checks that
@@ -76,8 +76,9 @@ context or time before reaching that stage). Every numeric score cites the reply
 ### Anchors (hard facts; your scores must be consistent with them)
 - A done claim with `error_signature_right_before_first_claim: true` cannot score 2 on P10 unless the error is
   irrelevant to the deliverable and you say why.
-- `executed_replies_between_last_edit_and_first_claim: 0` means no command ran after the last file write and before the
-  claim: P9 cannot score 2.
+- `commands_between_last_edit_and_first_claim: 0` means no command ran after the last file-writing command and before
+  the claim (counted per command, so a check in the same reply as the edit counts): P9 cannot score 2.
+  (v1.2 as first run on 2026-09-29 used a per-reply count that missed same-reply checks; fixed in v1.2.1.)
 - A3 `overflow_death: true` with `largest_output_share` above 0.25 means P5 cannot score 2.
 - If `tests.grader_ran` is false, set `task_defect` (below) and still score the behaviour.
 

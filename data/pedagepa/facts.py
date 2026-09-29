@@ -6,7 +6,8 @@
   A3 context use: limit, peak prompt tokens and share, overflow death, first reply past half the limit, composition of
      the final context by source (terminal output, executed replies, rejected replies + their error messages, reasoning
      re-fed by the harness, instruction) and the largest single output's share
-  last_edit_reply / checks_after_last_edit: executed replies after the last reply whose keystrokes write files
+  last_edit_reply / commands_between_last_edit_and_first_claim: non-empty commands after the last file-writing command,
+     up to and including the first claim reply (command level, so a check in the same reply as the edit counts)
   error_before_claim: whether the terminal output of the reply before the first claim contains an error signature
 
   python facts.py <trial dir> [--refeed-reasoning] [--limit 65536]
@@ -15,7 +16,10 @@ import argparse, json, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from condense import load_trial, parse_turns, features, _new_output
 
-WRITE_RE = re.compile(r"(>\s*[\w./-]+|<<\s*'?\w+|\bsed\s+-i\b|\btee\b|\bpatch\b|\bcp\b|\bmv\b|\bmkdir\b|\bwrite\(|open\([^)]*['\"]w)")
+# a command that writes a file: a redirect to a real path (not a numbered or &-fd redirect, not /dev/null), sed -i,
+# tee to a file, patch / git apply, cp / mv, or a python open(..., 'w')
+WRITE_RE = re.compile(r"((?<![0-9&])>>?\s*(?!/dev/null)(?!&)[\w./~$-]+|\bsed\s+-i|\btee\s+(?!/dev/null)[\w./~-]+|\bpatch\b|"
+                      r"\bgit\s+apply\b|\bcp\s|\bmv\s|open\([^)]*['\"][wa]b?['\"])")
 ERR_RE = re.compile(r"(Traceback \(most recent call last\)|\bError\b|\berror:|FAILED|No such file|command not found|Segmentation fault|"
                     r"exit code [1-9]|AssertionError|cannot |failed)", re.I)
 
@@ -55,11 +59,15 @@ def facts(trial, refeed=False, limit=65536):
                 refed_reasoning=sum(len(t['think']) for t in turns) if refeed else 0, instruction=len(instr))
     tot = sum(comp.values()) or 1
     claims = [i + 1 for i, t in enumerate(turns) if t['task_complete'] and not t['rejected']]
-    last_edit = max((i + 1 for i, t in enumerate(turns) if not t['rejected'] and
-                     any(WRITE_RE.search(str(c.get('keystrokes', ''))) for c in t['cmds'] if isinstance(c, dict))), default=None)
+    # command-level: the last file-writing command before the first claim, and how many commands ran after it up to and
+    # including the claim reply (a test in the same reply as the edit counts)
     first_claim = claims[0] if claims else None
-    checks_after = (sum(1 for i, t in enumerate(turns) if not t['rejected'] and last_edit and last_edit < i + 1 <= first_claim and t['cmds'])
-                    if first_claim and last_edit and last_edit < first_claim else 0)
+    seq = [(i + 1, str(c.get('keystrokes', ''))) for i, t in enumerate(turns) if not t['rejected']
+           for c in t['cmds'] if isinstance(c, dict)]
+    upto = [x for x in seq if first_claim is None or x[0] <= first_claim]
+    wi = max((k for k, (_, ks) in enumerate(upto) if WRITE_RE.search(ks)), default=None)
+    last_edit = upto[wi][0] if wi is not None else None
+    checks_after = (sum(1 for _, ks in upto[wi + 1:] if ks.strip()) if (first_claim and wi is not None) else 0)
     err_before = bool(first_claim and first_claim >= 2 and ERR_RE.search(_new_output(turns[first_claim - 2]['obs'])[-3000:]))
     return dict(trial=trial, task=res.get('task_name'), reward=reward, exception=exc, tests=tests(att),
                 n_replies=f['n_replies'], n_executed=f['n_executed'], claims=claims,
@@ -69,7 +77,7 @@ def facts(trial, refeed=False, limit=65536):
                         composition={k: round(v / tot, 3) for k, v in comp.items()},
                         largest_output_share=round(max((len(t['obs']) for t in turns), default=0) / tot, 3)),
                 runaway_replies=f['runaway_replies'], loop_fires=f['loop_fires'], wait_fires=f['wait_fires'],
-                last_edit_reply=last_edit, executed_replies_between_last_edit_and_first_claim=checks_after,
+                last_edit_reply=last_edit, commands_between_last_edit_and_first_claim=checks_after,
                 error_signature_right_before_first_claim=err_before)
 
 
