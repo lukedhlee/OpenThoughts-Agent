@@ -28,6 +28,15 @@
 # "smoke": 4 tasks per arm (shortest budgets), 4 concurrent, early gate at 10 min.
 #
 #   tmux new -d -s relay_<name> "bash run_pilot.sh <jobid> <name>"
+#
+# Other sites (TACC Horizon, 2026-09-29): every path is an env knob (PY HARBOR HARBOR_SRC TREE KEYF E JOBS_ROOT
+# STUDENT_TOKENIZER TASK_LIST), and the driver may run in its own compute-node job (data/relay/horizon/driver.sbatch):
+# DRIVER_JOB / DRIVER_NODES make the node-hour cap, the deadline and run.meta count that job too (unset = Jupiter's
+# accounting, unchanged). With HTTPS_PROXY set, the model hosts are added to NO_PROXY once the endpoints are known.
+# ARM_GATES=1 runs data/relay/horizon/arm_gates.py every ARM_GATES_EVERY s (the finetuned-student gates): the takeover
+# rate over finished relay episodes against [TAKEOVER_MIN, TAKEOVER_MAX] once TAKEOVER_AFTER are in (TAKEOVER_ACTION
+# flag|stop), and the student's EAGLE-3 mean acceptance length from its servers' /metrics (flag below ACCEPT_FLAG, stop
+# below ACCEPT_STOP, 0 = off). A flag is logged and appended to <run>/FLAGS; it never cancels anything.
 set -uo pipefail
 JOB=${1:?serve job id}; NAME=${2:?run name}; MODE=${3:-full}
 C=/e/project1/transfernetx/lee27/code
@@ -68,12 +77,16 @@ TARGET_FAIL=${TARGET_FAIL:-0}; TARGET_BASE=${TARGET_BASE:-0}   # TARGET_FAIL>0: 
 RUN_KIND=${RUN_KIND:-pilot}
 STUDENT_TOKENIZER=${STUDENT_TOKENIZER:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921/tokenizer.json}   # the cap on older teacher reasoning   # pilot: TASKS.txt must be disjoint from the held-out split; heldout: it must BE the split
 KEYF=${KEYF:-/e/fscratch/reformo/lee27/keys/daytona_eval.env}
-E=/e/fscratch/reformo/lee27/experiments/relay/pilot; EP=$E/endpoints
+E=${E:-/e/fscratch/reformo/lee27/experiments/relay/pilot}; EP=$E/endpoints
 R=$E/runs/$NAME
 JOBS_ROOT=${JOBS_ROOT:-/e/data1/mmlaion/lee27/experiments/relay_pilot_jobs}   # many small files -> mmlaion
 ARMS=${ARMS:-control relay_repair}
 CONC=${CONC:-100}; CAP_NODE_H=${CAP_NODE_H:-4.0}; NODES=${NODES:-3}; DEADLINE_MARGIN=${DEADLINE_MARGIN:-300}
 EARLY_MIN=${EARLY_MIN:-25}; STALL_MIN=${STALL_MIN:-15}; UP_WAIT=${UP_WAIT:-2400}; MIN_EARLY_TURNS=${MIN_EARLY_TURNS:-20}
+DRIVER_JOB=${DRIVER_JOB:-}; DRIVER_NODES=${DRIVER_NODES:-0}   # the driver's own Slurm job (Horizon), counted in the cap
+ARM_GATES=${ARM_GATES:-0}; ARM_GATES_EVERY=${ARM_GATES_EVERY:-600}; ARM_GATES_FROM=${ARM_GATES_FROM:-10}   # minutes after harbor start
+TAKEOVER_MIN=${TAKEOVER_MIN:-}; TAKEOVER_MAX=${TAKEOVER_MAX:-}; TAKEOVER_AFTER=${TAKEOVER_AFTER:-100}; TAKEOVER_ACTION=${TAKEOVER_ACTION:-flag}
+ACCEPT_FLAG=${ACCEPT_FLAG:-0}; ACCEPT_STOP=${ACCEPT_STOP:-0}
 VERIFY_WAIT=${VERIFY_WAIT:-2700}   # after the serve job is released, how long harbor may keep verifying (CPU only)
 PORT0=${PORT0:-$((21000 + RANDOM % 8000))}
 [ "$MODE" = smoke ] && { CONC=4; EARLY_MIN=10; MIN_EARLY_TURNS=4; }
@@ -91,10 +104,14 @@ stop_harbor() { for k in "${!HPID[@]}"; do kill -INT ${HPID[$k]} 2>/dev/null; do
                 for k in "${!HPID[@]}"; do kill -TERM ${HPID[$k]} 2>/dev/null; done; pkill -TERM -u $USER -f "harbor jobs start --config $R/" 2>/dev/null; }
 stop_routers() { for arm in $ARMS; do [ -n "${RPID[$arm]:-}" ] && kill -TERM ${RPID[$arm]} 2>/dev/null; done; }
 write_meta() {
-  local el; el=$(sacct -j $JOB -X -n -o ElapsedRaw 2>/dev/null | head -1 | tr -d ' ')
+  local el del=0; el=$(sacct -j $JOB -X -n -o ElapsedRaw 2>/dev/null | head -1 | tr -d ' ')
+  [ -n "$DRIVER_JOB" ] && del=$(sacct -j $DRIVER_JOB -X -n -o ElapsedRaw 2>/dev/null | head -1 | tr -d ' ')
   printf 'serve_job=%s\nnodes=%s\nnode_hours=%s\nharbor=%s\nota=%s\narms=%s\nconc=%s\nmode=%s\ndeadline=%s\nend=%s\n' "$JOB" "$NODES" \
-    "$(awk -v s="${el:-0}" -v n=$NODES 'BEGIN{printf "%.3f", n*s/3600}')" "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" \
+    "$(awk -v s="${el:-0}" -v n=$NODES -v d="${del:-0}" -v k=$DRIVER_NODES 'BEGIN{printf "%.3f", (n*s + k*d)/3600}')" "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" \
     "$(git -C $HERE rev-parse --short=8 HEAD 2>/dev/null)" "$ARMS" "$CONC" "$MODE" "${DEADLINE:-}" "$(date -Is)" > $R/run.meta
+  [ -n "$DRIVER_JOB" ] && printf 'serve_node_hours=%s\ndriver_job=%s\ndriver_nodes=%s\ndriver_node_hours=%s\n' \
+    "$(awk -v s="${el:-0}" -v n=$NODES 'BEGIN{printf "%.3f", n*s/3600}')" "$DRIVER_JOB" "$DRIVER_NODES" \
+    "$(awk -v d="${del:-0}" -v k=$DRIVER_NODES 'BEGIN{printf "%.3f", k*d/3600}')" >> $R/run.meta
 }
 cleanup_sandboxes() {
   local jobs=(); for arm in $ARMS; do for d in $JOBS_ROOT/${NAME}_$arm $JOBS_ROOT/${NAME}_${arm}_p2; do [ -d $d ] && jobs+=($d); done; done
@@ -140,8 +157,18 @@ while [ ! -f $EP/$JOB.student ] || [ ! -f $EP/$JOB.teacher ]; do   # .teacher is
 done
 SURL=$(cat $EP/$JOB.student); TURL=$(cat $EP/$JOB.teacher)
 JSTART=$(date -d "$(squeue -h -j $JOB -o %S)" +%s)
-DEADLINE=$(awk -v s=$JSTART -v c=$CAP_NODE_H -v n=$NODES -v m=$DEADLINE_MARGIN 'BEGIN{printf "%d", s + c/n*3600 - m}')
-log "endpoints student=$SURL teacher=$TURL; job start $(date -d @$JSTART -Is), deadline $(date -d @$DEADLINE -Is)"
+# the driver job's node-hours (0 without DRIVER_JOB): what it ran before the serve job started (DPRE), and the verify tail
+# it keeps running after the servers are released (DTAIL = VERIFY_WAIT) are reserved, the rest is shared per hour
+DSTART=$JSTART; [ -n "$DRIVER_JOB" ] && DSTART=$(date -d "$(squeue -h -j $DRIVER_JOB -o %S)" +%s)
+DPRE=$(awk -v j=$JSTART -v d=$DSTART -v k=$DRIVER_NODES 'BEGIN{x=j-d; printf "%.4f", k*(x>0?x:0)/3600}')
+DTAIL=$(awk -v w=$VERIFY_WAIT -v k=$DRIVER_NODES 'BEGIN{printf "%.4f", k*w/3600}')
+DEADLINE=$(awk -v s=$JSTART -v c=$CAP_NODE_H -v n=$NODES -v m=$DEADLINE_MARGIN -v k=$DRIVER_NODES -v p=$DPRE -v t=$DTAIL \
+  'BEGIN{printf "%d", s + (c-p-t)/(n+k)*3600 - m}')
+log "endpoints student=$SURL teacher=$TURL; job start $(date -d @$JSTART -Is), deadline $(date -d @$DEADLINE -Is)$([ -n "$DRIVER_JOB" ] && echo "; driver job $DRIVER_JOB x$DRIVER_NODES from $(date -d @$DSTART -Is), reserved ${DPRE} + ${DTAIL} node-h")"
+if [ -n "${HTTPS_PROXY:-}${https_proxy:-}" ]; then   # model traffic never goes through the Daytona proxy
+  MH=$(echo "$SURL,$TURL" | tr ',' '\n' | sed -E 's#^[a-z]+://([^:/]+).*#\1#' | grep -v '^$' | sort -u | paste -sd, -)
+  export NO_PROXY="${NO_PROXY:-localhost,127.0.0.1}${MH:+,$MH}"; export no_proxy="$NO_PROXY"; log "NO_PROXY=$NO_PROXY"
+fi
 
 # ---- 3. routers -----------------------------------------------------------------------------------------------------
 PARSER=$HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py
@@ -235,7 +262,7 @@ PY
   fi
   log "harbor $arm started (pid ${HPID[$arm]}) -> $JOBS_ROOT/${NAME}_$arm"
 done
-T0=$(date +%s); EARLY_DONE=0; LAST_N=0; LAST_CHANGE=$T0; RELEASED_AT=""; OVF_DONE=0; STOP_LAST=0; TARGET_HIT=0
+T0=$(date +%s); EARLY_DONE=0; LAST_N=0; LAST_CHANGE=$T0; RELEASED_AT=""; OVF_DONE=0; STOP_LAST=0; TARGET_HIT=0; AG_LAST=0
 
 # ---- 5. watch -------------------------------------------------------------------------------------------------------
 while :; do
@@ -245,14 +272,14 @@ while :; do
   N=0; for arm in $ARMS; do N=$((N + $(wc -l < $R/router_$arm/turns.jsonl 2>/dev/null || echo 0))); done
   [ $N -ne $LAST_N ] && { LAST_N=$N; LAST_CHANGE=$NOW; }
   ALIVE=0; for k in "${!HPID[@]}"; do kill -0 ${HPID[$k]} 2>/dev/null && ALIVE=$((ALIVE+1)); done
-  NH=$(awk -v s=$JSTART -v n=$NOW -v k=$NODES 'BEGIN{printf "%.2f", k*(n-s)/3600}')
+  NH=$(awk -v s=$JSTART -v n=$NOW -v k=$NODES -v d=$DSTART -v j=$DRIVER_NODES 'BEGIN{printf "%.2f", (k*(n-s) + j*(n-d))/3600}')
   [ $SERVE_RELEASED = 1 ] && NH="$NH (released)"
   log "watch: node-h=$NH requests=$N harbor_alive=$ALIVE threads=$(ps -L -u $USER --no-headers 2>/dev/null | wc -l)"
   [ $ALIVE -eq 0 ] && break
   if [ $SERVE_RELEASED = 0 ]; then
     [ -f $EP/$JOB.DEAD ] && abort "serve job reports DEAD: $(cat $EP/$JOB.DEAD)"
     squeue -h -j $JOB -o %T | grep -q RUNNING || abort "serve job $JOB not RUNNING"
-    awk -v a="${NH%% *}" -v b=$CAP_NODE_H 'BEGIN{exit !(a>=b)}' && { release_serve "node-hour cap $CAP_NODE_H reached"; RELEASED_AT=$NOW; }
+    awk -v a="${NH%% *}" -v b=$CAP_NODE_H -v t=$DTAIL 'BEGIN{exit !(a>=b-t)}' && { release_serve "node-hour cap $CAP_NODE_H reached"; RELEASED_AT=$NOW; }
     if [ $NOW -ge $DEADLINE ] && [ $((NOW - LAST_CHANGE)) -ge 180 ]; then release_serve "past the deadline, no LLM traffic for 3 min"; RELEASED_AT=$NOW; fi
     [ $NOW -lt $DEADLINE ] && [ $((NOW - LAST_CHANGE)) -gt $((STALL_MIN*60)) ] && abort "no router traffic for $STALL_MIN min"
   elif [ $((NOW - RELEASED_AT)) -gt $VERIFY_WAIT ]; then
@@ -322,6 +349,19 @@ PY
     done
     [ $TARGET_HIT = 1 ] && break
   fi
+  if [ $ARM_GATES = 1 ] && [ $SERVE_RELEASED = 0 ] && [ $((NOW - T0)) -ge $((ARM_GATES_FROM*60)) ] && [ $((NOW - AG_LAST)) -ge $ARM_GATES_EVERY ]; then
+    AG_LAST=$NOW
+    for arm in $ARMS; do case $arm in relay*) ;; *) continue;; esac
+      AG=$(timeout 300 $PY $HERE/../horizon/arm_gates.py $R $NAME $arm --student-urls "$SURL" --takeover-after $TAKEOVER_AFTER \
+           ${TAKEOVER_MIN:+--takeover-min $TAKEOVER_MIN} ${TAKEOVER_MAX:+--takeover-max $TAKEOVER_MAX} --takeover-action $TAKEOVER_ACTION \
+           --accept-flag $ACCEPT_FLAG --accept-stop $ACCEPT_STOP 2>>$R/arm_gates.err)
+      log "arm gates $arm: ${AG:-evaluation failed (see arm_gates.err)}"
+      case "${AG%% *}" in
+        stop) abort "arm gate $arm: ${AG#stop }";;
+        flag) echo "[$(date -Is)] $arm ${AG#flag }" >> $R/FLAGS;;
+      esac
+    done
+  fi
   if [ $EARLY_DONE = 0 ] && [ $((NOW - T0)) -ge $((EARLY_MIN*60)) ]; then
     EARLY_DONE=1
     $PY $HERE/readout.py --run-dir $R --name $NAME --gate early > $R/early_gate.json 2> $R/early_gate.txt \
@@ -342,6 +382,7 @@ stop_routers
 release_serve "harbor done"
 sleep 20; write_meta
 cleanup_sandboxes
-$PY $HERE/readout.py --run-dir $R --name $NAME --gate final --json $R/readout.json > /dev/null 2> $R/readout.txt
+$PY $HERE/readout.py --run-dir $R --name $NAME --gate final --json $R/readout.json \
+  ${TAKEOVER_MIN:+--takeover-min $TAKEOVER_MIN} ${TAKEOVER_MAX:+--takeover-max $TAKEOVER_MAX} > /dev/null 2> $R/readout.txt
 cat $R/readout.txt
 log "RUN_DONE $(tr '\n' ' ' < $R/run.meta)"

@@ -404,6 +404,10 @@ def relay_takeovers(rv, rows):
         (trig[e['takeover']['trigger']] if e['takeover'] else none).append((e, t))
     out = dict(episodes=len(eps), takeover_episodes=sum(len(v) for v in trig.values()), by_trigger={})
     out['takeover_rate'] = round(out['takeover_episodes'] / len(eps), 4) if eps else None
+    # the same rate without the episodes the run's deadline ended (router ending 'deadline'): a run cut by its node-hour
+    # cap has many of those, mostly before any takeover could fire (09-27 attempt 6a: 0.34 with them, 0.85 without)
+    unc = [e for e in eps if e['ending'] != 'deadline']
+    out['takeover_rate_uncensored'] = round(sum(1 for e in unc if e['takeover']) / len(unc), 4) if unc else None
     rec_all = []
     for name, items in sorted(trig.items()):
         turns = [e['takeover']['turn'] for e, _ in items]
@@ -668,6 +672,9 @@ def main():
     p.add_argument('--gate', choices=['early', 'final'], default='final')
     p.add_argument('--node-hours', type=float, help='node-hours spent (default: run.meta)')
     p.add_argument('--json', help='write the readout here too')
+    p.add_argument('--takeover-min', type=float, help="S3's floor for another student (default: 09-21's >= 0.25 on the "
+                   'raw rate); with --takeover-min/--takeover-max S3 judges the rate without deadline-censored episodes')
+    p.add_argument('--takeover-max', type=float, help="S3's ceiling (default none)")
     a = p.parse_args()
     name = a.name or os.path.basename(os.path.normpath(a.run_dir))
     arm_names = [arm for arm in ('relay', 'control', 'relay_keep', 'relay_repair', 'student_only') if os.path.isdir(os.path.join(a.run_dir, f'router_{arm}'))]
@@ -774,7 +781,11 @@ def main():
             scheck('S2 the student owns >= 50 % of executed turns in relay_repair', (rp['student_share_of_executed_turns'] or 0) >= 0.5,
                    rp['student_share_of_executed_turns'])
             # target 0.30; Luke 2026-09-25 17:40 PT: run 3's 0.28 is inside noise and counts as a pass -> floor 0.25
-            scheck('S3 sticky takeover rate >= 0.25 (target 0.30)', (tk.get('takeover_rate') or 0) >= 0.25, tk.get('takeover_rate'))
+            if a.takeover_min is None and a.takeover_max is None:
+                scheck('S3 sticky takeover rate >= 0.25 (target 0.30)', (tk.get('takeover_rate') or 0) >= 0.25, tk.get('takeover_rate'))
+            else:   # a band for another student (--takeover-min/--takeover-max), judged without deadline-censored episodes
+                lo, hi, r_ = a.takeover_min or 0.0, a.takeover_max or 1.0, tk.get('takeover_rate_uncensored')
+                scheck(f'S3 sticky takeover rate (uncensored) in [{lo}, {hi}]', r_ is not None and lo <= r_ <= hi, r_)
         else:
             scheck('S2 relay takeover rate >= 0.40', (tk.get('takeover_rate') or 0) >= 0.40, tk.get('takeover_rate'))
         scheck('S4 recovery P(pass | sticky takeover) >= 0.20', (tk.get('recovery') or 0) >= 0.20,
