@@ -20,7 +20,8 @@ set -uo pipefail
 module load GCC/14.3.0
 module load nvidia-compilers/25.9-CUDA-13
 C=/e/project1/transfernetx/lee27/code
-OTA=${SLURM_SUBMIT_DIR:-$C/ota-horizon-gates}
+OTA=${OTA:-$C/ota-horizon-gates}
+TK=${TOOLKIT:-$C/grugmoe-eagle3}   # github.com/lukedhlee/grugmoe-eagle3 @ 8b1558ba (tools/spec_decode is untracked in OTA)
 PY=$C/envs/snowball-v2/bin/python
 export PATH=$C/envs/snowball-v2/bin:$PATH
 export PYTHONPATH=$C/src/marin_vllm_eagle3
@@ -32,7 +33,7 @@ G=/e/data1/mmlaion/lee27/horizon_gates; mkdir -p $G/logs
 echo "node=$(hostname) job=$SLURM_JOB_ID model=$MODEL draft=$DRAFT ota=$(git -C $OTA rev-parse --short HEAD)"
 sha256sum $REPLAY $DRAFT/model.safetensors
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
-$PY $OTA/tools/spec_decode/scripts/benchmark.py --target "$MODEL" --draft "$DRAFT" --baseline-draft "$DRAFT" \
+$PY $TK/scripts/benchmark.py --target "$MODEL" --draft "$DRAFT" --baseline-draft "$DRAFT" \
     --replay $REPLAY --out $G/gate3_jupiter.$SLURM_JOB_ID --cache /e/fscratch/reformo/lee27/cache --python $PY \
     --max-model-len 32768 --seconds 120 --steady-after 30 --parity-turns 4 --repeats 1 > $G/logs/gate3_bench.$SLURM_JOB_ID.log 2>&1
 RC=$?
@@ -41,7 +42,7 @@ $PY -c "import json,sys; r=json.load(open(sys.argv[1])); [print('GATE3 arm=%s ac
 # benchmark arm's exact config, then gate2_score.py think (target P of each opening token + 64 seeded samples). ~5 min.
 if [ "${THINK:-1}" = 1 ]; then
   TLOG=$G/logs/gate3_think_server.$SLURM_JOB_ID.log
-  setsid $PY $OTA/tools/spec_decode/toolkit.py serve --python $PY --target "$MODEL" --cache /e/fscratch/reformo/lee27/cache --dp 4 \
+  setsid $PY $TK/toolkit.py serve --python $PY --target "$MODEL" --cache /e/fscratch/reformo/lee27/cache --dp 4 \
       --max-model-len 32768 --port 8000 --draft "$DRAFT" --k 3 --chat-template "$MODEL/chat_template.jinja" > $TLOG 2>&1 &
   TPID=$!
   trap 'kill -- -$TPID 2>/dev/null; pkill -u $USER -f vllm.entrypoints.openai.api_server 2>/dev/null' TERM EXIT
