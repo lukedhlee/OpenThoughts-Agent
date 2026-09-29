@@ -2,9 +2,9 @@
 
 **Training 09-21 on relay traces beats training it on Qwen-alone traces on all three agent benchmarks, most clearly on SWE-bench, and ties on held-out CalibForge.**
 
-- SWE-bench Verified: relay 31 % vs Qwen-alone 18 % vs 09-21 9 % (relay gains 13 tasks and loses 2 against Qwen-alone)
-- TB2.1 11 % vs 5 % and OpenThoughts-TBLite 18 % vs 12 %, the same direction; held-out CalibForge 10 % vs 9 %
-- Adding the Qwen-alone rows to the relay rows (twice the data) scores the same as relay alone (SWE-bench 34 %, TB2.1 11 %), so the gain comes from the relay rows
+- SWE-bench Verified: relay 30 % vs Qwen-alone 17 % vs 09-21 9 % (relay gains 13 tasks and loses 2 against Qwen-alone)
+- TB2.1 10 % vs 5 % and OpenThoughts-TBLite 17 % vs 12 %, the same direction; held-out CalibForge 10 % vs 9 %
+- Adding the Qwen-alone rows to the relay rows (twice the data) scores the same as relay alone (SWE-bench 32 %, TB2.1 10 %), so the gain comes from the relay rows
 - SFT fixed 09-21's reply format (the harness rejected 89 % of its turns, 15–20 % after SFT), and the models now run out of time because they write twice as many tokens
 
 **Outline**
@@ -23,13 +23,13 @@
 
 | | held-out CalibForge (300) | TB2.1 (88) | SWE-bench Verified (100) | OpenThoughts-TBLite (100) |
 |---|---|---|---|---|
-| 09-21, before SFT | 18 / 291 (6.2 %) | 5 / 85 (5.9 %) | 9 / 96 (9.4 %) | not run |
-| A, relay | **29 / 287 (10.1 %)** | **9 / 80 (11.3 %)** | **30 / 97 (30.9 %)** | **17 / 94 (18.1 %)** |
-| B, Qwen alone | 26 / 289 (9.0 %) | 4 / 85 (4.7 %) | 17 / 95 (17.9 %) | 12 / 97 (12.4 %) |
-| C, relay + autofix loss | 26 / 286 (9.1 %) | 8 / 86 (9.3 %) | not run | not run |
-| MIX, relay + Qwen-alone rows | not run | 9 / 79 (11.4 %) | 32 / 93 (34.4 %) | not run |
+| 09-21, before SFT | 18 / 300 (6.0 %) | 5 / 88 (5.7 %) | 9 / 100 (9.0 %) | not run |
+| A, relay | **29 / 300 (9.7 %)** | **9 / 88 (10.2 %)** | **30 / 100 (30.0 %)** | **17 / 100 (17.0 %)** |
+| B, Qwen alone | 26 / 300 (8.7 %) | 4 / 88 (4.5 %) | 17 / 100 (17.0 %) | 12 / 100 (12.0 %) |
+| C, relay + autofix loss | 26 / 300 (8.7 %) | 8 / 88 (9.1 %) | not run | not run |
+| MIX, relay + Qwen-alone rows | not run | 9 / 88 (10.2 %) | 32 / 100 (32.0 %) | not run |
 
-Solved / scored tasks, one try each. A task without a verdict (sandbox or tmux error) is left out of both numbers.
+Solved / all tasks, one try each. A task that ended without a verdict (sandbox or tmux error, 2–14 per run, see the table at the end) counts as a failure here, so no model gains from losing tasks to infrastructure. The comparisons below use only tasks both models scored.
 
 - **SWE-bench, same 93 tasks.** Relay gains 13 tasks and loses 2, +11.8 points (the range consistent with the data runs +4.3 to +19.4). Against 09-21 the relay arm gains 24 tasks and loses 4 (+21.3 points), the Qwen-alone arm 11 against 4 (+7.6).
 - **OpenThoughts-TBLite, same 92 tasks.** Relay gains 11 and loses 4, +7.6 points (+0.0 to +16.3).
@@ -95,4 +95,4 @@ One try per task; the last attempt counts (after any recovery pass). "Hit 30-min
 
 ---
 
-<sub>**Setup.** Base Grug Datakit 09-21 (the 09-21 import, router bias frozen). LR 3e-4, cosine to 10 % with 5 % warmup, 3 passes over the packed rows (147 steps for B, 246 for A and C, 393 for MIX), 16 × 65,536 on 4 Jupiter nodes, loss only on the rows' trained tokens (checked token for token against the cache the trainer reads). Evals at 65,536 input and 16,384 output tokens, Terminus-2, harbor 761fb516, one try per task, 16 concurrent per GH200 node for TB2.1, SWE-bench and TBLite (each served on its own node; per-task generation speed within 15 % across compared models) (the 09-24 Marin policy with only the token limits changed), 100 concurrent on one node for held-out CalibForge. TB2.1 is terminal-bench-2 @ 53ff2b8. Ranges are 95 % bootstrap intervals over the tasks both models scored; pass-rate bars show Wilson intervals. About 30 node-hours for training and the pre-registered evals.</sub>
+<sub>**Setup.** Base Grug Datakit 09-21 (the 09-21 import, router bias frozen). LR 3e-4, cosine to 10 % with 5 % warmup, 3 passes over the packed rows (147 steps for B, 246 for A and C, 393 for MIX), 16 × 65,536 on 4 Jupiter nodes, loss only on the rows' trained tokens (checked token for token against the cache the trainer reads). Evals at 65,536 input and 16,384 output tokens, Terminus-2, harbor 761fb516, one try per task, 16 concurrent per GH200 node for TB2.1, SWE-bench and TBLite (each served on its own node; per-task generation speed within 15 % across compared models) (the 09-24 Marin policy with only the token limits changed), 100 concurrent on one node for held-out CalibForge. TB2.1 is terminal-bench-2 @ 53ff2b8. Ranges are 95 % bootstrap intervals over the tasks both models scored; pass-rate bars count every task (no verdict = fail) and show Wilson intervals. About 30 node-hours for training and the pre-registered evals.</sub>
