@@ -102,7 +102,11 @@ def facts(trial, refeed=False, limit=65536):
                 rejected_replies_and_errors=sum(len(t['raw']) + len(t['obs']) for t in turns if t['rejected']),
                 refed_reasoning=sum(len(t['think']) for t in turns) if refeed else 0, instruction=len(instr))
     tot = sum(comp.values()) or 1
-    claims = [i + 1 for i, t in enumerate(turns) if t['task_complete'] and not t['rejected']]
+    # the relay router ends an episode at its time budget with an empty task_complete reply (SYNTHETIC_DONE: no analysis,
+    # plan, commands or reasoning, 0 tokens), twice for the confirmation; that is the harness timing out, not an agent claim
+    synth = [i + 1 for i, t in enumerate(turns) if t['task_complete'] and not t['rejected'] and not t['cmds']
+             and not t['analysis'].strip() and not t['plan'].strip() and not t['think'] and not t['completion_tokens']]
+    claims = [i + 1 for i, t in enumerate(turns) if t['task_complete'] and not t['rejected'] and i + 1 not in synth]
     # command-level: the last file-writing command before the first claim, and how many commands ran after it up to and
     # including the claim reply (a test in the same reply as the edit counts)
     first_claim = claims[0] if claims else None
@@ -115,6 +119,9 @@ def facts(trial, refeed=False, limit=65536):
     err_before = bool(first_claim and first_claim >= 2 and ERR_RE.search(_new_output(turns[first_claim - 2]['obs'])[-3000:]))
     return dict(trial=trial, task=res.get('task_name'), reward=reward, exception=exc, tests=tests(att),
                 n_replies=f['n_replies'], n_executed=f['n_executed'], claims=claims,
+                time_budget_end=dict(ended=bool(synth), router_replies=synth,
+                                     note='the run hit its time budget and the harness ended it with an empty done '
+                                          'reply the agent never wrote; not a claim') if synth else None,
                 A1_valid_rate=f['valid_rate'], A2_nothing_executed_token_share=round(a2, 3),
                 A3=dict(limit=limit, peak_prompt=peak, peak_share=round(peak / limit, 3),
                         overflow_death='ContextLength' in (exc or ''), first_reply_past_half=half,

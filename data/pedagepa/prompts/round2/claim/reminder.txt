@@ -1,0 +1,1 @@
+Reply with the JSON object only, first character `{`; findings go in analysis. Keep thinking short: settle questions by running commands, and bound long output. Set task_complete only once output shows the deliverable, run as the task runs it, meeting every requirement.

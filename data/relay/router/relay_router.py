@@ -470,9 +470,11 @@ class Router:
                     stats['reasoning_restored'] += 1
                 else:
                     stats['teacher_turns_without_reasoning'] += 1
-                if r:
+                if r and not self.a.teacher_drop_prior_reasoning:
                     m2['reasoning'] = r
                     m2['reasoning_content'] = r
+                elif r:
+                    stats['prior_reasoning_dropped'] = stats.get('prior_reasoning_dropped', 0) + 1
             elif owner == 'student' or (owner is None and ('<|start_think|>' in content or '<think>' in content)):
                 stats['student_turns'] += owner == 'student'
                 s = strip_think(content)
@@ -533,6 +535,10 @@ class Router:
         if who == 'teacher':
             b = {k: v for k, v in body.items() if k not in self.teacher_drop}
             b.update(self.teacher_extra)
+            if self.a.teacher_drop_prior_reasoning:
+                # Qwen3.8's template renders every earlier assistant turn's <think> unless preserve_thinking is false;
+                # with it false, earlier turns render as plain content (no empty think blocks), the current one thinks
+                b['chat_template_kwargs'] = dict(b.get('chat_template_kwargs') or {}, preserve_thinking=False)
             if self.a.teacher_max_tokens:
                 # the cap on one teacher reply (Luke 18:10 PT); harbor's chat path sends no max_tokens of its own
                 b['max_tokens'] = min(int(b.get('max_tokens') or self.a.teacher_max_tokens), self.a.teacher_max_tokens)
@@ -1327,6 +1333,9 @@ def parse_args(argv=None):
     p.add_argument('--verify-note', action='store_true',
                    help="append VERIFY_NOTE to the teacher's confirmation request (relay: the done_claim takeover's; "
                         "--mode teacher: the episode's first)")
+    p.add_argument('--teacher-drop-prior-reasoning', action='store_true',
+                   help="PedaGEPA prompt search: do not re-send the teacher's earlier reasoning (preserve_thinking=false "
+                        "in Qwen3.8's template); training rows still carry each turn's reasoning")
     p.add_argument('--verify-note-file', default=None,
                    help='with --verify-note: the note text from this file instead of VERIFY_NOTE / VERIFY_NOTE_OWN')
     p.add_argument('--teacher-system-file', default=None,

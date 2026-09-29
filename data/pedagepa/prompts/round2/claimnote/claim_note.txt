@@ -1,0 +1,1 @@
+Before answering, match each requirement of the task to output on screen that shows it met, with the deliverable run as the task runs it. If any requirement is unchecked, failed or still running, set task_complete to false and check or fix it now.

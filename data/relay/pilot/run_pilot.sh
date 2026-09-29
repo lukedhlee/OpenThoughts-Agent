@@ -9,7 +9,8 @@
 #   relay         sticky takeovers only, thinking stripped;  relay_keep  the same, thinking kept (--student-think keep)
 #   guided / clean  teacher from scratch with TEACHER_SYSTEM_FILE as a teacher-only system prompt, leak filter on (PedaGEPA)
 #   cand_<name>     prompt-search candidate: CAND_DIR/<name>/system.md (+ reminder.txt, + claim_note.txt = the teacher-only
-#                   note on its first confirmation request), leak filter on (PedaGEPA)
+#                   note on its first confirmation request; an empty drop_prior_reasoning file = earlier teacher
+#                   reasoning not re-sent), leak filter on (PedaGEPA)
 #   recovery      teacher with RECOVERY_SYSTEM_FILE + INJECT_PLAN (one simulated student mistake per episode), leak filter on
 #
 #   1. pre-flight (no GPU time spent yet): harbor clone at the pinned commit, task tree + router task file, Daytona key,
@@ -162,7 +163,8 @@ for arm in $ARMS; do
     cand_*) C=${CAND_DIR:?CAND_DIR for arm $arm}/${arm#cand_}; [ -f $C/system.md ] || abort "no $C/system.md"
       M=(--mode teacher --teacher-system-file $C/system.md --leak-check --leak-resamples ${LEAK_RESAMPLES:-2})
       [ -f $C/reminder.txt ] && M+=(--teacher-reminder-file $C/reminder.txt)
-      [ -f $C/claim_note.txt ] && M+=(--verify-note --verify-note-file $C/claim_note.txt);;
+      [ -f $C/claim_note.txt ] && M+=(--verify-note --verify-note-file $C/claim_note.txt)
+      [ -f $C/drop_prior_reasoning ] && M+=(--teacher-drop-prior-reasoning);;
     recovery) M=(--mode teacher --teacher-system-file ${RECOVERY_SYSTEM_FILE:?RECOVERY_SYSTEM_FILE} --inject-plan ${INJECT_PLAN:?INJECT_PLAN} --leak-check --leak-resamples ${LEAK_RESAMPLES:-2})
       [ -n "${TEACHER_REMINDER_FILE:-}" ] && M+=(--teacher-reminder-file $TEACHER_REMINDER_FILE);; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
     relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $PARSER

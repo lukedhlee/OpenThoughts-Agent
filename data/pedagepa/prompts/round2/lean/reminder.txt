@@ -1,0 +1,1 @@
+Reply with the JSON object only, first character `{`; findings go in analysis. Think a few short paragraphs, then act: code goes straight into keystrokes, and commands, not thought, compute and decode. Set task_complete only once output shows every requirement met.
