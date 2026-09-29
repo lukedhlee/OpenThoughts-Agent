@@ -13,3 +13,7 @@ export TEACHER_MODEL=${TEACHER_MODEL:-$(_snap Qwen--Qwen3.8-27B 1d4bf0f2)}
 export STUDENT_MODEL=${STUDENT_MODEL:-$(_snap laion--snowball-67b-a2b-sft-s3-nemotron-terminal-step1888)}   # Stage-3 base until the relay-SFT arm-A export lands
 export STUDENT_DRAFT=${STUDENT_DRAFT:-$(_snap laion--snowball-64k-eagle3-draft-r2egym)}
 export PER_GPU=${PER_GPU:-1} TEACHER_MAXLEN=${TEACHER_MAXLEN:-131072}   # the full runs' teacher: 4 x TP1 servers at 128k
+# Qwen3.8 is a VL model: vLLM's memory profile runs its vision tower once, and on sm_100 the ViT's FLASH_ATTN path is
+# FA4 (CuTe DSL), which dies in this venv (nvidia-cutlass-dsl libs-base and libs-cu13 4.5.3 overwrote each other's files:
+# _cutlass_ir .so from base, _gpu_ops_gen.py from cu13 -> GPUModuleOp TypeError). Text-only relay: SDPA for the ViT.
+: "${TEACHER_EXTRA_ARGS=--mm-encoder-attn-backend TORCH_SDPA}"; export TEACHER_EXTRA_ARGS

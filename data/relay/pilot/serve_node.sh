@@ -67,7 +67,7 @@ case $ROLE in
     QARGS=(--model "$MODEL" --served-model-name qwen38 --tensor-parallel-size 1
       --max-model-len ${TEACHER_MAXLEN:-65536} --gpu-memory-utilization 0.90 --max-num-seqs 96
       --enable-prefix-caching --enable-chunked-prefill --no-enable-log-requests
-      --speculative-config '{"method":"mtp","num_speculative_tokens":2}' --reasoning-parser qwen3)
+      --speculative-config '{"method":"mtp","num_speculative_tokens":2}' --reasoning-parser qwen3 ${TEACHER_EXTRA_ARGS:-})
     if [ "${PER_GPU:-0}" = 1 ]; then
       # one server per GPU (TP1, DP1, ports 8000-8003): the router balances episodes across all of them itself; a DP4
       # server spread its load unevenly over its engines (2026-09-26 diagnosis: busy engines at 85-95 % KV with 10-19
