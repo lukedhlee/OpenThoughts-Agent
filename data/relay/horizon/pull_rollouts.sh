@@ -10,7 +10,7 @@
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 PY=${PY:-/e/project1/transfernetx/lee27/code/envs/snowball-v2/bin/python}
-REPO=${REPO:-laion/relay-rollouts-horizon}; DEST=${DEST:-/e/data1/mmlaion/lee27/relay/horizon}
+REPO=${REPO:-lukeleeai/relay-rollouts-horizon}; DEST=${DEST:-/e/data1/mmlaion/lee27/relay/horizon}
 E=${E:-/e/fscratch/reformo/lee27/experiments/relay/pilot}; MAX_NEW_FILES=${MAX_NEW_FILES:-400000}
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 HF_HUB_DISABLE_XET=1 HF_HUB_DISABLE_PROGRESS_BARS=1
 mkdir -p $DEST

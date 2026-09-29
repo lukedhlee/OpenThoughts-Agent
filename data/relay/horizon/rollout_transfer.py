@@ -4,7 +4,7 @@
     push  --name N --run-dir E/runs/N --jobs-root JOBS_ROOT          Horizon login node
     pull  --dest /e/data1/mmlaion/lee27/relay/horizon [--name N] [--link-runs E/runs]   Jupiter login node
 
-Repo layout (default laion/relay-rollouts-horizon, created private): per run N
+Repo layout (default lukeleeai/relay-rollouts-horizon, created private; laion's private storage is full, 09-29): per run N
   N/run.tar.zst                         the run dir (router logs, driver.log, readout, run.meta, ...) without its jobs link
   N/<job dir>/meta.tar.zst              a harbor job dir's own files (config.json, job result.json, log)
   N/<job dir>/trials_0000.tar.zst ...   CHUNK trial dirs each, in name order
@@ -31,7 +31,7 @@ import sys
 import tempfile
 import time
 
-REPO = 'laion/relay-rollouts-horizon'
+REPO = 'lukeleeai/relay-rollouts-horizon'
 
 
 def sha256(path):
