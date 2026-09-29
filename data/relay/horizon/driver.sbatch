@@ -28,12 +28,13 @@ export PY=${PY:-$SB/envs/snowball/bin/python} HARBOR=${HARBOR:-$SB/envs/snowball
 export HARBOR_SRC=${HARBOR_SRC:-$SB/harbor-relay/src}
 export TREE=${TREE:-$S/relay/calibforge_tree}
 export KEYF=${KEYF:-$HOME/.config/otagent/daytona_eval.env}   # the eval org that owns the CalibForge snapshots
-export E=${E:-$S/experiments/relay/pilot}
+export E=${E:-${RELAY_EXP_DIR:-$S/experiments/relay/pilot}}
 export JOBS_ROOT=${JOBS_ROOT:-$S/experiments/relay/jobs}
-export STUDENT_TOKENIZER=${STUDENT_TOKENIZER:?STUDENT_TOKENIZER (the student model dir tokenizer.json)}
+export STUDENT_TOKENIZER=${STUDENT_TOKENIZER:-meta}   # meta: run_pilot.sh reads the served student from the endpoints .meta
 [ -f $TREE/TASKS.txt ] && export NTASKS=${NTASKS:-$(grep -c . $TREE/TASKS.txt)}
 export DRIVER_JOB=$SLURM_JOB_ID DRIVER_NODES=$SLURM_NNODES
 export LITELLM_LOCAL_MODEL_COST_MAP=True   # no GitHub fetch at import
+export RES_OPTIONS=${RES_OPTIONS:-timeout:1 attempts:2}   # an uncached outside lookup: 1 s instead of the dead first nameserver's 5 s
 LOGD=$E/logs/driver_$SLURM_JOB_ID; mkdir -p $LOGD
 log() { echo "[$(date -Is)] $*"; }
 log "relay driver job=$SLURM_JOB_ID node=$(hostname -s) serve_job=$SERVE_JOB run=$RUN_NAME mode=$RUN_MODE ota=$(git -C $OTA rev-parse --short=8 HEAD) tunnels=$TUNNEL_PORTS"

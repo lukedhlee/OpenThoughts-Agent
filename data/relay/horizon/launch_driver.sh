@@ -5,23 +5,24 @@
 # run dirs) with explicit settings: the full relay runs' settings (launch_relay.sh, 2026-09-26/27) as defaults, each
 # overridable from the environment, plus the finetuned-student gates (ARM_GATES). Nothing here judges whether to run.
 #
-#   source serve_env.sh                                      # the same student the serve job loads -> its tokenizer
-#   S=$(bash serve_submit.sh 8 4 06:00:00 relay_srv_<name>)  # 4 student + 4 teacher nodes (the serving side's script)
+#   S=$(STUDENT_MODEL=<arm A snapshot> bash serve_submit.sh 8 4 06:00:00 relay_srv_<name>)   # the serving side's script
 #   NODES=8 CAP_NODE_H=45 TREE=... TASK_LIST=... bash launch_driver.sh $S <name>
+# The router's student tokenizer comes from the serve job's endpoints .meta (STUDENT_TOKENIZER=meta), so it always matches
+# the student that job actually serves.
 #
 # Required: NODES (serve nodes) and CAP_NODE_H (node-hour ceiling for serve + driver nodes together).
 # Driver job time: CAP_NODE_H / (NODES + 1) h + the verify window + 1 h of queue slack for the serve job (DRIVER_TIME).
 set -uo pipefail
 SERVE_JOB=${1:?serve job id}; NAME=${2:?run name}; MODE=${3:-full}
 HERE=$(cd "$(dirname "$0")" && pwd); OTA=$(cd $HERE/../../.. && pwd)
-[ -f $HERE/serve_env.sh ] && source $HERE/serve_env.sh   # STUDENT_MODEL (and the rest of the serve side's paths)
+[ -f $HERE/serve_env.sh ] && source $HERE/serve_env.sh   # RELAY_EXP_DIR (the serve side's experiment dir)
 S=${SCRATCH_DIR:-/scratch/11584/$USER}
 export E=${E:-${RELAY_EXP_DIR:-$S/experiments/relay/pilot}}; LOGS=$E/logs; mkdir -p $LOGS $E/runs
 [ -e $E/runs/$NAME ] && { echo "$E/runs/$NAME exists; pick a new run name"; exit 1; }
 export SERVE_JOB RUN_NAME=$NAME RUN_MODE=$MODE OTA
 export TUNNEL_PORTS=${TUNNEL_PORTS:-18080,18081}
-export STUDENT_TOKENIZER=${STUDENT_TOKENIZER:-${STUDENT_MODEL:?STUDENT_MODEL or STUDENT_TOKENIZER}/tokenizer.json}
-[ -f $STUDENT_TOKENIZER ] || { echo "no tokenizer at $STUDENT_TOKENIZER"; exit 1; }
+export STUDENT_TOKENIZER=${STUDENT_TOKENIZER:-meta}   # meta: the served student's tokenizer.json, read from the serve job's .meta
+[ "$STUDENT_TOKENIZER" = meta ] || [ -f $STUDENT_TOKENIZER ] || { echo "no tokenizer at $STUDENT_TOKENIZER"; exit 1; }
 export TREE=${TREE:-$S/relay/calibforge_tree}
 # the full runs' relay settings (launch_relay.sh's run_pilot.sh line)
 export ARMS=${ARMS:-relay_repair} CLOCK=${CLOCK:-repair} CTX_BUDGET=${CTX_BUDGET:-32000} ROW_MAX=${ROW_MAX:-65536} ROW_RESERVE=${ROW_RESERVE:-8192}

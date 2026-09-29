@@ -30,7 +30,8 @@
 #   tmux new -d -s relay_<name> "bash run_pilot.sh <jobid> <name>"
 #
 # Other sites (TACC Horizon, 2026-09-29): every path is an env knob (PY HARBOR HARBOR_SRC TREE KEYF E JOBS_ROOT
-# STUDENT_TOKENIZER TASK_LIST), and the driver may run in its own compute-node job (data/relay/horizon/driver.sbatch):
+# STUDENT_TOKENIZER TASK_LIST; E also from the serve side's RELAY_EXP_DIR; STUDENT_TOKENIZER=meta = the tokenizer.json of
+# the student the serve job loaded, from its endpoints .meta), and the driver may run in its own compute-node job (data/relay/horizon/driver.sbatch):
 # DRIVER_JOB / DRIVER_NODES make the node-hour cap, the deadline and run.meta count that job too (unset = Jupiter's
 # accounting, unchanged). With HTTPS_PROXY set, the model hosts are added to NO_PROXY once the endpoints are known.
 # ARM_GATES=1 runs data/relay/horizon/arm_gates.py every ARM_GATES_EVERY s (the finetuned-student gates): the takeover
@@ -77,7 +78,7 @@ TARGET_FAIL=${TARGET_FAIL:-0}; TARGET_BASE=${TARGET_BASE:-0}   # TARGET_FAIL>0: 
 RUN_KIND=${RUN_KIND:-pilot}
 STUDENT_TOKENIZER=${STUDENT_TOKENIZER:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921/tokenizer.json}   # the cap on older teacher reasoning   # pilot: TASKS.txt must be disjoint from the held-out split; heldout: it must BE the split
 KEYF=${KEYF:-/e/fscratch/reformo/lee27/keys/daytona_eval.env}
-E=${E:-/e/fscratch/reformo/lee27/experiments/relay/pilot}; EP=$E/endpoints
+E=${E:-${RELAY_EXP_DIR:-/e/fscratch/reformo/lee27/experiments/relay/pilot}}; EP=$E/endpoints
 R=$E/runs/$NAME
 JOBS_ROOT=${JOBS_ROOT:-/e/data1/mmlaion/lee27/experiments/relay_pilot_jobs}   # many small files -> mmlaion
 ARMS=${ARMS:-control relay_repair}
@@ -156,6 +157,11 @@ while [ ! -f $EP/$JOB.student ] || [ ! -f $EP/$JOB.teacher ]; do   # .teacher is
   sleep 30
 done
 SURL=$(cat $EP/$JOB.student); TURL=$(cat $EP/$JOB.teacher)
+if [ "$STUDENT_TOKENIZER" = meta ]; then   # the served student's own tokenizer (serve_relay.sbatch writes student_model=)
+  STUDENT_TOKENIZER=$(sed -n 's/^student_model=//p' $EP/$JOB.meta 2>/dev/null | head -1)/tokenizer.json
+  [ -f "$STUDENT_TOKENIZER" ] || abort "STUDENT_TOKENIZER=meta: no tokenizer at '$STUDENT_TOKENIZER' (endpoints .meta)"
+  log "student tokenizer from the serve job's meta: $STUDENT_TOKENIZER"
+fi
 JSTART=$(date -d "$(squeue -h -j $JOB -o %S)" +%s)
 # the driver job's node-hours (0 without DRIVER_JOB): what it ran before the serve job started (DPRE), and the verify tail
 # it keeps running after the servers are released (DTAIL = VERIFY_WAIT) are reserved, the rest is shared per hour

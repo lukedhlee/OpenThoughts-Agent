@@ -13,6 +13,7 @@ PY=${PY:-$HOME/snowball/envs/snowball/bin/python}
 E=${E:-${RELAY_EXP_DIR:-$S/experiments/relay/pilot}}; JOBS_ROOT=${JOBS_ROOT:-$S/experiments/relay/jobs}
 REPO=${REPO:-laion/relay-rollouts-horizon}; CHUNK=${CHUNK:-500}; STAGE=${STAGE:-$S/relay/push_stage}
 export OMP_NUM_THREADS=1 HF_XET_HIGH_PERFORMANCE=0 HF_HUB_DISABLE_PROGRESS_BARS=1
+export RES_OPTIONS=${RES_OPTIONS:-timeout:1 attempts:2}   # Horizon's first nameserver never answers outside names (5 s per lookup)
 for NAME in "$@"; do
   echo "[$(date -Is)] push $NAME -> $REPO"
   nice -n 19 ionice -c 3 $PY $HERE/rollout_transfer.py push --repo $REPO --name $NAME --run-dir $E/runs/$NAME \
