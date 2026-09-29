@@ -84,8 +84,25 @@ def episode_turns(traj, records):
     return turns
 
 
-def render_episode(traj, records, tok, template, bos, autofix_loss='content', cap=rcap.CAP_TOKENS, think_limit=THINK_LIMIT):
+def json_only(text):
+    """The Terminus-2 JSON object inside a teacher reply, without prose before or after it (PedaGEPA: the data
+    guarantee for P0, so rows never teach a sentence before the JSON). Unchanged if no object parses."""
+    dec = json.JSONDecoder()
+    for m in re.finditer(r'\{', text or ''):
+        try:
+            obj, end = dec.raw_decode(text[m.start():])
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and ('analysis' in obj or 'commands' in obj):
+            return text[m.start():m.start() + end]
+    return text
+
+
+def render_episode(traj, records, tok, template, bos, autofix_loss='content', cap=rcap.CAP_TOKENS, think_limit=THINK_LIMIT,
+                   strip_outside_json=False):
     turns = episode_turns(traj, records)
+    if strip_outside_json:
+        turns = [(r, json_only(t) if (r == 'assistant' and m.get('owner') == 'teacher') else t, m) for r, t, m in turns]
     teacher = [i for i, (role, _, m) in enumerate(turns) if role == 'assistant' and m['owner'] == 'teacher']
     final_teacher = teacher[-1] if teacher else None
     messages, info = [], []
@@ -184,6 +201,7 @@ def main():
     ap.add_argument('--name')
     ap.add_argument('--out')
     ap.add_argument('--cap', type=int, default=rcap.CAP_TOKENS, help='reasoning cap in tokens (a huge value = no cap)')
+    ap.add_argument('--strip-outside-json', action='store_true', help='PedaGEPA: drop prose around the JSON in teacher turns')
     a = ap.parse_args()
     name = a.name or os.path.basename(os.path.normpath(a.run_dir))
     tok = rcap.load_tokenizer(os.path.join(a.tokenizer_dir, 'tokenizer.json'))
@@ -206,7 +224,7 @@ def main():
             stats['no_router_records'] += 1
             continue
         try:
-            row = render_episode(traj, recs[sid], tok, tpl, bos, cap=a.cap)
+            row = render_episode(traj, recs[sid], tok, tpl, bos, cap=a.cap, strip_outside_json=a.strip_outside_json)
             c = check_row(row, tok)
         except (ValueError, AssertionError, StopIteration) as e:
             stats['error: ' + str(e)[:60]] += 1

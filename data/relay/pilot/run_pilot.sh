@@ -155,8 +155,10 @@ for arm in $ARMS; do
   [ "$MAX_INPUT" != 65536 ] && TARGS+=(--report-max-model-len $MAX_INPUT)
   SARGS=(); [ -n "$SURL" ] && SARGS=(--student-url $SURL --student-model snowball)   # empty on a teacher-only serve
   case $arm in control) M=(--mode teacher);;
-    guided|clean) M=(--mode teacher --teacher-system-file ${TEACHER_SYSTEM_FILE:?TEACHER_SYSTEM_FILE for arm $arm} --leak-check --leak-resamples ${LEAK_RESAMPLES:-2});;
-    recovery) M=(--mode teacher --teacher-system-file ${RECOVERY_SYSTEM_FILE:?RECOVERY_SYSTEM_FILE} --inject-plan ${INJECT_PLAN:?INJECT_PLAN} --leak-check --leak-resamples ${LEAK_RESAMPLES:-2});; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
+    guided|clean) M=(--mode teacher --teacher-system-file ${TEACHER_SYSTEM_FILE:?TEACHER_SYSTEM_FILE for arm $arm} --leak-check --leak-resamples ${LEAK_RESAMPLES:-2})
+      [ -n "${TEACHER_REMINDER_FILE:-}" ] && M+=(--teacher-reminder-file $TEACHER_REMINDER_FILE);;
+    recovery) M=(--mode teacher --teacher-system-file ${RECOVERY_SYSTEM_FILE:?RECOVERY_SYSTEM_FILE} --inject-plan ${INJECT_PLAN:?INJECT_PLAN} --leak-check --leak-resamples ${LEAK_RESAMPLES:-2})
+      [ -n "${TEACHER_REMINDER_FILE:-}" ] && M+=(--teacher-reminder-file $TEACHER_REMINDER_FILE);; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
     relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $PARSER
                   --autofix --student-tokenizer $STUDENT_TOKENIZER);;
     *) abort "unknown arm $arm";; esac

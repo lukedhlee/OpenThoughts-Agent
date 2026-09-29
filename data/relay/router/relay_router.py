@@ -288,6 +288,7 @@ class Router:
         self.tok = rcap.load_tokenizer(a.student_tokenizer) if a.student_tokenizer else None
         self.note_text = VERIFY_NOTE if a.mode == 'relay' else VERIFY_NOTE_OWN
         self.guidance = open(a.teacher_system_file).read().strip() if a.teacher_system_file else None
+        self.reminder = open(a.teacher_reminder_file).read().strip() if a.teacher_reminder_file else None
         self.inject_plan = json.load(open(a.inject_plan)) if a.inject_plan else None
         self.parser = self.parser_path = self.parser_sha = None
         if a.repair_on_parse_error or a.teacher_format_guard:
@@ -1041,12 +1042,19 @@ class Router:
                 msgs = self.with_guidance(msgs)
                 rec['teacher_system'] = True
                 self.counts['teacher_system'] += 1
+            inj = None
             if self.inject_plan and main and rec.get('request_kind') in ('main', 'initial') and not rec.get('repair'):
                 inj = self.maybe_inject(ep, messages, rec)
                 if inj:
                     last = msgs[-1]
                     msgs = msgs[:-1] + [dict(last, content=text_of(last.get('content')) + '\n\n' + inj['text'])]
                     rec['injected'] = inj['name']
+            if self.reminder and main and not inj and msgs and msgs[-1].get('role') == 'user':
+                # a terse checklist at the end of the teacher's view of every request (never on an injected turn,
+                # where it would contradict the simulated mistake); harbor's history never carries it
+                last = msgs[-1]
+                msgs = msgs[:-1] + [dict(last, content=text_of(last.get('content')) + '\n\n' + self.reminder)]
+                rec['teacher_reminder'] = True
         else:
             msgs, stats = self.for_student(ep, messages)
             rec['student_view'] = stats
@@ -1319,6 +1327,8 @@ def parse_args(argv=None):
                         "--mode teacher: the episode's first)")
     p.add_argument('--teacher-system-file', default=None,
                    help='PedaGEPA: text sent as the system message of every teacher request (never in harbor history)')
+    p.add_argument('--teacher-reminder-file', default=None,
+                   help='PedaGEPA: short text appended to the last user message of every teacher request (teacher view only)')
     p.add_argument('--inject-plan', default=None,
                    help='PedaGEPA: JSON {seed, clean_frac, modes:[{name, weight, trigger:{type, ...}, text}]}; one '
                         'mode per episode, appended to the teacher view of the one agent request its trigger fires on')

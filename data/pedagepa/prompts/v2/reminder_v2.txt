@@ -1,0 +1,1 @@
+Reply with the JSON object only, first character `{`; findings go in analysis. Keep thinking short: settle questions by running commands, and bound long output. Before task_complete, run the deliverable exactly as the task states and compare against something independent.
