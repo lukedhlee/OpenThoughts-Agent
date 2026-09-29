@@ -269,14 +269,15 @@ def record_compact(con, t, r, judgment):
     L = [f"task: {t['task']}   model: {r['model_id']}   passed: {'yes' if (t['reward'] or 0) > 0 else 'no'}",
          f"from: {r['run_id']} ({r['benchmark']}) · {r['harness']} @ {(r['harness_commit'] or '').split('@')[-1].strip()} · "
          f"trial {os.path.basename(t['trial_dir'])}",
-         'policy (0 = absent, 1 = partial, 2 = present, NA = no chance to show it, LD = loop died first)']
+         'policy (0 = absent, 1 = partial, 2 = present, NA = no chance to show it, LD = loop died first;',
+         '        T6 = the agent\'s 6th reply, the turn the evidence points at)']
     J = {j['item']: j for j in con.execute('SELECT * FROM judgments WHERE trial_key=? AND judgment=?', (t['trial_key'], judgment))}
     for i in ITEMS:
         if i not in J:
             continue
         j = J[i]; rp = json.loads(j['replies'] or 'null') or []
         sc = str(j['score']).replace('.0', '')
-        where = (f"T{rp[0]}" + (f"-T{rp[-1]}" if len(rp) > 1 else '') + ': ') if rp else ''
+        where = (', '.join(f'T{x}' for x in rp[:4]) + (', …' if len(rp) > 4 else '') + ': ') if rp else ''
         note = _short(j['note'], 78)
         L.append(f"  {NAMES.get(i, i):20} {sc:3}  " + (f"({note})" if sc in ('NA', 'LD') else where + note))
     L += [f"  {'valid action (auto)':20} {f.get('A1_valid_rate') or 0:.2f}",
@@ -318,7 +319,7 @@ def record(db, q, judgment=None, compact=False):
          '**Hard facts (from the logs)**', '',
          f"- reward {t['reward']}; exception {t['exception'] or 'none'}; grader ran {tests.get('grader_ran')}; tests passed "
          f"{len(tests.get('passed') or [])}, failed {len(tests.get('failed') or [])}",
-         f"- replies {f.get('n_replies')}, executed {f.get('n_executed')}; done claims at {f.get('claims')}; last file write in reply "
+         f"- turns {f.get('n_replies')}, of which executed {f.get('n_executed')}; claimed done at turns {f.get('claims')}; last file write at turn "
          f"{f.get('last_edit_reply')}; commands between it and the claim {f.get('commands_between_last_edit_and_first_claim', f.get('executed_replies_between_last_edit_and_first_claim'))}",
          f"- A1 replies accepted {pct(f.get('A1_valid_rate'))}; A2 tokens in replies that executed nothing {pct(f.get('A2_nothing_executed_token_share'))}",
          f"- A3 context: peak {a3.get('peak_prompt')} of {a3.get('limit')} ({pct(a3.get('peak_share'))}), overflow {a3.get('overflow_death')}; "
@@ -327,13 +328,15 @@ def record(db, q, judgment=None, compact=False):
                     (t['trial_key'],) + ((judgment,) if judgment else ())).fetchall()
     for jn in sorted({j['judgment'] for j in J}):
         rows = {j['item']: j for j in J if j['judgment'] == jn}
-        L += [f"**Checklist, judge {rows[next(iter(rows))]['judge']} ({jn})**", '', '| item | score | replies | evidence |', '|---|---|---|---|']
+        j0 = rows[next(iter(rows))]
+        L += [f"**Policy scores** (judged by {j0['judge'].capitalize()}, rubric {j0['rubric']}; T6 = the agent's 6th reply, "
+              "the turn the evidence points at)", '', '| behaviour | score | turns | evidence |', '|---|---|---|---|']
         for i in ITEMS:
             if i in rows:
                 j = rows[i]
-                L.append(f"| {i} | {j['score']} | {', '.join(str(x) for x in (json.loads(j['replies'] or 'null') or []))} | {(j['note'] or '').replace('|', '/')} |")
+                L.append(f"| {NAMES.get(i, i)} ({i}) | {j['score']} | {', '.join('T' + str(x) for x in (json.loads(j['replies'] or 'null') or []))} | {(j['note'] or '').replace('|', '/')} |")
         K = con.execute('SELECT * FROM knowledge WHERE trial_key=? AND judgment=?', (t['trial_key'], jn)).fetchall()
-        L += ['', '**Missing facts**', ''] + ([f"- {k['fact']} ({k['kind']}; reply {k['reply']}; blocked {k['blocked']}; confirmed by {k['confirmed_by']})" for k in K] or ['- none listed'])
+        L += ['', '**Missing facts**', ''] + ([f"- {k['fact']} ({KIND.get((k['kind'] or '')[:2], k['kind'])}; turn T{(json.loads(k['reply']) if k['reply'] else '?')}; blocked the task: {k['blocked']}; confirmed by {k['confirmed_by']})" for k in K] or ['- none listed'])
         L.append('')
     return '\n'.join(L)
 
