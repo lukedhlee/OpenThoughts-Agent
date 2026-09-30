@@ -16,7 +16,8 @@
 # The pack count must equal Jupiter's (A 82, B 49 steps per pass = its 246 / 147 steps), or the arm stops before
 # training: a different count means different rows or a different packer.
 #
-#   ARM=relay|qwen bash relay_sft_arm.sh       (login node, inside tmux; it only submits and polls)
+#   ARM=relay|qwen [EPOCHS=3] bash relay_sft_arm.sh       (login node, inside tmux; it only submits and polls)
+#   ARM=<new> ROWS=<jsonl> DATASET_REVISION=<stage pin> bash relay_sft_arm.sh   (stage relay_<new> must exist)
 #
 # Steps, each skipped when its artifact exists: rows (1 node, ~5 min) -> prep (cache, 1 node, ~5 min) -> run (4 nodes;
 # A ~1.1 h, B ~0.7 h) -> 3 exports (4 CPU nodes each, side by side, ~10 min) -> W&B sync + a per-step loss TSV.
@@ -29,7 +30,8 @@ case $ARM in
          EXPECT=${EXPECT_EPOCH_STEPS:-82};;
   qwen)  ROWS=${ROWS:-/scratch/11584/$USER/relay/jupiter_0928/relay_full_baseline6m_20260926/final_v2_rendered_think16k_clean.jsonl}
          EXPECT=${EXPECT_EPOCH_STEPS:-49};;
-  *) echo "ARM must be relay or qwen" >&2; exit 1;;
+  *) : "${ROWS:?ARM=$ARM needs ROWS=<rendered jsonl> and a marin stage relay_$ARM}"   # a new arm (e.g. the 09-30 experiments)
+     EXPECT=${EXPECT_EPOCH_STEPS:-any};;
 esac
 STAGE=relay_$ARM
 OTA=$(cd "$(dirname "$0")/../../../.." && pwd)
@@ -42,7 +44,7 @@ INIT=${SNOWBALL_INIT:-$S/experiments/snowball-base-inits/init-dk0921-step0}
 WANDB=${WANDB_CLI:-$HOME/snowball/envs/snowball/bin/wandb}
 KEYS=${KEYS:-$HOME/.config/otagent/secrets.env}
 WANDB_ENTITY_ARM=lukedhlee-marin; WANDB_PROJECT_ARM=${WANDB_PROJECT_ARM:-horizon-relay-sft}
-LR=3e-4; EPOCHS=3
+LR=3e-4; EPOCHS=${EPOCHS:-3}   # passes; EPOCHS=5 on arm B = arm A's step count (245 vs 246)
 D=$S/data/relay_v2/$ARM
 EXP=$S/experiments/snowball-relay-sft
 CACHE=$EXP/cache-$STAGE-v1
@@ -60,7 +62,7 @@ wait_job() {  # $1 job, $2 log, $3 marker regex
   [ "$st" = COMPLETED ] && grep -qE "$3" "$2"
 }
 export SNOWBALL_SCRATCH=$S MARIN_ROOT=$MARIN MARIN_PYTHON=$PYM SNOWBALL_STAGE=$STAGE SNOWBALL_TOKENIZER=$BASE
-export SNOWBALL_DATASET_ID=private/relay-calibforge-sft-$ARM SNOWBALL_DATASET_REVISION=final_v2   # = the stage's pins
+export SNOWBALL_DATASET_ID=private/relay-calibforge-sft-$ARM SNOWBALL_DATASET_REVISION=${DATASET_REVISION:-final_v2}   # = the stage's pins
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 # layout: 16 x 65,536 on 4 nodes, set before prep as Jupiter's launcher does: the prerendered format's row limit is the
 # packing length SNOWBALL_SEQ_LEN (default 32,768), so a prep without it refuses every row over 32,768 tokens
