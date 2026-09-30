@@ -76,7 +76,7 @@ say "ARM_START marin=$(git -C "$MARIN" rev-parse --short HEAD) ota=$(git -C "$OT
 if [ ! -f "$D/pack_epoch_steps.json" ]; then
   [ -f "$ROWS" ] || die "no rows at $ROWS"
   mkdir -p "$D"; rm -f "$D/parquet.list"
-  jr=$(sbatch -A CCR24067 -p debug -N 1 --ntasks-per-node=1 --cpus-per-task=144 --gres=gpu:4 -t 00:40:00 -J "relay-rows-$ARM" -o "$LOGD/rows.%j.log" <<EOF 2>&1 | jobid
+  jr=$(sbatch -A CCR24067 -p debug -N 1 --ntasks-per-node=1 --cpus-per-task=144 --gres=gpu:4 -t ${ROWS_TIME:-00:40:00} -J "relay-rows-$ARM" -o "$LOGD/rows.%j.log" <<EOF 2>&1 | jobid
 #!/bin/bash
 set -euo pipefail
 export OMP_NUM_THREADS=1 JAX_PLATFORMS=cpu
