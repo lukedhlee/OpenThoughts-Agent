@@ -473,5 +473,11 @@ now** (early operations). Confirmed 09-29: the balance still read 1,000 SU after
   `tunnel.sh`); 3.6 s/step vs Jupiter's 6.4. Compute nodes name their IPoIB ports `ibs2`/`ibP2p1s0`/`ibP16s4`/`ibP18p1s0`
   (the login node's is `ibp1s0`), so multi-node jobs set `NCCL_SOCKET_IFNAME=ib`. Finished jobs sit in COMPLETING for
   5-10 min (epilog), so chains that poll `squeue` wait that long per step. RL has no Horizon launcher yet.
+- **Many eval runs vs the 20-running-job cap (09-30):** the cap counts jobs, not nodes, and every session of the user
+  shares it. A serve job plus a separate harbor-driver job per run leaves drivers PENDING behind idle serves. Run the
+  driver as a step inside its serve job (`srun -p debug -A CCR24067 -t <left> --jobid=<serve> --overlap -w <node>`;
+  TACC's srun filter wants `-p`, `-A` and `-t` even for a step), and put several runs in one multi-node serve job with one
+  server per node: `data/r2egym/horizon/sft/eval_sft.sh` (`GROUPED=1`). The Grug trainer's tqdm log lines stop updating
+  well before the last step; `GUARDED_RUN_EXIT rc=0` and the step-N checkpoint are the completion signals.
 - **Daytona org load (09-29 13:36 PT):** the eval org held 780 sandboxes before our runs. The deal allows ~1,000
   concurrent, so check the count before stacking a 128-seat relay run on top of other users' runs.
