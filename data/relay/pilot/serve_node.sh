@@ -55,15 +55,16 @@ case $ROLE in
     MODEL=${STUDENT_MODEL:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921}
     DRAFT=${STUDENT_DRAFT:-/e/data1/mmlaion/lee27/eagle3/probe_adapt_20260911/checkpoints/3}
     [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
-    [ -f "$DRAFT/model.safetensors" ] || { echo "no draft at $DRAFT"; exit 1; }
+    SPEC=(--speculative-config "{\"method\":\"eagle3\",\"model\":\"$DRAFT\",\"num_speculative_tokens\":3}")
+    if [ "$DRAFT" = none ]; then SPEC=()   # STUDENT_DRAFT=none: no speculative decoding (a control for the draft path)
+    else [ -f "$DRAFT/model.safetensors" ] || { echo "no draft at $DRAFT"; exit 1; }; fi
     CHAT=(); [ -f "$MODEL/chat_template.jinja" ] && CHAT=(--chat-template "$MODEL/chat_template.jinja")
     GEN='{"temperature":1.0,"top_p":1.0,"top_k":-1}'
     serve $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name snowball --port 8000 \
       --tensor-parallel-size 1 --data-parallel-size 4 --enable-expert-parallel \
       --max-model-len 65536 --hf-overrides '{"max_position_embeddings": 65536, "max_seq_len": 65536}' \
       --max-num-seqs 32 --gpu-memory-utilization 0.90 \
-      --speculative-config "{\"method\":\"eagle3\",\"model\":\"$DRAFT\",\"num_speculative_tokens\":3}" \
-      --override-generation-config "$GEN" "${CHAT[@]}";;
+      "${SPEC[@]}" --override-generation-config "$GEN" "${CHAT[@]}";;
   teacher)
     export PYTHONPATH=$PYTHONPATH:${RELAY_EXTRA:-$C/envs/relay-extra}   # torchvision for vLLM's qwen3_5 import (qwen_bench.sbatch)
     MODEL=${TEACHER_MODEL:-/e/data1/mmlaion/lee27/models/Qwen3.8-27B}
