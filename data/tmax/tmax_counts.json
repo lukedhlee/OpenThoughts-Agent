@@ -1,0 +1,107 @@
+{
+ "steps": {
+  "lenient": [
+   [
+    "TMax, all tasks",
+    14601
+   ],
+   [
+    "minus the audit's structural defects (724)",
+    13877
+   ],
+   [
+    "minus its answer leaks (1592)",
+    12285
+   ],
+   [
+    "minus tasks Qwen3.5-9B solved on every try (>= 2 tries; 4155 here)",
+    8130
+   ],
+   [
+    "minus TB-Hard copies (62 of the 100 still here)",
+    8068
+   ],
+   [
+    "minus instruction overlap with tb21/calibforge (0)",
+    8068
+   ],
+   [
+    "minus tasks the router could not tell apart (0)",
+    8068
+   ]
+  ],
+  "strict": [
+   [
+    "TMax, all tasks",
+    14601
+   ],
+   [
+    "minus the audit's structural defects (724)",
+    13877
+   ],
+   [
+    "minus its answer leaks (1592)",
+    12285
+   ],
+   [
+    "minus weak verifiers that do not check the answer (keep_policy_b)",
+    5082
+   ],
+   [
+    "minus tasks Qwen3.5-9B solved on every try (>= 2 tries; 1946 here)",
+    3136
+   ],
+   [
+    "minus TB-Hard copies (17 of the 100 still here)",
+    3119
+   ],
+   [
+    "minus instruction overlap with tb21/calibforge (0)",
+    3119
+   ],
+   [
+    "minus tasks the router could not tell apart (0)",
+    3119
+   ]
+  ]
+ },
+ "tbhard": {
+  "tbhard_tasks": 100,
+  "matched_exact_instruction": 100,
+  "tmax_ids_excluded": 100,
+  "tbhard_labels": {
+   "VERIFIER-TOO-WEAK": 65,
+   "ANSWER-LEAK": 16,
+   "INSTR-VERIFIER-MISMATCH": 11,
+   "INSTR-ENV-MISMATCH": 3,
+   "CLEAN": 5
+  },
+  "tbhard_qwen_solved_every_try": 8
+ },
+ "ref_overlap": {
+  "tb21": 0,
+  "calibforge": 0
+ },
+ "fixture_siblings_of_tbhard_kept": {
+  "lenient": 0,
+  "strict": 0
+ },
+ "tests_ext_hosts_kept": {
+  "lenient": 64,
+  "strict": 25
+ },
+ "source_kept": {
+  "lenient": {
+   "legacy": 7994,
+   "v2": 74
+  },
+  "strict": {
+   "legacy": 3076,
+   "v2": 43
+  }
+ },
+ "secondary_answer_leak_kept": {
+  "lenient": 1111,
+  "strict": 216
+ }
+}

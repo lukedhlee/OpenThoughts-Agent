@@ -23,10 +23,13 @@
 #SBATCH --output=/e/fscratch/reformo/lee27/experiments/relay/pilot/logs/%x_%j.out
 #SBATCH --exclude=jpbo-031-[01-48],jpbo-011-[01-48],jpbo-038-38,jpbo-004-46,jpbo-065-17,jpbo-074-22,jpbo-074-40,jpbo-048-41,jpbo-091-05,jpbo-044-0[1-5]
 set -uo pipefail
-C=/e/project1/transfernetx/lee27/code
+# Site knobs: the defaults are Jupiter's. On Horizon, data/relay/horizon/serve_submit.sh sources serve_env.sh (paths,
+# NODE_SUFFIX="") and overrides the #SBATCH lines on the command line (-A -p -o --exclude= -J -N -t).
+C=${SERVE_CODE:-/e/project1/transfernetx/lee27/code}
 HERE=${RELAY_PILOT_DIR:-$C/relay/pilot}
-PY=$C/envs/snowball-v2/bin/python
-E=/e/fscratch/reformo/lee27/experiments/relay/pilot; EP=$E/endpoints; LOGS=$E/logs; mkdir -p $EP $LOGS
+PY=${SERVE_VENV:-$C/envs/snowball-v2}/bin/python
+E=${RELAY_EXP_DIR:-/e/fscratch/reformo/lee27/experiments/relay/pilot}; EP=$E/endpoints; LOGS=$E/logs; mkdir -p $EP $LOGS
+SFX=${NODE_SUFFIX-.jupiter.internal}   # what the endpoint URLs append to the node name
 UP_TIMEOUT=${UP_TIMEOUT:-1800}
 mapfile -t NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 N_STUDENT=${N_STUDENT:-1}   # the first N_STUDENT nodes serve the student, the rest the teacher (full run: 2 + 4, or 0 + 4)
@@ -35,14 +38,14 @@ echo "relay serve job=$SLURM_JOB_ID students=${SNS[*]} teachers=${TNS[*]} ($(dat
 SPIDS=(); SURLS=()
 for k in "${!SNS[@]}"; do
   srun --nodes=1 --ntasks=1 --overlap --cpu-bind=none --gres=gpu:4 --cpus-per-task=72 -w "${SNS[$k]}" bash $HERE/serve_node.sh student > $LOGS/serve_student${k}_$SLURM_JOB_ID.log 2>&1 &
-  SPIDS+=($!); SURLS+=("http://${SNS[$k]}.jupiter.internal:8000/v1")
+  SPIDS+=($!); SURLS+=("http://${SNS[$k]}$SFX:8000/v1")
 done
 TPIDS=(); TURLS=()
 for k in "${!TNS[@]}"; do
   srun --nodes=1 --ntasks=1 --overlap --cpu-bind=none --gres=gpu:4 --cpus-per-task=72 -w "${TNS[$k]}" bash $HERE/serve_node.sh teacher > $LOGS/serve_teacher${k}_$SLURM_JOB_ID.log 2>&1 &
   TPIDS+=($!)
-  if [ "${PER_GPU:-0}" = 1 ]; then for g in 0 1 2 3; do TURLS+=("http://${TNS[$k]}.jupiter.internal:$((8000 + g))/v1"); done
-  else TURLS+=("http://${TNS[$k]}.jupiter.internal:8000/v1"); fi
+  if [ "${PER_GPU:-0}" = 1 ]; then for g in 0 1 2 3; do TURLS+=("http://${TNS[$k]}$SFX:$((8000 + g))/v1"); done
+  else TURLS+=("http://${TNS[$k]}$SFX:8000/v1"); fi
 done
 die() { echo "DEAD: $* ($(date -Is))"; echo "$*" > $EP/$SLURM_JOB_ID.DEAD; rm -f $EP/$SLURM_JOB_ID.student $EP/$SLURM_JOB_ID.teacher
         kill "${SPIDS[@]}" "${TPIDS[@]}" 2>/dev/null; scancel $SLURM_JOB_ID; exit 1; }

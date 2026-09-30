@@ -1,15 +1,26 @@
 #!/usr/bin/env python3
 """Anonymous Docker Hub registry client for the digest-pinned CalibForge images (stdlib only).
 
-Docker Hub counts a *manifest* GET as a pull (anonymous limit per IP); blob GETs are not counted. This module caches
-every manifest and config it reads, so each image's manifest is fetched once per machine.
+Docker Hub counts a *manifest* GET as a pull (anonymous: 100 per hour per IPv4 address or IPv6 /64, 2026-09); blob
+GETs are not counted. This module caches every manifest and config it reads, so each image's manifest is fetched once
+per machine. (On 2026-09-29, ~2,600 by-digest manifest GETs from one Mac never moved `ratelimit-remaining` and got no
+429, but the documented limit may still apply: spread large fetches over machines or use --registry.)
 
     python registry.py fetch --tasks <parquet> [--recommended] --cache <dir>   # manifests + configs for the pool
+    python registry.py fetch --tasks <parquet> --only <task list> --registry https://mirror.gcr.io --cache <dir>
+
+--registry reads from a Docker Hub pull-through mirror instead, anonymously and outside Docker Hub's per-IP limit.
+mirror.gcr.io answers 404 for an image it has not cached yet and fetches it in the background, so re-run until
+nothing fails (a re-run also completes configs that were not cached yet). Everything is fetched by digest, so a mirror
+cannot substitute content: with a non-default registry every manifest and config is checked against its sha256
+before it is cached. The cache is the same either way.
 """
 from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import hashlib
+import http.client
 import json
 import threading
 import time
@@ -27,9 +38,16 @@ ACCEPT = ",".join([
 
 
 class Hub:
-    def __init__(self):
+    def __init__(self, registry: str = REGISTRY):
+        self.registry = registry.rstrip("/")
+        self.mirror = self.registry != REGISTRY  # anonymous, no token; every byte checked against its digest
         self._tokens: dict[str, tuple[str, float]] = {}
         self._lock = threading.Lock()
+
+    def _check(self, raw: bytes, digest: str) -> bytes:
+        if self.mirror and hashlib.sha256(raw).hexdigest() != digest.split(":")[1]:
+            raise ValueError(f"{self.registry} served bytes that do not match {digest}")
+        return raw
 
     def token(self, repo: str) -> str:
         with self._lock:
@@ -44,19 +62,20 @@ class Hub:
 
     def get(self, repo: str, path: str, accept: str | None = None, tries: int = 6) -> bytes:
         for attempt in range(tries):
-            req = urllib.request.Request(f"{REGISTRY}/v2/{repo}/{path}",
-                                         headers={"Authorization": f"Bearer {self.token(repo)}", **({"Accept": accept} if accept else {})})
+            auth = {} if self.mirror else {"Authorization": f"Bearer {self.token(repo)}"}
+            req = urllib.request.Request(f"{self.registry}/v2/{repo}/{path}",
+                                         headers={**auth, **({"Accept": accept} if accept else {})})
             try:
                 return urllib.request.urlopen(req, timeout=120).read()
             except urllib.error.HTTPError as e:
                 if e.code == 429:
-                    raise RuntimeError(f"Docker Hub rate limit (429) on {repo}/{path}: {e.headers}") from e
+                    raise RuntimeError(f"{self.registry} rate limit (429) on {repo}/{path}: {e.headers}") from e
                 if e.code in (401,):
                     with self._lock:
                         self._tokens.pop(repo, None)
                 if e.code < 500 and e.code != 401:
                     raise
-            except (urllib.error.URLError, TimeoutError, ConnectionError):
+            except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException):  # e.g. IncompleteRead
                 pass
             time.sleep(2 * (attempt + 1))
         raise RuntimeError(f"GET {repo}/{path} failed after {tries} tries")
@@ -67,12 +86,12 @@ class Hub:
         p = cache / "manifests" / f"{digest.split(':')[1]}.json"
         if p.exists():
             return json.loads(p.read_text())
-        raw = self.get(repo, f"manifests/{digest}", ACCEPT)
+        raw = self._check(self.get(repo, f"manifests/{digest}", ACCEPT), digest)
         m = json.loads(raw)
         if "manifests" in m:  # an index: pick linux/amd64
             sub = [x for x in m["manifests"] if x.get("platform", {}).get("architecture") == "amd64"
                    and x.get("platform", {}).get("os") == "linux"]
-            m = json.loads(self.get(repo, f"manifests/{sub[0]['digest']}", ACCEPT))
+            m = json.loads(self._check(self.get(repo, f"manifests/{sub[0]['digest']}", ACCEPT), sub[0]["digest"]))
             m["_index_digest"] = digest
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(m))
@@ -83,7 +102,7 @@ class Hub:
         p = cache / "configs" / f"{digest.split(':')[1]}.json"
         if p.exists():
             return json.loads(p.read_text())
-        raw = self.get(repo, f"blobs/{digest}")
+        raw = self._check(self.get(repo, f"blobs/{digest}"), digest)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(raw)
         return json.loads(raw)
@@ -107,16 +126,20 @@ def main() -> int:
     p.add_argument("--cache", required=True)
     p.add_argument("--workers", type=int, default=6)
     p.add_argument("--limit", type=int, default=0)
+    p.add_argument("--only", help="file of task ids (one per line): fetch only these tasks' images")
+    p.add_argument("--registry", default=REGISTRY, help="registry base URL (default Docker Hub; e.g. https://mirror.gcr.io)")
     a = ap.parse_args()
     import pandas as pd
     d = pd.read_parquet(a.tasks)
     if a.recommended:
         d = d[d.recommended_2500]
+    if a.only:
+        d = d[d.task_id.isin({line.strip() for line in open(a.only) if line.strip()})]
     refs = sorted(set(d.image_digest))
     if a.limit:
         refs = refs[: a.limit]
     cache = Path(a.cache)
-    hub = Hub()
+    hub = Hub(a.registry)
     done = fail = 0
 
     def one(ref):

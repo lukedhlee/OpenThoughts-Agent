@@ -17,7 +17,7 @@
 #   ROOT=/e/project1/reformo/$USER/snowball bash build_snowball_env.sh check      # verify modules + every download, build nothing
 #   ROOT=/e/project1/reformo/$USER/snowball bash build_snowball_env.sh            # = all steps, each skipped when already done
 #   ROOT=... bash build_snowball_env.sh vllm trainer                              # re-run named steps only
-# Steps, in order: tools python clones torch vllm trainer overlay smoke
+# Steps, in order: tools python clones torch vllm trainer overlay smoke (+ opt-in eagle3: the EAGLE-3 overlay, after vllm)
 # Knobs: SCRATCH (default /e/fscratch/reformo/$USER; caches + experiments), CACHE (default $SCRATCH/cache/snowball_build),
 #        MAX_JOBS (16), STAGE_MODULE (Stages/2026).
 # Quotas: ROOT gets ~170k files / ~16 GB (venv 109k, vLLM tree 62k); the build caches are another ~150k files and go to CACHE.
@@ -37,12 +37,14 @@ VLLM_REPO=https://github.com/marin-community/vllm.git
 VLLM_SHA=fa50698a9a303f7282aa0e969f35717703de4911
 VLLM_VERSION=0.0.0.dev20260804+marin.fa50698a9a30           # setuptools-scm pretend version, same as Jupiter's build
 MSRL_REPO=https://github.com/marin-community/MarinSkyRL.git
-MSRL_BRANCH=lukedhlee/snowball-r2egym;  MSRL_SHA=20032472    # 2026-09-13 (what Jupiter runs); `git pull` later to follow the branch
+MSRL_BRANCH=lukedhlee/snowball-r2egym;  MSRL_SHA=${MSRL_SHA:-20032472}    # 2026-09-13 (what Jupiter runs); `git pull` later to follow the branch
 HARBOR_REPO=https://github.com/marin-community/harbor.git
-HARBOR_BRANCH=lukedhlee/snowball-r2egym; HARBOR_SHA=b964a5f6 # 2026-09-11
+HARBOR_BRANCH=lukedhlee/snowball-r2egym; HARBOR_SHA=${HARBOR_SHA:-b964a5f6} # 2026-09-11
 OTA_REPO=https://github.com/lukedhlee/OpenThoughts-Agent.git
-OTA_BRANCH=lukedhlee/rl_acceleration;    OTA_SHA=f3edec45    # the launcher branch checked out on Jupiter
+OTA_BRANCH=lukedhlee/rl_acceleration;    OTA_SHA=${OTA_SHA:-f3edec45}    # the launcher branch checked out on Jupiter
 JSC_BRANCH=lukedhlee/vista-moe-grpo-30b                      # data/r2egym/jsc lives here (mirror of Jupiter's code/snowball)
+EAGLE3_REPO=https://github.com/lukedhlee/vllm.git                # EAGLE-3 for GrugMoE: 5 Python-only commits on $VLLM_SHA
+EAGLE3_BRANCH=lukedhlee/grugmoe-eagle3; EAGLE3_SHA=${EAGLE3_SHA:-00d81ae11}
 TORCH_SPEC="torch==2.11.0"; TORCH_INDEX=https://download.pytorch.org/whl/cu130
 UV_VERSION=0.11.31; PY_VERSION=3.12.13
 FA_WHL=flash_attn-2.8.3+cu130torch2.11-cp312-cp312-manylinux_2_34_aarch64.whl
@@ -50,7 +52,9 @@ FA_URL=https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/down
 TORCHTITAN_PIN="torchtitan @ git+https://github.com/pytorch/torchtitan@a1fdd7e43694bbfeff5d6ad8ac738c067bb90d41"
 DYNSEM_PIN="dynamic-semaphore @ git+https://github.com/penfever/dynamic-semaphore@4d5f49f290889f4826219b241e1aa42d6466163e"
 STAGE_MODULE=${STAGE_MODULE:-Stages/2026}                        # JSC already exports $STAGES (a path), hence the different name
-MODULES=(CUDA/13 GCC/14.3.0 CMake Ninja Rust/1.88.0)        # what the 2026-09-02 build had on PATH (nvcc, gcc 14, cmake, ninja, cargo)
+read -r -a MODULES <<< "${SNOWBALL_MODULES:-CUDA/13 GCC/14.3.0 CMake Ninja Rust/1.88.0}"  # what the 2026-09-02 build had on PATH (nvcc, gcc 14, cmake, ninja, cargo)
+# Other clusters: SNOWBALL_MODULES="..." TORCH_CUDA_ARCH_LIST=10.0 (Blackwell) SNOWBALL_RUSTUP=1 (no Rust module: rustup into CACHE)
+#                 SNOWBALL_CC=gcc SNOWBALL_CXX=g++ (compiler module sets a non-GNU CC/CXX)
 
 # ----------------------------------------------------------------------------- layout
 : "${ROOT:?set ROOT (e.g. ROOT=/e/project1/reformo/\$USER/snowball) — everything is built under it}"
@@ -62,7 +66,8 @@ OTA=$ROOT/OpenThoughts-Agent
 UV=$ROOT/bin/uv
 export UV_CACHE_DIR=$CACHE/uv PIP_CACHE_DIR=$CACHE/pip TMPDIR=$CACHE/tmp XDG_CACHE_HOME=$CACHE/xdg CARGO_HOME=$CACHE/cargo
 export UV_PYTHON_INSTALL_DIR=$ROOT/envs/uv-python UV_LINK_MODE=copy UV_NO_MODIFY_PATH=1
-export MAX_JOBS=${MAX_JOBS:-16} NVCC_THREADS=2 TORCH_CUDA_ARCH_LIST=9.0 VLLM_TARGET_DEVICE=cuda
+export MAX_JOBS=${MAX_JOBS:-16} NVCC_THREADS=2 TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST:-9.0} VLLM_TARGET_DEVICE=cuda
+export RUSTUP_HOME=$CACHE/rustup PATH=$CACHE/cargo/bin:$PATH   # only populated when SNOWBALL_RUSTUP=1
 export SETUPTOOLS_SCM_PRETEND_VERSION=$VLLM_VERSION
 mkdir -p "$ROOT"/{bin,envs,src,logs} "$CACHE"/{uv,pip,tmp,xdg,cargo}
 exec > >(tee -a "$ROOT/logs/build_snowball_env.log") 2>&1
@@ -77,6 +82,9 @@ load_modules() {
   module load "$STAGE_MODULE" >/dev/null 2>&1 || say "module load $STAGE_MODULE failed (continuing with the default stage)"
   local m; for m in "${MODULES[@]}"; do module load "$m" >/dev/null 2>&1 || say "WARN: module load $m failed"; done
   export CUDA_HOME="$(dirname "$(dirname "$(command -v nvcc || true)")")"; export PATH="$CUDA_HOME/bin:$PATH"
+  # Where the compiler module points CC/CXX at a non-GNU compiler (Horizon's nvidia/26.9 -> nvc++, which lacks aarch64
+  # float16_t and fails on torch's Half.h): SNOWBALL_CC=gcc SNOWBALL_CXX=g++ (also the nvcc host compiler)
+  if [ -n "${SNOWBALL_CC:-}" ]; then export CC=$SNOWBALL_CC CXX=${SNOWBALL_CXX:-g++} CUDAHOSTCXX=${SNOWBALL_CXX:-g++}; fi
 }
 
 quota_line() { # path kind -> the project quota row for that filesystem (jutil is a login-shell function on JSC)
@@ -110,6 +118,10 @@ step_tools() {
   done_marker tools && { say "tools: done"; return; }
   [ -x "$UV" ] || { say "tools: installing uv $UV_VERSION -> $ROOT/bin"; curl -LsSf "https://astral.sh/uv/$UV_VERSION/install.sh" | env UV_INSTALL_DIR="$ROOT/bin" sh || die "uv install"; }
   "$UV" --version || die "uv broken"
+  if [ "${SNOWBALL_RUSTUP:-0}" = 1 ] && [ ! -x "$CARGO_HOME/bin/cargo" ]; then
+    say "tools: rustup 1.88.0 -> $CARGO_HOME"
+    curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0 --no-modify-path || die "rustup"
+  fi
   mark_done tools
 }
 
@@ -241,6 +253,11 @@ PY
   if [ -s "$ROOT/envs/snowball.pindown.in" ]; then
     "$UV" pip install -p "$PY" --no-deps -r "$ROOT/envs/snowball.pindown.in" --index-strategy unsafe-best-match || die "pin-down install"
   fi
+  # nvidia-cutlass-dsl-libs-base and -libs-cu13 write the same files, and uv installs wheels in parallel, so a venv can end
+  # up with base's compiled library next to cu13's bindings (Horizon 09-29; Jupiter's happened to be all cu13). FA4 / CuTe
+  # DSL kernels then die (Qwen3.8's ViT memory-profile pass on sm_100). Reinstalling cu13 alone makes its files win.
+  local CUTE; CUTE=$("$UV" pip list -p "$PY" --format=freeze 2>/dev/null | grep -i '^nvidia-cutlass-dsl-libs-cu13==')
+  if [ -n "$CUTE" ]; then "$UV" pip install -p "$PY" --reinstall --no-deps "$CUTE" || die "cutlass-dsl cu13 reinstall"; fi
   # MarinSkyRL on sys.path via .pth files (never `pip install -e` its root: that copies skyrl_train into site-packages and shadows the checkout)
   local SP; SP=$("$PY" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
   rm -rf "$SP/skyrl_gym" "$SP/skyrl_train"
@@ -304,6 +321,19 @@ EOF
   if [ -d "$OTA/hpc/dotenv" ] && [ ! -f "$OTA/hpc/dotenv/jupiter.local.env" ]; then cp "$OV" "$OTA/hpc/dotenv/jupiter.local.env"; say "overlay: installed into $OTA/hpc/dotenv/"; fi
 }
 
+step_eagle3() { # opt-in (not in the default list): the EAGLE-3 overlay that serve scripts put first on PYTHONPATH
+  done_marker eagle3 && { say "eagle3: done"; return; }
+  done_marker vllm || die "eagle3 needs the compiled base (step vllm)"
+  local D=$ROOT/src/marin_vllm_eagle3
+  clone_pin "$D" "$EAGLE3_REPO" "$EAGLE3_BRANCH" "$EAGLE3_SHA"
+  # The overlay commits are Python-only, so it borrows every git-ignored build product of the base tree (*.so,
+  # vllm_flash_attn/*, _version.py, ...): copying only vllm/*.so leaves out _vllm_fa2_C/_vllm_fa3_C and vLLM dies at start.
+  say "eagle3: copy the base build's generated files into the overlay"
+  ( cd "$SRC" && git ls-files --others --ignored --exclude-standard vllm | grep -v __pycache__ | tar -cf - -T - ) | tar -xf - -C "$D" || die "copy generated files"
+  OMP_NUM_THREADS=1 PYTHONPATH=$D "$PY" -c "import vllm, vllm.vllm_flash_attn; assert vllm.__file__.startswith('$D'), vllm.__file__" || die "overlay import"
+  mark_done eagle3
+}
+
 step_smoke() {
   say "smoke: imports on the login node (no GPU)"
   OMP_NUM_THREADS=1 SRC="$SRC" HB="$ROOT/harbor-marin" MS="$ROOT/marinskyrl-marin" "$PY" - <<'PY'
@@ -332,8 +362,8 @@ STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(tools python clones torch vllm tr
 say "build_snowball_env.sh ROOT=$ROOT SCRATCH=$SCRATCH CACHE=$CACHE steps: ${STEPS[*]}"
 for s in "${STEPS[@]}"; do
   case "$s" in
-    check|all|tools|python|clones|torch|vllm|trainer|overlay|smoke) ;;
-    *) die "unknown step '$s' (check tools python clones torch vllm trainer overlay smoke)";;
+    check|all|tools|python|clones|torch|vllm|trainer|overlay|eagle3|smoke) ;;
+    *) die "unknown step '$s' (check tools python clones torch vllm trainer overlay eagle3 smoke)";;
   esac
   if [ "$s" = all ]; then for t in tools python clones torch vllm trainer overlay smoke; do "step_$t"; done; else "step_$s"; fi
 done

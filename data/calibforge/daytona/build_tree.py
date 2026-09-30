@@ -15,7 +15,7 @@ A task is covered when its image starts with one of the bases' layers (longest m
 above the base are at most --max-delta-gb compressed (sandbox disk).
 
   python build_tree.py --parquet calibforge_tasks.parquet --source task-data.tar.gz \
-      --cache ~/.local/share/otagent/calibforge-work --out <tree> [--all] [--max-delta-gb 1.5]
+      --cache ~/.local/share/otagent/calibforge-work --out <tree> [--all] [--only <task list>] [--max-delta-gb 1.5]
 
 Writes TASKS.txt, Dockerfile.<base>, pool.json (per base: tasks, snapshot name, sizes) and coverage.tsv
 (every selected task with its base or its exclusion reason). Manifests and configs come from registry.py's cache
@@ -109,6 +109,7 @@ def main() -> int:
     ap.add_argument("--cache", required=True, help="registry.py manifest/config cache")
     ap.add_argument("--out", required=True)
     ap.add_argument("--all", action="store_true", help="every task, not only recommended_2500")
+    ap.add_argument("--only", help="file of task ids (one per line): build only these (with --all: from every task)")
     ap.add_argument("--max-delta-gb", type=float, default=1.5)
     ap.add_argument("--mirrors", default=MIRROR, help="default CF_MIRRORS baked into setup.sh (space-separated blob base URLs)")
     ap.add_argument("--no-dockerhub", action="store_true", help="bake CF_DOCKERHUB=0: mirror only, no Docker Hub fallback")
@@ -118,6 +119,11 @@ def main() -> int:
     d = pd.read_parquet(a.parquet)
     if not a.all:
         d = d[d.recommended_2500]
+    if a.only:
+        want = {line.strip() for line in open(a.only) if line.strip()}
+        if want - set(d.task_id):
+            raise SystemExit(f"{len(want - set(d.task_id))} --only tasks are not in the selection (need --all?)")
+        d = d[d.task_id.isin(want)]
     out = Path(a.out)
     if out.exists():
         raise SystemExit(f"{out} exists; build into a new directory")
