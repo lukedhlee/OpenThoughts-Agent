@@ -48,7 +48,7 @@ EXP=$S/experiments/snowball-relay-sft
 CACHE=$EXP/cache-$STAGE-v1
 OUT=$EXP/$STAGE/lr$LR-sched$EPOCHS
 RUN_ID=snowball-$STAGE-horizon-lr$LR-sched$EPOCHS
-LOGD=$S/logs/$STAGE; mkdir -p "$LOGD" "$EXP"; LOG=$LOGD/arm.log
+LOGD=$S/logs/$STAGE; mkdir -p "$LOGD" "$EXP" "$(dirname "$OUT")"; LOG=$LOGD/arm.log   # the preflight wants the output's parent to exist
 say() { echo "[$(date -u +%FT%TZ)] [$STAGE] $*" | tee -a "$LOG"; }
 die() { say "ARM_FAILED: $*"; exit 1; }
 jobid() { grep -oE 'Submitted batch job [0-9]+' | awk '{print $NF}' | tail -1; }
