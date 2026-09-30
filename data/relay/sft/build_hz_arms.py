@@ -111,6 +111,10 @@ def main():
             if not h['fits']:
                 st['over_64k'] += 1
                 continue
+            j = line.find('"loss": [')
+            if '1' not in line[j + 9:line.find(']', j)]:   # every turn masked (e.g. one autofixed teacher turn): nothing to train
+                st['no_trained_token'] += 1
+                continue
             tags = dict(leak=c['leak_turns'] > 0, hunt=c['hunt_turns'] > 0, canary=c['canary'])
             st.update(f'tag_{k}' for k, v in tags.items() if v)
             if any(tags.values()):
