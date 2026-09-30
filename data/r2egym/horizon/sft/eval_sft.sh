@@ -1,75 +1,140 @@
 #!/bin/bash
-# eval_sft.sh — the relay SFT arms' agentic evals for one Horizon-trained checkpoint, REPS independent runs of each set:
-# TB2.1 (88 tasks, train-fasttext excluded), SWE-bench Verified random-100 (2 shards of 50) and TB-lite (openthoughts
-# tblite 2.0, 2 shards of 50). Every run is Jupiter's (the tb21/swe/tblite_6516_A_* runs): harbor-p0924 @ 761fb516,
+# eval_sft.sh — agentic evals of Horizon-trained SFT checkpoints, REPS independent runs of each set: TB2.1 (88 tasks,
+# train-fasttext excluded), SWE-bench Verified random-100 (2 shards of 50) and TB-lite (openthoughts tblite 2.0, 2 shards
+# of 50). Every run is Jupiter's (the tb21/swe/tblite_6516_A_* runs): harbor-p0924 @ 761fb516,
 # tb2_marin_policy_0924_65k16k.yaml (65,536 in / 16,384 out, 1,800 s agent budget, Daytona), 16 concurrent trials, one
 # trial per task, against its own 1-node student serve (serve_relay.sbatch N_STUDENT=1 = serve_snowball POLICY=trained:
-# EAGLE-3 draft, TP1 x DP4 x EP). The harness is data/tb2/horizon/run_tb2.sh + tb2_driver.sbatch; this script only
-# submits a serve per run, waits for its endpoint, starts the run, and releases nothing itself (the driver cancels its
-# serve when harbor ends).
+# EAGLE-3 draft, TP1 x DP4 x EP). The harbor side is data/tb2/horizon/tb2_driver.sbatch, the policy rendering is
+# data/tb2/horizon/run_tb2.sh's.
 #
-#   MODEL=<HF export dir> TAG=<short model tag> [REPS="1 2 3"] [SETS="tb21 swe_s0 swe_s1 tblite_s0 tblite_s1"] \
-#     bash eval_sft.sh        (login node, inside tmux)
+# One Slurm job per run: Horizon's debug QOS allows 20 running and 40 submitted jobs per user, so the harbor driver runs
+# as an overlapping step inside the serve job (srun --jobid --overlap) instead of as a second job, and this script is a
+# queue that keeps at most MAXJOBS of the user's jobs submitted (all sessions count). It adopts serve jobs already named
+# esrv_<run> and leaves alone a run whose separate tb2_drv_<run> job is RUNNING (the first launcher's two-job runs); a
+# PENDING tb2_drv_<run> job of this script's runs is cancelled and replaced by an in-serve driver.
 #
-# Runs are named <set>_<TAG>_r<rep>_<YYYYMMDD>; results under $S/experiments/sft_eval/tb2_jobs/<run>. Serve and driver
-# logs, endpoints and rendered policies live under $S/experiments/sft_eval/ (not the relay dirs). Two nodes per run
-# (serve + driver), all runs side by side: at the defaults 15 runs = 30 nodes and up to 240 sandboxes.
+#   MODELS="hzA=<export dir> hzB=<export dir>" [REPS="1 2 3"] [SETS="tb21 swe_s0 swe_s1 tblite_s0 tblite_s1"] \
+#     [MAXJOBS=34] bash eval_sft.sh        (login node, inside tmux; it only submits and polls)
+#
+# Runs are named <set>_<tag>_r<rep>_<DAY>; results under $S/experiments/sft_eval/tb2_jobs/<run>; per-run state in
+# $S/experiments/sft_eval/state/<run>/ (serve job id, tries, driver log, done). Readout: eval_readout.py.
 set -uo pipefail
-MODEL=${MODEL:?HF export dir}; TAG=${TAG:?model tag}
+MODELS=${MODELS:?"tag=<export dir> ..."}
 REPS=${REPS:-1 2 3}; SETS=${SETS:-tb21 swe_s0 swe_s1 tblite_s0 tblite_s1}
+MAXJOBS=${MAXJOBS:-34}
 HERE=$(cd "$(dirname "$0")" && pwd); OTA=$(cd "$HERE/../../../.." && pwd)
 S=${SCRATCH_DIR:-/scratch/11584/$USER}; T=$S/tasks
-EV=$S/experiments/sft_eval
-export RELAY_EXP_DIR=$EV/serve RELAY_PILOT_DIR=$OTA/data/relay/pilot TB2_EXP_DIR=$EV/tb2 JOBS=$EV/tb2_jobs
-export STUDENT_MODEL=$MODEL
+EV=$S/experiments/sft_eval; ST=$EV/state
+export RELAY_EXP_DIR=$EV/serve RELAY_PILOT_DIR=$OTA/data/relay/pilot JOBS=$EV/tb2_jobs
 export HARBOR_SRC=${HARBOR_SRC:-$HOME/snowball/harbor-p0924/src} HARBOR_SHA=${HARBOR_SHA:-761fb516}
-export POLICY_FILE=${POLICY_FILE:-tb2_marin_policy_0924_65k16k.yaml}
-SERVE_TIME=${SERVE_TIME:-07:00:00}
+POLICY_FILE=${POLICY_FILE:-tb2_marin_policy_0924_65k16k.yaml}
+PY=${PY:-$HOME/snowball/envs/snowball/bin/python}
+KEYF=${KEYF:-$HOME/.config/otagent/daytona_eval.env}
+SERVE_TIME=${SERVE_TIME:-08:00:00}
 DAY=${DAY:-$(date +%Y%m%d)}
-mkdir -p "$RELAY_EXP_DIR/logs" "$RELAY_EXP_DIR/endpoints" "$TB2_EXP_DIR/logs" "$JOBS"; LOG=$EV/eval_$TAG.log
-say() { echo "[$(date -u +%FT%TZ)] [$TAG] $*" | tee -a "$LOG"; }
-[ -f "$MODEL/config.json" ] || { say "no export at $MODEL"; exit 1; }
-say "EVAL_START model=$MODEL reps='$REPS' sets='$SETS' ota=$(git -C "$OTA" rev-parse --short HEAD) harbor=$HARBOR_SHA policy=$POLICY_FILE"
+TUNNEL_PORTS=18080,18081
+mkdir -p "$RELAY_EXP_DIR/logs" "$RELAY_EXP_DIR/endpoints" "$EV/runs" "$EV/logs" "$JOBS" "$ST"; LOG=$EV/eval.log
+say() { echo "[$(date -u +%FT%TZ)] $*" | tee -a "$LOG"; }
+declare -A MODEL
+for m in $MODELS; do MODEL[${m%%=*}]=${m#*=}; [ -f "${m#*=}/config.json" ] || { say "no export at ${m#*=}"; exit 1; }; done
+[ "$(git -C "${HARBOR_SRC%/src}" rev-parse --short=8 HEAD)" = "${HARBOR_SHA:0:8}" ] || { say "$HARBOR_SRC is not at $HARBOR_SHA"; exit 1; }
+grep -q "type: daytona" "$OTA/data/tb2/jupiter/$POLICY_FILE" || { say "$POLICY_FILE is not a Daytona policy"; exit 1; }
 
 set_env() {  # the task tree, count, exclusions and shard of one set, as Jupiter ran it
-  unset SHARD EXCLUDE_TASKS
+  EXCLUDE_TASKS=; SHARD=
   case $1 in
-    tb21)      TASKS=$T/terminal_bench_2_1 NTASKS=89; export EXCLUDE_TASKS=train-fasttext;;
-    swe_s0)    TASKS=$T/swebench_verified_random100 NTASKS=100; export SHARD=0/2;;
-    swe_s1)    TASKS=$T/swebench_verified_random100 NTASKS=100; export SHARD=1/2;;
-    tblite_s0) TASKS=$T/openthoughts_tblite_2_0 NTASKS=100; export SHARD=0/2;;
-    tblite_s1) TASKS=$T/openthoughts_tblite_2_0 NTASKS=100; export SHARD=1/2;;
+    tb21)      TASKS=$T/terminal_bench_2_1 NTASKS=89 EXCLUDE_TASKS=train-fasttext;;
+    swe_s0)    TASKS=$T/swebench_verified_random100 NTASKS=100 SHARD=0/2;;
+    swe_s1)    TASKS=$T/swebench_verified_random100 NTASKS=100 SHARD=1/2;;
+    tblite_s0) TASKS=$T/openthoughts_tblite_2_0 NTASKS=100 SHARD=0/2;;
+    tblite_s1) TASKS=$T/openthoughts_tblite_2_0 NTASKS=100 SHARD=1/2;;
     *) return 1;;
   esac
-  export TASKS NTASKS
+  [ "$(find "$TASKS" -mindepth 2 -maxdepth 2 -name task.toml | wc -l)" = "$NTASKS" ] || { say "task tree $TASKS does not have $NTASKS tasks"; return 1; }
 }
 
-one_run() {  # $1 set, $2 rep: serve -> endpoint -> run_tb2.sh; one retry of the serve if it dies before its endpoint
-  local set=$1 rep=$2 name=${1}_${TAG}_r${2}_$DAY try j st
-  [ -d "$JOBS/$name" ] && { say "$name exists; skipping"; return 0; }
-  for try in 1 2; do
-    j=$(bash "$OTA/data/relay/horizon/serve_submit.sh" 1 1 "$SERVE_TIME" "esrv_$name" 2>&1 | tail -1)
-    [ "$j" -eq "$j" ] 2>/dev/null || { say "$name serve submit failed: $j"; return 1; }
-    say "$name serve job $j (try $try)"
-    while :; do
-      st=$(squeue -h -j "$j" -o %T 2>/dev/null)
-      [ -f "$RELAY_EXP_DIR/endpoints/$j.student" ] && [ "$st" = RUNNING ] && break
-      if [ -f "$RELAY_EXP_DIR/endpoints/$j.DEAD" ] || [ -z "$st" ]; then say "$name serve $j died before its endpoint"; scancel "$j" 2>/dev/null; j=; break; fi
-      sleep 60
-    done
-    [ -n "$j" ] && break
-  done
-  [ -n "$j" ] || { say "$name FAILED: no serve after 2 tries"; return 1; }
-  set_env "$set" || { say "unknown set $set"; scancel "$j"; return 1; }
-  if bash "$OTA/data/tb2/horizon/run_tb2.sh" "$j" "$name" >> "$LOG" 2>&1; then say "$name started (serve $j)"
-  else say "$name FAILED: run_tb2.sh refused (see $LOG)"; scancel "$j"; return 1; fi
+render() {  # $1 run, $2 set, $3 model URL -> $EV/runs/$1.yaml (run_tb2.sh's rendering: jobs dir swapped, the rest verbatim)
+  local cfg=$EV/runs/$1.yaml
+  set_env "$2" || return 1
+  sed "s#__JOB_NAME__#$1#; s#__API_BASE__#$3#; s#^jobs_dir: .*#jobs_dir: $JOBS#" "$OTA/data/tb2/jupiter/$POLICY_FILE" > "$cfg"
+  EXCLUDE_TASKS=$EXCLUDE_TASKS SHARD=$SHARD MODE=full OMP_NUM_THREADS=1 "$PY" - "$cfg" "$TASKS" <<'PY' >> "$ST/$1/render.log" 2>&1 || return 1
+import os, re, sys, yaml
+p, tasks = sys.argv[1:3]; c = yaml.safe_load(open(p))
+def agent_timeout(t):
+    s = open(f"{tasks}/{t}/task.toml").read(); m = re.search(r"\[agent\][^\[]*?timeout_sec\s*=\s*([0-9.]+)", s)
+    return float(m.group(1)) if m else 0.0
+names = sorted((d for d in os.listdir(tasks) if os.path.isfile(f"{tasks}/{d}/task.toml")), key=lambda t: (-agent_timeout(t), t))
+skip = [t for t in os.environ.get("EXCLUDE_TASKS", "").split(",") if t]
+if skip:
+    names = [t for t in names if t not in skip]; print(f"excluded: {skip}")
+shard = os.environ.get("SHARD")
+if shard:
+    i, n = map(int, shard.split("/")); names = names[i::n]
+c["n_attempts"] = 1
+c.pop("datasets", None); c["tasks"] = [{"path": f"{tasks}/{t}"} for t in names]
+yaml.safe_dump(c, open(p, "w"), sort_keys=False)
+print(f"{len(names)} tasks at {c['n_concurrent_trials']} concurrent")
+PY
+  PYTHONPATH=$HARBOR_SRC "$PY" -c "import yaml; from harbor_config.models.job.config import JobConfig; JobConfig.model_validate(yaml.safe_load(open('$cfg')))" >> "$ST/$1/render.log" 2>&1
 }
 
-for rep in $REPS; do
-  for set in $SETS; do
-    one_run "$set" "$rep" &
-    sleep 20   # spread the serve starts (EAGLE-3 compile) and the tunnel setups
+start_driver() {  # $1 run, $2 set, $3 serve job: render, tunnels, then the driver as an overlapping step of the serve job
+  local run=$1 j=$3 url left
+  url=$(cut -d, -f1 "$RELAY_EXP_DIR/endpoints/$j.student")
+  render "$run" "$2" "$url" || { say "$run render/validate FAILED ($ST/$run/render.log)"; return 1; }
+  left=$(squeue -h -j "$j" -o %L)
+  for p in ${TUNNEL_PORTS//,/ }; do
+    setsid nohup bash "$OTA/data/r2egym/horizon/tunnel.sh" "$j" "$p" > "$EV/logs/tunnel_${j}_$p.log" 2>&1 < /dev/null &
   done
+  CFG=$EV/runs/$run.yaml SERVE_JOB=$j RUN_NAME=$run OTA=$OTA TUNNEL_PORTS=$TUNNEL_PORTS SCANCEL_SERVE=0 LOGD=$ST/$run/drv \
+  setsid nohup bash -c "srun -p debug -A CCR24067 -t $left --jobid=$j --overlap -N1 -n1 -c 32 --export=ALL bash $OTA/data/tb2/horizon/tb2_driver.sbatch; echo DRIVER_STEP_EXIT \$?; scancel $j" \
+    > "$ST/$run/driver.out" 2>&1 < /dev/null &
+  echo "$j" > "$ST/$run/driver_started"
+  say "$run driver started in serve $j ($url, ${left} left)"
+}
+
+RUNS=()
+for rep in $REPS; do for tag in "${!MODEL[@]}"; do for set in $SETS; do RUNS+=("$set:$tag:$rep"); done; done; done
+say "EVAL_QUEUE_START models='$MODELS' runs=${#RUNS[@]} maxjobs=$MAXJOBS ota=$(git -C "$OTA" rev-parse --short HEAD) harbor=$HARBOR_SHA policy=$POLICY_FILE"
+while :; do
+  Q=$(squeue -u "$USER" -h -o '%i %j %T')
+  ntot=$(echo "$Q" | grep -c .)
+  left=0
+  for r in "${RUNS[@]}"; do
+    IFS=: read -r set tag rep <<<"$r"; run=${set}_${tag}_r${rep}_$DAY; d=$ST/$run; mkdir -p "$d"
+    [ -f "$d/done" ] && continue
+    left=$((left + 1))
+    ext=$(echo "$Q" | awk -v n="tb2_drv_$run" '$2==n {print $1" "$3}')
+    if [ -n "$ext" ]; then
+      if [ "${ext#* }" = PENDING ]; then scancel "${ext%% *}"; say "$run pending separate driver ${ext%% *} cancelled (in-serve driver instead)"
+      else [ -f "$d/external" ] || { echo "${ext%% *}" > "$d/external"; say "$run runs with its own driver job ${ext%% *}"; }; continue; fi
+    fi
+    if [ -f "$d/external" ]; then   # its driver job has ended
+      touch "$d/done"; say "$run DONE (driver job $(cat "$d/external"))"; continue
+    fi
+    sj=$(echo "$Q" | awk -v n="esrv_$run" '$2==n {print $1" "$3}')
+    if [ -f "$d/driver_started" ]; then
+      if grep -q DRIVER_STEP_EXIT "$d/driver.out" 2>/dev/null; then
+        touch "$d/done"; say "$run DONE ($(grep -h TB2_DONE "$d/driver.out" 2>/dev/null | tail -1 | cut -c1-120))"
+      elif [ -z "$sj" ]; then
+        touch "$d/done"; say "$run ENDED without the driver's exit line (serve $(cat "$d/driver_started") gone); see $d/driver.out"
+      fi
+      continue
+    fi
+    if [ -n "$sj" ]; then
+      j=${sj%% *}; echo "$j" > "$d/serve"
+      if [ "${sj#* }" = RUNNING ] && [ -f "$RELAY_EXP_DIR/endpoints/$j.student" ]; then start_driver "$run" "$set" "$j"; fi
+      [ -f "$RELAY_EXP_DIR/endpoints/$j.DEAD" ] && { say "$run serve $j DEAD before its driver"; scancel "$j"; }
+      continue
+    fi
+    tries=$(cat "$d/tries" 2>/dev/null || echo 0)
+    if [ "$tries" -ge 2 ]; then touch "$d/done"; say "$run FAILED: no serve after 2 tries"; continue; fi
+    [ "$ntot" -lt "$MAXJOBS" ] || continue
+    j=$(STUDENT_MODEL=${MODEL[$tag]} bash "$OTA/data/relay/horizon/serve_submit.sh" 1 1 "$SERVE_TIME" "esrv_$run" 2>&1 | tail -1)
+    if [ "$j" -eq "$j" ] 2>/dev/null; then echo $((tries + 1)) > "$d/tries"; echo "$j" > "$d/serve"; ntot=$((ntot + 1)); say "$run serve job $j (try $((tries + 1)))"
+    else say "$run serve submit failed: $j"; fi
+  done
+  [ "$left" -eq 0 ] && break
+  sleep 60
 done
-wait
-say "EVAL_SUBMITTED; results: $JOBS/<set>_${TAG}_r<rep>_$DAY; readout: data/r2egym/horizon/sft/eval_readout.py"
+say "EVAL_QUEUE_DONE; readout: $PY $OTA/data/r2egym/horizon/sft/eval_readout.py --tags ${!MODEL[*]} --day $DAY"
