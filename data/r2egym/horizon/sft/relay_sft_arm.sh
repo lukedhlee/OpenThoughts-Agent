@@ -62,6 +62,10 @@ wait_job() {  # $1 job, $2 log, $3 marker regex
 export SNOWBALL_SCRATCH=$S MARIN_ROOT=$MARIN MARIN_PYTHON=$PYM SNOWBALL_STAGE=$STAGE SNOWBALL_TOKENIZER=$BASE
 export SNOWBALL_DATASET_ID=private/relay-calibforge-sft-$ARM SNOWBALL_DATASET_REVISION=final_v2   # = the stage's pins
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+# layout: 16 x 65,536 on 4 nodes, set before prep as Jupiter's launcher does: the prerendered format's row limit is the
+# packing length SNOWBALL_SEQ_LEN (default 32,768), so a prep without it refuses every row over 32,768 tokens
+export SNOWBALL_SEQ_LEN=65536 SNOWBALL_BATCH=16 SNOWBALL_NODES=4 SNOWBALL_DEVICES=16
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.95 XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async OMP_NUM_THREADS=1
 [ -f "$BASE/config.json" ] || die "no 09-21 export at $BASE"
 [ -f "$INIT/snowball_base.json" ] || die "no 09-21 init sidecar at $INIT (pair_kimi0921.sh's import step makes it)"
 say "ARM_START marin=$(git -C "$MARIN" rev-parse --short HEAD) ota=$(git -C "$OTA" rev-parse --short HEAD) rows=$ROWS out=$OUT"
@@ -103,8 +107,6 @@ say "cache: $(head -c 300 "$CACHE/train/.stats.json")"
 
 # 3. train: 3 passes on one cosine, one kept checkpoint per pass
 if [ ! -f "$LOGD/run_$RUN_ID.done" ]; then
-  export SNOWBALL_SEQ_LEN=65536 SNOWBALL_BATCH=16 SNOWBALL_NODES=4 SNOWBALL_DEVICES=16
-  export XLA_PYTHON_CLIENT_MEM_FRACTION=0.95 XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async OMP_NUM_THREADS=1
   export SNOWBALL_LR=$LR SNOWBALL_WARMUP=$WARMUP EPOCHS=$EPOCHS SNOWBALL_SCHEDULE_EPOCHS=$EPOCHS SNOWBALL_RESUME=0
   export SNOWBALL_EPOCH_STEPS=$EPOCH_STEPS SNOWBALL_KEEP_PER_EPOCH=1
   export SNOWBALL_INIT=$INIT SNOWBALL_CACHE=$CACHE SNOWBALL_OUTPUT=$OUT SNOWBALL_RUN_ID=$RUN_ID SNOWBALL_WALL=${WALL:-02:30:00}
