@@ -27,6 +27,7 @@ def main():
     ap.add_argument('--control', default='hzA')
     ap.add_argument('--arms', nargs='+', required=True, help='tag:label:rows:steps')
     ap.add_argument('--day', default='20260930')
+    ap.add_argument('--save', help='also write {readout, arms} JSON here (for gist_fig.py)')
     a = ap.parse_args()
     arms = [x.split(':', 3) for x in a.arms]
     done = [x for x in arms if complete(x[0], a.day)[0]]
@@ -37,6 +38,8 @@ def main():
     subprocess.run([sys.executable, f'{HERE}/eval_readout.py', '--tags', *tags, '--day', a.day, '--out', out],
                    check=True, capture_output=True)
     r = json.load(open(out))
+    if a.save:
+        json.dump(dict(readout=r, arms=done, control=a.control), open(a.save, 'w'), indent=1)
     hdr = '| arm | rows | steps | ' + ' | '.join(n for _, n in SETS) + ' |'
     print(hdr)
     print('|' + '---|' * (3 + len(SETS)))
