@@ -59,12 +59,15 @@ case $ROLE in
       # index assert and killed the server (job 38635, 2026-09-30)
       export PYTHONPATH=$PYTHONPATH:${RELAY_EXTRA:-$C/envs/relay-extra}
       MODEL=${STUDENT_MODEL:?STUDENT_MODEL=<Qwen3.8 dir>}
+      # QWEN_SPEC=0: no MTP speculative decoding. In the DP4 eval serve an engine died twice at random (CUDA gather index
+      # assert in the model runner, jobs 38635 / 38676, also at 66,560); decoding is lossless either way, only slower
+      QSPEC=(--speculative-config '{"method":"mtp","num_speculative_tokens":2}'); [ "${QWEN_SPEC:-1}" = 0 ] && QSPEC=()
       [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
       $PY -c "import torchvision, vllm.model_executor.models.qwen3_5" || { echo "qwen3_5 import failed"; exit 1; }
       serve $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name snowball --port 8000 \
         --tensor-parallel-size 1 --data-parallel-size 4 --max-model-len ${QWEN_MAXLEN:-66560} --gpu-memory-utilization 0.90 \
         --max-num-seqs 96 --enable-prefix-caching --enable-chunked-prefill --no-enable-log-requests \
-        --speculative-config '{"method":"mtp","num_speculative_tokens":2}' --reasoning-parser qwen3
+        "${QSPEC[@]}" --reasoning-parser qwen3
       exit $?
     fi
     MODEL=${STUDENT_MODEL:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921}
