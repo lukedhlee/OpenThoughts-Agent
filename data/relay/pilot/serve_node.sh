@@ -52,6 +52,19 @@ echo "serve_node $ROLE on $(hostname) job=$SLURM_JOB_ID step=$SLURM_STEP_ID ($(d
 nvidia-smi --query-gpu=name,memory.total --format=csv
 case $ROLE in
   student)
+    if [ "${STUDENT_KIND:-snowball}" = qwen ]; then
+      # teacher-baseline evals (2026-09-30): Qwen3.8 served as the eval's "snowball" model with the teacher's own serve
+      # settings below (TP1 x DP4, MTP 2, qwen3 reasoning parser, prefix caching), at the eval's 65,536 context
+      export PYTHONPATH=$PYTHONPATH:${RELAY_EXTRA:-$C/envs/relay-extra}
+      MODEL=${STUDENT_MODEL:?STUDENT_MODEL=<Qwen3.8 dir>}
+      [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
+      $PY -c "import torchvision, vllm.model_executor.models.qwen3_5" || { echo "qwen3_5 import failed"; exit 1; }
+      serve $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name snowball --port 8000 \
+        --tensor-parallel-size 1 --data-parallel-size 4 --max-model-len 65536 --gpu-memory-utilization 0.90 \
+        --max-num-seqs 96 --enable-prefix-caching --enable-chunked-prefill --no-enable-log-requests \
+        --speculative-config '{"method":"mtp","num_speculative_tokens":2}' --reasoning-parser qwen3
+      exit $?
+    fi
     MODEL=${STUDENT_MODEL:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921}
     DRAFT=${STUDENT_DRAFT:-/e/data1/mmlaion/lee27/eagle3/probe_adapt_20260911/checkpoints/3}
     [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
