@@ -34,7 +34,7 @@ def main():
             col = '#1f4e79' if tag == ctl else '#8fb3d9'
             ax.barh(y, 100 * p, color=col, height=0.7)
             ax.errorbar(100 * p, y, xerr=[[100 * (p - ci[0])], [100 * (ci[1] - p)]], fmt='none', ecolor='#333', capsize=3, lw=1)
-            ax.text(100 * ci[1] + 1, y, f'{100 * p:.1f}', va='center', fontsize=9)
+            ax.text(100 * ci[1] + 2, y, f'{100 * p:.1f}', va='center', fontsize=9)
         c = (r.get(f'{ctl}/{s}') or {}).get('pass_at_1')
         if c is not None:
             ax.axvline(100 * c, color='#1f4e79', ls='--', lw=1)
