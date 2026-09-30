@@ -54,9 +54,9 @@ LOGD=$S/logs/$STAGE; mkdir -p "$LOGD" "$EXP" "$(dirname "$OUT")"; LOG=$LOGD/arm.
 say() { echo "[$(date -u +%FT%TZ)] [$STAGE] $*" | tee -a "$LOG"; }
 die() { say "ARM_FAILED: $*"; exit 1; }
 jobid() { grep -oE 'Submitted batch job [0-9]+' | awk '{print $NF}' | tail -1; }
-wait_job() {  # $1 job, $2 log, $3 marker regex
-  local st
-  while squeue -h -j "$1" 2>/dev/null | grep -q .; do sleep 60; done
+wait_job() {  # $1 job, $2 log, $3 marker regex. COMPLETING counts as ended: sacct already holds the final state, and
+  local st     # Horizon's epilog keeps a finished job in squeue for 5-10 min
+  while squeue -h -j "$1" -t PD,R,CF,S,RQ,RS 2>/dev/null | grep -q .; do sleep 30; done
   for _ in 1 2 3 4 5; do st=$(sacct -j "$1" -X -n -o State%20 2>/dev/null | head -1 | awk '{print $1}'); [ -n "$st" ] && break; sleep 20; done
   say "job $1 ended ${st:-?}"
   [ "$st" = COMPLETED ] && grep -qE "$3" "$2"
