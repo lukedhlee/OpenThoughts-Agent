@@ -25,6 +25,9 @@ MODELS=${MODELS:?"tag=<export dir> ..."}
 REPS=${REPS:-1 2 3}; SETS=${SETS:-tb21 swe_s0 swe_s1 tblite_s0 tblite_s1}
 MAXJOBS=${MAXJOBS:-34}
 HERE=$(cd "$(dirname "$0")" && pwd); OTA=$(cd "$HERE/../../../.." && pwd)
+if [ -z "${STUDENT_DRAFT:-}" ]; then   # Horizon serve knobs (draft, venv, caches) from serve_env.sh, read against the real scratch
+  _sd=${SCRATCH_DIR-}; unset SCRATCH_DIR; source "$OTA/data/relay/horizon/serve_env.sh"; [ -n "$_sd" ] && export SCRATCH_DIR=$_sd
+fi
 S=${SCRATCH_DIR:-/scratch/11584/$USER}; T=$S/tasks
 EV=$S/experiments/sft_eval; ST=$EV/state
 export RELAY_EXP_DIR=$EV/serve RELAY_PILOT_DIR=$OTA/data/relay/pilot JOBS=$EV/tb2_jobs
