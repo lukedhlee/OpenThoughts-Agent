@@ -34,6 +34,8 @@ def main():
             col = '#1f4e79' if tag == ctl else '#8fb3d9'
             ax.barh(y, 100 * p, color=col, height=0.7)
             ax.errorbar(100 * p, y, xerr=[[100 * (p - ci[0])], [100 * (ci[1] - p)]], fmt='none', ecolor='#333', capsize=3, lw=1)
+            if v.get('se') is not None:   # thick = +-1 standard error over tasks, thin = 95 % bootstrap range
+                ax.errorbar(100 * p, y, xerr=100 * v['se'], fmt='none', ecolor='#000', capsize=0, lw=4)
             ax.text(100 * ci[1] + 2, y, f'{100 * p:.1f}', va='center', fontsize=9)
         c = (r.get(f'{ctl}/{s}') or {}).get('pass_at_1')
         if c is not None:
@@ -44,7 +46,7 @@ def main():
         ax.grid(axis='x', alpha=0.3)
     axes[0].set_yticks(list(range(len(arms)))[::-1])
     axes[0].set_yticklabels([x[1] for x in arms], fontsize=9)
-    fig.suptitle('Horizon SFT arms on 09-21 (dark = control A; dashed line = A; bars show 95 % ranges)', fontsize=11)
+    fig.suptitle('Horizon SFT arms on 09-21 (dark = control A, dashed line = A; thick bar = ±1 SE over tasks, thin = 95 % range)', fontsize=11)
     fig.tight_layout()
     fig.savefig(a.out, dpi=150)
 

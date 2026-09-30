@@ -33,6 +33,15 @@ def boot(vals):
     return [round(ms[int(0.025 * NBOOT)], 4), round(ms[int(0.975 * NBOOT) - 1], 4)]
 
 
+def se(vals):
+    """standard error of the mean over tasks"""
+    n = len(vals)
+    if n < 2:
+        return None
+    m = sum(vals) / n
+    return round((sum((v - m) ** 2 for v in vals) / (n - 1) / n) ** 0.5, 4)
+
+
 def merged(dirs):
     o, c = {}, collections.Counter()
     for d in dirs:
@@ -79,7 +88,7 @@ def main():
             res[f'{tag}/{fam}'] = dict(
                 reps={r: dict(pe.rate(o), counts=c) for r, (o, c) in ro.items()},
                 tasks=len(s), pass_at_1=round(sum(s.values()) / len(s), 4) if s else None,
-                ci95=boot(list(s.values())) if s else None)
+                se=se(list(s.values())), ci95=boot(list(s.values())) if s else None)
     for spec in a.ref:
         tag, rest = spec.split('=', 1)
         fam, dirs = rest.split(':', 1)
@@ -95,13 +104,13 @@ def main():
                     both = sorted(set(X) & set(Y))
                     d = [X[t] - Y[t] for t in both]
                     if d:
-                        res[f'{x}-{y}/{fam}'] = dict(tasks=len(both), diff=round(sum(d) / len(d), 4), ci95=boot(d))
+                        res[f'{x}-{y}/{fam}'] = dict(tasks=len(both), diff=round(sum(d) / len(d), 4), se=se(d), ci95=boot(d))
     for k, v in res.items():
         if 'pass_at_1' in v:
             reps = ' '.join(f"r{r}={x['rate']}({x['n']})" for r, x in v['reps'].items())
-            print(f"{k:16s} pass@1 {v['pass_at_1']} {v['ci95']} over {v['tasks']} tasks; {reps}")
+            print(f"{k:16s} pass@1 {v['pass_at_1']} ± {v['se']} {v['ci95']} over {v['tasks']} tasks; {reps}")
         elif 'diff' in v:
-            print(f"{k:16s} diff {v['diff']:+.4f} {v['ci95']} over {v['tasks']} tasks")
+            print(f"{k:16s} diff {v['diff']:+.4f} ± {v['se']} {v['ci95']} over {v['tasks']} tasks")
         else:
             print(f"{k:16s} {v['rate']} {v['ci95']} ({v['n']}) [single run]")
     if a.out:

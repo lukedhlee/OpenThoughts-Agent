@@ -48,12 +48,12 @@ def main():
         for s, _ in SETS:
             v = r.get(f'{tag}/{s}') or {}
             p = v.get('pass_at_1')
-            cell = f"{100 * p:.1f} %" if p is not None else 'n/a'
+            cell = (f"{100 * p:.1f} ± {100 * v['se']:.1f} %" if v.get('se') is not None else f"{100 * p:.1f} %") if p is not None else 'n/a'
             d = r.get(f'{a.control}-{tag}/{s}')
             if tag != a.control and d and d.get('diff') is not None:
                 lo, hi = -d['ci95'][1], -d['ci95'][0]          # readout gives control - arm; show arm - control
                 sig = '**' if lo > 0 or hi < 0 else ''
-                cell += f" ({sig}{-100 * d['diff']:+.1f}{sig} [{100 * lo:+.1f}, {100 * hi:+.1f}])"
+                cell += f"<br>Δ {sig}{-100 * d['diff']:+.1f}{sig} ± {100 * (d.get('se') or 0):.1f} [{100 * lo:+.1f}, {100 * hi:+.1f}]"
             cells.append(cell)
         print(f'| {label} | {rows} | {steps} | ' + ' | '.join(cells) + ' |')
     pending = [x[1] for x in arms if x[0] not in tags]
