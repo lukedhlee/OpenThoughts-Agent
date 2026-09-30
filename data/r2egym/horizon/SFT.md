@@ -41,6 +41,28 @@ here (`sft/horizon_sft_chain.sh`) is the Jupiter one with Horizon paths. Port-ga
 5. **Read the loss:** the run log's tqdm lines (`Progress on:train N.0it/96.0it ... loss=`) in
    `logs/snowball-<stage>.<job>.log`.
 
-## Verdict
+## Verdict (2026-09-29)
 
-(filled in when the gate run finishes; pass rule in `~/briefs/train-port.STATUS.md`, written before the run)
+**It runs and trains the same model, but its loss curve is not Jupiter's.** Horizon ran the Jupiter Kimi SWE-smith
+arm (job 1867383: lr 5e-5, 96 steps, same data, init and commit). The resulting model scores 0.3698 held-out NLL
+against Jupiter's 0.374, and the base scores 0.5857 against 0.586. The training loss, though, sits ~0.010 below
+Jupiter's at every reference step and 0.007 above it at init. That offset is about 10x Horizon's own run-to-run noise
+(an identical rerun differs by 0.001 per step), so it is systematic. It fails the pass rule written before the run
+(step 2 within ±0.005; mean |Δ| ≤ 0.007) and passes its per-point clause (max 0.0132 ≤ 0.0135).
+
+| | Jupiter | Horizon |
+|---|---|---|
+| loss at step 0 / 9 / 29 / 59 / 95 | .628 / .447 / .395 / .379 / .378 | .635 / .436 / .382 / .370 / .366 |
+| held-out NLL, base | 0.586 | 0.5857 |
+| held-out NLL, step-96 export (think / rest) | 0.374 (0.588 / 0.279) | 0.3698 (0.583 / 0.276) |
+| step time, 16 nodes | 6.4 s | 3.6 s |
+
+Why the curves can differ while the models match: the trainer's step-0 loss is not a plain forward pass. vLLM scores the
+same first batch at 0.582, and both trainers log ~0.63. With the plain Stage-3 import (`pending_qb_betas` zeroed), the
+Grug router recomputes its balancing bias from each batch's routing quantiles. That state depends on numerics and can
+move with the GPU. This is likely but not proven. So compare Horizon and Jupiter SFT runs by held-out NLL of the
+export, not by train loss at the 0.01 level.
+
+Tools: `sft/heldout_nll.sbatch` (held-out NLL through vLLM; `MODEL=<export> NAME=<tag>`) and `sft/batch0_nll.py`
+(rebuild a step's training batch and score it with vLLM). The per-step loss is in the offline W&B run under
+`~/snowball/marin-sft/wandb/`. tqdm's `N.0it ... loss=` shows the loss of step N−2.
