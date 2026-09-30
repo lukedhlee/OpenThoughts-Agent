@@ -95,6 +95,14 @@ def q(xs, f):
     return xs[int(f * (len(xs) - 1))] if xs else None
 
 
+def _done(step):
+    """Did this agent step claim task completion? A reply the parser chokes on (e.g. `"commands": 3`) claims nothing."""
+    try:
+        return bool(isinstance(step.get('message'), str) and rt.parse_reply(step['message'], 'terminus2')['done'])
+    except (TypeError, AttributeError, ValueError):
+        return False
+
+
 def trials(job_dir, only=None):
     """Per trial: task, reward, exception, session id and the main trajectory's agent steps (only: trial dir names to
     read, default all)."""
@@ -118,7 +126,7 @@ def trials(job_dir, only=None):
                 steps = [dict(content_sha=sha(s.get('message') if isinstance(s.get('message'), str) else json.dumps(s.get('message'))),
                               model=s.get('model_name'), has_reasoning=bool(s.get('reasoning_content')),
                               parse_error_obs='Previous response had parsing errors' in json.dumps(s.get('observation') or {}),
-                              done=bool(isinstance(s.get('message'), str) and rt.parse_reply(s['message'], 'terminus2')['done']))
+                              done=_done(s))
                          for s in t.get('steps', []) if s.get('source') == 'agent' and not s.get('is_copied_context')]
             except (OSError, ValueError):
                 pass
