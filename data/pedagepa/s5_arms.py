@@ -3,7 +3,8 @@
 
 R   = pool episodes an Opus reader labelled mistake_real=yes AND recovery=genuine (rubric s5_recovery_rubric.md v1),
       at most 2 per task (seeded).
-C1  = |R| pool episodes drawn at random from every judged pool episode (labels ignored), at most 2 per task (seeded):
+C1  = |R| pool episodes drawn at random from every judged pool episode (labels ignored; reader-flagged hunting dropped
+      from both R and C1), at most 2 per task (seeded):
       the size-matched unjudged control.
 pgp  rows = pgc0 rows + R rows;  pgc1 rows = pgc0 rows + C1 rows.
 Checks: every trained span of every added row is free of the leak pattern (the pool build masked them); the gate sample
@@ -55,6 +56,8 @@ def main():
                 if j['sid'] in man:
                     lab[j['sid']] = j
     judged = [dict(man[s], **{'label': lab[s]}) for s in lab]
+    n_hunt = sum(bool(x['label'].get('hunting')) for x in judged)
+    judged = [x for x in judged if not x['label'].get('hunting')]   # reader-flagged grader hunting: out of R and C1 alike
     rng = random.Random(SEED)
     R = cap([x for x in judged if x['label']['mistake_real'] == 'yes' and x['label']['recovery'] == 'genuine'], rng)
     rng = random.Random(SEED + 1)
@@ -62,7 +65,7 @@ def main():
     rng.shuffle(pool_c)
     C1 = pool_c[:len(R)]
     want = {'pgp': {x['sid'] for x in R}, 'pgc1': {x['sid'] for x in C1}}
-    rep = dict(judged=len(judged), labels=collections.Counter(f"{x['label']['mistake_real']}/{x['label']['recovery']}"
+    rep = dict(judged=len(judged), dropped_reader_hunting=n_hunt, labels=collections.Counter(f"{x['label']['mistake_real']}/{x['label']['recovery']}"
                                                               for x in judged),
                R=len(R), R_pass=sum(x['passed'] for x in R), R_tasks=len({x['task'] for x in R}),
                C1=len(C1), C1_pass=sum(x['passed'] for x in C1), C1_in_R=len(want['pgp'] & want['pgc1']),
