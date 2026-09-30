@@ -88,6 +88,14 @@ Everything runs from the login node in tmux; each step is a Slurm job.
    one serve node per run). The per-user cap is 20 running jobs, so the harbor driver runs inside its serve job, and
    `GROUPED=1` puts a rep's 5 runs in one 5-node job. A rep takes ~2–2.5 h (TB2.1 is the long one).
    Readout: `eval_readout.py --tags hzA hzB --day <YYYYMMDD> [--ref jupA=tb21:<Jupiter job dir> ...]`.
+**Results (2026-09-30).** pass@1 over 3 runs per set; Jupiter A is Jupiter's single run of its own arm A.
+
+| set | Horizon A | Horizon B | Jupiter A | Horizon A − Jupiter A |
+|---|---|---|---|---|
+| TB2.1 | 0.121 | 0.096 | 0.113 | +0.004 [−0.053, +0.061] |
+| SWE random-100 | 0.286 | 0.177 | 0.309 | −0.031 [−0.095, +0.031] |
+| TB-lite | 0.168 | 0.125 | 0.181 | −0.005 [−0.073, +0.059] |
+
 3. **Held-out NLL of an export:** `relay_heldout_docs.py` builds unseen relay episodes in the arms' ids + loss format.
    Score them with `SCRIPT=.../batch0_nll.py PARQUET=<docs> HELDOUT_MAX_MODEL_LEN=66560 HELDOUT_MAX_POS=131072
    HELDOUT_MAX_LEN=65536 MODEL=<export> NAME=<tag> sbatch heldout_nll.sbatch` (1 node, ~10 min).
