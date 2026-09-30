@@ -14,7 +14,9 @@
 # PENDING tb2_drv_<run> job of this script's runs is cancelled and replaced by an in-serve driver.
 #
 #   MODELS="hzA=<export dir> hzB=<export dir>" [REPS="1 2 3"] [SETS="tb21 swe_s0 swe_s1 tblite_s0 tblite_s1"] \
-#     [MAXJOBS=34] bash eval_sft.sh        (login node, inside tmux; it only submits and polls)
+#     [MAXJOBS=34] [GROUPED=1] bash eval_sft.sh        (login node, inside tmux; it only submits and polls)
+# GROUPED=1 serves all SETS of one (model, rep) from one multi-node job (one server and one run per node): 1 job slot per
+# 5 runs. Two queues (e.g. one per model) may run side by side; each counts every job of the user against MAXJOBS.
 #
 # Runs are named <set>_<tag>_r<rep>_<DAY>; results under $S/experiments/sft_eval/tb2_jobs/<run>; per-run state in
 # $S/experiments/sft_eval/state/<run>/ (serve job id, tries, driver log, done). Readout: eval_readout.py.
@@ -78,20 +80,74 @@ PY
   PYTHONPATH=$HARBOR_SRC "$PY" -c "import yaml; from harbor_config.models.job.config import JobConfig; JobConfig.model_validate(yaml.safe_load(open('$cfg')))" >> "$ST/$1/render.log" 2>&1
 }
 
-start_driver() {  # $1 run, $2 set, $3 serve job: render, tunnels, then the driver as an overlapping step of the serve job
-  local run=$1 j=$3 url left
-  url=$(cut -d, -f1 "$RELAY_EXP_DIR/endpoints/$j.student")
+start_driver() {  # $1 run, $2 set, $3 serve job, $4 model URL, $5 node, $6 1 = release the serve job when harbor ends,
+                  # $7 1 = start the login-side tunnels for this job: render, then the driver as an overlapping step on $5
+  local run=$1 j=$3 url=$4 node=$5 rel=$6 left
   render "$run" "$2" "$url" || { say "$run render/validate FAILED ($ST/$run/render.log)"; return 1; }
   left=$(squeue -h -j "$j" -o %L)
-  for p in ${TUNNEL_PORTS//,/ }; do
-    setsid nohup bash "$OTA/data/r2egym/horizon/tunnel.sh" "$j" "$p" > "$EV/logs/tunnel_${j}_$p.log" 2>&1 < /dev/null &
-  done
+  if [ "$7" = 1 ]; then
+    for p in ${TUNNEL_PORTS//,/ }; do
+      setsid nohup bash "$OTA/data/r2egym/horizon/tunnel.sh" "$j" "$p" > "$EV/logs/tunnel_${j}_$p.log" 2>&1 < /dev/null &
+    done
+  fi
   CFG=$EV/runs/$run.yaml SERVE_JOB=$j RUN_NAME=$run OTA=$OTA TUNNEL_PORTS=$TUNNEL_PORTS SCANCEL_SERVE=0 LOGD=$ST/$run/drv \
-  setsid nohup bash -c "srun -p debug -A CCR24067 -t $left --jobid=$j --overlap -N1 -n1 -c 32 --export=ALL bash $OTA/data/tb2/horizon/tb2_driver.sbatch; echo DRIVER_STEP_EXIT \$?; scancel $j" \
+  setsid nohup bash -c "srun -p debug -A CCR24067 -t $left --jobid=$j --overlap -N1 -n1 -w $node -c 32 --export=ALL bash $OTA/data/tb2/horizon/tb2_driver.sbatch; echo DRIVER_STEP_EXIT \$?$([ "$rel" = 1 ] && echo "; scancel $j")" \
     > "$ST/$run/driver.out" 2>&1 < /dev/null &
   echo "$j" > "$ST/$run/driver_started"
-  say "$run driver started in serve $j ($url, ${left} left)"
+  say "$run driver started in serve $j on $node ($url, ${left} left)"
 }
+
+# GROUPED=1: one multi-node serve job per (model, rep), one student server per node (serve_relay N_STUDENT = nodes), and
+# every set of that rep on its own node, each against its own node's server (the same 1-node server and concurrency as
+# a single run). Five runs then take one job slot instead of five. A server that dies takes the group's job down.
+if [ "${GROUPED:-0}" = 1 ]; then
+  read -ra SETA <<<"$SETS"; N=${#SETA[@]}
+  GRPS=(); for rep in $REPS; do for tag in "${!MODEL[@]}"; do GRPS+=("$tag:$rep"); done; done
+  say "EVAL_QUEUE_START grouped models='$MODELS' groups=${#GRPS[@]} x $N sets maxjobs=$MAXJOBS ota=$(git -C "$OTA" rev-parse --short HEAD) harbor=$HARBOR_SHA policy=$POLICY_FILE"
+  while :; do
+    Q=$(squeue -u "$USER" -h -o '%i %j %T'); ntot=$(echo "$Q" | grep -c .); left=0
+    for g in "${GRPS[@]}"; do
+      IFS=: read -r tag rep <<<"$g"; gname=${tag}_r${rep}_$DAY; gd=$ST/g_$gname; mkdir -p "$gd"
+      [ -f "$gd/done" ] && continue
+      left=$((left + 1))
+      gj=$(echo "$Q" | awk -v n="esrv_g_$gname" '$2==n {print $1" "$3}')
+      if [ -f "$gd/started" ]; then
+        ndone=0
+        for set in "${SETA[@]}"; do grep -q DRIVER_STEP_EXIT "$ST/${set}_${gname}/driver.out" 2>/dev/null && ndone=$((ndone + 1)); done
+        if [ "$ndone" = "$N" ] || [ -z "$gj" ]; then
+          for set in "${SETA[@]}"; do run=${set}_${gname}; touch "$ST/$run/done"
+            say "$run $(grep -q DRIVER_STEP_EXIT "$ST/$run/driver.out" 2>/dev/null && echo "DONE ($(grep -h TB2_DONE "$ST/$run/driver.out" | tail -1 | cut -c1-120))" || echo "ENDED without the driver's exit line; see $ST/$run/driver.out")"; done
+          [ -n "$gj" ] && scancel "${gj%% *}"; touch "$gd/done"; say "group $gname done"
+        fi
+        continue
+      fi
+      if [ -n "$gj" ]; then
+        j=${gj%% *}; echo "$j" > "$gd/serve"
+        if [ "${gj#* }" = RUNNING ] && [ -f "$RELAY_EXP_DIR/endpoints/$j.student" ]; then
+          IFS=, read -ra U < "$RELAY_EXP_DIR/endpoints/$j.student"
+          [ "${#U[@]}" = "$N" ] || { say "group $gname serve $j has ${#U[@]} student URLs, not $N"; scancel "$j"; continue; }
+          for k in "${!SETA[@]}"; do
+            run=${SETA[$k]}_${gname}; mkdir -p "$ST/$run"
+            start_driver "$run" "${SETA[$k]}" "$j" "${U[$k]}" "$(echo "${U[$k]}" | sed -E 's#^[a-z]+://([^:/]+).*#\1#')" 0 "$([ "$k" = 0 ] && echo 1 || echo 0)"
+          done
+          touch "$gd/started"
+        fi
+        [ -f "$RELAY_EXP_DIR/endpoints/$j.DEAD" ] && { say "group $gname serve $j DEAD before its drivers"; scancel "$j"; }
+        continue
+      fi
+      tries=$(cat "$gd/tries" 2>/dev/null || echo 0)
+      if [ "$tries" -ge 2 ]; then touch "$gd/done"; say "group $gname FAILED: no serve after 2 tries"; continue; fi
+      [ "$ntot" -lt "$MAXJOBS" ] || continue
+      j=$(STUDENT_MODEL=${MODEL[$tag]} bash "$OTA/data/relay/horizon/serve_submit.sh" "$N" "$N" "$SERVE_TIME" "esrv_g_$gname" 2>&1 | tail -1)
+      if [ "$j" -eq "$j" ] 2>/dev/null; then echo $((tries + 1)) > "$gd/tries"; ntot=$((ntot + 1)); say "group $gname serve job $j ($N nodes, try $((tries + 1)))"
+      else say "group $gname serve submit failed: $j"; fi
+    done
+    [ "$left" -eq 0 ] && break
+    sleep 60
+  done
+  say "EVAL_QUEUE_DONE; readout: $PY $OTA/data/r2egym/horizon/sft/eval_readout.py --tags ${!MODEL[*]} --day $DAY"
+  exit 0
+fi
 
 RUNS=()
 for rep in $REPS; do for tag in "${!MODEL[@]}"; do for set in $SETS; do RUNS+=("$set:$tag:$rep"); done; done; done
@@ -123,7 +179,9 @@ while :; do
     fi
     if [ -n "$sj" ]; then
       j=${sj%% *}; echo "$j" > "$d/serve"
-      if [ "${sj#* }" = RUNNING ] && [ -f "$RELAY_EXP_DIR/endpoints/$j.student" ]; then start_driver "$run" "$set" "$j"; fi
+      if [ "${sj#* }" = RUNNING ] && [ -f "$RELAY_EXP_DIR/endpoints/$j.student" ]; then
+        u=$(cut -d, -f1 "$RELAY_EXP_DIR/endpoints/$j.student"); start_driver "$run" "$set" "$j" "$u" "$(echo "$u" | sed -E 's#^[a-z]+://([^:/]+).*#\1#')" 1 1
+      fi
       [ -f "$RELAY_EXP_DIR/endpoints/$j.DEAD" ] && { say "$run serve $j DEAD before its driver"; scancel "$j"; }
       continue
     fi
