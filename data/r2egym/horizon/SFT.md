@@ -1,5 +1,11 @@
 # Snowball SFT on Horizon (Marin JAX / Levanter Grug chain)
 
+**Verdict (2026-09-30): Horizon trains Snowball SFT like Jupiter under the current recipe** (Grug Datakit 09-21 base,
+router bias frozen at its non-zero value, 16 x 65,536 on 4 nodes). The 30-step port pair passed its pre-registered rule
+(Horizon − Jupiter train loss: 0.0013 mean |Δ|, 0.0007 at step 0; marin `HORIZON_JUPITER_PAIR.md`), and Horizon's retrain
+of Jupiter's relay SFT arm A scores the same held-out NLL as Jupiter's arm A (0.5814 vs 0.5834; 09-21 is 0.6428). The
+older recipe below (Stage-3 import, per-batch router bias) trains the same model, but its loss curve sits ~0.010 off.
+
 Horizon runs the same Levanter Grug SFT chain as Jupiter, on the same 64 one-GPU ranks (16 nodes x 4 GB200). The port
 changes no Python: the marin branch `lukedhlee/horizon-snowball-sft` (lukedhlee/marin fork) is Jupiter's
 `lukedhlee/vista-snowball-sft` at a3840f826 plus `horizon_*` copies of the Jupiter sbatch files, and the chain runner
@@ -66,3 +72,22 @@ export, not by train loss at the 0.01 level.
 Tools: `sft/heldout_nll.sbatch` (held-out NLL through vLLM; `MODEL=<export> NAME=<tag>`) and `sft/batch0_nll.py`
 (rebuild a step's training batch and score it with vLLM). The per-step loss is in the offline W&B run under
 `~/snowball/marin-sft/wandb/`. tqdm's `N.0it ... loss=` shows the loss of step N−2.
+
+## Relay SFT arms and their evals (current recipe, 2026-09-30)
+
+Horizon retrained Jupiter's 09-28 relay SFT arms A (relay, 246 steps) and B (Qwen alone, 147 steps) on Jupiter's rows.
+Everything runs from the login node in tmux; each step is a Slurm job.
+
+1. **Train one arm:** `ARM=relay|qwen bash data/r2egym/horizon/sft/relay_sft_arm.sh` (marin branch
+   `lukedhlee/horizon-snowball-sft-0921`, init `init-dk0921-step0` from `pair_kimi0921.sh`'s import). It converts the
+   rows and counts packs on a compute node, stops unless the steps per pass equal Jupiter's (A 82, B 49), builds the cache,
+   trains (~7 s/step), exports every pass, and syncs W&B (`lukedhlee-marin/horizon-relay-sft`). About 30 min of training
+   per arm. The trainer's tqdm lines stop updating early; `GUARDED_RUN_EXIT rc=0` is the end signal.
+2. **Evaluate:** `MODELS="hzA=<export>" GROUPED=1 bash data/r2egym/horizon/sft/eval_sft.sh` runs TB2.1, SWE-bench
+   Verified random-100 and TB-lite 3 times each, with Jupiter's policy (harbor-p0924 @ 761fb516, 65k/16k, 16 concurrent,
+   one serve node per run). The per-user cap is 20 running jobs, so the harbor driver runs inside its serve job, and
+   `GROUPED=1` puts a rep's 5 runs in one 5-node job. A rep takes ~2–2.5 h (TB2.1 is the long one).
+   Readout: `eval_readout.py --tags hzA hzB --day <YYYYMMDD> [--ref jupA=tb21:<Jupiter job dir> ...]`.
+3. **Held-out NLL of an export:** `relay_heldout_docs.py` builds unseen relay episodes in the arms' ids + loss format.
+   Score them with `SCRIPT=.../batch0_nll.py PARQUET=<docs> HELDOUT_MAX_MODEL_LEN=66560 HELDOUT_MAX_POS=131072
+   HELDOUT_MAX_LEN=65536 MODEL=<export> NAME=<tag> sbatch heldout_nll.sbatch` (1 node, ~10 min).
