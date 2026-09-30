@@ -31,7 +31,7 @@ def main():
             p, ci = v.get('pass_at_1'), v.get('ci95')
             if p is None:
                 continue
-            col = '#1f4e79' if tag == ctl else '#8fb3d9'
+            col = {ctl: '#1f4e79', 'base0921': '#9e9d98', 'qwen38': '#7b4fb0'}.get(tag, '#8fb3d9')   # control, base (gray), teacher
             ax.barh(y, 100 * p, color=col, height=0.7)
             ax.errorbar(100 * p, y, xerr=[[100 * (p - ci[0])], [100 * (ci[1] - p)]], fmt='none', ecolor='#333', capsize=3, lw=1)
             if v.get('se') is not None:   # thick = +-1 standard error over tasks, thin = 95 % bootstrap range
@@ -46,7 +46,7 @@ def main():
         ax.grid(axis='x', alpha=0.3)
     axes[0].set_yticks(list(range(len(arms)))[::-1])
     axes[0].set_yticklabels([x[1] for x in arms], fontsize=9)
-    fig.suptitle('Horizon SFT arms on 09-21 (dark = control A, dashed line = A; thick bar = ±1 SE over tasks, thin = 95 % range)', fontsize=11)
+    fig.suptitle('Horizon SFT arms on 09-21 (gray = 09-21 base, dark blue = control A with dashed line, purple = Qwen3.8 teacher; thick bar = ±1 SE, thin = 95 % range)', fontsize=10)
     fig.tight_layout()
     fig.savefig(a.out, dpi=150)
 
