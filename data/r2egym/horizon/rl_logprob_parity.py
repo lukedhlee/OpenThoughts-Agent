@@ -38,7 +38,8 @@ def score(a):
     items = sorted(items, key=lambda r: -(len(r["prompt_ids"]) + len(r["completion_ids"])))[a.rank::a.world]
     t0 = time.time()
     model = HFModelWrapper(a.model, use_flash_attention_2=True, bf16=True, use_sample_packing=False,
-                           use_grouped_mm=True, attn_backend="flash_attention_2")
+                           use_grouped_mm=True, attn_backend="flash_attention_2",
+                           training_strategy="fsdp2")   # the arm's trainer.strategy; the wrapper refuses Grug without it
     model = model.to("cuda").eval()
     print(f"rank {a.rank}: loaded in {time.time() - t0:.0f}s, {len(items)} turns", flush=True)
     with open(f"{a.out}.part{a.rank}.jsonl", "w") as f, torch.no_grad():
@@ -89,6 +90,8 @@ def compare(a):
             d = [abs(x - y) for x, y in zip(t, ref) if x is not None and y is not None]
             big += sum(x > 0.69 for x in d)
             per.append((sum(d), len(d)))
+        if not per:
+            print(f"  {name:44s} no turns"); return None
         m, lo, hi = boot(per)
         tok = sum(c for _, c in per)
         print(f"  {name:44s} mean|dlogp| {m:.5f}  95% CI [{lo:.5f}, {hi:.5f}]  turns {len(per)}  tokens {tok}  |d|>0.69: {big / tok:.2e}")
