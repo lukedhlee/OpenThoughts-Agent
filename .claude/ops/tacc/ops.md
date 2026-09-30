@@ -468,5 +468,10 @@ now** (early operations). Confirmed 09-29: the balance still read 1,000 SU after
   the teachers logged "Stale file handle"). The file was intact a minute later. Multi-node serves set
   `SERVE_CACHE_LOCAL=/tmp` (`data/relay/horizon/serve_env.sh`), which gives one node-local cache per job at ~4 min of
   cold compile. Single-node jobs on the shared cache are fine.
+- **Training (09-29, `data/r2egym/horizon/{SFT,RL}.md`):** the Snowball Grug SFT chain runs on 16 nodes x 4 one-GPU
+  ranks (marin `lukedhlee/horizon-snowball-sft`, env `~/snowball/envs/marin-grug-sft` built on a compute node through
+  `tunnel.sh`); 3.6 s/step vs Jupiter's 6.4. Compute nodes name their IPoIB ports `ibs2`/`ibP2p1s0`/`ibP16s4`/`ibP18p1s0`
+  (the login node's is `ibp1s0`), so multi-node jobs set `NCCL_SOCKET_IFNAME=ib`. Finished jobs sit in COMPLETING for
+  5-10 min (epilog), so chains that poll `squeue` wait that long per step. RL has no Horizon launcher yet.
 - **Daytona org load (09-29 13:36 PT):** the eval org held 780 sandboxes before our runs. The deal allows ~1,000
   concurrent, so check the count before stacking a 128-seat relay run on top of other users' runs.
