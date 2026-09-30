@@ -16,7 +16,7 @@ ARM=$ARM ROWS=$ROWS DATASET_REVISION=pg20260930 MARIN_ROOT=$HOME/snowball/marin-
   bash "$OTA/data/r2egym/horizon/sft/relay_sft_arm.sh" || { echo "ARM $ARM FAILED"; exit 1; }
 fi
 OUT=/scratch/11584/$USER/snowball-sft/experiments/snowball-relay-sft/relay_$ARM/lr3e-4-sched3
-EX=$(for d in "$OUT"/export-step*-hf-bf16; do echo "$(basename "$d" | grep -oE '[0-9]+') $d"; done | sort -n | tail -1 | cut -d' ' -f2)
+EX=$(ls -d "$OUT"/export-step*-hf-bf16 | sed -E 's#.*/export-step([0-9]+)-hf-bf16$#\1 &#' | sort -n | tail -1 | cut -d' ' -f2)
 echo "eval $ARM on $EX"
 SCRATCH_DIR=$EVROOT MODELS="$ARM=$EX" SETS="tb21 swe_s0 swe_s1" REPS="1 2 3" GROUPED=1 MAXJOBS=${MAXJOBS:-30} \
   bash "$OTA/data/r2egym/horizon/sft/eval_sft.sh"
