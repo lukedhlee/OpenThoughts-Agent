@@ -1,7 +1,8 @@
 # Snowball agentic RL on Horizon: status and how to get to a run
 
-**Verdict (2026-09-29): port gate 5 has not run. It is blocked on the R2E-Gym Daytona snapshots, and bringing them
-back is Luke's call.** All 11 per-repo pool snapshots (`harbor__<hash>__snapshot`, list in
+**Verdict (2026-09-29, still true 09-30): port gate 5 has not run. It is blocked on the R2E-Gym Daytona snapshots, and
+bringing them back is Luke's call.** Since 09-30 the task tree, the Jupiter arm configs and their step-1 values are on
+Horizon, so once the snapshots are back only the Horizon launcher (step 3) remains. All 11 per-repo pool snapshots (`harbor__<hash>__snapshot`, list in
 `ai_memory/active/snowball-r2egym/state.md` 09-18/19) are missing from the only org our key reaches. That org holds
 54 snapshots and is full. The trainer-side numerics were checked without sandboxes and look healthy (§ Proxy).
 
@@ -10,13 +11,17 @@ back is Luke's call.** All 11 per-repo pool snapshots (`harbor__<hash>__snapshot
 Gate 5 needs the same config and checkpoint as a Jupiter reference, and a logged step-1 `policy/tis/log_ratio_abs_mean`
 that is no bigger than Jupiter's.
 
-- **Reference.** W&B (`lukedhlee-marin/jupiter-snowball-r2egym`) holds 25 runs, the last from 2026-09-08. All of them
-  used the apptainer backend on the pre-migration stack, and no Daytona RL run was ever synced. The closest one is
-  `62ft5sky` = `snowball_ttband_v2train_fulldist_gmm_seats1584_x16_a`: fresh from Stage-3 step 1888, full sampler,
-  grouped_mm, staleness 2, lr 5e-7, and step 1 = **0.03531**. Step-1 values of the other runs from the same base range
-  from 0.0254 to 0.0356, depending on sampler and KL settings. A Daytona reference (for example the 09-15 1,024-seat arm
-  1826380, or the 09-19/21 12-node arms) can only be read from the arm's own log on Jupiter
-  (`WANDB_MIRROR kind=train step=1`), which a Jupiter-side session has to do.
+- **Reference (updated 2026-09-30).** Jupiter's arm configs, sbatch files and step-1 values are now on Horizon in
+  `/scratch/11584/lukedhlee/rl_refs/` (README.md has the table; values read from each arm's W&B offline file on Jupiter).
+  - **Daytona, the closest match:** `snowball_ttband_ota3d1034u_b` step 1 = **0.02772** and `snowball_ttband_ota3d517u_b`
+    = **0.02754**. Their init checkpoints are the OTA SFT arm-D exports
+    (`snowball-ota-sft/ota3_if_rstsucc/lr1e-4-sched2/export-step{1034,517}-hf-bf16`), which exist only on Jupiter, so
+    one of them has to come over through HF (a Jupiter-side upload) before this reference can be matched exactly.
+  - **Apptainer:** `62ft5sky` = `snowball_ttband_v2train_fulldist_gmm_seats1584_x16_a`, from Stage-3 step 1888 (on
+    Horizon), full sampler, grouped_mm, staleness 2, lr 5e-7, step 1 = **0.03531**. Same checkpoint available here, but a
+    different sandbox backend.
+  - Plan: match a Daytona "b" arm once its export is on HF. Until then, the fallback is 62ft5sky's config and checkpoint
+    on Daytona. The metric compares trainer and rollout log-probs of the same tokens, so the backend should not move it.
 - **Stack.** It is identical to Jupiter's (port gate 1): `~/snowball/envs/snowball`, MarinSkyRL a03b2773, harbor
   dcf609bc, vLLM fa50698a + EAGLE-3 overlay. Serving passed gates 2 and 3. The relay driver already reaches Daytona from
   compute nodes through the login-side `ssh -R` tunnels and `socks_connect_bridge.py` (`data/relay/horizon/DRIVER.md`),
@@ -31,11 +36,11 @@ that is no bigger than Jupiter's.
 1. **Pool.** Luke restores the 11 snapshots from the public images (`data/r2egym/daytona_artifacts/RECOVERY.md`,
    `ghcr.io/lukedhlee/r2egym/<repo>`), after freeing 11 of the org's 40 custom slots. Then verify them read-only with
    `snapshot_census.py`.
-2. **Task tree.** Build the Daytona task tree `r2egym-daytona-v3` on Horizon. On Jupiter it is `$T/r2egym-daytona-v3`,
-   with 3,035 tasks and `Dockerfile.*` at the top. Either copy it through HF or rebuild it with the R2E-Gym generators in
-   `data/r2egym/`. Take the training pool of the reference run.
-3. **Config.** Copy the reference arm's `_rl_config.json` and sbatch from Jupiter (or render `snowball_r2egym_arm_b.yaml`),
-   then change only the Horizon parts:
+2. **Task tree (on Horizon already).** The Daytona task tree `r2egym-daytona-v3` (3,035 tasks) is inside the recovery
+   bundle: `~/.local/share/otagent/r2egym-recovery/v3-20260918/task_tree.tar.gz`. Unpack it under `/scratch` and take the
+   training pool of the reference run.
+3. **Config (on Horizon already).** Take the reference arm's `configs/*_rl_config.json` and `sbatch/` from
+   `/scratch/11584/lukedhlee/rl_refs/<arm>/`, then change only the Horizon parts:
    - paths come from `~/snowball/jupiter.local.env`;
    - Daytona egress goes through `tunnel.sh` + `socks_connect_bridge.py`, not the Jupiter gateway;
    - add `CC=gcc CXX=g++` and a node-local `SERVE_CACHE_LOCAL=/tmp`;
