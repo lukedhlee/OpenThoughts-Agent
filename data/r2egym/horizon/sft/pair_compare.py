@@ -8,7 +8,9 @@ P = "lukedhlee-marin/horizon-jupiter-sft-pair"
 def curve(rid):
     try: r = api.run(f"{P}/{rid}")
     except Exception as e: return None
-    return {int(h["_step"]): h["train/loss"] for h in r.scan_history(keys=["_step", "train/loss"])}
+    # history(), not scan_history(): the synced offline runs have no _step column for the scan API ("Step column
+    # '_step' not found in schema")
+    return {int(h["_step"]): h["train/loss"] for h in r.history(keys=["train/loss"], samples=10000, pandas=False)}
 h1, h2, j1 = (curve(f"snowball-kimi0921-pair-{x}") for x in ("horizon-r1", "horizon-r2", "jupiter-r1"))
 print("steps", len(h1 or {}), len(h2 or {}), len(j1 or {}))
 sig = st.mean(abs(h1[t] - h2[t]) for t in range(1, 30)); print(f"horizon r1 vs r2: step0 {h1[0]:.5f} vs {h2[0]:.5f}; sigma (mean|d| t=1..29) {sig:.5f}; max {max(abs(h1[t]-h2[t]) for t in range(1,30)):.5f}")
