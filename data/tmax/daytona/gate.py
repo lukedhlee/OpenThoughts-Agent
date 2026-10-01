@@ -33,8 +33,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent.parent / "calibforge" / "daytona"))
 from build_snapshots import DEFAULT_KEY_FILE, load_secret  # noqa: E402
 
-HARBOR = "/Users/lukedhlee/harbor/.venv/bin/harbor"
-HARBOR_SRC = "/Users/lukedhlee/harbor-wt/snowball-r2egym/src"
+HARBOR = os.environ.get("TMAX_HARBOR", "/Users/lukedhlee/harbor/.venv/bin/harbor")   # Horizon: ~/snowball/envs/snowball/bin/harbor
+HARBOR_SRC = os.environ.get("TMAX_HARBOR_SRC", "/Users/lukedhlee/harbor-wt/snowball-r2egym/src")   # Horizon: ~/snowball/harbor-relay/src
 
 
 def ts(s):  # as in data/calibforge/daytona/gate.py
