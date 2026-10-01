@@ -51,8 +51,8 @@ def main():
     ho = {t: heldout(p) for t, p in (x.split('=', 1) for x in a.heldout)}
     if start in ho and rl in ho:   # held-out entries in the readout's shape: per-model mean + range, paired diff
         common = sorted(set(ho[start]) & set(ho[rl]))
-        for t in (start, rl):
-            xs = [ho[t][k] for k in common]
+        for t in [x for x in tags if x in ho]:
+            xs = [ho[t][k] for k in common if k in ho[t]]
             r[f'{t}/heldout'] = {'pass_at_1': sum(xs) / len(xs), 'ci95': list(boot(xs)), 'tasks': len(xs)}
         dd = [ho[start][k] - ho[rl][k] for k in common]
         r[f'{start}-{rl}/heldout'] = {'diff': sum(dd) / len(dd), 'ci95': list(boot(dd)), 'tasks': len(dd)}
