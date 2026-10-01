@@ -273,8 +273,8 @@ def main():
         "  tail -n 5 \"$GW_DIR\"/*.log >&2; exit 95\nfi\n"
         "export HTTPS_PROXY=http://127.0.0.1:18946 https_proxy=http://127.0.0.1:18946\n"
         "export NO_PROXY=localhost,127.0.0.1,.horizon.tacc.utexas.edu no_proxy=localhost,127.0.0.1,.horizon.tacc.utexas.edu\n"
-        "if ! curl -sf -o /dev/null --max-time 30 -H \"Authorization: Bearer $DAYTONA_API_KEY\" https://app.daytona.io/api/api-keys/current; then\n"
-        "  echo \"FATAL: Daytona API not reachable through the bridge\" >&2; exit 98\nfi\n"
+        "_ok=0; for _i in $(seq 1 12); do curl -sf -o /dev/null --max-time 30 -H \"Authorization: Bearer $DAYTONA_API_KEY\" https://app.daytona.io/api/api-keys/current && { _ok=1; break; }; sleep 5; done\n"
+        "[ $_ok = 1 ] || { echo \"FATAL: Daytona API not reachable through the bridge (12 tries)\" >&2; exit 98; }\n"
         "echo \"horizon rl: bridges ready on $SLURM_NNODES nodes; Daytona API reachable through 127.0.0.1:18946\"\n"))
     sub1('setup_container_runtime "apptainer" "$WORKDIR" || exit $?\n', 'setup_container_runtime "daytona" "$WORKDIR" || exit $?\n')
     sub1("export PYTHONPATH=/e/project1/transfernetx/lee27/code/src/marin_vllm_eagle3${PYTHONPATH:+:$PYTHONPATH}\n",
