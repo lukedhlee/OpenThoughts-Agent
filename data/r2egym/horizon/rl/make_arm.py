@@ -66,7 +66,10 @@ def main():
     ap.add_argument("--hf-save-interval", type=int, default=0, help="0 = no HF exports")
     ap.add_argument("--project", default="horizon-snowball-rl")
     ap.add_argument("--set", action="append", default=[], help="extra hydra override key=value (replaces if present)")
-    ap.add_argument("--ota", default=f"{SB}/ota-rl", help="job checkout the sbatch runs from")
+    ap.add_argument("--ota", default=f"{SB}/ota-rl", help="checkout of this branch: the Horizon scripts (bridge, shm_prune)")
+    ap.add_argument("--runtime", default=f"{SB}/ota-rl-runtime",
+                    help="OTA checkout the RL runner imports (WORKDIR): lukedhlee/horizon-rl = f3edec45, the commit port gate 1 "
+                         "verified as Jupiter's RL stack, + the horizon cluster entry")
     ap.add_argument("--out", default=f"{S}/experiments/rl")
     a = ap.parse_args()
 
@@ -298,7 +301,8 @@ def main():
     assert "dtn_" not in b
     sbf = f"{run}/sbatch/{a.name}_rl.sbatch"
     open(sbf, "w").write(b)
-    print(json.dumps(dict(config=cfg, sbatch=sbf, nodes=nodes, policy_nodes=a.policy_nodes, engines=a.engines,
+    json.dump(dict(runtime=os.path.realpath(a.runtime), ota=os.path.realpath(a.ota)), open(f"{run}/configs/checkouts.json", "w"))
+    print(json.dumps(dict(config=cfg, sbatch=sbf, runtime=a.runtime, nodes=nodes, policy_nodes=a.policy_nodes, engines=a.engines,
                           seats=a.seats, coords=a.coords, steps=a.steps, model=model, served=served, tree=tree,
                           ntasks=len(tasks), recipe=a.recipe), indent=1))
 

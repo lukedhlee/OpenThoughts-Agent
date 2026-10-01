@@ -1,6 +1,7 @@
 #!/bin/bash
 # launch_arm.sh <run dir made by make_arm.py> — pre-flight, submit, and start the login-side tunnels for a Horizon RL arm.
-# Run on the Horizon login node; the sbatch runs from the job checkout (~/snowball/ota-rl). Pre-flight (read-only; any
+# Run on the Horizon login node. The job's WORKDIR (what the RL runner imports) is the runtime checkout named in
+# configs/checkouts.json (~/snowball/ota-rl-runtime, branch lukedhlee/horizon-rl); its scripts come from ~/snowball/ota-rl. Pre-flight (read-only; any
 # failure refuses):
 #   - the hydra args compose against the installed MarinSkyRL schema (validate_hydra_args.py)
 #   - every environment hash of the train tree has a snapshot in the org (no task may make harbor build one: the org is
@@ -10,6 +11,9 @@
 set -euo pipefail
 RUN=${1:?run dir}; NAME=$(basename "$RUN")
 OTA=${OTA:-$HOME/snowball/ota-rl}; HZ=$OTA/data/r2egym/horizon; PY=$HOME/snowball/envs/snowball/bin/python
+RUNTIME=$($PY -c "import json,sys; print(json.load(open(sys.argv[1]))['runtime'])" "$1/configs/checkouts.json")   # WORKDIR of the job
+[ -f "$RUNTIME/hpc/shell_utils/nccl_flight_recorder.sh" ] && grep -q '^horizon = HPC' "$RUNTIME/hpc/hpc.py" || { echo "$RUNTIME is not the horizon-rl runtime"; exit 1; }
+[ -z "$(git -C "$RUNTIME" status --short --untracked-files=no)" ] || { echo "$RUNTIME has local changes"; exit 1; }
 TUNNEL_PORTS=${TUNNEL_PORTS:-18080,18081}; MAX_ORG=${MAX_ORG:-1200}   # Luke 10-01: org total under 1,200 (other sessions share it)
 CFG=$RUN/configs/${NAME}_rl_config.json; SBF=$RUN/sbatch/${NAME}_rl.sbatch
 [ -f "$CFG" ] && [ -f "$SBF" ] || { echo "missing $CFG or $SBF"; exit 1; }
@@ -29,7 +33,7 @@ if [ "${SKIP_SANDBOX_CHECK:-0}" != 1 ]; then
   echo "== org sandboxes started: ${N:-?}; this arm: $SEATS seats; limit $MAX_ORG"
   [ -n "$N" ] && [ $((N + SEATS)) -le "$MAX_ORG" ] || { echo "REFUSED: org would exceed $MAX_ORG started sandboxes"; exit 1; }
 fi
-JOB=$(cd "$OTA" && DCFT=$OTA sbatch --parsable "$SBF" | tail -n 1 | grep -oE '^[0-9]+')   # TACC prints a banner first
+JOB=$(cd "$RUNTIME" && DCFT=$RUNTIME sbatch --parsable "$SBF" | tail -n 1 | grep -oE '^[0-9]+')   # TACC prints a banner first
 [ -n "$JOB" ] || { echo "sbatch returned no job id"; exit 1; }
 echo "submitted $NAME as job $JOB"; echo "$JOB" >> "$RUN/jobs.txt"
 for p in ${TUNNEL_PORTS//,/ }; do
