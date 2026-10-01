@@ -68,6 +68,7 @@ def main():
     ap.add_argument("--probe", type=int, default=0,
                     help="K > 0: eval-only screen (Jupiter's refresh_screen probe): K attempts per tree entry, no training step; "
                          "trials kept on /scratch for the per-task readout (screen_report.py); the job stops at eval step 0")
+    ap.add_argument("--drop", action="append", default=[], help="hydra key to remove (e.g. an arg the installed stack rejects)")
     ap.add_argument("--set", action="append", default=[], help="extra hydra override key=value (replaces if present)")
     ap.add_argument("--ota", default=f"{SB}/ota-rl", help="checkout of this branch: the Horizon scripts (bridge, shm_prune)")
     ap.add_argument("--runtime", default=f"{SB}/ota-rl-runtime",
@@ -195,6 +196,9 @@ def main():
         setk("generator.sampling_params.top_k=", "-1")
         setk("data.val_data=", json.dumps([tree]))
         c.update(val_data=[tree], val_data_sources=[tree])
+    for k in a.drop:
+        assert idx(k + "="), f"--drop {k}: not in the config"
+        dropk(k + "=")
     for kv in a.set:
         k, v = kv.split("=", 1)
         setk(k + "=", v)
