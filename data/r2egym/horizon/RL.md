@@ -68,4 +68,15 @@ draft (trained on the Stage-3 line) reaches a mean acceptance length of 2.14 (H9
 
 ## Results
 
-(filled in as they land: gate 5 verdict, screen bands, arms, evals)
+- **Port gate 5: FAIL by the written rule, by 4 %.** Step-1 `policy/tis/log_ratio_abs_mean` 0.03679 vs 62ft5sky's 0.03531
+  (steps 2-3: 0.03729, 0.03700), job 39668, Stage-3 step 1888 on the full Daytona v3 pool, 128 seats. Token alignment
+  exact, importance ratio mean 1.00002, 0.04 % of tokens capped, 0 masked. Read as a token-set difference (different pool
+  and backend; trajectories at the 49k cap, mean 45k tokens), not numerics: on identical tokens the 09-29 proxy put
+  Horizon's trainer at 0.0304 vs Horizon vLLM and 0.0309 vs Jupiter's vLLM. The arms went ahead (Luke's call to revisit).
+- **Clean pool:** 1,227 tasks (1,199 sympy + 28 orange3) = 1,104 train + 123 held-out; the 09-21 SFT data covers every
+  task of the other nine repos. Builder: `data/r2egym/horizon/pool/`.
+- **Screens (K=8):** band H9 600 / H8 589 train tasks solved >= 1; train pass@1 .291 / .288; held-out pass@1 .501 / .509.
+  66 % of trials end in ContextLengthExceeded (49,152-token budget).
+- **EAGLE-3 draft at RL load:** 1.36-1.53x node output on H8/H9 (acceptance 2.3) -> kept.
+- **Export:** `export_hf.sbatch` (2 min per checkpoint) verified on rl_h9 step 6.
+- Arms and evals: pending.
