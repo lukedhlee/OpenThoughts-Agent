@@ -43,7 +43,10 @@ S = "/scratch/11584/lukedhlee"
 HOMEDIR = os.path.expanduser("~")
 SB = f"{HOMEDIR}/snowball"
 DAYTONA_INFRA = ["DaytonaError", "DaytonaRateLimitError", "DaytonaTimeoutError", "DaytonaNotFoundError",
-                 "DaytonaConflictError", "DaytonaSandboxStopError", "SandboxBuildFailedError", "SetupScriptError"]
+                 "DaytonaConflictError", "DaytonaSandboxStopError", "SandboxBuildFailedError", "SetupScriptError",
+                 "DaytonaBadRequestError"]   # rl_h9 10-01: "declarative builds are not allowed" scored as false zeros
+HARBOR_OVERLAY = f"{HOMEDIR}/snowball/harbor-rl"   # marin-community/harbor lukedhlee/daytona-snapshot-readonly (dcf609bc + read-only snapshots)
+HARBOR_OVERLAY_SHA = "a20612bf"
 
 
 def main():
@@ -309,7 +312,13 @@ def main():
         "echo \"horizon rl: bridges ready on $SLURM_NNODES nodes; Daytona API reachable through 127.0.0.1:18946\"\n"))
     sub1('setup_container_runtime "apptainer" "$WORKDIR" || exit $?\n', 'setup_container_runtime "daytona" "$WORKDIR" || exit $?\n')
     sub1("export PYTHONPATH=/e/project1/transfernetx/lee27/code/src/marin_vllm_eagle3${PYTHONPATH:+:$PYTHONPATH}\n",
-         f"export PYTHONPATH={SB}/src/marin_vllm_eagle3${{PYTHONPATH:+:$PYTHONPATH}}\n")
+         f"export PYTHONPATH={SB}/src/marin_vllm_eagle3${{PYTHONPATH:+:$PYTHONPATH}}\n"
+         "# --- Horizon: harbor overlay = the venv's dcf609bc + read-only auto-snapshots (never create/delete a snapshot, never\n"
+         "# fall through to a declarative build); the venv's editable harbor-marin is shared by running jobs and stays untouched\n"
+         f"export PYTHONPATH={HARBOR_OVERLAY}/src:$PYTHONPATH HARBOR_DAYTONA_SNAPSHOT_READONLY=1\n"
+         f"[ \"$(git -C {HARBOR_OVERLAY} rev-parse --short=8 HEAD)\" = {HARBOR_OVERLAY_SHA} ] && [ -z \"$(git -C {HARBOR_OVERLAY} status --short)\" ] || {{ echo \"FATAL: harbor overlay is not a clean {HARBOR_OVERLAY_SHA}\" >&2; exit 97; }}\n"
+         f"_HI=$(cd /tmp && \"$RL_PYTHON\" -c 'import harbor.environments.daytona.snapshots as s; print(s.__file__, hasattr(s.DaytonaSnapshotService, \"_ensure_auto_readonly\"))' 2>&1 | tail -n 1)\n"
+         f"case \"$_HI\" in \"{HARBOR_OVERLAY}/src/\"*\" True\") echo \"harbor overlay: $_HI\";; *) echo \"FATAL: harbor overlay not imported: $_HI\" >&2; exit 97;; esac\n")
     launch = re.search(r'\n"\$RL_PYTHON" -m hpc\.rl_launch_utils --config "[^"]+" &\n', b)
     assert launch
     ckpt_wait = (f'  for _i in $(seq 1 60); do [ "$(cat {run}/{a.name}/checkpoints/latest_ckpt_global_step.txt 2>/dev/null)" = {a.steps} ] && break; sleep 30; done\n'
