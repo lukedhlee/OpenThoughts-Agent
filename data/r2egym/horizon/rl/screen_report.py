@@ -66,6 +66,8 @@ def main():
     ap.add_argument('--out', type=Path, required=True)
     ap.add_argument('--repo-map', type=Path, help='csv/tsv with task (or task_name) and repo columns')
     ap.add_argument('--band', type=Path, help='task list the band is drawn from (the train set)')
+    ap.add_argument('--before', help="ISO time (UTC, e.g. 2026-10-01T13:21:44): drop trials started later. A probe's eval "
+                    "is followed by SkyRL's eval_on_train_end second eval; its partial trials land in the same session dir")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     repo = {}
@@ -79,6 +81,13 @@ def main():
     for run in a.runs:
         m = masks_of(run)
         for p in sorted((run / 'trials').glob('eval_sessions/*/*/result.json')):
+            if a.before:
+                with p.open('rb') as fh:   # the trial's own started_at sits at the end of result.json
+                    fh.seek(max(0, p.stat().st_size - 8192))
+                    st = re.findall(rb'"started_at":\s*"([^"]+)"', fh.read())
+                st = re.match(rb'(.*)', st[-1]) if st else None
+                if st and st.group(1).decode()[:19] > a.before[:19]:
+                    continue
             try:
                 task, reward, ex = read_outcome(p)
             except (ValueError, OSError, KeyError):
