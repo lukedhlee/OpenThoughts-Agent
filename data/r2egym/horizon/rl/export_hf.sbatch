@@ -19,7 +19,7 @@ unset LD_PRELOAD   # TACC XALT pollutes command output
 export CC=gcc CXX=g++ OMP_NUM_THREADS=16
 PY=$HOME/snowball/envs/snowball/bin/python
 SCRIPT=$HOME/snowball/marinskyrl-marin/skyrl-train/scripts/consolidate_sharded_checkpoint.py
-: "${BASE:?set BASE (the arm's start export)}"
+: "${BASE:?set BASE to the start export of the arm}"
 E=/scratch/11584/lukedhlee/experiments/rl
 : "${RUN:?set RUN}"; : "${STEP:?set STEP}"
 SRC=${SRC:-$E/$RUN/$RUN/checkpoints/global_step_$STEP/policy}
