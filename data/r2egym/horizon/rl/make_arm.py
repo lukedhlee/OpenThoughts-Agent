@@ -323,9 +323,10 @@ def main():
         f"DS_LOG={run}/logs/${{SLURM_JOB_NAME}}_${{SLURM_JOB_ID}}.out\n"
         f"( while ! grep -q 'WANDB_MIRROR {stop_on}' \"$DS_LOG\" 2>/dev/null; do sleep 30; done\n"
         f"  echo \"horizon rl: {stop_on.strip()} logged $(date +%T)\"\n" + ("" if a.probe else ckpt_wait) +
-        + ("  echo \"horizon rl: stopping $(date +%T) (probe: at once; SkyRL's eval_on_train_end starts a 2nd eval that would orphan sandboxes)\"\n"
-           if a.probe else "  echo \"horizon rl: stopping $(date +%T)\"; sleep 120\n") +
-        "  scancel -s USR1 -b \"$SLURM_JOB_ID\"; sleep 240; scancel \"$SLURM_JOB_ID\" ) &\n"
+        ("  echo \"horizon rl: stopping $(date +%T) (probe: at once; SkyRL's eval_on_train_end starts a 2nd eval that would orphan sandboxes)\"\n"
+         "  scancel \"$SLURM_JOB_ID\" ) &\n" if a.probe else
+         "  echo \"horizon rl: stopping $(date +%T)\"; sleep 120\n"
+         "  scancel -s USR1 -b \"$SLURM_JOB_ID\"; sleep 240; scancel \"$SLURM_JOB_ID\" ) &\n") +
         f'\n"$RL_PYTHON" -m hpc.rl_launch_utils --config "{cfg}" &\n'), 1)
     b = b.replace(f"{jexp}/{REF_SB_NAME}", f"{run}/{a.name}").replace(jexp, run).replace(REF_SB_NAME, a.name)
     b = b.replace(f"{a.name}-{REF_SB_HASH}", a.name)
