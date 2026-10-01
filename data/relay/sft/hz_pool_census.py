@@ -16,7 +16,10 @@ Tags per episode:
 Selection per scenario (final_v2, single arm): at most 2 eligible rows per task (seeded), then N = min(passes, fails)
 of each (seeded). Scenarios: all; drop hunt + canary; drop hunt + canary + leak.
 
-    python hz_pool_census.py --runs <run dir> ... --out census.jsonl [--procs 12]   (one process per run)
+    python hz_pool_census.py --runs <run dir> ... --out census.jsonl [--procs 12] [--arm control]   (one process per run)
+
+--arm control (2026-10-01): the same census of Qwen-alone runs (relay pipeline's control arm on the same tasks); every
+tag and filter is the same, and every turn is the teacher's.
 """
 import argparse
 import collections
@@ -103,11 +106,14 @@ def select(rows, seed=20260927, per_task=2):
 
 
 def main():
+    global ARM
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--runs', nargs='+', required=True)
     ap.add_argument('--out', required=True)
     ap.add_argument('--procs', type=int, default=12)
+    ap.add_argument('--arm', default='relay_repair', help='router arm: relay_repair (default) or control (Qwen alone, 2026-10-01)')
     a = ap.parse_args()
+    ARM = a.arm   # the pool's workers are forked after this, so they see it
     with mp.Pool(min(a.procs, len(a.runs))) as pool:
         rows = [r for rs in pool.map(census, a.runs) for r in rs]
     with open(a.out, 'w') as f:
