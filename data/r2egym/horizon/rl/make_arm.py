@@ -264,7 +264,10 @@ def main():
          # Daytona create pacing (build_ota_darm.sh): 5/s org budget, split over this arm's coordinators
          f"export HARBOR_DAYTONA_CREATE_RATE=${{HARBOR_DAYTONA_CREATE_RATE:-5}} HARBOR_DAYTONA_CREATE_SHARES={a.coords}\n"
          "export RES_OPTIONS='timeout:1 attempts:2' LITELLM_LOCAL_MODEL_COST_MAP=True\n")
-    subre(r'^export NCCL_SOCKET_IFNAME="ib0"\n', 'export NCCL_SOCKET_IFNAME="ib"\n')
+    # Horizon nodes carry 4 InfiniBand HCAs (mlx5_0/1/4/5, 800 Gb/s) and 2 RoCE ones (mlx5_2/3); unpinned, NCCL paired an
+    # IB device with a RoCE one across nodes and the first policy->engine weight broadcast died ("Remote IB device is
+    # incompatible", jobs 39609/39610). Same names on every node checked (28 of 28).
+    subre(r'^export NCCL_SOCKET_IFNAME="ib0"\n', 'export NCCL_SOCKET_IFNAME="ib"\nexport NCCL_IB_HCA="=mlx5_0,mlx5_1,mlx5_4,mlx5_5"\n')
     subre(r'^export FLASHINFER_WORKSPACE_BASE="/e/fscratch/reformo/lee27/cache/flashinfer"\n',
           'export FLASHINFER_WORKSPACE_BASE="$_LC/flashinfer"\n', count=2)
     subre(r'^export WANDB_PROJECT="jupiter-r2egym-grpo"\n', f'export WANDB_PROJECT="{a.project}"\n', count=2)
