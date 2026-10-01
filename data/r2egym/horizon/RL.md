@@ -95,4 +95,13 @@ draft (trained on the Stage-3 line) reaches a mean acceptance length of 2.14 (H9
   66 % of trials end in ContextLengthExceeded (49,152-token budget).
 - **EAGLE-3 draft at RL load:** 1.36-1.53x node output on H8/H9 (acceptance 2.3) -> kept.
 - **Export:** `export_hf.sbatch` (2 min per checkpoint) verified on rl_h9 step 6.
-- Arms and evals: pending.
+- **Arm H9 (rl_h9, GRPO 30 steps from H9 on its 600-task band): PASS.** All 30 steps were healthy (tis 0.015-0.018,
+  entropy 0.27-0.29, q >= 0.70, 0 masked; reward 0.49-0.66 early, 0.66 at step 30). Paired against H9, with 95 %
+  bootstrap ranges:
+  - Held-out clean R2E-Gym (123 tasks x 8): .497 -> .568, +.071 [+.039, +.105]. 51 tasks went up and 20 went down; 7
+    were newly solved and 5 lost.
+  - TB2.1: .208 -> .235, +.042 [-.002, +.086].
+  - TB-lite: .282 -> .330, +.054 [-.003, +.116].
+  - SWE-bench Verified random-100: .453 -> .418, -.035 [-.083, +.010] (without sympy -.033 [-.082, +.016]).
+  - Uploaded as `laion/snowball-67b-a2b-rl-r2egym-acont-step30`.
+- Arm H8: pending.
