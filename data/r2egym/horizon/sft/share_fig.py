@@ -39,7 +39,7 @@ def main():
     models = MATCHED if a.matched else MODELS
     if a.grpo and not a.matched:
         k = [m[0] for m in models].index('h9acont') + 1
-        models = models[:k] + (GRPO,) + models[k:]
+        models = tuple(m for m in models[:k] + (GRPO,) + models[k:] if m[0] != 'h8allkimi')   # GRPO started from H9
     bold = ('mrel', 'mrelk') if a.matched else ('h8allkimi', 'h9acont', 'rlh9s30')
     r = json.load(open(a.data))['readout']
     if a.extra:
