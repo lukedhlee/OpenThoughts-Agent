@@ -314,6 +314,9 @@ def main():
     assert launch
     ckpt_wait = (f'  for _i in $(seq 1 60); do [ "$(cat {run}/{a.name}/checkpoints/latest_ckpt_global_step.txt 2>/dev/null)" = {a.steps} ] && break; sleep 30; done\n'
                  if a.ckpt_interval and a.steps % a.ckpt_interval == 0 else "")
+    if a.hf_save_interval and a.steps % a.hf_save_interval == 0:   # and the step's HF export (any dir naming the step)
+        ckpt_wait += (f'  for _i in $(seq 1 80); do find {run}/{a.name}/exports -maxdepth 3 -name config.json -path "*{a.steps}*" 2>/dev/null | grep -q . && break; sleep 30; done\n'
+                      f'  echo "horizon rl: export of step {a.steps}: $(find {run}/{a.name}/exports -maxdepth 3 -name config.json -path "*{a.steps}*" 2>/dev/null | head -1)"\n')
     stop_on = "kind=eval step=0 " if a.probe else f"kind=train step={a.steps} "
     b = b.replace(launch.group(0), (
         f"\n# --- Horizon: stop once '{stop_on.strip()}' is logged (and its checkpoint written); the fully-async trainer keeps going ---\n"
