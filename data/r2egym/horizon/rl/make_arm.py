@@ -221,6 +221,9 @@ def main():
         assert n == count, ("regex anchor", pat, n)
 
     sub1("#SBATCH --time=08:00:00\n", f"#SBATCH --time={a.wall}\n")
+    # TACC preloads XALT (libxalt_init.so) into every process; it prints an NVML stub warning on stdout, which lands in
+    # every $(...) capture (job 39606: the Daytona key read back as 978 characters). Drop it before anything runs.
+    sub1("set -eo pipefail\n", "set -eo pipefail\nunset LD_PRELOAD   # Horizon: XALT pollutes command substitutions\n")
     sub1("#SBATCH --nodes=20\n", f"#SBATCH --nodes={nodes}\n")
     sub1("#SBATCH --cpus-per-task=288\n", "#SBATCH --cpus-per-task=144\n")
     sub1("#SBATCH --mail-type=END,TIME_LIMIT,FAIL\n#SBATCH --mail-user=\n", "")
