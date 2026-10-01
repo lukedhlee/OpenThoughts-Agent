@@ -76,7 +76,11 @@ def main():
     ap.add_argument('--jobs', default=f"/scratch/11584/{os.environ.get('USER')}/experiments/sft_eval/tb2_jobs")
     ap.add_argument('--ref', nargs='*', default=[], help='TAG=SET:<job dir>[,<job dir>] single-run references')
     ap.add_argument('--out')
+    ap.add_argument('--exclude', help='regex of task names to drop from every set (e.g. ^sympy__ : the RL pool shares that '
+                    'repo with SWE-bench random-100, so report the gain with and without it)')
     a = ap.parse_args()
+    import re
+    drop = re.compile(a.exclude) if a.exclude else None
     res, sc = {}, {}
     for tag in a.tags:
         for fam in SETS:
@@ -84,6 +88,8 @@ def main():
             if not ro:
                 continue
             s = scores(ro)
+            if drop:
+                s = {t: v for t, v in s.items() if not drop.search(t)}
             sc[(tag, fam)] = s
             res[f'{tag}/{fam}'] = dict(
                 reps={r: dict(pe.rate(o), counts=c) for r, (o, c) in ro.items()},
