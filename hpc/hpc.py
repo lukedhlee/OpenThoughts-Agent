@@ -1930,9 +1930,55 @@ marenostrum = HPC(
     num_nodes_fast=16,
 )
 
+# TACC Horizon (4x GB200 per node, 144 Grace cores, no internet on compute nodes). By diff from `jupiter` for the
+# Snowball RL port (data/r2egym/horizon/rl/ on lukedhlee/vista-moe-grpo-30b): same Ray/vLLM/NCCL env, Horizon paths, IPoIB
+# ports named ib*, GPUs are a gres. Daytona egress is the sbatch's per-node HTTPS_PROXY bridge (login-side `ssh -R`
+# tunnels), so no proxychains and no ssh tunnel from the launcher.
+horizon = HPC(
+    name="horizon",
+    hostname_pattern=r".*horizon\.tacc\.utexas\.edu",
+    dotenv_filename="jupiter.env",
+    account="CCR24067",
+    partition="debug",
+    gpus_per_node=4,
+    cpus_per_node=144,
+    internet_node=False,
+    gpus_type="GB200 186GB (B200 + Grace)",
+    unified_gpu_memory=True,
+    total_partition_nodes=1000,
+    gpu_directive_format="--gres=gpu:{n}",
+    modules=[],
+    env_vars={
+        **{k: v for k, v in jupiter.env_vars.items() if k not in ("LD_LIBRARY_PATH", "OT_AGENT_RAY_LOG_DIR", "RAY_object_spilling_config")},
+        "OT_AGENT_RAY_LOG_DIR": "/scratch/11584/lukedhlee/experiments/_ray_logs",
+        "RAY_object_spilling_config": (
+            '{"type":"filesystem","params":'
+            '{"directory_path":"/scratch/11584/lukedhlee/ray_spill"}}'
+        ),
+    },
+    nccl_settings={
+        "NCCL_DEBUG": "WARN",
+        "NCCL_NET_GDR_LEVEL": "0",
+        "NCCL_SOCKET_IFNAME": "ib",
+        "NCCL_IB_TIMEOUT": "23",
+    },
+    training_launcher="accelerate",
+    needs_ssh_tunnel=False,
+    proxychains_binary="",
+    gpu_bind="none",
+    disable_cpu_bind=True,
+    pre_run_commands=["ulimit -c 0"],
+    default_time_limit="12:00:00",
+    max_time_limit="48:00:00",
+    num_nodes_slow=1,
+    num_nodes_default=12,
+    num_nodes_fast=40,
+)
+
 clusters = [
     jureca,
     jupiter,
+    horizon,
     juwels,
     leonardo,
     capella,
