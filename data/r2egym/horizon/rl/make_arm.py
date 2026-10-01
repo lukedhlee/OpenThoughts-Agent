@@ -77,7 +77,10 @@ def main():
     ap.add_argument("--out", default=f"{S}/experiments/rl")
     a = ap.parse_args()
 
-    model = os.path.realpath(a.model)
+    # not realpath: harbor names the model after basename(policy path) in every request, and vLLM 400s any request
+    # whose name differs from served_model_name (gate-5 job 39625: an HF snapshot hash vs the served name, every trial
+    # BadRequestError, masked, no step in 1 h). A symlink named after the model keeps both equal.
+    model = os.path.abspath(a.model)
     assert os.path.isfile(f"{model}/config.json"), f"no config.json under {model}"
     tree = os.path.realpath(a.tree)
     val_tree = os.path.realpath(a.val_tree) if a.val_tree else tree
@@ -87,6 +90,7 @@ def main():
         assert os.path.isfile(f"{tree}/{t}/tests/test.sh") and os.path.isfile(f"{tree}/{t}/environment/Dockerfile"), \
             f"{tree}/{t} is not a harbor task dir"
     served = a.served_name or os.path.basename(model)
+    assert served == os.path.basename(model), f"served name {served} != basename of the model path {model}: every LLM call would 400"
     nodes = a.policy_nodes + a.engines
     fsdp = 4 * a.policy_nodes
     run = f"{a.out}/{a.name}"
