@@ -12,6 +12,11 @@ for r in "${runs[@]}"; do
   tr=$(grep -c "WANDB_MIRROR kind=train" $L 2>/dev/null); ev=$(grep -c "WANDB_MIRROR kind=eval" $L 2>/dev/null)
   res=$(find $E/$r/trials -maxdepth 4 -name result.json 2>/dev/null | wc -l)
   echo "== $r job $J [$st] log age $age | DP lines $dp | train steps $tr | eval logs $ev | probe results $res | tracebacks $tb"
+  # exception mix of finished trials (probes: /scratch trials; arms: /dev/shm on the head node, last ~10 min kept)
+  if [ -d $E/$r/trials ]; then TD=$E/$r/trials; ex=$(find $TD -maxdepth 4 -name result.json -mmin -30 2>/dev/null | head -400 | xargs -r grep -ho '"exception_type": *"[A-Za-z]*"' 2>/dev/null | sort | uniq -c | sort -rn | head -4 | awk '{printf "%s=%s ", $3, $1}' | tr -d '"')
+  else N=$(scontrol show hostnames "$(squeue -h -j $J -o %N 2>/dev/null)" 2>/dev/null | head -1)
+    [ -n "$N" ] && ex=$(timeout 60 ssh -o BatchMode=yes -o ConnectTimeout=10 $N "find /dev/shm/otagent_trials/$r -maxdepth 3 -name result.json 2>/dev/null | head -400 | xargs -r grep -ho '\"exception_type\": *\"[A-Za-z]*\"' | sort | uniq -c | sort -rn | head -4" 2>/dev/null | awk '{printf "%s=%s ", $3, $1}' | tr -d '"'); fi
+  [ -n "${ex:-}" ] && echo "   recent trial exceptions (<=400 trials): $ex"; ex=""
   last=$(grep "WANDB_MIRROR kind=train" $L 2>/dev/null | tail -n 1)
   [ -n "$last" ] && python3 - "$last" <<'PY'
 import re, sys, json
