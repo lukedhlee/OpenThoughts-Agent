@@ -65,6 +65,9 @@ def main():
     ap.add_argument("--ckpt-interval", type=int, default=0, help="0 = no checkpoints")
     ap.add_argument("--hf-save-interval", type=int, default=0, help="0 = no HF exports")
     ap.add_argument("--project", default="horizon-snowball-rl")
+    ap.add_argument("--probe", type=int, default=0,
+                    help="K > 0: eval-only screen (Jupiter's refresh_screen probe): K attempts per tree entry, no training step; "
+                         "trials kept on /scratch for the per-task readout (screen_report.py); the job stops at eval step 0")
     ap.add_argument("--set", action="append", default=[], help="extra hydra override key=value (replaces if present)")
     ap.add_argument("--ota", default=f"{SB}/ota-rl", help="checkout of this branch: the Horizon scripts (bridge, shm_prune)")
     ap.add_argument("--runtime", default=f"{SB}/ota-rl-runtime",
@@ -89,7 +92,7 @@ def main():
     os.makedirs(f"{run}/configs", exist_ok=True)
     os.makedirs(f"{run}/sbatch", exist_ok=True)
     os.makedirs(f"{run}/logs", exist_ok=True)
-    trials = f"/dev/shm/otagent_trials/{a.name}/trace_jobs"
+    trials = f"{run}/trials" if a.probe else f"/dev/shm/otagent_trials/{a.name}/trace_jobs"
 
     # ------------------------------------------------------------------ config
     c = json.load(open(REF_CFG[a.recipe]))
@@ -181,6 +184,17 @@ def main():
             setk("generator.engine_init_kwargs.speculative_config=", "{method:eagle3,model:%s,num_speculative_tokens:3}" % d)
     else:
         assert not idx("generator.engine_init_kwargs.speculative_config="), "62ft5sky had no draft"
+    if a.probe:  # refresh_screen.build(): eval-before-train only (EvaluationCallback needs eval_interval > 0), zero epochs
+        setk("trainer.eval_interval=", "9999")
+        setk("trainer.eval_before_train=", "true")
+        setk("trainer.epochs=", "0")
+        setk("generator.eval_n_samples_per_prompt=", str(a.probe))
+        setk("trainer.eval_batch_size=", str(min(32, len(tasks))))
+        setk("trajectory_runner.process_pool.eval_spread_coordinators=", "true")
+        setk("generator.sampling_params.top_p=", "1.0")
+        setk("generator.sampling_params.top_k=", "-1")
+        setk("data.val_data=", json.dumps([tree]))
+        c.update(val_data=[tree], val_data_sources=[tree])
     for kv in a.set:
         k, v = kv.split("=", 1)
         setk(k + "=", v)
@@ -258,8 +272,11 @@ def main():
            f'( bash /e/project1/transfernetx/lee27/code/snowball/shm_prune.sh "$SHM_TRIALS" 10 70 60 ) &\n')
     sub1(shm.replace(trials, f"/dev/shm/otagent_trials/{REF_SB_NAME}/trace_jobs"), "")
     sub1("\n_setup_proxy\n", "\n" + (
-        f'SHM_TRIALS={trials}; mkdir -p "$SHM_TRIALS"; echo "trials_dir on tmpfs: $SHM_TRIALS ($(df -h /dev/shm | tail -n 1))"\n'
-        f'( bash {a.ota}/data/r2egym/horizon/rl/shm_prune.sh "$SHM_TRIALS" 10 70 60 ) &\n'
+        "# TACC preloads XALT (libxalt_init.so), which prints an NVML stub warning into every captured command output\n"
+        "unset LD_PRELOAD\n" +
+        (f'mkdir -p {trials}; echo "probe trials_dir (kept): {trials}"\n' if a.probe else
+         f'SHM_TRIALS={trials}; mkdir -p "$SHM_TRIALS"; echo "trials_dir on tmpfs: $SHM_TRIALS ($(df -P /dev/shm | tail -n 1))"\n'
+         f'( bash {a.ota}/data/r2egym/horizon/rl/shm_prune.sh "$SHM_TRIALS" 10 70 60 ) &\n') +
         "# --- Horizon: Daytona egress = one CONNECT bridge per node over the login-side ssh -R tunnels (launch_arm.sh starts\n"
         "# tunnel.sh per port); no proxychains. Every node's bridge listens on its own 127.0.0.1:18946.\n"
         "unset PROXYCHAINS_BIN_OVERRIDE PROXYCHAINS_CONF_FILE LD_PRELOAD SSH_KEY HTTP_PROXY http_proxy ALL_PROXY all_proxy\n"
@@ -283,11 +300,12 @@ def main():
     assert launch
     ckpt_wait = (f'  for _i in $(seq 1 60); do [ "$(cat {run}/{a.name}/checkpoints/latest_ckpt_global_step.txt 2>/dev/null)" = {a.steps} ] && break; sleep 30; done\n'
                  if a.ckpt_interval and a.steps % a.ckpt_interval == 0 else "")
+    stop_on = "kind=eval step=0 " if a.probe else f"kind=train step={a.steps} "
     b = b.replace(launch.group(0), (
-        f"\n# --- Horizon: stop once step {a.steps} is logged (and its checkpoint written); the fully-async trainer keeps going ---\n"
+        f"\n# --- Horizon: stop once '{stop_on.strip()}' is logged (and its checkpoint written); the fully-async trainer keeps going ---\n"
         f"DS_LOG={run}/logs/${{SLURM_JOB_NAME}}_${{SLURM_JOB_ID}}.out\n"
-        f"( while ! grep -q 'WANDB_MIRROR kind=train step={a.steps} ' \"$DS_LOG\" 2>/dev/null; do sleep 30; done\n"
-        f"  echo \"horizon rl: step {a.steps} logged $(date +%T)\"\n" + ckpt_wait +
+        f"( while ! grep -q 'WANDB_MIRROR {stop_on}' \"$DS_LOG\" 2>/dev/null; do sleep 30; done\n"
+        f"  echo \"horizon rl: {stop_on.strip()} logged $(date +%T)\"\n" + ("" if a.probe else ckpt_wait) +
         "  echo \"horizon rl: stopping $(date +%T)\"; sleep 120\n"
         "  scancel -s USR1 -b \"$SLURM_JOB_ID\"; sleep 240; scancel \"$SLURM_JOB_ID\" ) &\n"
         f'\n"$RL_PYTHON" -m hpc.rl_launch_utils --config "{cfg}" &\n'), 1)
@@ -304,7 +322,7 @@ def main():
     json.dump(dict(runtime=os.path.realpath(a.runtime), ota=os.path.realpath(a.ota)), open(f"{run}/configs/checkouts.json", "w"))
     print(json.dumps(dict(config=cfg, sbatch=sbf, runtime=a.runtime, nodes=nodes, policy_nodes=a.policy_nodes, engines=a.engines,
                           seats=a.seats, coords=a.coords, steps=a.steps, model=model, served=served, tree=tree,
-                          ntasks=len(tasks), recipe=a.recipe), indent=1))
+                          ntasks=len(tasks), recipe=a.recipe, probe=a.probe), indent=1))
 
 
 if __name__ == "__main__":
