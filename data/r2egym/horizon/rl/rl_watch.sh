@@ -8,7 +8,7 @@ for r in "${runs[@]}"; do
   J=$(tail -n 1 $E/$r/jobs.txt 2>/dev/null); L=$E/$r/logs/${r}_$J.out
   st=$(squeue -h -j "$J" -o "%T %M %D" 2>/dev/null); [ -z "$st" ] && st="ENDED $(sacct -j $J -X -n -o State,Elapsed 2>/dev/null | head -1 | xargs)"
   age=$([ -f $L ] && echo $(( $(date +%s) - $(stat -c %Y $L) ))s || echo "-")
-  dp=$(grep -c "DP rank" $L 2>/dev/null); tb=$(grep -c "^Traceback\|Traceback (most recent" $L 2>/dev/null)
+  dp=$(grep -c "DP rank -> node" $L 2>/dev/null); tb=$(grep -c "^Traceback\|Traceback (most recent" $L 2>/dev/null)
   tr=$(grep -c "WANDB_MIRROR kind=train" $L 2>/dev/null); ev=$(grep -c "WANDB_MIRROR kind=eval" $L 2>/dev/null)
   res=$(find $E/$r/trials -maxdepth 4 -name result.json 2>/dev/null | wc -l)
   echo "== $r job $J [$st] log age $age | DP lines $dp | train steps $tr | eval logs $ev | probe results $res | tracebacks $tb"
