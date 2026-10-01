@@ -32,7 +32,7 @@ export HARBOR_SRC=${HARBOR_SRC:-$HOME/snowball/harbor-p0924/src} HARBOR_SHA=${HA
 POLICY_FILE=${POLICY_FILE:-tb2_marin_policy_0924_65k16k.yaml}
 PY=${PY:-$HOME/snowball/envs/snowball/bin/python}
 KEYF=${KEYF:-$HOME/.config/otagent/daytona_eval.env}
-SERVE_TIME=${SERVE_TIME:-08:00:00}
+SERVE_TIME=${SERVE_TIME:-04:00:00}   # a 5-node unit ends in ~2-2.5 h; TACC's submit filter sums nodes x time limit over all queued + running jobs against the 1,000 SU balance
 DAY=${DAY:-$(date +%Y%m%d)}
 TUNNEL_PORTS=18080,18081
 mkdir -p "$RELAY_EXP_DIR/logs" "$RELAY_EXP_DIR/endpoints" "$EV/runs" "$EV/logs" "$JOBS" "$ST"; LOG=$EV/eval.log
