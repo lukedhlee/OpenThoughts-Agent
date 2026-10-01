@@ -13,7 +13,7 @@ Everything lives in `data/r2egym/horizon/rl/` (this branch) and runs on the logi
    - `--recipe gate5`: 62ft5sky's hydra args (Stage-3 step 1888, KL 0.01, no draft), the port-gate-5 reference.
    - `--recipe arm`: `snowball_ttband_ota3d517u_b`'s hydra args (rloo_n, no KL, clip .2/.2, sequence_mean, TIS cap 2,
      lr 5e-7, warmup 3, staleness 2, n 8, batch 64, grouped_mm, temp 1, 65,536 / 16,384 / 49,152, summarize off,
-     agent 1,800 s, verifier 2,400 s with preserve-on-timeout off, connect timeout 120 s, 16 coordinators, overflow = 0).
+     agent 1,800 s, verifier 2,400 s with preserve-on-timeout off, connect timeout 120 s, 16 coordinators; ContextLengthExceeded and agent timeouts are passthrough: the trial keeps its verifier reward).
    - `--probe K`: eval-only screen (Jupiter's `refresh_screen.py` probe): eval-before-train with K attempts per tree
      entry, zero epochs, trials kept on /scratch, the job stops at `WANDB_MIRROR kind=eval step=0`. The harbor runner
      samples eval trials with the training sampler (temperature 1.0), not `eval_sampling_params` (greedy).
@@ -73,6 +73,22 @@ draft (trained on the Stage-3 line) reaches a mean acceptance length of 2.14 (H9
   exact, importance ratio mean 1.00002, 0.04 % of tokens capped, 0 masked. Read as a token-set difference (different pool
   and backend; trajectories at the 49k cap, mean 45k tokens), not numerics: on identical tokens the 09-29 proxy put
   Horizon's trainer at 0.0304 vs Horizon vLLM and 0.0309 vs Jupiter's vLLM. The arms went ahead (Luke's call to revisit).
+- **Where the trainer-vs-vLLM log-ratio comes from (`rl/tis_decomp/`, 0.76 node-h).** It is mostly MoE router flips, not
+  a trainer bug.
+  - **The test.** 96 fixed turns per model were scored by vLLM and by the trainer: Stage-3 step 1888 (143k completion
+    tokens) and H9 (42k tokens, from screen_h9). The table gives mean |Δ log p| with a 95 % bootstrap over turns.
+  - **Router replay explains most of it.** Forcing vLLM's chosen experts into the trainer cuts the gap from 0.0304 to
+    0.0074 on Stage-3 (−76 %) and from 0.0164 to 0.0066 on H9 (−60 %).
+  - **Routing is near-tied.** 46 % of Stage-3 routing decisions have a top-4 vs 5th margin under 0.1 logit. So any bf16
+    difference flips 13–19 % of expert sets, about 4 % at layer 0 and about 30 % by layers 20–24. vLLM's batched
+    run-to-run noise (0.0255) is the same flip mechanism, and with one request at a time vLLM is bitwise deterministic.
+  - **The trainer is clean.** It is bitwise reproducible, and grouped_mm matches the per-expert loop (0.00005). An fp32 LM
+    head moves it by 0.0005. Swapping in fp32-score attention under fixed routing does not move it closer to vLLM.
+  - **The non-routing residual (0.0074) is spread over many bf16 kernels.**
+  - **Entropy sets the size; context length does not.** The gap is 0.0003 at < 0.01 nats, 0.045 at 0.3–1 nats and 0.12
+    above 2 nats. H9 reads lower than Stage-3 because its tokens are more confident (mean entropy 0.28 vs 0.49, which
+    accounts for about 90 % of the difference) and its router margins are wider.
+  - **Same mechanism on gate 5's pool.** That fits gate 5's +4 % being a token-set difference.
 - **Clean pool:** 1,227 tasks (1,199 sympy + 28 orange3) = 1,104 train + 123 held-out; the 09-21 SFT data covers every
   task of the other nine repos. Builder: `data/r2egym/horizon/pool/`.
 - **Screens (K=8):** band H9 600 / H8 589 train tasks solved >= 1; train pass@1 .291 / .288; held-out pass@1 .501 / .509.
