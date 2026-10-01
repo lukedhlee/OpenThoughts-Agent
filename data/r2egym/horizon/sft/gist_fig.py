@@ -4,6 +4,9 @@
 its level drawn across each panel. Input: gist_table.py --save JSON.
 
     python gist_fig.py --data table.json --out fig_horizon.png
+    python gist_fig.py --data table.json --out fig_key.png --only base0921,mqwen,mrel --colors mrel=#1f4e79 --title "..."
+
+--only keeps those arms in that order; --colors overrides bar colors per tag; with --only, no control line is drawn.
 """
 import argparse
 import json
@@ -19,9 +22,18 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--data', required=True)
     ap.add_argument('--out', required=True)
+    ap.add_argument('--only', help='comma-separated tags to draw, in this order')
+    ap.add_argument('--colors', nargs='*', default=[], help='tag=#hex bar colors')
+    ap.add_argument('--title')
     a = ap.parse_args()
     d = json.load(open(a.data))
     r, arms, ctl = d['readout'], d['arms'], d['control']
+    if a.only:
+        by = {x[0]: x for x in arms}
+        arms = [by[t] for t in a.only.split(',') if t in by]
+        ctl = None
+    colors = {'base0921': '#9e9d98', 'qwen38': '#7b4fb0', **({ctl: '#1f4e79'} if ctl else {})}
+    colors.update(dict(c.split('=', 1) for c in a.colors))
     names = [x[1].split(',')[0] for x in arms]
     fig, axes = plt.subplots(1, 3, figsize=(4.2 * 3, 0.42 * len(arms) + 1.8), sharey=True)
     for ax, (s, title) in zip(axes, SETS):
@@ -31,13 +43,13 @@ def main():
             p, ci = v.get('pass_at_1'), v.get('ci95')
             if p is None:
                 continue
-            col = {ctl: '#1f4e79', 'base0921': '#9e9d98', 'qwen38': '#7b4fb0'}.get(tag, '#8fb3d9')   # control, base (gray), teacher
+            col = colors.get(tag, '#8fb3d9')   # control dark blue, base gray, teacher purple unless --colors says otherwise
             ax.barh(y, 100 * p, color=col, height=0.7)
             ax.errorbar(100 * p, y, xerr=[[100 * (p - ci[0])], [100 * (ci[1] - p)]], fmt='none', ecolor='#333', capsize=3, lw=1)
             if v.get('se') is not None:   # thick = +-1 standard error over tasks, thin = 95 % bootstrap range
                 ax.errorbar(100 * p, y, xerr=100 * v['se'], fmt='none', ecolor='#000', capsize=0, lw=4)
             ax.text(100 * ci[1] + 2, y, f'{100 * p:.1f}', va='center', fontsize=9)
-        c = (r.get(f'{ctl}/{s}') or {}).get('pass_at_1')
+        c = (r.get(f'{ctl}/{s}') or {}).get('pass_at_1') if ctl else None
         if c is not None:
             ax.axvline(100 * c, color='#1f4e79', ls='--', lw=1)
         ax.set_title(title, fontsize=10)
@@ -46,7 +58,7 @@ def main():
         ax.grid(axis='x', alpha=0.3)
     axes[0].set_yticks(list(range(len(arms)))[::-1])
     axes[0].set_yticklabels([x[1] for x in arms], fontsize=9)
-    fig.suptitle('Horizon SFT arms on 09-21 (gray = 09-21 base, dark blue = control A with dashed line, purple = Qwen3.8 teacher; thick bar = ±1 SE, thin = 95 % range)', fontsize=10)
+    fig.suptitle(a.title or 'Horizon SFT arms on 09-21 (gray = 09-21 base, dark blue = control A with dashed line, purple = Qwen3.8 teacher; thick bar = ±1 SE, thin = 95 % range)', fontsize=10)
     fig.tight_layout()
     fig.savefig(a.out, dpi=150)
 
