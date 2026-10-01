@@ -22,10 +22,10 @@ for r in "${runs[@]}"; do
 import re, sys, json
 line = sys.argv[1]; step = re.search(r"step=(\d+)", line).group(1); m = line.split("metrics=", 1)[1]
 try:
-    d = json.loads(m)
+    d = json.JSONDecoder().raw_decode(m)[0]
 except Exception:
     d = {k: v for k, v in re.findall(r"'([^']+)': ([-0-9.eE+]+)", m)}
-keys = [k for k in d if re.search(r"tis/log_ratio_abs_mean|reward/avg|avg_raw_reward|entropy|q_correct|finish|pass_at|response_length/avg|timing/step", k)]
+keys = [k for k in d if re.search(r"tis/log_ratio_abs_mean|avg_raw_reward|policy_entropy|reward_given_done|pass_at_8|frac_groups_mixed|avg_num_tokens|timing/step$|num_masked", k)]
 print("   step", step, " ".join(f"{k}={float(d[k]):.4g}" for k in sorted(keys)[:14]))
 PY
 done
