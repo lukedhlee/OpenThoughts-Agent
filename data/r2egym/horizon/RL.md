@@ -104,4 +104,18 @@ draft (trained on the Stage-3 line) reaches a mean acceptance length of 2.14 (H9
   - TB-lite: .282 -> .330, +.054 [-.003, +.116].
   - SWE-bench Verified random-100: .453 -> .418, -.035 [-.083, +.010] (without sympy -.033 [-.082, +.016]).
   - Uploaded as `laion/snowball-67b-a2b-rl-r2egym-acont-step30`.
-- Arm H8: pending.
+- **Arm H8 (rl_h8, same recipe from H8 on its 589-task band): FAIL.** Training was as healthy as H9's (q 0.77-0.91,
+  0 masked, reward 0.69 at step 30). Paired against H8:
+  - Held-out: .511 -> .539, +.027 [-.004, +.059].
+  - TB2.1: .188 -> .182, -.004 [-.059, +.049].
+  - TB-lite: .272 -> .322, +.052 [-.012, +.117].
+  - SWE random-100: .466 -> .401, -.066 [-.120, -.014].
+  - Not uploaded.
+- **Why SWE drops (both arms, pooled -4.4, p .02, all on the easy tasks).** GRPO mostly taught the model to finish
+  inside the 49k training budget: task_complete went .46 -> .74 at a flat pass rate per declared trial, with no reward
+  hacking. On SWE that shows up as:
+  - half the turns;
+  - no test-runner setup when pytest is missing, because the R2E-Gym images ship pytest and have no pip;
+  - patches that break existing tests;
+  - crash-site fixes.
+  Reports: `experiments/rl/swe_diag/{stats_flips,behaviour,training_drift}.md`.
