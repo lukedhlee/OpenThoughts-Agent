@@ -5,12 +5,12 @@
 #   - the hydra args compose against the installed MarinSkyRL schema (validate_hydra_args.py)
 #   - every environment hash of the train tree has a snapshot in the org (no task may make harbor build one: the org is
 #     at its snapshot cap, and creating snapshots is forbidden)
-#   - the org's started sandboxes + this arm's seats stay under MAX_ORG (default 1000)
+#   - the org's started sandboxes + this arm's seats stay under MAX_ORG (default 1200)
 # Then sbatch, and one tunnel.sh per TUNNEL_PORTS port (setsid; each exits when the job ends).
 set -euo pipefail
 RUN=${1:?run dir}; NAME=$(basename "$RUN")
 OTA=${OTA:-$HOME/snowball/ota-rl}; HZ=$OTA/data/r2egym/horizon; PY=$HOME/snowball/envs/snowball/bin/python
-TUNNEL_PORTS=${TUNNEL_PORTS:-18080,18081}; MAX_ORG=${MAX_ORG:-1000}
+TUNNEL_PORTS=${TUNNEL_PORTS:-18080,18081}; MAX_ORG=${MAX_ORG:-1200}   # Luke 10-01: org total under 1,200 (other sessions share it)
 CFG=$RUN/configs/${NAME}_rl_config.json; SBF=$RUN/sbatch/${NAME}_rl.sbatch
 [ -f "$CFG" ] && [ -f "$SBF" ] || { echo "missing $CFG or $SBF"; exit 1; }
 grep -q "$OTA/data/r2egym/horizon/rl/node_bridge.sh" "$SBF" || { echo "sbatch does not run from $OTA"; exit 1; }
@@ -29,7 +29,8 @@ if [ "${SKIP_SANDBOX_CHECK:-0}" != 1 ]; then
   echo "== org sandboxes started: ${N:-?}; this arm: $SEATS seats; limit $MAX_ORG"
   [ -n "$N" ] && [ $((N + SEATS)) -le "$MAX_ORG" ] || { echo "REFUSED: org would exceed $MAX_ORG started sandboxes"; exit 1; }
 fi
-JOB=$(cd "$OTA" && DCFT=$OTA sbatch --parsable "$SBF")
+JOB=$(cd "$OTA" && DCFT=$OTA sbatch --parsable "$SBF" | tail -n 1 | grep -oE '^[0-9]+')   # TACC prints a banner first
+[ -n "$JOB" ] || { echo "sbatch returned no job id"; exit 1; }
 echo "submitted $NAME as job $JOB"; echo "$JOB" >> "$RUN/jobs.txt"
 for p in ${TUNNEL_PORTS//,/ }; do
   setsid nohup bash $HZ/tunnel.sh "$JOB" "$p" > "$RUN/logs/tunnel_${JOB}_$p.log" 2>&1 < /dev/null &
