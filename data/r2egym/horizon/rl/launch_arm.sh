@@ -18,7 +18,7 @@ TUNNEL_PORTS=${TUNNEL_PORTS:-18080,18081}; MAX_ORG=${MAX_ORG:-1200}   # Luke 10-
 CFG=$RUN/configs/${NAME}_rl_config.json; SBF=$RUN/sbatch/${NAME}_rl.sbatch
 [ -f "$CFG" ] && [ -f "$SBF" ] || { echo "missing $CFG or $SBF"; exit 1; }
 grep -q "$OTA/data/r2egym/horizon/rl/node_bridge.sh" "$SBF" || { echo "sbatch does not run from $OTA"; exit 1; }
-if squeue -h -u "$USER" -n "$NAME" -o %i | grep -q .; then echo "$NAME already in squeue"; exit 1; fi
+if squeue -h -u "$USER" -n "$NAME" -t PENDING,CONFIGURING,RUNNING -o %i | grep -q .; then echo "$NAME already in squeue"; exit 1; fi
 export OMP_NUM_THREADS=1
 echo "== hydra schema"; (cd "$HOME" && $PY $HZ/rl/validate_hydra_args.py "$CFG")
 TREE=$($PY -c "import json,sys; print(json.load(open(sys.argv[1]))['train_data'][0])" "$CFG")
