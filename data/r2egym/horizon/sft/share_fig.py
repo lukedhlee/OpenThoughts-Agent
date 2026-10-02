@@ -13,7 +13,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
-# Qwen-only baselines are orange, relay models a family of close blues; bars run base, Qwen-only, relay.
+# Qwen-only baselines are orange, relay models a family of close blues. In the matched figures each ablation pair
+# (Qwen-only, relay on the same slots) stands side by side; None leaves a gap between pairs.
 QWEN, QWEN_PLUS = '#eda25e', '#d17a2e'
 RELAY = ('#5b9ad6', '#3a7cc2', '#245fa3')
 MODELS = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'),
@@ -21,16 +22,17 @@ MODELS = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'),
           ('h8allkimi', 'Relay SFT from 09-21\n(…-relay-sft-allkimi-step1203)', RELAY[0]),
           ('h9acont', 'Relay SFT, continued\n(…-relay-sft-acont-step999)', RELAY[1]),
           ('qwen38', 'Qwen3.8-27B (teacher)', '#9a7cc0'))
-MATCHED = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'),
+MATCHED = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'), None,
            ('mqwen', 'Qwen-only traces', QWEN),
+           ('mrel', 'Relay traces', RELAY[0]), None,
            ('mqwenk', 'Qwen-only traces\n+ Kimi SWE-smith traces', QWEN_PLUS),
-           ('mrel', 'Relay traces', RELAY[0]),
            ('mrelk', 'Relay traces\n+ Kimi SWE-smith traces', RELAY[1]))
-TMAX = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'),
+TMAX = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'), None,
         ('t3qtmax', 'TMax Qwen-only traces', QWEN),
+        ('t3tmax', 'TMax relay traces', RELAY[0]), None,
         ('t1qtmax', 'TMax Qwen-only traces\n+ CalibForge relay + Kimi', QWEN_PLUS),
-        ('t3tmax', 'TMax relay traces', RELAY[0]),
         ('t1tmax', 'TMax relay traces\n+ CalibForge relay + Kimi', RELAY[1]))
+GAP = 0.5   # width of a None gap, in bar slots
 GRPO = ('rlh9s30', 'Relay SFT, continued + GRPO\n(30 steps on clean R2E-Gym)', RELAY[2])
 SETS = (('tb21', 'Terminal-Bench 2.1'), ('swe', 'SWE-bench Verified\n(random 100)'), ('tblite', 'OpenThoughts-TBLite'))
 
@@ -50,18 +52,27 @@ def main():
     if a.grpo and not a.matched:
         k = [m[0] for m in models].index('h9acont') + 1
         models = tuple(m for m in models[:k] + (GRPO,) + models[k:] if m[0] != 'h8allkimi')   # GRPO started from H9
+    slots, at = [], 0.0
+    for m in models:
+        if m is None:
+            at += GAP
+        else:
+            slots.append(at)
+            at += 1
+    slots = [x - (at - 1) / 2 for x in slots]
+    models = tuple(m for m in models if m is not None)
     bold = ('t3tmax', 't1tmax') if a.tmax else ('mrel', 'mrelk') if a.matched else ('h8allkimi', 'h9acont', 'rlh9s30')
     r = json.load(open(a.data))['readout']
     if a.extra:
         r.update(json.load(open(a.extra)))
     plt.rcParams.update({'font.size': 15, 'font.family': 'DejaVu Sans'})
     fig, ax = plt.subplots(figsize=(15, 7.6))
-    w = min(0.16, 0.74 / len(models))
+    w = min(0.16, 0.74 / (slots[-1] - slots[0] + 1))
     for i, (tag, name, col) in enumerate(models):
         xs, ps, ses = [], [], []
         for g, (s, _) in enumerate(SETS):
             v = r[f'{tag}/{s}']
-            xs.append(g + (i - (len(models) - 1) / 2) * (w + 0.012))
+            xs.append(g + slots[i] * (w + 0.012))
             ps.append(100 * v['pass_at_1'])
             ses.append(100 * v['se'])
         ax.bar(xs, ps, w, color=col, label=name, zorder=2)
