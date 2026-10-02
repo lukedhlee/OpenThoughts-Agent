@@ -23,6 +23,11 @@ MATCHED = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'),
            ('mrel', 'Relay traces', '#9cc3e6'),
            ('mqwenk', 'Qwen-only traces + Kimi', '#e08a3c'),
            ('mrelk', 'Relay traces + Kimi', '#2f6fb3'))
+TMAX = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'),
+        ('t3qtmax', 'TMax Qwen-only traces', '#f2c08f'),
+        ('t3tmax', 'TMax relay traces', '#9cc3e6'),
+        ('t1qtmax', 'H8 data + TMax Qwen-only', '#e08a3c'),
+        ('t1tmax', 'H8 data + TMax relay', '#2f6fb3'))
 GRPO = ('rlh9s30', 'Relay SFT, continued + GRPO\n(30 steps on clean R2E-Gym)', '#0f2c52')
 SETS = (('tb21', 'Terminal-Bench 2.1'), ('swe', 'SWE-bench Verified\n(random 100)'), ('tblite', 'OpenThoughts-TBLite'))
 
@@ -35,12 +40,14 @@ def main():
     ap.add_argument('--grpo', action='store_true', help='add the H9 + GRPO checkpoint after H9 (its readout via --extra)')
     ap.add_argument('--matched', action='store_true',
                     help='the matched comparison: Qwen-only vs relay traces on the same 3,872 task slots, each +/- Kimi')
+    ap.add_argument('--tmax', action='store_true',
+                    help='the TMax matched comparison: Qwen-only vs relay traces on 2,730 TMax task slots, alone and + H8 data')
     a = ap.parse_args()
-    models = MATCHED if a.matched else MODELS
+    models = TMAX if a.tmax else MATCHED if a.matched else MODELS
     if a.grpo and not a.matched:
         k = [m[0] for m in models].index('h9acont') + 1
         models = tuple(m for m in models[:k] + (GRPO,) + models[k:] if m[0] != 'h8allkimi')   # GRPO started from H9
-    bold = ('mrel', 'mrelk') if a.matched else ('h8allkimi', 'h9acont', 'rlh9s30')
+    bold = ('t3tmax', 't1tmax') if a.tmax else ('mrel', 'mrelk') if a.matched else ('h8allkimi', 'h9acont', 'rlh9s30')
     r = json.load(open(a.data))['readout']
     if a.extra:
         r.update(json.load(open(a.extra)))
@@ -62,12 +69,18 @@ def main():
     ax.set_xticks(range(len(SETS)))
     ax.set_xticklabels([t for _, t in SETS], fontsize=15)
     ax.set_ylabel('pass@1 (%), mean of 3 runs')
-    ax.set_ylim(0, 60 if a.matched else 85)
+    ax.set_ylim(0, 60 if a.matched or a.tmax else 85)
     ax.grid(axis='y', color='#e5e5e5', zorder=0)
     for side in ('top', 'right'):
         ax.spines[side].set_visible(False)
-    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), frameon=False, fontsize=12.5, ncol=5 if a.matched else 3)
-    if a.matched:
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), frameon=False, fontsize=12.5,
+              ncol=5 if a.matched or a.tmax else 3)
+    if a.tmax:
+        ax.set_title('Relay vs Qwen-only traces on TMax, matched: SFT of Grug 67B-A2B 09-21', fontsize=16, pad=14)
+        fig.text(0.01, 0.01, 'Both trace sets cover the same 2,730 TMax task slots (2,126 tasks, 2,229 passes + 501 failures); only who played '
+                 'the early turns differs.\nTrained tokens: Qwen-only 17.6M, relay 13.8M. "H8 data" adds H8\'s 10,308 rows to both. '
+                 'Same recipe: 3 epochs, LR 3e-4. Error bars: ±1 standard error over tasks.', ha='left', fontsize=10.5, color='#555')
+    elif a.matched:
         ax.set_title('Relay vs Qwen-only traces, matched: SFT of Grug 67B-A2B 09-21', fontsize=16, pad=14)
         fig.text(0.01, 0.01, 'Both trace sets cover the same 3,872 CalibForge task slots (2,204 tasks, 3,006 passes + 866 failures); only who played '
                  'the early turns differs.\nTrained tokens: Qwen-only 37.2M, relay 32.8M (+ 21.6M Kimi in both). Same recipe: 3 epochs, LR 3e-4. '
@@ -79,7 +92,7 @@ def main():
             note = ('GRPO vs its start (paired per task, 95 % range): TB2.1 +4.2 [-0.2, +8.6], SWE -3.5 [-8.2, +1.0], TBLite +5.4 [-0.3, +11.6].\n'
                     + note)
         fig.text(0.99, 0.01, note, ha='right', fontsize=10.5, color='#666')
-    fig.tight_layout(rect=(0, 0.06 if a.matched else 0.02, 1, 1))
+    fig.tight_layout(rect=(0, 0.06 if a.matched or a.tmax else 0.02, 1, 1))
     fig.savefig(a.out, dpi=160, facecolor='white')
 
 
