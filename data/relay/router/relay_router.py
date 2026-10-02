@@ -272,7 +272,7 @@ class Router:
         self.student_extra = json.loads(a.student_extra) if a.student_extra else {}
         self.tasks = self._load_tasks(a.tasks)
         self.tok = rcap.load_tokenizer(a.student_tokenizer) if a.student_tokenizer else None
-        self.note_text = VERIFY_NOTE if a.mode == 'relay' else VERIFY_NOTE_OWN
+        self.note_text = a.verify_note_text or (VERIFY_NOTE if a.mode == 'relay' else VERIFY_NOTE_OWN)
         self.parser = self.parser_path = self.parser_sha = None
         if a.repair_on_parse_error or a.teacher_format_guard:
             self.parser, self.parser_path, self.parser_sha = load_terminus_parser(a.terminus_parser)
@@ -1193,6 +1193,9 @@ def parse_args(argv=None):
     p.add_argument('--verify-note', action='store_true',
                    help="append VERIFY_NOTE to the teacher's confirmation request (relay: the done_claim takeover's; "
                         "--mode teacher: the episode's first)")
+    p.add_argument('--verify-note-text', default=None,
+                   help='replace the verify note text (both modes), e.g. a neutral instruction with no "note" or "agent" '
+                        'for Qwen to cite (2026-10-01 A/B: Qwen\'s replies citing the note are dropped as leaks)')
     p.add_argument('--context-budget-tokens', type=int, default=None,
                    help='context_budget takeover (sticky): the teacher takes the episode once the student view of a '
                         'request (counted on the student /tokenize) reaches this many tokens; off by default (32000 '
