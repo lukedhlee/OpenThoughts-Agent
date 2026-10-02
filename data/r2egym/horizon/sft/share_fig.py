@@ -13,22 +13,25 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
+# Qwen-only baselines are orange, relay models a family of close blues; bars run base, Qwen-only, relay.
+QWEN, QWEN_PLUS = '#eda25e', '#d17a2e'
+RELAY = ('#5b9ad6', '#3a7cc2', '#245fa3')
 MODELS = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'),
-          ('mqwenk', 'SFT on Qwen-only traces\n(same tasks, + same Kimi)', '#e08a3c'),
-          ('h8allkimi', 'Relay SFT from 09-21\n(…-relay-sft-allkimi-step1203)', '#3a86c8'),
-          ('h9acont', 'Relay SFT, continued\n(…-relay-sft-acont-step999)', '#1d4e89'),
+          ('mqwenk', 'SFT on Qwen-only traces\n(same tasks, + same Kimi)', QWEN_PLUS),
+          ('h8allkimi', 'Relay SFT from 09-21\n(…-relay-sft-allkimi-step1203)', RELAY[0]),
+          ('h9acont', 'Relay SFT, continued\n(…-relay-sft-acont-step999)', RELAY[1]),
           ('qwen38', 'Qwen3.8-27B (teacher)', '#9a7cc0'))
 MATCHED = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'),
-           ('mqwen', 'Qwen-only traces', '#f2c08f'),
-           ('mrel', 'Relay traces', '#9cc3e6'),
-           ('mqwenk', 'Qwen-only traces + Kimi', '#e08a3c'),
-           ('mrelk', 'Relay traces + Kimi', '#2f6fb3'))
+           ('mqwen', 'Qwen-only traces', QWEN),
+           ('mqwenk', 'Qwen-only traces + Kimi', QWEN_PLUS),
+           ('mrel', 'Relay traces', RELAY[0]),
+           ('mrelk', 'Relay traces + Kimi', RELAY[1]))
 TMAX = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'),
-        ('t3qtmax', 'TMax Qwen-only traces', '#f2c08f'),
-        ('t3tmax', 'TMax relay traces', '#9cc3e6'),
-        ('t1qtmax', 'H8 data + TMax Qwen-only', '#e08a3c'),
-        ('t1tmax', 'H8 data + TMax relay', '#2f6fb3'))
-GRPO = ('rlh9s30', 'Relay SFT, continued + GRPO\n(30 steps on clean R2E-Gym)', '#0f2c52')
+        ('t3qtmax', 'TMax Qwen-only traces', QWEN),
+        ('t1qtmax', 'H8 data + TMax Qwen-only', QWEN_PLUS),
+        ('t3tmax', 'TMax relay traces', RELAY[0]),
+        ('t1tmax', 'H8 data + TMax relay', RELAY[1]))
+GRPO = ('rlh9s30', 'Relay SFT, continued + GRPO\n(30 steps on clean R2E-Gym)', RELAY[2])
 SETS = (('tb21', 'Terminal-Bench 2.1'), ('swe', 'SWE-bench Verified\n(random 100)'), ('tblite', 'OpenThoughts-TBLite'))
 
 
