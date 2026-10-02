@@ -23,14 +23,14 @@ MODELS = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'),
           ('qwen38', 'Qwen3.8-27B (teacher)', '#9a7cc0'))
 MATCHED = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'),
            ('mqwen', 'Qwen-only traces', QWEN),
-           ('mqwenk', 'Qwen-only traces + Kimi', QWEN_PLUS),
+           ('mqwenk', 'Qwen-only traces\n+ Kimi SWE-smith traces', QWEN_PLUS),
            ('mrel', 'Relay traces', RELAY[0]),
-           ('mrelk', 'Relay traces + Kimi', RELAY[1]))
+           ('mrelk', 'Relay traces\n+ Kimi SWE-smith traces', RELAY[1]))
 TMAX = (('base0921', 'Grug 09-21 (base)', '#b8b6b0'),
         ('t3qtmax', 'TMax Qwen-only traces', QWEN),
-        ('t1qtmax', 'H8 data + TMax Qwen-only', QWEN_PLUS),
+        ('t1qtmax', 'TMax Qwen-only traces\n+ CalibForge relay + Kimi', QWEN_PLUS),
         ('t3tmax', 'TMax relay traces', RELAY[0]),
-        ('t1tmax', 'H8 data + TMax relay', RELAY[1]))
+        ('t1tmax', 'TMax relay traces\n+ CalibForge relay + Kimi', RELAY[1]))
 GRPO = ('rlh9s30', 'Relay SFT, continued + GRPO\n(30 steps on clean R2E-Gym)', RELAY[2])
 SETS = (('tb21', 'Terminal-Bench 2.1'), ('swe', 'SWE-bench Verified\n(random 100)'), ('tblite', 'OpenThoughts-TBLite'))
 
@@ -44,7 +44,7 @@ def main():
     ap.add_argument('--matched', action='store_true',
                     help='the matched comparison: Qwen-only vs relay traces on the same 3,872 task slots, each +/- Kimi')
     ap.add_argument('--tmax', action='store_true',
-                    help='the TMax matched comparison: Qwen-only vs relay traces on 2,730 TMax task slots, alone and + H8 data')
+                    help='the TMax matched comparison: Qwen-only vs relay traces on 2,730 TMax task slots, alone and + the 5,916 CalibForge relay and 4,392 Kimi SWE-smith traces')
     a = ap.parse_args()
     models = TMAX if a.tmax else MATCHED if a.matched else MODELS
     if a.grpo and not a.matched:
@@ -81,12 +81,13 @@ def main():
     if a.tmax:
         ax.set_title('Relay vs Qwen-only traces on TMax, matched: SFT of Grug 67B-A2B 09-21', fontsize=16, pad=14)
         fig.text(0.01, 0.01, 'Both trace sets cover the same 2,730 TMax task slots (2,126 tasks, 2,229 passes + 501 failures); only who played '
-                 'the early turns differs.\nTrained tokens: Qwen-only 17.6M, relay 13.8M. "H8 data" adds H8\'s 10,308 rows to both. '
+                 'the early turns differs. Trained tokens: Qwen-only 17.6M, relay 13.8M.\n"+ CalibForge relay + Kimi" adds the same '
+                 '10,308 traces to both: 5,916 CalibForge relay traces and 4,392 Kimi SWE-smith traces. '
                  'Same recipe: 3 epochs, LR 3e-4. Error bars: ±1 standard error over tasks.', ha='left', fontsize=10.5, color='#555')
     elif a.matched:
         ax.set_title('Relay vs Qwen-only traces on CalibForge, matched: SFT of Grug 67B-A2B 09-21', fontsize=16, pad=14)
         fig.text(0.01, 0.01, 'Both trace sets cover the same 3,872 CalibForge task slots (2,204 tasks, 3,006 passes + 866 failures); only who played '
-                 'the early turns differs.\nTrained tokens: Qwen-only 37.2M, relay 32.8M (+ 21.6M Kimi in both). Same recipe: 3 epochs, LR 3e-4. '
+                 'the early turns differs.\nTrained tokens: Qwen-only 37.2M, relay 32.8M (+ 21.6M of Kimi SWE-smith traces in both). Same recipe: 3 epochs, LR 3e-4. '
                  'Error bars: ±1 standard error over tasks.', ha='left', fontsize=10.5, color='#555')
     else:
         ax.set_title('Relay SFT on Grug 67B-A2B 09-21 (Qwen3.8-27B teacher + Kimi SWE-smith traces)', fontsize=16, pad=14)
