@@ -38,6 +38,7 @@
 # AGENT=msa (2026-10-02): mini-swe-agent tool mode instead of Terminus-2: harbor lukedhlee/mini-swe-relay (HARBOR_SRC /
 # HARBOR_SHA defaults change with it; mini-swe-agent 2.4.6 from MSA_DIR on PYTHONPATH), the job template relay_msa.yaml,
 # and every router with --harness msa (its parse checks are msa_tool.py's, so no Terminus-2 parser is passed).
+# STUDENT_VIEW_STRIP=1 (msa): after a sticky takeover, 09-21's view (hard-end count, row) drops the student's thinking.
 # ARM_GATES=1 runs data/relay/horizon/arm_gates.py every ARM_GATES_EVERY s (the finetuned-student gates): the takeover
 # rate over finished relay episodes against [TAKEOVER_MIN, TAKEOVER_MAX] once TAKEOVER_AFTER are in (TAKEOVER_ACTION
 # flag|stop), and the student's EAGLE-3 mean acceptance length from its servers' /metrics (flag below ACCEPT_FLAG, stop
@@ -206,7 +207,8 @@ for arm in $ARMS; do
     *) abort "unknown arm $arm";; esac
   case $arm in relay*)
     [ -n "$CTX_BUDGET" ] && M+=(--context-budget-tokens $CTX_BUDGET)
-    [ -n "$ROW_MAX" ] && M+=(--student-row-max-tokens $ROW_MAX --student-row-reserve $ROW_RESERVE);; esac
+    [ -n "$ROW_MAX" ] && M+=(--student-row-max-tokens $ROW_MAX --student-row-reserve $ROW_RESERVE)
+    [ "${STUDENT_VIEW_STRIP:-0}" = 1 ] && M+=(--student-view-after-takeover strip);; esac
   case $CLOCK in wall) CARGS=(--budget-mode off);; repair) CARGS=(--budget-mode on);; paused) CARGS=(--budget-mode on --pause-model-calls);;
     *) abort "unknown CLOCK $CLOCK";; esac
   $PY $ROUTER "${M[@]}" "${HARNESS_ARGS[@]}" --arm $arm --port ${PORT[$arm]} --log-dir $R/router_$arm --tasks $TREE/router_tasks.json \

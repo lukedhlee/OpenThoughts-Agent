@@ -550,8 +550,17 @@ class Router:
         owners = [(self.owner_of(ep, m) or {}).get('owner') if m.get('role') == 'assistant' else None for m in messages]
         teacher_idx = [i for i, o in enumerate(owners) if o == 'teacher']
         last_teacher = teacher_idx[-1] if teacher_idx else None
+        # --student-view-after-takeover strip: once the teacher owns the episode (sticky), the student is never asked
+        # again, so its view only sizes the trainable row; the student's turns then carry no thinking there, as in
+        # the teacher's own view (--student-think strip)
+        strip_student = bool(ep and ep.takeover and self.a.student_view_after_takeover == 'strip')
+        stats['student_think_dropped'] = 0
         out = []
         for i, m in enumerate(messages):
+            if owners[i] == 'student' and strip_student and (m.get('reasoning') or m.get('reasoning_content')):
+                out.append({k: v for k, v in m.items() if k not in ('reasoning', 'reasoning_content')})
+                stats['student_think_dropped'] += 1
+                continue
             if owners[i] != 'teacher':
                 out.append(m)
                 continue
@@ -1535,6 +1544,9 @@ def parse_args(argv=None):
                    help='context_budget takeover (sticky): the teacher takes the episode once the student view of a '
                         'request (counted on the student /tokenize) reaches this many tokens; off by default (32000 '
                         'in the 2026-09-26 check)')
+    p.add_argument('--student-view-after-takeover', choices=['keep', 'strip'], default='keep',
+                   help="--harness msa: after a sticky takeover, the student's turns in 09-21's view (the hard-end count "
+                        "and the SFT row) keep their thinking (keep) or drop it (strip, as the teacher saw them)")
     p.add_argument('--context-budget-min-turn', type=int, default=2, help='context_budget never fires before this agent turn')
     p.add_argument('--student-row-max-tokens', type=int, default=None,
                    help='trainability hard end: after a takeover, end the episode as a context overflow once the '

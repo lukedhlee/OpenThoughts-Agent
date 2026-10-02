@@ -331,6 +331,17 @@ def test_hard_end_after_takeover_and_synthetic_submit_at_budget(tmp_path):
         assert d.submitted and st.turns('sid-work')[-1]['ending'] == 'student_budget'
 
 
+def test_student_view_after_takeover_drops_the_students_thinking(tmp_path):
+    with Stack(tmp_path, router_args=['--student-row-max-tokens', '100000', '--student-view-after-takeover', 'strip']) as st:
+        Driver(st, 'done').run()
+        assert st.turns('sid-done')[3]['student_view_tokens'] is not None     # counted after the takeover
+        tok_bodies = [b for b in st.student.tokenize_requests if any(m.get('role') == 'assistant' for m in b['messages'])]
+        last = tok_bodies[-1]['messages']
+        assert [m['tool_calls'][0]['id'] for m in last if m['role'] == 'assistant'][:2] == ['call_1_0', 'call_2_0']
+        assert not any(m.get('reasoning_content') for m in last if m['role'] == 'assistant'
+                       and m['tool_calls'][0]['id'] in ('call_1_0', 'call_2_0'))
+
+
 # ---- end to end: harbor's MiniSweAgentHost against the router ----------------------------------------------------
 try:
     import inspect

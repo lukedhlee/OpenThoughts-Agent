@@ -28,8 +28,9 @@ def teacher_worked(e):
     t0 = e['takeover']['turn']
     for r in sorted((r for r in e['main'] if r.get('owner') == 'teacher' and (r.get('turn') or 0) >= t0),
                     key=lambda r: r['turn']):
-        c = (((r.get('response') or {}).get('choices') or [{}])[0].get('message') or {}).get('content') or ''
-        if readout.rt.parse_reply(c, 'terminus2')['cmds']:
+        pr = readout.reply_of(r)
+        # mini-swe-agent: the submit itself is a command; it has to be some other one
+        if [k for k, _ in pr['cmds'] if not (pr.get('harness') == 'tools' and readout.rt.MINI_DONE_RE.search(k))]:
             return True
     return False
 
@@ -47,6 +48,15 @@ def stalled(e, t):
         return 'trigger'
     if not t.get('traj_path'):
         return None
+    if t.get('msa'):   # mini-swe-agent: scan its own message list (tool calls and tool results)
+        up = os.path.join(os.path.dirname(t['traj_path']), readout.MSA_TRAJECTORY)
+        try:
+            msgs = [m for m in json.load(open(up))['messages'] if m.get('role') != 'exit']
+        except (OSError, ValueError, KeyError):
+            return None
+        sc = readout.rt.scan_messages(msgs, harness=None)
+        acts = [a for a in sc.actions if not a['mark']]
+        return 'no_new_output' if len(acts) >= 3 and all(a['empty'] for a in acts[-3:]) else None
     try:
         traj = json.load(open(t['traj_path']))
     except (OSError, ValueError):
