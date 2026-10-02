@@ -35,6 +35,9 @@
 # DRIVER_JOB / DRIVER_NODES make the node-hour cap, the deadline and run.meta count that job too (unset = Jupiter's
 # accounting, unchanged). With HTTPS_PROXY set, the model hosts are added to NO_PROXY once the endpoints are known, and
 # CLEANUP_PY names a sandbox cleanup that honors the proxy (the sync SDK's cleanup_sandboxes.py connects straight out).
+# AGENT=msa (2026-10-02): mini-swe-agent tool mode instead of Terminus-2: harbor lukedhlee/mini-swe-relay (HARBOR_SRC /
+# HARBOR_SHA defaults change with it; mini-swe-agent 2.4.6 from MSA_DIR on PYTHONPATH), the job template relay_msa.yaml,
+# and every router with --harness msa (its parse checks are msa_tool.py's, so no Terminus-2 parser is passed).
 # ARM_GATES=1 runs data/relay/horizon/arm_gates.py every ARM_GATES_EVERY s (the finetuned-student gates): the takeover
 # rate over finished relay episodes against [TAKEOVER_MIN, TAKEOVER_MAX] once TAKEOVER_AFTER are in (TAKEOVER_ACTION
 # flag|stop), and the student's EAGLE-3 mean acceptance length from its servers' /metrics (flag below ACCEPT_FLAG, stop
@@ -45,8 +48,16 @@ C=/e/project1/transfernetx/lee27/code
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROUTER=$HERE/../router/relay_router.py
 PY=${PY:-$C/envs/snowball-v2/bin/python}; HARBOR=${HARBOR:-$C/envs/snowball-v2/bin/harbor}
-HARBOR_SRC=${HARBOR_SRC:-$C/harbor-terminus2-relay/src}
-HARBOR_SHA=${HARBOR_SHA:-89098635}          # marin-community/harbor lukedhlee/terminus2-relay
+AGENT=${AGENT:-terminus2}           # terminus2 | msa
+if [ "$AGENT" = msa ]; then
+  HARBOR_SRC=${HARBOR_SRC:-$C/harbor-mini-swe-relay/src}
+  HARBOR_SHA=${HARBOR_SHA:?HARBOR_SHA = the lukedhlee/mini-swe-relay commit at HARBOR_SRC}   # marin-community/harbor
+  MSA_DIR=${MSA_DIR:-$C/envs/msa-2.4.6}; JOB_TEMPLATE=relay_msa.yaml
+else
+  HARBOR_SRC=${HARBOR_SRC:-$C/harbor-terminus2-relay/src}
+  HARBOR_SHA=${HARBOR_SHA:-89098635}          # marin-community/harbor lukedhlee/terminus2-relay
+  MSA_DIR=; JOB_TEMPLATE=relay_pilot.yaml
+fi
 TREE=${TREE:-/e/fscratch/reformo/lee27/tasks/calibforge_relay100}
 NTASKS=${NTASKS:-100}
 TASK_LIST=${TASK_LIST:-}          # a subset of the tree to run (default: the tree's TASKS.txt), e.g. the solvable tasks; a task
@@ -120,7 +131,7 @@ cleanup_sandboxes() {
   [ ${#jobs[@]} -gt 0 ] && $PY ${CLEANUP_PY:-$HERE/cleanup_sandboxes.py} --key-file $KEYF --delete "${jobs[@]}" 2>&1 | tail -3
 }
 abort() { log "ABORT: $*"; echo "$*" > $R/ABORT; stop_harbor; stop_routers; release_serve "abort"; cleanup_sandboxes; write_meta; exit 1; }
-log "run_pilot $NAME job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE failover_5xx=$FAILOVER_5XX max_input=$MAX_INPUT max_output=$MAX_OUTPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR herr_exclude=${HERR_EXCLUDE:-none} target_fail=$TARGET_FAIL base=$TARGET_BASE shuffle=${SHUFFLE_SEED:-off}"
+log "run_pilot $NAME agent=$AGENT job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE failover_5xx=$FAILOVER_5XX max_input=$MAX_INPUT max_output=$MAX_OUTPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR herr_exclude=${HERR_EXCLUDE:-none} target_fail=$TARGET_FAIL base=$TARGET_BASE shuffle=${SHUFFLE_SEED:-off}"
 
 # ---- 1. pre-flight --------------------------------------------------------------------------------------------------
 [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = "$HARBOR_SHA" ] || { log "harbor at ${HARBOR_SRC%/src} is not $HARBOR_SHA"; scancel $JOB; exit 1; }
@@ -179,16 +190,18 @@ fi
 
 # ---- 3. routers -----------------------------------------------------------------------------------------------------
 PARSER=$HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py
+PARSER_ARGS=(--terminus-parser $PARSER); HARNESS_ARGS=()
+[ "$AGENT" = msa ] && { PARSER_ARGS=(); HARNESS_ARGS=(--harness msa); }
 for arm in $ARMS; do
   TARGS=(); [ -n "$TURL" ] && TARGS=(--teacher-url $TURL --teacher-model qwen38 --teacher-max-tokens $TEACHER_MAX_TOKENS)
   if [ -n "$TURL" ] && [ "$TEACHER_GUARD" = 1 ]; then TARGS+=(--teacher-format-guard --teacher-resamples $TEACHER_RESAMPLES)
-    case $arm in relay_repair) ;; *) TARGS+=(--terminus-parser $PARSER);; esac; fi   # relay_repair passes the parser below
+    case $arm in relay_repair) ;; *) TARGS+=("${PARSER_ARGS[@]}");; esac; fi   # relay_repair passes the parser below
   [ -n "$TURL" ] && [ "$VERIFY_NOTE" = 1 ] && TARGS+=(--verify-note)
   [ -n "$TURL" ] && [ "$VERIFY_NOTE" = 1 ] && [ -n "${VERIFY_NOTE_TEXT:-}" ] && TARGS+=(--verify-note-text "$VERIFY_NOTE_TEXT")
   [ "$MAX_INPUT" != 65536 ] && TARGS+=(--report-max-model-len $MAX_INPUT)
   SARGS=(); [ -n "$SURL" ] && SARGS=(--student-url $SURL --student-model snowball)   # empty on a teacher-only serve
   case $arm in control) M=(--mode teacher);; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
-    relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error --terminus-parser $PARSER
+    relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error "${PARSER_ARGS[@]}"
                   --autofix --student-tokenizer $STUDENT_TOKENIZER);;
     *) abort "unknown arm $arm";; esac
   case $arm in relay*)
@@ -196,7 +209,7 @@ for arm in $ARMS; do
     [ -n "$ROW_MAX" ] && M+=(--student-row-max-tokens $ROW_MAX --student-row-reserve $ROW_RESERVE);; esac
   case $CLOCK in wall) CARGS=(--budget-mode off);; repair) CARGS=(--budget-mode on);; paused) CARGS=(--budget-mode on --pause-model-calls);;
     *) abort "unknown CLOCK $CLOCK";; esac
-  $PY $ROUTER "${M[@]}" --arm $arm --port ${PORT[$arm]} --log-dir $R/router_$arm --tasks $TREE/router_tasks.json \
+  $PY $ROUTER "${M[@]}" "${HARNESS_ARGS[@]}" --arm $arm --port ${PORT[$arm]} --log-dir $R/router_$arm --tasks $TREE/router_tasks.json \
     "${CARGS[@]}" --balance $BALANCE \
     --engine-metrics --deadline-epoch $DEADLINE "${SARGS[@]}" "${TARGS[@]}" $([ "$FAILOVER_5XX" = 1 ] && echo --failover-5xx) \
     > $R/router_$arm.log 2>&1 &
@@ -213,10 +226,10 @@ done
 log "routers ready: $(for arm in $ARMS; do printf '%s:%s ' $arm ${PORT[$arm]}; done)"
 
 # ---- 4. harbor ------------------------------------------------------------------------------------------------------
-export PYTHONPATH=$HARBOR_SRC
+export PYTHONPATH=$HARBOR_SRC${MSA_DIR:+:$MSA_DIR}
 for arm in $ARMS; do
   CFG=$R/${NAME}_$arm.yaml
-  sed "s#__JOB_NAME__#${NAME}_$arm#; s#__JOBS_DIR__#$JOBS_ROOT#; s#__API_BASE__#http://127.0.0.1:${PORT[$arm]}/v1#; s#__CONC__#$CONC#; s#__MAX_INPUT__#$MAX_INPUT#; s#__MAX_OUTPUT__#$MAX_OUTPUT#; s#__AGENT_MULT__#$AGENT_MULT#" $HERE/relay_pilot.yaml > $CFG
+  sed "s#__JOB_NAME__#${NAME}_$arm#; s#__JOBS_DIR__#$JOBS_ROOT#; s#__API_BASE__#http://127.0.0.1:${PORT[$arm]}/v1#; s#__CONC__#$CONC#; s#__MAX_INPUT__#$MAX_INPUT#; s#__MAX_OUTPUT__#$MAX_OUTPUT#; s#__AGENT_MULT__#$AGENT_MULT#" $HERE/$JOB_TEMPLATE > $CFG
   $PY - "$CFG" "$TREE" "$MODE" "${TASK_LIST:-$TREE/TASKS.txt}" "$N_ATTEMPTS" "$SHUFFLE_SEED" <<'PY' || abort "config for $arm does not validate"
 import os, random, re, sys, yaml
 p, tree, mode, lst, att, seed = sys.argv[1:7]

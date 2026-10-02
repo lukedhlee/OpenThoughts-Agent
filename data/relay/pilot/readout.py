@@ -37,6 +37,11 @@ VERIFIER_TIMEOUT = 'VerifierTimeoutError'
 RELAY_ARMS = ('relay', 'relay_keep', 'relay_repair')
 SERVED = {'student': 'snowball', 'teacher': 'qwen38', 'router': 'relay-router'}
 TAIL_BYTES = 4 << 20
+# mini-swe-agent tool mode (relay_router.py --harness msa): its format-error message openings (mini.yaml 2.4.6), the
+# agent name harbor records, and its own trajectory file (exit_status: Submitted = the episode ended on a submit)
+MSA_FORMAT_ERROR_MARKS = ('Tool call error:', 'Your previous response reached the output token limit')
+MSA_AGENT = 'mini-swe-agent-host'
+MSA_TRAJECTORY = 'mini-swe-agent.trajectory.json'
 
 
 def read_jsonl(path):
@@ -103,6 +108,20 @@ def _done(step):
         return False
 
 
+def reply_of(r):
+    """A router record's returned reply, parsed: a tool-calling message (--harness msa) by its tool calls, else as
+    Terminus-2 JSON."""
+    m = (((r.get('response') or {}).get('choices') or [{}])[0].get('message')) or {}
+    if m.get('tool_calls'):
+        return rt.tool_reply(m)
+    return rt.parse_reply(m.get('content') or '', 'terminus2')
+
+
+def _parse_error_obs(obs):
+    o = json.dumps(obs or {})
+    return 'Previous response had parsing errors' in o or any(k in o for k in MSA_FORMAT_ERROR_MARKS)
+
+
 def trials(job_dir, only=None):
     """Per trial: task, reward, exception, session id and the main trajectory's agent steps (only: trial dir names to
     read, default all)."""
@@ -118,20 +137,28 @@ def trials(job_dir, only=None):
         except (OSError, ValueError, KeyError):
             continue
         trajs = sorted(glob.glob(os.path.join(tdir, '**', 'agent', 'trajectory.json'), recursive=True), key=os.path.getmtime)
-        sid, steps = None, []
+        sid, steps, msa, submitted = None, [], False, None
         if trajs:
             try:
                 t = json.load(open(trajs[-1]))
                 sid = t.get('session_id')
+                msa = (t.get('agent') or {}).get('name') == MSA_AGENT
                 steps = [dict(content_sha=sha(s.get('message') if isinstance(s.get('message'), str) else json.dumps(s.get('message'))),
                               model=s.get('model_name'), has_reasoning=bool(s.get('reasoning_content')),
-                              parse_error_obs='Previous response had parsing errors' in json.dumps(s.get('observation') or {}),
-                              done=_done(s))
+                              parse_error_obs=_parse_error_obs(s.get('observation')),
+                              done=False if msa else _done(s))
                          for s in t.get('steps', []) if s.get('source') == 'agent' and not s.get('is_copied_context')]
+                if msa:
+                    up = os.path.join(os.path.dirname(trajs[-1]), MSA_TRAJECTORY)
+                    if os.path.exists(up):
+                        submitted = (json.load(open(up)).get('info') or {}).get('exit_status') == 'Submitted'
+                    if steps and submitted:
+                        steps[-1]['done'] = True
             except (OSError, ValueError):
                 pass
         vt = exc == VERIFIER_TIMEOUT
         rows.append(dict(trial=os.path.basename(tdir), task=task, reward=reward, exc=exc, sid=sid, steps=steps,
+                         msa=msa, submitted=submitted,
                          traj_path=trajs[-1] if trajs else None,
                          verifier_timeout=vt, censored=False,
                          harness_error=not vt and ((reward is None) or (exc is not None and exc not in AGENT_ENDS))))
@@ -351,6 +378,8 @@ def failure_cause(t, ending=None):
         return 'format_loop'
     if ending in ('student_budget', 'teacher_budget') or t['exc'] == 'AgentTimeoutError':
         return 'timeout'
+    if t.get('msa') and t.get('submitted') and ending is None:   # mini-swe-agent ends on the submit itself
+        return 'false_done'
     if len(steps) >= 2 and steps[-1]['done'] and steps[-2]['done'] and ending is None:
         return 'false_done'
     return 'tests_failed'
@@ -385,8 +414,7 @@ def takeover_guards(e, t):
                       and r['turn'] >= t0 and r.get('upstream_status') == 200), key=lambda r: r['turn'])
     verified, claim_at = False, None
     for i, r in enumerate(teacher[:2]):
-        content = (((r.get('response') or {}).get('choices') or [{}])[0].get('message') or {}).get('content') or ''
-        pr = rt.parse_reply(content, 'terminus2')
+        pr = reply_of(r)
         if pr['done']:
             claim_at = i
             break
@@ -431,6 +459,10 @@ def relay_takeovers(rv, rows):
             first = [e['takeover']['first_teacher_record'] for e, _ in items]
             immediate = 0
             for r in first:
+                pr = reply_of(r)
+                if pr.get('harness') == 'tools':     # mini-swe-agent: the teacher submits at once, no check first
+                    immediate += bool(pr['done']) and len(pr['cmds']) == 1
+                    continue
                 try:
                     c = json.loads(re.search(r'\{.*\}', r['response']['choices'][0]['message']['content'], re.S).group(0))
                     immediate += bool(c.get('task_complete')) and not c.get('commands')

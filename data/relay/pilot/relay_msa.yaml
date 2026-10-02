@@ -1,0 +1,61 @@
+# Relay rollouts under mini-swe-agent tool mode (harbor mini-swe-agent-host, lukedhlee/mini-swe-relay): one arm's
+# harbor job, rendered by run_pilot.sh with AGENT=msa. Same job block as relay_pilot.yaml (Terminus-2); the agent block is
+# the CalibForge MSA smoke policy (data/mini_swe_host/calibforge_mini_swe.yaml, as the 09-28 TB2 tool-mode runs used it):
+# upstream mini-swe-agent 2.4.6 mini.yaml verbatim (no step limit, 30 s per command, no summarization), model_class
+# litellm (tool mode), tool_choice "none" (no server tool parser: harbor parses the student's <tool_call> blocks; the
+# router hands back every turn already parsed), interleaved_thinking true (prior reasoning re-sent as reasoning_content),
+# plus the relay's session header. Harbor sends no max_tokens on this path; __MAX_INPUT__ / __MAX_OUTPUT__ only shape
+# model_info. __AGENT_MULT__ as in relay_pilot.yaml (the router enforces the task budget on the owner's clock).
+job_name: __JOB_NAME__
+jobs_dir: __JOBS_DIR__
+n_attempts: 1
+n_concurrent_trials: __CONC__
+timeout_multiplier: 1.0
+agent_timeout_multiplier: __AGENT_MULT__
+# 400 sandboxes created at once overran the 300-600 s start window: 272 EnvironmentStartTimeoutError in the full-run
+# baseline's first 5 min (2026-09-25 18:57 PT), none after. A 4x window absorbs a start burst.
+environment_build_timeout_multiplier: 4.0
+quiet: true
+release_trial_payloads_in_memory: true
+retry:
+  max_retries: 3
+  include_exceptions:
+  - DaytonaRateLimitError
+  - EnvironmentStartTimeoutError
+  - DaytonaSandboxStopError
+  - SetupScriptError
+  - SandboxBuildFailedError
+  - ArtifactUploadTimeoutError
+  - ArtifactWriterBacklogError
+  exclude_exceptions: []
+  wait_multiplier: 2.0
+  min_wait_sec: 1.0
+  max_wait_sec: 60.0
+environment:
+  type: daytona
+  force_build: false
+  delete: true
+  override_cpus: 2
+  override_memory_mb: 4096
+  override_storage_mb: 10240
+  kwargs:
+    auto_snapshot: true
+agents:
+- name: mini-swe-agent-host
+  model_name: hosted_vllm/relay
+  kwargs:
+    config_file: mini.yaml
+    model_class: litellm
+    llm_call_kwargs:
+      tool_choice: none
+    api_base: __API_BASE__
+    model_info:
+      max_input_tokens: __MAX_INPUT__
+      max_output_tokens: __MAX_OUTPUT__
+      input_cost_per_token: 0.0
+      output_cost_per_token: 0.0
+    extra_body:
+      skip_special_tokens: false
+    interleaved_thinking: true
+    llm_session_header: X-Harbor-Session-Id
+tasks: []

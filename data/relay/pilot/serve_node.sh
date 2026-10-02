@@ -88,10 +88,12 @@ case $ROLE in
     MODEL=${TEACHER_MODEL:-/e/data1/mmlaion/lee27/models/Qwen3.8-27B}
     [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
     $PY -c "import torchvision, vllm.model_executor.models.qwen3_5; print('torchvision', torchvision.__version__, 'qwen3_5 import ok')" || { echo "qwen3_5 import failed"; exit 1; }
+    # QWEN_SPEC=0: no MTP (Horizon 09-30: MTP-2 killed DP engines at random; lossless either way, only slower)
+    TSPEC=(--speculative-config '{"method":"mtp","num_speculative_tokens":2}'); [ "${QWEN_SPEC:-1}" = 0 ] && TSPEC=()
     QARGS=(--model "$MODEL" --served-model-name qwen38 --tensor-parallel-size 1
       --max-model-len ${TEACHER_MAXLEN:-65536} --gpu-memory-utilization 0.90 --max-num-seqs 96
       --enable-prefix-caching --enable-chunked-prefill --no-enable-log-requests
-      --speculative-config '{"method":"mtp","num_speculative_tokens":2}' --reasoning-parser qwen3 ${TEACHER_EXTRA_ARGS:-})
+      "${TSPEC[@]}" --reasoning-parser qwen3 ${TEACHER_EXTRA_ARGS:-})
     if [ "${PER_GPU:-0}" = 1 ]; then
       # one server per GPU (TP1, DP1, ports 8000-8003): the router balances episodes across all of them itself; a DP4
       # server spread its load unevenly over its engines (2026-09-26 diagnosis: busy engines at 85-95 % KV with 10-19

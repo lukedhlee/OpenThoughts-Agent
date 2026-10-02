@@ -125,9 +125,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'triggers'))
 import relay_triggers as rt  # noqa: E402
 sys.path.insert(0, HERE)
 import autofix as af  # noqa: E402
+import msa_tool as mt  # noqa: E402
 import reasoning_cap as rcap  # noqa: E402
 
-ROUTER_VERSION = 'relay-router/1 (2026-09-26 teacher format guard, verify note)'
+ROUTER_VERSION = 'relay-router/1 (2026-09-26 teacher format guard, verify note; 2026-10-02 --harness msa)'
 SESSION_HEADER = 'X-Harbor-Session-Id'
 
 # Terminus-2 prompt openings (harbor terminus_2.py; stable across the v0.1 pin and lukedhlee/terminus2-relay)
@@ -146,6 +147,11 @@ VERIFY_NOTE = ("Note: another agent did the previous work, and its claim that th
                "confirming, run commands that check the task's key requirements (outputs, files, tests).")
 # --mode teacher: the claim is the teacher's own, so the note drops the "another agent" framing (rest byte-identical)
 VERIFY_NOTE_OWN = VERIFY_NOTE.replace('another agent did the previous work, and its claim', 'the claim', 1)
+# --harness msa: the neutral note B of the 2026-10-01 A/B ("Before confirming, run commands that check the task's key
+# requirements (outputs, files, tests).") with "confirming" -> "submitting": mini-swe-agent has no confirmation request,
+# the student's submit is discarded and the teacher answers the same request with this appended to its last message
+VERIFY_NOTE_MSA = "Before submitting, run commands that check the task's key requirements (outputs, files, tests)."
+SYNTHETIC_SUBMIT = 'echo ' + mt.SUBMIT_SENTINEL
 
 
 def sha(s):
@@ -178,7 +184,9 @@ def think_text(content):
     return '\n\n'.join(p for p in parts if p)
 
 
-def request_kind(messages):
+def request_kind(messages, msa=False):
+    if msa:   # mini-swe-agent: no summarization, no confirmation request; the first request has no assistant turn
+        return 'main' if any(m.get('role') == 'assistant' for m in messages) else 'initial'
     last = text_of(messages[-1].get('content')) if messages else ''
     if messages and messages[-1].get('role') == 'user':
         if last.startswith(SUMMARY_PREFIX):
@@ -240,6 +248,7 @@ class Episode:
         self.paused_at_takeover = 0.0
         self.repair_confirm = False       # the teacher claimed done in a repair turn: it answers that confirmation
         self.note_turn = None             # --verify-note: the turn of the done_claim takeover's confirmation request
+        self.n_fed = 0                    # --harness msa: history messages already fed to the scanner
 
     def summary(self):
         return dict(episode=self.idx, sid=self.sid, task_id=(self.task or {}).get('task_id'), owner=self.owner,
@@ -272,9 +281,11 @@ class Router:
         self.student_extra = json.loads(a.student_extra) if a.student_extra else {}
         self.tasks = self._load_tasks(a.tasks)
         self.tok = rcap.load_tokenizer(a.student_tokenizer) if a.student_tokenizer else None
-        self.note_text = a.verify_note_text or (VERIFY_NOTE if a.mode == 'relay' else VERIFY_NOTE_OWN)
+        self.msa = a.harness == 'msa'
+        self.note_text = a.verify_note_text or (VERIFY_NOTE_MSA if self.msa else VERIFY_NOTE if a.mode == 'relay'
+                                                else VERIFY_NOTE_OWN)
         self.parser = self.parser_path = self.parser_sha = None
-        if a.repair_on_parse_error or a.teacher_format_guard:
+        if (a.repair_on_parse_error or a.teacher_format_guard) and not self.msa:   # msa: msa_tool.py's checks
             self.parser, self.parser_path, self.parser_sha = load_terminus_parser(a.terminus_parser)
         self.episodes = {}
         self.by_first = {}
@@ -285,7 +296,7 @@ class Router:
                            repair_reply_rejected=0, repinned=0, autofixes=0, teacher_cut_at_cap=0,
                            view_count_errors=0, context_hard_ends=0, teacher_checked=0, teacher_parse_errors=0,
                            teacher_autofix=0, teacher_resample=0, teacher_unparseable_passed=0, verify_notes=0,
-                           upstream_5xx_failover=0)
+                           upstream_5xx_failover=0, student_parse_errors=0)
         os.makedirs(a.log_dir, exist_ok=True)
         os.makedirs(os.path.join(a.log_dir, 'bodies'), exist_ok=True)
         # one os.write per line on an O_APPEND fd: readers (the driver's gates) never see a half-written line
@@ -394,17 +405,24 @@ class Router:
         return ok, report
 
     # ---- episodes ----------------------------------------------------------------------------------------------
+    def first_text(self, messages):
+        """The text an episode is matched and keyed by: the first message (Terminus-2's prompt holds the task);
+        --harness msa: the first two (mini-swe-agent's first message is the system prompt, the same for every task)."""
+        return '\n'.join(text_of(m.get('content')) for m in messages[:2 if self.msa else 1])
+
     def episode(self, sid, messages):
         ep = self.episodes.get(sid)
-        first = text_of(messages[0].get('content')) if messages else ''
+        first = self.first_text(messages)
         new_attempt = (ep is not None and sid.startswith('h-') and len(messages) == 1
-                       and request_kind(messages) == 'initial' and ep.sc.turn > 0)
+                       and request_kind(messages, self.msa) == 'initial' and ep.sc.turn > 0)
         if ep is None or new_attempt:
             task = self.match_task(first) if first else None
             if task is None:
                 self.counts['no_task_match'] += 1
             self.n_episodes += 1
             ep = Episode(sid, self.n_episodes, first, task, 'teacher' if self.mode == 'teacher' else 'student')
+            if self.msa:
+                ep.sc = rt.EpisodeScanner(None)   # its tool-calling turns parse as harness 'tools'
             ep.student_think = self.a.student_think
             self.episodes[sid] = ep
             self.by_first.setdefault(ep.first_sha, []).append(sid)
@@ -413,7 +431,7 @@ class Router:
         return ep
 
     def owner_for_tokenize(self, messages):
-        first = text_of(messages[0].get('content')) if messages else ''
+        first = self.first_text(messages)
         sids = self.by_first.get(sha(first)) or []
         eps = [self.episodes[s] for s in sids if s in self.episodes]
         if not eps:
@@ -422,7 +440,17 @@ class Router:
         return ep, ep.owner
 
     # ---- history conversion ------------------------------------------------------------------------------------
+    def owner_of(self, ep, m):
+        """The router's record of an assistant turn in harbor's history: by its first tool call id (--harness msa;
+        the router chose every id it returned), else by its content hash."""
+        if not ep:
+            return None
+        k = mt.call_id_key(m) if self.msa else None
+        return ep.replies.get(k) if k else ep.replies.get(sha(text_of(m.get('content'))))
+
     def for_teacher(self, ep, messages):
+        if self.msa:
+            return self.for_teacher_msa(ep, messages)
         stats = dict(student_think=self.a.student_think, student_think_as_reasoning=0,
                      prior_teacher_turns=0, reasoning_key_from_harbor=0, reasoning_content_only=0, reasoning_restored=0,
                      teacher_turns_without_reasoning=0, student_turns=0, think_stripped=0, other_assistant=0)
@@ -472,10 +500,88 @@ class Router:
             out.append(m2)
         return out, stats
 
+    def for_teacher_msa(self, ep, messages):
+        """--harness msa: the teacher's view. Its own earlier turns carry their reasoning (as harbor re-sent it, else
+        restored from the router's record); the student's turns keep their prose and tool calls, and their thinking
+        is dropped (--student-think strip) or kept as that turn's reasoning (keep). Tool results pass unchanged."""
+        stats = dict(student_think=self.a.student_think, student_think_as_reasoning=0, prior_teacher_turns=0,
+                     reasoning_key_from_harbor=0, reasoning_restored=0, teacher_turns_without_reasoning=0,
+                     student_turns=0, think_stripped=0, other_assistant=0)
+        out = []
+        for m in messages:
+            if m.get('role') != 'assistant':
+                out.append(m)
+                continue
+            rec = self.owner_of(ep, m)
+            owner = rec['owner'] if rec else None
+            m2 = {k: v for k, v in m.items() if k not in ('reasoning', 'reasoning_content')}
+            r = m.get('reasoning') or m.get('reasoning_content')
+            if owner == 'teacher':
+                stats['prior_teacher_turns'] += 1
+                if r:
+                    stats['reasoning_key_from_harbor'] += 1
+                elif rec.get('reasoning'):
+                    r = rec['reasoning']
+                    stats['reasoning_restored'] += 1
+                else:
+                    stats['teacher_turns_without_reasoning'] += 1
+            elif owner == 'student' or owner is None:
+                stats['student_turns'] += owner == 'student'
+                if r:
+                    stats['think_stripped'] += 1
+                    if self.a.student_think == 'keep':
+                        stats['student_think_as_reasoning'] += 1
+                    else:
+                        r = None
+            else:   # the router's synthetic turns
+                stats['other_assistant'] += 1
+            if r:
+                m2['reasoning'] = r
+                m2['reasoning_content'] = r
+            out.append(m2)
+        return out, stats
+
+    def for_student_msa(self, ep, messages):
+        """--harness msa: the student's view. Its own turns as harbor sent them; a teacher turn keeps its prose and
+        tool calls, with its reasoning (stripped) as the turn's reasoning, which 09-21's template renders inside
+        <|start_think|>..<|end_think|> as for the student's own turns. With --student-tokenizer every teacher turn but
+        the most recent has its reasoning cut to --reasoning-cap tokens (reasoning_cap.py, as for Terminus-2)."""
+        stats = dict(teacher_turns_inline=0, teacher_turns_without_reasoning=0, cuts=[])
+        owners = [(self.owner_of(ep, m) or {}).get('owner') if m.get('role') == 'assistant' else None for m in messages]
+        teacher_idx = [i for i, o in enumerate(owners) if o == 'teacher']
+        last_teacher = teacher_idx[-1] if teacher_idx else None
+        out = []
+        for i, m in enumerate(messages):
+            if owners[i] != 'teacher':
+                out.append(m)
+                continue
+            rec = self.owner_of(ep, m)
+            r = (m.get('reasoning') or m.get('reasoning_content') or rec.get('reasoning') or '').strip()
+            m2 = {k: v for k, v in m.items() if k not in ('reasoning', 'reasoning_content')}
+            at = None
+            if self.tok is not None and i != last_teacher and r:
+                key = ('cut', mt.call_id_key(m))
+                if key in rec:
+                    r, at = rec[key]
+                else:
+                    r, at = rcap.cut_reasoning(r, self.tok, self.a.reasoning_cap)
+                    rec[key] = (r, at)
+            if r:
+                m2['reasoning'] = r
+                m2['reasoning_content'] = r
+            stats['teacher_turns_inline'] += 1
+            stats['teacher_turns_without_reasoning'] += not r
+            if at is not None:
+                stats['cuts'].append(dict(call_id=mt.call_id_key(m), cut_at=at))
+            out.append(m2)
+        return out, stats
+
     def for_student(self, ep, messages):
         """The student sees its own turns unchanged. A teacher turn in its history (a parse_error repair) is rendered
         the way the SFT converter renders teacher turns for 09-21: the teacher's reasoning inside 09-21's think
         markers, then the content, no newlines around the span, no separate reasoning field."""
+        if self.msa:
+            return self.for_student_msa(ep, messages)
         stats = dict(teacher_turns_inline=0, teacher_turns_without_reasoning=0, cuts=[])
         teacher_idx = [i for i, m in enumerate(messages) if m.get('role') == 'assistant' and ep
                        and (ep.replies.get(sha(text_of(m.get('content')))) or {}).get('owner') == 'teacher']
@@ -678,7 +784,7 @@ class Router:
             if not self.a.allow_hash_fallback:
                 self.set_fatal(f'request without the {SESSION_HEADER} header (harbor needs llm_session_header)')
                 return openai_error(503, f'relay router stopped: {self.fatal}')
-            sid = 'h-' + sha(text_of(messages[0].get('content')))
+            sid = 'h-' + sha(self.first_text(messages))
         ep = self.episode(sid, messages)
         async with ep.lock:
             try:
@@ -690,6 +796,8 @@ class Router:
 
     # ---- the decision ------------------------------------------------------------------------------------------
     async def handle(self, ep, body, messages):
+        if self.msa:
+            return await self.handle_msa(ep, body, messages)
         ep.n_requests += 1
         now = time.time()
         kind = request_kind(messages)
@@ -795,6 +903,161 @@ class Router:
         if self.a.verify_note and kind == 'confirm' and ep.note_turn == t:
             rec['verify_note'] = True     # the teacher confirms a claim: the done_claim takeover's, or control's first
         return await self.answer(ep, 'teacher', body, messages, rec, main=True)
+
+    async def handle_msa(self, ep, body, messages):
+        """--harness msa: handle() for mini-swe-agent tool mode. The history only grows (no summarization), so the
+        scanner is fed every message it has not seen; a request ends with the tool results of the previous turn (or
+        upstream's format-error user message). No confirmation request exists: the student's done claim (a submit
+        command) is a decision trigger like the others, its reply is discarded and the teacher answers the same
+        request, with the verify note on that request only."""
+        ep.n_requests += 1
+        now = time.time()
+        kind = request_kind(messages, msa=True)
+        rec = dict(ts=now, elapsed_sec=round(now - ep.t0, 3), arm=self.a.arm, router_version=ROUTER_VERSION,
+                   harness='msa', episode=ep.idx, sid=ep.sid, task_id=(ep.task or {}).get('task_id'), request_kind=kind,
+                   n_messages=len(messages), request_sha=sha(json.dumps(messages, sort_keys=True, ensure_ascii=False)),
+                   seq=ep.n_requests, student_think=self.a.student_think, paused_sec=round(ep.paused_sec, 3),
+                   student_clock_sec=round(now - ep.t0 - ep.paused_sec, 3))
+        key = (len(messages), sha(json.dumps(messages[-1], sort_keys=True, ensure_ascii=False)))
+        retry = key == ep.last_main_key
+        if len(messages) > ep.n_fed:
+            for m in messages[ep.n_fed:]:
+                ep.sc.add_message(m)
+            ep.sc.flush()
+            ep.n_fed = len(messages)
+        ep.last_main_key = key
+        t = ep.sc.turn + 1
+        rec.update(turn=t, retry=retry)
+
+        if not ep.ending and self.a.deadline_epoch and now >= self.a.deadline_epoch:
+            ep.ending = 'deadline'
+            self.event('ending', episode=ep.idx, sid=ep.sid, ending='deadline', turn=t, elapsed_sec=now - ep.t0)
+        if ep.ending == 'context_hard_end':
+            return self.hard_end(ep, rec, t, None)
+        if ep.ending:
+            return self.synthetic(ep, rec)
+        if self.a.budget_mode == 'on' and ep.task and ep.task.get('budget_sec'):
+            b = ep.task['budget_sec']
+            if ep.owner == 'student' and self.mode in ('relay', 'student') and now - ep.t0 - ep.paused_sec >= self.a.student_budget_frac * b:
+                ep.ending = 'student_budget'
+            elif (ep.owner == 'teacher' and ep.takeover_t and now - ep.takeover_t - (ep.paused_sec - ep.paused_at_takeover)
+                  >= self.a.teacher_budget_frac * b):
+                ep.ending = 'teacher_budget'
+            elif ep.owner == 'teacher' and self.mode == 'teacher' and now - ep.t0 - ep.paused_sec >= self.a.teacher_budget_frac * b:
+                ep.ending = 'teacher_budget'
+            if ep.ending:
+                self.event('ending', episode=ep.idx, sid=ep.sid, ending=ep.ending, turn=t, elapsed_sec=now - ep.t0)
+                return self.synthetic(ep, rec)
+        if ep.owner == 'student' and self.mode == 'relay' and not retry:
+            env = [f for f in ep.sc.current_fires(None, self.cfg) if f['kind'] == 'environment']
+            if env:
+                self.take_over(ep, env[0], t, now)
+                rec['takeover'] = self.takeover_rec(ep)
+        if ep.owner == 'student' and self.mode == 'relay' and self.a.context_budget_tokens:
+            n = await self.count_student_view(ep, body, messages, rec)
+            fire = rt.context_budget_fire(n, t, self.a.context_budget_tokens, self.a.context_budget_min_turn)
+            if fire:
+                self.take_over(ep, fire, t, now)
+                rec['takeover'] = self.takeover_rec(ep)
+        if ep.owner == 'student':
+            return await self.answer_student_msa(ep, body, messages, rec, t, now)
+        if self.mode == 'relay' and ep.takeover and self.a.student_row_max_tokens:
+            n = rec['student_view_tokens'] if 'student_view_tokens' in rec else \
+                await self.count_student_view(ep, body, messages, rec)
+            if n is not None and n > self.a.student_row_max_tokens - self.a.student_row_reserve:
+                ep.ending = 'context_hard_end'
+                self.event('ending', episode=ep.idx, sid=ep.sid, ending='context_hard_end', turn=t,
+                           elapsed_sec=now - ep.t0, student_view_tokens=n,
+                           limit=self.a.student_row_max_tokens - self.a.student_row_reserve,
+                           takeover_trigger=ep.takeover['trigger'])
+                return self.hard_end(ep, rec, t, n)
+        rec['owner'] = 'teacher'
+        if self.a.verify_note and ep.note_turn == t:
+            rec['verify_note'] = True     # a retry of the done-claim takeover's request gets the note again
+        return await self.answer(ep, 'teacher', body, messages, rec, main=True)
+
+    def call_ids(self, ep):
+        n = ep.n_requests
+        return lambda j: f'call_{n}_{j}'
+
+    async def answer_student_msa(self, ep, body, messages, rec, t, now):
+        rec['owner'] = 'student'
+        msgs, sstats = self.for_student(ep, messages)
+        rec['student_view'] = sstats
+        b = self.upstream_body('student', body, msgs)
+        rec['sent_body'] = self.write_body(ep, rec['seq'], 'student', b)
+        t1 = time.time()
+        status, data = await self.post('student', '/chat/completions', b, ep)
+        rec.update(latency_sec=round(time.time() - t1, 3), upstream_status=status)
+        if self.a.pause_model_calls:
+            ep.paused_sec += time.time() - t1
+            rec['paused_this_turn_sec'] = round(time.time() - t1, 3)
+        if status != 200:
+            self.check_fatal('student', status, data)
+            rec['upstream_error'] = data[:2000].decode('utf-8', 'replace')
+            self.log(rec)
+            return web.Response(status=status, body=data, content_type='application/json')
+        resp = json.loads(data)
+        ch = resp['choices'][0]
+        served = dict(ch['message'])
+        p = mt.parse(text_of(served.get('content')), served.get('reasoning_content') or served.get('reasoning'),
+                     self.call_ids(ep))
+        err = p.error or mt.toolcall_error(p.tool_calls)
+        rec['served_message'] = served
+        if err:
+            self.counts['student_parse_errors'] += 1
+            rec['student_parse_error'] = err[:300]
+            answer = mt.split_inline_reasoning(text_of(served.get('content')))[1]
+            if (self.mode == 'relay' and self.a.autofix and ch.get('finish_reason') != 'length' and answer.strip()
+                    and not served.get('reasoning_content')):
+                tcs, kind, prose = mt.student_autofix(answer, self.call_ids(ep), af)
+                if tcs:
+                    # format autofix: the student's own command, as a well-formed bash call; its thinking verbatim
+                    rec.update(autofix=True, autofix_kind=kind, autofix_reason=err[:300])
+                    p.tool_calls, p.error, err, p.content = tcs, '', '', prose
+                    self.counts['autofixes'] += 1
+                else:
+                    rec['autofix_unfixable'] = kind
+        if err and self.mode == 'relay' and self.a.repair_on_parse_error:
+            # parse_error repair: harbor would turn this reply into a format error; the teacher answers the same
+            # request for one turn and the student keeps the episode
+            ep.n_repairs += 1
+            self.counts['repairs'] += 1
+            rec.update(repair=True, repair_kind='parse_error', repair_reason=err[:500], owner='teacher',
+                       discarded_student_reply=resp, discarded_usage=resp.get('usage'),
+                       student_latency_sec=rec.pop('latency_sec'), student_sent_body=rec.pop('sent_body'))
+            self.event('repair', episode=ep.idx, sid=ep.sid, turn=t, reason=err[:200])
+            return await self.answer(ep, 'teacher', body, messages, rec, main=True)
+        if err:
+            # passed as served: harbor parses it itself and answers with upstream's format error
+            return self.finish(ep, 'student', resp, rec, t, main=True)
+        ch['message'] = mt.message(p)
+        view = rt.tool_reply(dict(content=p.content, tool_calls=p.tool_calls))
+        rec['logged'] = self.logged_signals(ep, view)
+        dec = [] if self.mode != 'relay' else [f for f in ep.sc.current_fires(view, self.cfg) if f['kind'] == 'decision']
+        if self.mode == 'student':
+            rec['would_fire'] = [dict(trigger=f['trigger'], reason=f.get('reason')) for f in ep.sc.current_fires(view, self.cfg)]
+        if (self.mode == 'relay' and 'done_claim' in self.cfg['enabled'] and view['done']
+                and not any(f['trigger'] == 'done_claim' for f in dec)):
+            # the scanner fires done_claim only on the episode's first submit; a teacher repair turn may have claimed
+            dec.append(dict(trigger='done_claim', kind='decision', turn=t, reason='submit command (student)'))
+        if dec:
+            # decision trigger (the done claim included): the student's reply never runs; the teacher answers the
+            # same request and keeps the episode
+            first = next((f for f in dec if f['trigger'] == 'done_claim'), dec[0])
+            self.take_over(ep, first, t, now, discarded=resp)
+            rec.update(discarded_student_reply=resp, discarded_usage=resp.get('usage'),
+                       takeover=self.takeover_rec(ep), owner='teacher')
+            rec['student_latency_sec'] = rec.pop('latency_sec')
+            rec['student_sent_body'] = rec.pop('sent_body')
+            if first['trigger'] == 'done_claim':
+                rec['done_claim'] = True
+                self.event('done_claim', episode=ep.idx, sid=ep.sid, turn=t)
+                ep.note_turn = t
+                if self.a.verify_note:
+                    rec['verify_note'] = True
+            return await self.answer(ep, 'teacher', body, messages, rec, main=True)
+        return self.finish(ep, 'student', resp, rec, t, main=True)
 
     async def count_student_view(self, ep, body, messages, rec):
         """Tokens in 09-21's rendered prompt for this request: the student-bound body (for_student: its own turns as
@@ -932,7 +1195,12 @@ class Router:
         if who == 'teacher':
             msgs, stats = self.for_teacher(ep, messages)
             rec['refeed'] = stats
-            if rec.get('verify_note'):
+            if rec.get('verify_note') and self.msa:
+                # the done-claim takeover's request: the note after the last tool result (or format-error message)
+                last = msgs[-1]
+                msgs = msgs[:-1] + [dict(last, content=text_of(last.get('content')) + '\n\n' + self.note_text)]
+                self.counts['verify_notes'] += 1
+            elif rec.get('verify_note'):
                 last = msgs[-1]
                 if last.get('role') == 'user' and CONFIRM_MARK in text_of(last.get('content')):
                     msgs = msgs[:-1] + [dict(last, content=text_of(last.get('content')) + '\n\n' + self.note_text)]
@@ -946,7 +1214,12 @@ class Router:
         rec['sent_body'] = self.write_body(ep, rec['seq'], who, b)
         t1 = time.time()
         guard = who == 'teacher' and main and self.a.teacher_format_guard and self.parser is not None
-        if guard:
+        if who == 'teacher' and main and self.msa:
+            # every teacher agent turn goes back parsed (tool calls with the router's ids); with the guard, a reply
+            # whose tool calls upstream would reject is sampled again
+            status, data = await self.guarded_teacher_msa(ep, b, rec)
+            attempts = 0
+        elif guard:
             status, data = await self.guarded_teacher(ep, b, rec)
             attempts = 0
         else:
@@ -968,6 +1241,9 @@ class Router:
                 break
             self.counts['repair_reply_rejected'] += 1
             rec.setdefault('repair_rejected_replies', []).append(json.loads(data))
+        if rec.get('repair') and self.msa and status == 200:
+            m = json.loads(data)['choices'][0]['message']
+            rec['repair_reply_parse_error'] = mt.toolcall_error(m.get('tool_calls')) or None
         if rec.get('repair') and self.parser is not None and status == 200:
             c = text_of(json.loads(data)['choices'][0]['message'].get('content'))
             pr = self.parser.parse_response(c)
@@ -1000,7 +1276,13 @@ class Router:
                 self.counts['teacher_cut_at_cap'] += 1
             rec['content_has_think_close'] = '</think>' in (msg.get('content') or '')
         t = rec.get('turn')
-        if main and self.mode in ('teacher', 'student'):
+        if main and self.msa:
+            view = rt.tool_reply(msg) if msg.get('tool_calls') else text_of(msg.get('content'))
+            rec['logged'] = self.logged_signals(ep, view)
+            if self.mode in ('teacher', 'student'):
+                rec['would_fire'] = [dict(trigger=f['trigger'], reason=f.get('reason'))
+                                     for f in ep.sc.current_fires(view, self.cfg)]
+        elif main and self.mode in ('teacher', 'student'):
             content = text_of(msg.get('content'))
             rec['logged'] = self.logged_signals(ep, content)
             rec['would_fire'] = [dict(trigger=f['trigger'], reason=f.get('reason'))
@@ -1017,6 +1299,50 @@ class Router:
             rec['teacher_max_tokens_dropped'] = True
             status, data = await self.post('teacher', '/chat/completions', b, ep)
         return status, data, b
+
+    async def guarded_teacher_msa(self, ep, b, rec):
+        """--harness msa: the teacher's reply as harbor will get it: Qwen3.8's tool calls parsed (msa_tool.teacher_reply)
+        and checked with upstream's rule. Accepted -> the parsed message (the router's call ids); else, with
+        --teacher-format-guard, the same request again up to --teacher-resamples times; none accepted -> the last
+        reply as served (harbor answers it with upstream's format error). Returns (status, body bytes) like post()."""
+        g = dict(attempts=0, outcome=None, parse_errors=[], shapes=[])
+        rec['teacher_guard'] = g
+        status = data = None
+        tries = 1 + (self.a.teacher_resamples if self.a.teacher_format_guard else 0)
+        for attempt in range(tries):
+            prev = data if status == 200 else None
+            status, data, b = await self.teacher_call(ep, b, rec)
+            g['attempts'] += 1
+            if status != 200:
+                if prev is not None:
+                    self.counts['teacher_resample_failed'] = self.counts.get('teacher_resample_failed', 0) + 1
+                    self.counts['teacher_unparseable_passed'] += 1
+                    rec.update(teacher_unparseable_passed=True, teacher_resample_error=data[:300].decode('utf-8', 'replace'))
+                    g['outcome'] = f'resample_http_{status}_passed'
+                    return 200, prev
+                g['outcome'] = f'http_{status}'
+                return status, data
+            resp = json.loads(data)
+            ch = resp['choices'][0]
+            p = mt.teacher_reply(ch['message'], self.call_ids(ep))
+            err = p.error or mt.toolcall_error(p.tool_calls)
+            g['shapes'].append(p.shape)
+            self.counts['teacher_checked'] += attempt == 0
+            if not err:
+                rec['served_message'] = dict(ch['message'])
+                ch['message'] = mt.message(p)
+                g['outcome'] = 'ok' if attempt == 0 else 'resampled_ok'
+                return status, json.dumps(resp).encode()
+            self.counts['teacher_parse_errors'] += 1
+            g['parse_errors'].append(err[:200])
+            if attempt < tries - 1:
+                self.counts['teacher_resample'] += 1
+                rec.setdefault('teacher_resampled_replies', []).append(resp)
+        self.counts['teacher_unparseable_passed'] += 1
+        rec['teacher_unparseable_passed'] = True
+        g['outcome'] = 'unparseable_passed'
+        self.event('teacher_unparseable_passed', episode=ep.idx, sid=ep.sid, turn=rec.get('turn'), errors=g['parse_errors'])
+        return status, data
 
     async def guarded_teacher(self, ep, b, rec):
         """--teacher-format-guard: the teacher's reply as harbor will get it. Terminus-2's parser accepts it -> as
@@ -1077,7 +1403,8 @@ class Router:
         msg = resp['choices'][0]['message']
         content = text_of(msg.get('content'))
         reasoning = msg.get('reasoning_content') or msg.get('reasoning')
-        ep.replies[sha(content)] = dict(owner=who, turn=t, reasoning=reasoning)
+        k = mt.call_id_key(msg) if self.msa else None
+        ep.replies[k or sha(content)] = dict(owner=who, turn=t, reasoning=reasoning)
         if main:
             ep.pending_reply = content
             ep.owners.append((t, who))
@@ -1087,12 +1414,17 @@ class Router:
         return web.json_response(resp)
 
     def synthetic(self, ep, rec):
-        """End the episode the way a timeout would: task_complete with no commands, twice (Terminus-2 confirms)."""
+        """End the episode the way a timeout would: task_complete with no commands, twice (Terminus-2 confirms).
+        --harness msa: the submit command (it runs, prints the sentinel, and mini-swe-agent submits)."""
         self.counts['synthetic'] += 1
+        msg = {'role': 'assistant', 'content': SYNTHETIC_DONE}
+        if self.msa:
+            msg = {'role': 'assistant', 'content': '', 'tool_calls': [{
+                'id': f'call_{ep.n_requests}_0', 'type': 'function',
+                'function': {'name': 'bash', 'arguments': json.dumps({'command': SYNTHETIC_SUBMIT})}}]}
         resp = {'id': f'relay-{uuid.uuid4().hex[:12]}', 'object': 'chat.completion', 'created': int(time.time()),
                 'model': 'relay-router',
-                'choices': [{'index': 0, 'finish_reason': 'stop',
-                             'message': {'role': 'assistant', 'content': SYNTHETIC_DONE}}],
+                'choices': [{'index': 0, 'finish_reason': 'stop', 'message': msg}],
                 'usage': {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}}
         rec.update(owner='router', ending=ep.ending, upstream_status=None, latency_sec=0.0)
         return self.finish(ep, 'router', resp, rec, rec.get('turn'), main=True)
@@ -1132,6 +1464,9 @@ def build_app(router):
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--mode', choices=['relay', 'teacher', 'student'], required=True)
+    p.add_argument('--harness', choices=['terminus2', 'msa'], default='terminus2',
+                   help='the agent in front of the router: Terminus-2 (JSON replies, a confirmation request) or '
+                        'mini-swe-agent tool mode (harbor mini-swe-agent-host, model_class litellm)')
     p.add_argument('--arm', default=None, help='label written on every log line (default: the mode)')
     p.add_argument('--host', default='127.0.0.1')
     p.add_argument('--port', type=int, required=True)
@@ -1236,7 +1571,7 @@ def parse_args(argv=None):
 async def serve(a, ready_event=None):
     router = Router(a)
     await router.start_http()
-    router.event('start', argv=sys.argv, version=ROUTER_VERSION, mode=a.mode, takeover=router.cfg['enabled'],
+    router.event('start', argv=sys.argv, version=ROUTER_VERSION, mode=a.mode, harness=a.harness, takeover=router.cfg['enabled'],
                  budget_mode=a.budget_mode, tasks=len(router.tasks), student_think=a.student_think,
                  deadline_epoch=a.deadline_epoch, repair_on_parse_error=a.repair_on_parse_error,
                  context_budget_tokens=a.context_budget_tokens, context_budget_min_turn=a.context_budget_min_turn,
