@@ -297,6 +297,9 @@ def reasoning_view(rv):
 def student_view(rv):
     s = [r for r in rv['recs'] if r.get('owner') == 'student' and r.get('turn') is not None and r.get('upstream_status') == 200]
     def c(r):
+        # msa: the router hands harbor the reply parsed (thinking moved to reasoning_content), so read what was served
+        if r.get('harness') == 'msa' and r.get('served_message'):
+            return r['served_message'].get('content') or ''
         return (((r.get('response') or {}).get('choices') or [{}])[0].get('message') or {}).get('content') or ''
     # served with skip_special_tokens=false, a reply keeps 09-21's think markers; one marker at least (an unclosed
     # span is a format failure, not a stripped one)
