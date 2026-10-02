@@ -81,7 +81,7 @@ def main():
                  'the early turns differs.\nTrained tokens: Qwen-only 17.6M, relay 13.8M. "H8 data" adds H8\'s 10,308 rows to both. '
                  'Same recipe: 3 epochs, LR 3e-4. Error bars: ±1 standard error over tasks.', ha='left', fontsize=10.5, color='#555')
     elif a.matched:
-        ax.set_title('Relay vs Qwen-only traces, matched: SFT of Grug 67B-A2B 09-21', fontsize=16, pad=14)
+        ax.set_title('Relay vs Qwen-only traces on CalibForge, matched: SFT of Grug 67B-A2B 09-21', fontsize=16, pad=14)
         fig.text(0.01, 0.01, 'Both trace sets cover the same 3,872 CalibForge task slots (2,204 tasks, 3,006 passes + 866 failures); only who played '
                  'the early turns differs.\nTrained tokens: Qwen-only 37.2M, relay 32.8M (+ 21.6M Kimi in both). Same recipe: 3 epochs, LR 3e-4. '
                  'Error bars: ±1 standard error over tasks.', ha='left', fontsize=10.5, color='#555')

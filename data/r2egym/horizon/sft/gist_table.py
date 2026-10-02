@@ -35,7 +35,8 @@ def main():
     if a.control not in tags:
         sys.exit('control has no complete record')
     out = f'/tmp/gist_readout_{os.getpid()}.json'
-    subprocess.run([sys.executable, f'{HERE}/eval_readout.py', '--tags', *tags, '--day', a.day, '--out', out],
+    subprocess.run([sys.executable, f'{HERE}/eval_readout.py', '--tags', *tags, '--day', a.day, '--out', out,
+                    '--pairs-with', a.control],
                    check=True, capture_output=True)
     r = json.load(open(out))
     if a.save:

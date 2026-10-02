@@ -76,6 +76,9 @@ def main():
     ap.add_argument('--jobs', default=f"/scratch/11584/{os.environ.get('USER')}/experiments/sft_eval/tb2_jobs")
     ap.add_argument('--ref', nargs='*', default=[], help='TAG=SET:<job dir>[,<job dir>] single-run references')
     ap.add_argument('--out')
+    ap.add_argument('--pairs-with', nargs='*', default=None,
+                    help='only the paired differences that involve one of these tags (default: every pair; each pair is '
+                    'a 10,000-resample bootstrap per set, so 20+ tags take minutes)')
     ap.add_argument('--exclude', help='regex of task names to drop from every set (e.g. ^sympy__ : the RL pool shares that '
                     'repo with SWE-bench random-100, so report the gain with and without it)')
     a = ap.parse_args()
@@ -104,6 +107,8 @@ def main():
     tags = list(dict.fromkeys(a.tags + [s.split('=', 1)[0] for s in a.ref]))
     for i, x in enumerate(tags):
         for y in tags[i + 1:]:
+            if a.pairs_with is not None and x not in a.pairs_with and y not in a.pairs_with:
+                continue
             for fam in SETS:
                 if (x, fam) in sc and (y, fam) in sc:
                     X, Y = sc[(x, fam)], sc[(y, fam)]
