@@ -55,7 +55,8 @@ curl -sf --max-time 300 $URL/chat/completions -H 'Content-Type: application/json
 # ---- 3. harbor
 set -a; source $KEYF; set +a
 log "harbor run -c $CFG"
-PYTHONPATH=$HARBOR_SRC $HARBOR run -c $CFG -y > $LOGD/harbor.log 2>&1
+# MSA_DIR (mini-swe-agent tool-mode policies): upstream mini-swe-agent on the path beside the harbor clone
+PYTHONPATH=$HARBOR_SRC${MSA_DIR:+:$MSA_DIR} $HARBOR run -c $CFG -y > $LOGD/harbor.log 2>&1
 rc=$?
 log "harbor exited $rc"
 
