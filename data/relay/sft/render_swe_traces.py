@@ -10,6 +10,16 @@ Kept: resolved == 1; no SWE-bench Verified instance (by instance id and by (repo
 exactly one `bash` call with {"command": str} (a trajectory with any parallel-call turn is dropped whole, as is one with
 an upstream format-error user message); no benchmark canary; <= 65,536 tokens; >= 1 trained token.
 
+--keep-parallel keeps parallel-call trajectories too (mini-swe-agent 2.4.6 tool mode runs each call of a turn as its own
+action and answers each with its own role-`tool` message, in call order; harbor re-sends the turn with all its calls).
+Every assistant turn then has >= 1 call, each `bash` with {"command": str}, and is followed by exactly one role-`tool`
+message per call before the next assistant turn (NVIDIA's tool messages carry no tool_call_id, so the pairing is by
+position; a tool_call_id, if present, must equal its call's id), except the last turn, which must be the submit: its
+calls unanswered and its last call's command carrying COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT (drop reasons obs_mismatch,
+no_submit). Calls are rendered in order with ids call_<turn>_<j> (harbor's scheme), each observation as its own tool
+turn. Single-call trajectories render byte-identically in both modes; rows gain `parallel_turns` and `calls` only under
+--keep-parallel, and qa.json gains single / parallel counts and token stats.
+
 Rendering is render_msa.render itself (09-21's chat_template.jinja, the bash tool in the Tools block, calls as
 `<tool_call>{"name": "bash", "arguments": {..}}</tool_call>`, observations as <tool_response name="bash">). Every
 assistant turn is a relay TEACHER turn: reasoning as <|start_think|>..<|end_think|>, every turn but the last cut to
@@ -28,6 +38,7 @@ The trajectories' own actions stay as they are, including the swebench.yaml subm
 (`echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt`, which mini-swe-agent accepts as a submit).
 
     python render_swe_traces.py --out <dir>/rows.jsonl [--shards-per-subset N] [--limit N] [--max-kept N] [--procs 4]
+                                [--keep-parallel] [--raw-dir <dir with data/minisweagent/...>]
 writes rows.jsonl (one row per kept trajectory: arm 'swe_traces', task = instance id, sid, passed, the QA tags, ids,
 loss) and qa.json beside it (kept / dropped by reason, token stats). Shards are read in subset-interleaved order
 (rebench 0, scale 0, rebench 1, ...) and fetched from HF into --raw-dir when reached.
@@ -74,7 +85,9 @@ UNAMES = [
     'Linux 6.8.0-138-generic #138-Ubuntu SMP PREEMPT_DYNAMIC Fri Jul 31 22:41:49 UTC 2026 x86_64',
 ]
 REASONS = ('unresolved', 'resolved_unknown', 'swebench_verified', 'bad_structure', 'parallel_calls', 'no_call_turn',
-           'format_error_turn', 'bad_call', 'prompt_unparsed', 'canary', 'over_64k', 'no_trained_token')
+           'format_error_turn', 'bad_call', 'obs_mismatch', 'no_submit', 'prompt_unparsed', 'canary', 'over_64k',
+           'no_trained_token')
+SENTINEL = 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'
 
 
 def pr_key(instance_id, repo):
@@ -99,8 +112,59 @@ def verified_sets(path):
     return ids, keys
 
 
-def screen(r, vids, vkeys, prompt):
-    """(drop reason or None, per-turn (reasoning, content, command) list, problem statement)."""
+def bash_args(tc):
+    """A call's arguments json string if it is `bash` with exactly {"command": str}, else None."""
+    f = tc.get('function') or {}
+    try:
+        args = json.loads(f.get('arguments'))
+    except (TypeError, ValueError):
+        args = None
+    if f.get('name') != 'bash' or not isinstance(args, dict) or set(args) != {'command'} \
+            or not isinstance(args['command'], str):
+        return None
+    return f['arguments']
+
+
+def screen_turns_parallel(ms):
+    """--keep-parallel: (drop reason or None, per-turn (reasoning, content, [arguments json], [observation] or None))."""
+    turns, i = [], 2
+    while i < len(ms):
+        m = ms[i]
+        if m['role'] == 'user':
+            return 'format_error_turn', None
+        if m['role'] != 'assistant':
+            return 'bad_structure', None
+        tcs = m.get('tool_calls') or []
+        if not tcs:
+            return 'no_call_turn', None
+        args = [bash_args(tc) for tc in tcs]
+        if any(a is None for a in args):
+            return 'bad_call', None
+        j = i + 1
+        if j >= len(ms):                                     # the last turn: unanswered (it submitted)
+            turns.append((m.get('reasoning_content'), m.get('content'), args, None))
+            break
+        obs = []
+        for tc in tcs:                                       # one tool message per call, in call order
+            o = ms[j] if j < len(ms) else None
+            if o is not None and o['role'] == 'user':
+                return 'format_error_turn', None
+            if o is None or o['role'] != 'tool' or o.get('tool_call_id') not in (None, tc.get('id')):
+                return 'obs_mismatch', None
+            obs.append(o['content'] if o['content'] is not None else '')     # what harbor's message view sends
+            j += 1
+        if j < len(ms) and ms[j]['role'] == 'tool':          # more answers than calls
+            return 'obs_mismatch', None
+        turns.append((m.get('reasoning_content'), m.get('content'), args, obs))
+        i = j
+    if turns[-1][3] is not None or SENTINEL not in json.loads(turns[-1][2][-1])['command']:
+        return 'no_submit', None
+    return None, turns
+
+
+def screen(r, vids, vkeys, prompt, keep_parallel=False):
+    """(drop reason or None, per-turn (reasoning, content, [arguments json], [observation] or None) list, problem
+    statement)."""
     if r['resolved'] != 1:
         return ('unresolved' if r['resolved'] == 0 else 'resolved_unknown'), None, None
     if r['instance_id'] in vids or pr_key(r['instance_id'], r['repo']) in vkeys:
@@ -108,6 +172,11 @@ def screen(r, vids, vkeys, prompt):
     ms = r['messages']
     if len(ms) < 3 or ms[0]['role'] != 'system' or ms[1]['role'] != 'user':
         return 'bad_structure', None, None
+    if keep_parallel:
+        why, turns = screen_turns_parallel(ms)
+        if why:
+            return why, None, None
+        return prompt_task(ms, prompt, turns)
     turns, i = [], 2
     while i < len(ms):
         m = ms[i]
@@ -133,8 +202,12 @@ def screen(r, vids, vkeys, prompt):
             return 'format_error_turn', None, None
         if obs is not None and obs['role'] != 'tool':
             return 'bad_structure', None, None
-        turns.append((m.get('reasoning_content'), m.get('content'), f['arguments'], obs['content'] if obs else None))
+        turns.append((m.get('reasoning_content'), m.get('content'), [f['arguments']], [obs['content']] if obs else None))
         i += 2
+    return prompt_task(ms, prompt, turns)
+
+
+def prompt_task(ms, prompt, turns):
     ps = None
     if prompt == 'mini':
         mt = PR_RE.match(ms[1]['content'])
@@ -198,16 +271,18 @@ def render_one(c):
     msgs = [dict(role='system', content=system), dict(role='user', content=user)]
     recs = []
     for k, (reasoning, content, arguments, obs) in enumerate(turns):
-        cid = f'call_{k}_0'
+        cids = [f'call_{k}_{j}' for j in range(len(arguments))]     # harbor's call_<turn>_<j>
         m = dict(role='assistant', content=content or '',
-                 tool_calls=[dict(id=cid, type='function', function=dict(name='bash', arguments=arguments))])
+                 tool_calls=[dict(id=cid, type='function', function=dict(name='bash', arguments=a))
+                             for cid, a in zip(cids, arguments)])
         if reasoning:
             m['reasoning_content'] = reasoning
         msgs.append(m)
-        if obs is not None:
-            msgs.append(dict(role='tool', content=obs, tool_call_id=cid))
-        recs.append(dict(response=dict(choices=[dict(message=dict(tool_calls=[dict(id=cid)]))]), upstream_status=200,
-                         owner='teacher', autofix=False, repair=False, turn=k, seq=k))
+        for cid, o in zip(cids, obs or []):                  # one tool turn per call, in call order
+            if o is not None:
+                msgs.append(dict(role='tool', content=o, tool_call_id=cid))
+        recs.append(dict(response=dict(choices=[dict(message=dict(tool_calls=[dict(id=cids[0])]))]),
+                         upstream_status=200, owner='teacher', autofix=False, repair=False, turn=k, seq=k))
     canary = any(CANARY.search(m.get('content') or '') or CANARY.search(m.get('reasoning_content') or '') or
                  any(CANARY.search(tc['function']['arguments']) for tc in m.get('tool_calls') or []) for m in msgs)
     row = rm.render(msgs, recs, TOK, TPL, BOS, think_limit=THINK)
@@ -224,8 +299,10 @@ def render_one(c):
                view_count_logged=None, view_count_rendered=None, verifier_ran=True, weak_timeout=False, noisy=False,
                leak=False, hunt=False, canary=canary, source=REPO, subset=c['subset'], repo=r['repo'],
                language=r['language'], hf_dataset_name=r['hf_dataset_name'], prompt=PROMPT,
-               final_submit='COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT' in (turns[-1][2] if turns else ''),
-               ids=row['ids'], loss=row['loss'])
+               final_submit=SENTINEL in (turns[-1][2][-1] if turns else ''))
+    if c.get('keep_parallel'):
+        out.update(parallel_turns=sum(len(x[2]) > 1 for x in turns), calls=sum(len(x[2]) for x in turns))
+    out.update(ids=row['ids'], loss=row['loss'])
     return reason, aligned, out
 
 
@@ -256,6 +333,13 @@ def pct(xs, q):
     return xs[min(len(xs) - 1, int(q * (len(xs) - 1)))] if xs else None
 
 
+def tok_stats(rows):
+    n = [r['n_tokens'] for r in rows]
+    tt = [r['trained_tokens'] for r in rows]
+    return dict(rows=len(rows), tokens=sum(n), trained_tokens=sum(tt), n_tokens_p10=pct(n, .1), n_tokens_p50=pct(n, .5),
+                n_tokens_p90=pct(n, .9), n_tokens_max=max(n, default=None), trained_p50=pct(tt, .5))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--out', required=True, help='rows.jsonl path; qa.json is written beside it')
@@ -273,6 +357,8 @@ def main():
     ap.add_argument('--limit', type=int, help='stop after reading this many records')
     ap.add_argument('--max-kept', type=int, help='stop once this many rows are kept')
     ap.add_argument('--procs', type=int, default=4)
+    ap.add_argument('--keep-parallel', action='store_true',
+                    help='keep trajectories with parallel-call turns (one tool message per call, in order)')
     a = ap.parse_args()
     out_dir = os.path.dirname(os.path.abspath(a.out))
     os.makedirs(out_dir, exist_ok=True)
@@ -298,12 +384,13 @@ def main():
             overall['has_parallel_turn'] += any(len(m.get('tool_calls') or []) > 1 for m in ms if m['role'] == 'assistant')
             overall['swebench_verified_any'] += r['instance_id'] in vids or pr_key(r['instance_id'], r['repo']) in vkeys
             overall['verified_repo_any'] += (r['repo'] or '').lower() in VREPOS
-            why, turns, ps = screen(r, vids, vkeys, a.prompt)
+            why, turns, ps = screen(r, vids, vkeys, a.prompt, keep_parallel=a.keep_parallel)
             if why:
                 dropped[why] += 1
                 per_subset[subset][why] += 1
                 continue
-            yield dict(r=r, turns=turns, ps=ps, subset=subset, sid=f"ost:{subset.rsplit('/', 1)[-1]}:{r['trajectory_id']}")
+            yield dict(r=r, turns=turns, ps=ps, subset=subset, sid=f"ost:{subset.rsplit('/', 1)[-1]}:{r['trajectory_id']}",
+                       keep_parallel=a.keep_parallel)
 
     global VREPOS
     VREPOS = {k[0] for k in vkeys}
@@ -328,6 +415,8 @@ def main():
                     continue
                 sids.add(row['sid'])
                 per_subset[row['subset']]['kept'] += 1
+                if a.keep_parallel:
+                    per_subset[row['subset']]['kept_parallel' if row['parallel_turns'] else 'kept_single'] += 1
                 kept.append({k: v for k, v in row.items() if k not in ('ids', 'loss')})
                 f.write(json.dumps(row) + '\n')
     os.replace(tmp, a.out)
@@ -352,6 +441,18 @@ def main():
                               final_submit=sum(r['final_submit'] for r in kept),
                               languages=dict(collections.Counter(r['language'] for r in kept).most_common()),
                               verified_repo_rows=sum((r['repo'] or '').lower() in VREPOS for r in kept)))
+    if a.keep_parallel:
+        qa['keep_parallel'] = True
+        ks = qa['kept_stats']
+        ks.update(n_tokens_p25=pct(n, .25), n_tokens_p75=pct(n, .75), n_tokens_p99=pct(n, .99),
+                  trained_p10=pct(tt, .1), trained_p90=pct(tt, .9),
+                  parallel_rows=sum(1 for r in kept if r['parallel_turns']),
+                  parallel_turns=sum(r['parallel_turns'] for r in kept), calls_total=sum(r['calls'] for r in kept),
+                  by_kind={k: tok_stats([r for r in kept if bool(r['parallel_turns']) == (k == 'parallel')])
+                           for k in ('single', 'parallel')},
+                  by_subset_kind={f"{s.rsplit('/', 1)[-1]}:{k}": tok_stats(
+                      [r for r in kept if r['subset'] == s and bool(r['parallel_turns']) == (k == 'parallel')])
+                      for s in a.subsets for k in ('single', 'parallel')})
     qa_path = os.path.join(out_dir, os.path.splitext(os.path.basename(a.out))[0].replace('rows', 'qa') + '.json')
     json.dump(qa, open(qa_path, 'w'), indent=1)
     print(json.dumps(qa, indent=1))
