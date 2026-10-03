@@ -348,10 +348,12 @@ def latency(rv):
 
 def owner_join(rv, rows):
     """Every trajectory agent step must match a router record of that episode by content hash and served model."""
-    by_sid = collections.defaultdict(dict)
+    # every owner whose record has that content: a tool-mode reply that is only a tool call has empty prose, so student,
+    # teacher and synthetic turns of one episode can share a content hash
+    by_sid = collections.defaultdict(lambda: collections.defaultdict(set))
     for r in rv['recs']:
         if r.get('content_sha'):
-            by_sid[r['sid']][r['content_sha']] = r.get('owner')
+            by_sid[r['sid']][r['content_sha']].add(r.get('owner'))
     steps = matched = model_ok = 0
     no_sid = 0
     for t in rows:
@@ -361,10 +363,10 @@ def owner_join(rv, rows):
         recs = by_sid.get(t['sid'], {})
         for s in t['steps']:
             steps += 1
-            o = recs.get(s['content_sha'])
-            if o:
+            owners = recs.get(s['content_sha'])
+            if owners:
                 matched += 1
-                model_ok += s['model'] == SERVED.get(o)
+                model_ok += s['model'] in {SERVED.get(o) for o in owners}
     return dict(agent_steps=steps, joined=matched, model_consistent=model_ok, trials_with_steps_but_no_sid=no_sid,
                 joined_frac=round(matched / steps, 4) if steps else None)
 
