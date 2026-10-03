@@ -44,7 +44,7 @@ INIT=${SNOWBALL_INIT:-$S/experiments/snowball-base-inits/init-dk0921-step0}
 WANDB=${WANDB_CLI:-$HOME/snowball/envs/snowball/bin/wandb}
 KEYS=${KEYS:-$HOME/.config/otagent/secrets.env}
 WANDB_ENTITY_ARM=lukedhlee-marin; WANDB_PROJECT_ARM=${WANDB_PROJECT_ARM:-horizon-relay-sft}
-LR=3e-4; EPOCHS=${EPOCHS:-3}   # passes; EPOCHS=5 on arm B = arm A's step count (245 vs 246)
+LR=${LR:-3e-4}; EPOCHS=${EPOCHS:-3}   # LR: arm A's 3e-4 unless overridden (outputs go to lr<LR>-sched<EPOCHS>); passes; EPOCHS=5 on arm B = arm A's step count (245 vs 246)
 D=$S/data/relay_v2/$ARM
 EXP=$S/experiments/snowball-relay-sft
 CACHE=$EXP/cache-$STAGE-v1
