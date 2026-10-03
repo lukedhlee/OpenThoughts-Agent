@@ -16,7 +16,10 @@ SS=/scratch/11584/$USER/snowball-sft; EXP=$SS/experiments/snowball-relay-sft
 EV=/scratch/11584/$USER/experiments/sft_eval; mkdir -p "$EV"; LOG=$EV/dispatch.log
 DAY=${DAY:-$(date +%Y%m%d)}
 say() { echo "[$(date -u +%FT%TZ)] $*" | tee -a "$LOG"; }
-say "DISPATCH_START arms='$ARMS' reps='$REPS' maxunits=$MAXUNITS daytona_cap=$DAYTONA_CAP day=$DAY"
+# a tmux session gets the tmux server's environment, not this shell's: pass the harness settings explicitly
+# (MSA tool-mode evals: HARBOR_SRC / HARBOR_SHA / POLICY_FILE / MSA_DIR)
+ENVPASS=""; for v in HARBOR_SRC HARBOR_SHA POLICY_FILE MSA_DIR; do [ -n "${!v:-}" ] && ENVPASS+="$v='${!v}' "; done
+say "DISPATCH_START arms='$ARMS' reps='$REPS' maxunits=$MAXUNITS daytona_cap=$DAYTONA_CAP day=$DAY env=[${ENVPASS}]"
 UNITS=(); for r in $REPS; do for a in $ARMS; do UNITS+=("$a:$r"); done; done
 declare -A started
 while :; do
@@ -32,7 +35,7 @@ while :; do
     [ $((ds + 80)) -le "$DAYTONA_CAP" ] || { say "$tag r$rep: ready, waiting for Daytona room ($ds started)"; break; }
     model=$(ls -d "$out"/export-step*-hf-bf16 | sort -V | tail -1)
     [ -f "$model/config.json" ] || { say "$tag: no final export under $out"; started[$tag:$rep]=failed; continue; }
-    tmux new -d -s "evq_${tag}_r$rep" "MODELS='$tag=$model' REPS=$rep GROUPED=1 DAY=$DAY bash $HERE/eval_sft.sh; sleep 300"
+    tmux new -d -s "evq_${tag}_r$rep" "$ENVPASS MODELS='$tag=$model' REPS=$rep GROUPED=1 DAY=$DAY bash $HERE/eval_sft.sh; sleep 300"
     started[$tag:$rep]=1; active=$((active + 1)); pending=$((pending - 1)); ds=$((ds + 80))
     say "$tag r$rep: eval unit started on $model (tmux evq_${tag}_r$rep)"
   done
