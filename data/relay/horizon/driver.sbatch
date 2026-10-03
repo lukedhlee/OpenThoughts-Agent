@@ -33,6 +33,7 @@ export JOBS_ROOT=${JOBS_ROOT:-$S/experiments/relay/jobs}
 export STUDENT_TOKENIZER=${STUDENT_TOKENIZER:-meta}   # meta: run_pilot.sh reads the served student from the endpoints .meta
 [ -f $TREE/TASKS.txt ] && export NTASKS=${NTASKS:-$(grep -c . $TREE/TASKS.txt)}
 export DRIVER_JOB=$SLURM_JOB_ID DRIVER_NODES=$SLURM_NNODES
+[ "${DRIVER_IN_SERVE:-0}" = 1 ] && export DRIVER_JOB= DRIVER_NODES=0   # a step on a serve node: no nodes of its own
 export LITELLM_LOCAL_MODEL_COST_MAP=True   # no GitHub fetch at import
 export CLEANUP_PY=${CLEANUP_PY:-$HZ/cleanup_sandboxes_async.py}   # the sync SDK ignores HTTPS_PROXY and hangs here
 export RES_OPTIONS=${RES_OPTIONS:-timeout:1 attempts:2}   # an uncached outside lookup: 1 s instead of the dead first nameserver's 5 s

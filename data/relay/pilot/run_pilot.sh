@@ -113,7 +113,11 @@ log() { echo "[$(date -Is)] $*"; }
 declare -A HPID RPID PORT
 i=0; for arm in $ARMS; do PORT[$arm]=$((PORT0 + i)); i=$((i+1)); done
 SERVE_RELEASED=0
-release_serve() { [ $SERVE_RELEASED = 1 ] && return; scancel $JOB; SERVE_RELEASED=1; log "serve job $JOB cancelled: $*"; }
+# DRIVER_IN_SERVE=1: this driver is a step inside the serve job, so cancelling it would end the driver before the sandbox
+# cleanup and the readout; the serve job is cancelled after RUN_DONE instead.
+release_serve() { [ $SERVE_RELEASED = 1 ] && return; SERVE_RELEASED=1
+                  if [ "${DRIVER_IN_SERVE:-0}" = 1 ]; then log "serve job $JOB kept until the readout (driver inside it): $*"; return; fi
+                  scancel $JOB; log "serve job $JOB cancelled: $*"; }
 stop_harbor() { for k in "${!HPID[@]}"; do kill -INT ${HPID[$k]} 2>/dev/null; done; pkill -INT -u $USER -f "harbor jobs start --config $R/" 2>/dev/null; sleep 30
                 for k in "${!HPID[@]}"; do kill -TERM ${HPID[$k]} 2>/dev/null; done; pkill -TERM -u $USER -f "harbor jobs start --config $R/" 2>/dev/null; }
 stop_routers() { for arm in $ARMS; do [ -n "${RPID[$arm]:-}" ] && kill -TERM ${RPID[$arm]} 2>/dev/null; done; }
@@ -409,3 +413,4 @@ $PY $HERE/readout.py --run-dir $R --name $NAME --gate final --json $R/readout.js
   ${TAKEOVER_MIN:+--takeover-min $TAKEOVER_MIN} ${TAKEOVER_MAX:+--takeover-max $TAKEOVER_MAX} > /dev/null 2> $R/readout.txt
 cat $R/readout.txt
 log "RUN_DONE $(tr '\n' ' ' < $R/run.meta)"
+[ "${DRIVER_IN_SERVE:-0}" = 1 ] && { log "serve job $JOB cancelled after the readout"; scancel $JOB; }

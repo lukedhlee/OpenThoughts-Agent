@@ -37,6 +37,24 @@ export ARM_GATES=${ARM_GATES:-1} TAKEOVER_MIN=${TAKEOVER_MIN:-0.50} TAKEOVER_MAX
 export TAKEOVER_ACTION=${TAKEOVER_ACTION:-flag} ACCEPT_FLAG=${ACCEPT_FLAG:-1.8} ACCEPT_STOP=${ACCEPT_STOP:-0}
 VW=${VERIFY_WAIT:-2700}
 TMIN=${DRIVER_TIME:-$(awk -v c=$CAP_NODE_H -v n=$NODES -v w=$VW 'BEGIN{printf "%d", c/(n+1)*60 + w/60 + 60}')}
+if [ "${IN_SERVE:-0}" = 1 ]; then
+  # IN_SERVE=1: the driver runs as a step on the serve job's last node, started the moment the serve job runs, instead of
+  # a 1-node job of its own (Horizon's queue can start the serve job hours before a separate driver job, leaving the
+  # servers idle). run_pilot.sh then keeps the serve job until its readout (DRIVER_IN_SERVE).
+  export DRIVER_IN_SERVE=1
+  OUT=$LOGS/relay_drv_${NAME}_in$SERVE_JOB.out
+  setsid nohup bash -c "until squeue -h -j $SERVE_JOB -t R | grep -q .; do squeue -h -j $SERVE_JOB | grep -q . || exit 1; sleep 30; done
+    node=\$(scontrol show hostnames \"\$(squeue -h -j $SERVE_JOB -o %N)\" | tail -1); left=\$(squeue -h -j $SERVE_JOB -o %L)
+    echo \"[\$(date -Is)] driver step on \$node inside serve job $SERVE_JOB (\$left left)\"
+    exec srun -A ${SERVE_ACCOUNT:-CCR24067} -p ${SERVE_PARTITION:-debug} -t \$left --jobid=$SERVE_JOB --overlap -N1 -n1 -w \$node --export=ALL bash $HERE/driver.sbatch" \
+    > $OUT 2>&1 < /dev/null &
+  for p in ${TUNNEL_PORTS//,/ }; do
+    setsid nohup bash $OTA/data/r2egym/horizon/tunnel.sh $SERVE_JOB $p > $LOGS/tunnel_in${SERVE_JOB}_$p.log 2>&1 < /dev/null &
+  done
+  echo "[$(date -Is)] driver step queued inside serve job $SERVE_JOB, run $NAME ($MODE); tunnels $TUNNEL_PORTS"
+  echo "  driver log: $OUT; run dir: $E/runs/$NAME"
+  exit 0
+fi
 JOB=$(sbatch --parsable --export=ALL -J relay_drv_$NAME -t $TMIN -o $LOGS/%x_%j.out $HERE/driver.sbatch | tail -1)
 [ -n "$JOB" ] && [ "$JOB" -eq "$JOB" ] 2>/dev/null || { echo "sbatch failed: $JOB"; exit 1; }
 for p in ${TUNNEL_PORTS//,/ }; do
