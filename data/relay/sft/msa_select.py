@@ -3,7 +3,7 @@
 rules (build_hz_arms.py / build_matched_arms.py):
 
 Eligibility, identical for both arms: the verifier ran, not a weak timeout, no leak / hunt / canary tag, fits in
-65,536 tokens.
+65,536 tokens, at least one trained token (the parquet converter refuses a row without one).
   msaall   every task's eligible relay rows, at most 2 drawn at random (H4's cap);
   msarel / msaqwen  matched: per task the relay draw (p passes, f failures) is the target; the Qwen-alone arm must
            supply the same outcomes on that task, else the task's slots are cut to what both arms have; then each
@@ -23,7 +23,7 @@ PER_TASK = 2
 
 def eligible(r):
     return (r.get('verifier_ran') and not r.get('weak_timeout') and not (r.get('leak') or r.get('hunt') or r.get('canary'))
-            and r.get('fits') and r['n_tokens'] <= MAX_TOKENS)
+            and r.get('fits') and r['n_tokens'] <= MAX_TOKENS and r.get('trained_tokens', 0) > 0)
 
 
 def by_task(paths):
