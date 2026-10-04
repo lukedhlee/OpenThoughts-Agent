@@ -111,6 +111,9 @@ say "cache: $(head -c 300 "$CACHE/train/.stats.json")"
 if [ ! -f "$LOGD/run_$RUN_ID.done" ]; then
   export SNOWBALL_LR=$LR SNOWBALL_WARMUP=$WARMUP EPOCHS=$EPOCHS SNOWBALL_SCHEDULE_EPOCHS=$EPOCHS SNOWBALL_RESUME=0
   export SNOWBALL_EPOCH_STEPS=$EPOCH_STEPS SNOWBALL_KEEP_PER_EPOCH=1
+  # temporary (resume) saves: this script never resumes (SNOWBALL_RESUME=0); 625 GB every 30 min from several arms
+  # saturated scratch on 10-04, so save rarely unless SAVE_INTERVAL_MIN says otherwise
+  export SNOWBALL_SAVE_INTERVAL_MIN=${SAVE_INTERVAL_MIN:-100000}
   export SNOWBALL_INIT=$INIT SNOWBALL_CACHE=$CACHE SNOWBALL_OUTPUT=$OUT SNOWBALL_RUN_ID=$RUN_ID SNOWBALL_WALL=${WALL:-02:30:00}
   out=$(bash "$MOE/launch_horizon_snowball_sft.sh" 2>&1); rc=$?
   echo "$out" >> "$LOG"; echo "$out" | grep -E '^(stage|epochs|steps|layout|lr|init) ' | tee -a "$LOG"
