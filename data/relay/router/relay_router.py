@@ -539,6 +539,11 @@ class Router:
                 m2['reasoning'] = r
                 m2['reasoning_content'] = r
             out.append(m2)
+        if self.a.teacher_hint_text and out and out[0].get('role') == 'system':
+            # teacher-only instruction: appended to the system message of the teacher's request, never to harbor's
+            # history, so it reaches no training row (render_msa renders harbor's messages)
+            out[0] = dict(out[0], content=f"{text_of(out[0].get('content'))}\n\n{self.a.teacher_hint_text}")
+            stats['teacher_hint'] = 1
         return out, stats
 
     def for_student_msa(self, ep, messages):
@@ -1540,6 +1545,9 @@ def parse_args(argv=None):
     p.add_argument('--verify-note-text', default=None,
                    help='replace the verify note text (both modes), e.g. a neutral instruction with no "note" or "agent" '
                         'for Qwen to cite (2026-10-01 A/B: Qwen\'s replies citing the note are dropped as leaks)')
+    p.add_argument('--teacher-hint-text', default=None,
+                   help='--harness msa: text appended to the system message of every teacher request only (not to '
+                        "harbor's history, so not to training rows), e.g. a context-economy instruction")
     p.add_argument('--context-budget-tokens', type=int, default=None,
                    help='context_budget takeover (sticky): the teacher takes the episode once the student view of a '
                         'request (counted on the student /tokenize) reaches this many tokens; off by default (32000 '

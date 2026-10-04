@@ -203,6 +203,7 @@ for arm in $ARMS; do
     case $arm in relay_repair) ;; *) TARGS+=("${PARSER_ARGS[@]}");; esac; fi   # relay_repair passes the parser below
   [ -n "$TURL" ] && [ "$VERIFY_NOTE" = 1 ] && TARGS+=(--verify-note)
   [ -n "$TURL" ] && [ "$VERIFY_NOTE" = 1 ] && [ -n "${VERIFY_NOTE_TEXT:-}" ] && TARGS+=(--verify-note-text "$VERIFY_NOTE_TEXT")
+  [ -n "$TURL" ] && [ -n "${TEACHER_HINT_TEXT:-}" ] && TARGS+=(--teacher-hint-text "$TEACHER_HINT_TEXT")   # msa: teacher-only instruction
   [ "$MAX_INPUT" != 65536 ] && TARGS+=(--report-max-model-len $MAX_INPUT)
   SARGS=(); [ -n "$SURL" ] && SARGS=(--student-url $SURL --student-model snowball)   # empty on a teacher-only serve
   case $arm in control) M=(--mode teacher);; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;

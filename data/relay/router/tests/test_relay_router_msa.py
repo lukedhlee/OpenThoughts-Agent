@@ -394,3 +394,15 @@ def test_end_to_end_mini_swe_agent_host_through_the_router(tmp_path):
         # the teacher's reasoning reached harbor (re-sent in the next request under both keys)
         last_req = st.teacher.requests[-1]['messages']
         assert [m.get('reasoning') for m in last_req if m['role'] == 'assistant'][-1] == 'teacher-step 0 reasoning'
+
+
+def test_teacher_hint_reaches_only_the_teachers_system_message(tmp_path):
+    hint = 'Keep command output short.'
+    with Stack(tmp_path, router_args=['--teacher-hint-text', hint]) as st:
+        d = Driver(st, 'done').run()
+        assert d.submitted
+        treqs = [b for b in st.teacher.requests if b.get('tools')]          # episode requests (not the health probe)
+        assert treqs and all(b['messages'][0]['role'] == 'system' and b['messages'][0]['content'].endswith('\n\n' + hint)
+                             for b in treqs)
+        assert hint not in json.dumps(d.msgs)                                  # harbor's history never holds it
+        assert all(hint not in json.dumps(b.get('messages')) for b in st.student.requests)
