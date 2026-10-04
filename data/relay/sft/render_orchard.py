@@ -31,9 +31,10 @@ occurred while executing the command: Command ..`, its timeouts), i.e. Orchard E
 `No pod IP available for sandbox ..`, `An error occurred while executing the command: 500 Server Error ..` (its sandbox
 API), and its own timeout wording `Command timed out after 180s`; no benchmark canary; <= 65,536 tokens; >= 1 trained
 token.
-One trajectory per task: candidates ordered by teacher (--prefer, default MiniMax-M2.5 first: the stronger SWE teacher,
-and the one with reasoning), then by sha1('<instance_id>:<pool>:<sample_idx>'); a task's candidates are rendered in
-that order until one passes.
+One trajectory per task (--per-task N: up to N): candidates ordered by teacher (--prefer, default MiniMax-M2.5 first:
+the stronger SWE teacher, and the one with reasoning), then by sha1('<instance_id>:<pool>:<sample_idx>'); a task's
+candidates are rendered in that order until N pass, so a task's first kept sample is the one --per-task 1 keeps.
+sid = orchard:<pool>:<instance_id>:<sample_idx>, unique per sample.
 
 Observations are re-rendered into mini.yaml's observation template (render_si2ca.parse_obs + load_templates: exact,
 long outputs included). Rendering is render_msa.render through render_swe_traces's helpers, as render_si2ca does: every
@@ -50,8 +51,9 @@ The trajectories' own actions stay as they are (Scale-SWE runs work under /works
 /testbed), including the submit.
 
     python render_orchard.py --out <dir>/rows.jsonl [--raw-dir <orchard download>] [--shards 0 1 ..] [--max-tasks N]
-                             [--teachers MiniMax-M2.5 Qwen3.5-397B-A17B] [--prefer MiniMax-M2.5 ..] [--procs 4]
-writes rows.jsonl (one row per kept task: arm 'orchard', task = instance id, teacher, source swe-rebench / scale-swe,
+                             [--teachers MiniMax-M2.5 Qwen3.5-397B-A17B] [--prefer MiniMax-M2.5 ..] [--per-task 1]
+                             [--procs 4]
+writes rows.jsonl (one row per kept sample, a task's samples adjacent in preference order: arm 'orchard', task = instance id, teacher, source swe-rebench / scale-swe,
 pool, sample_idx, sid, the QA tags, ids, loss) and qa.json beside it (records kept / dropped by first reason, per pool
 and per teacher, selection counts, observation and marker census, token stats).
 """
@@ -377,6 +379,8 @@ def main():
     ap.add_argument('--shards', nargs='+', type=int, default=list(SHARDS), help='swe/train shard numbers to read')
     ap.add_argument('--teachers', nargs='+', default=list(TEACHERS), help='keep only these metadata.model teachers')
     ap.add_argument('--prefer', nargs='+', default=list(TEACHERS), help='teacher order when a task has several')
+    ap.add_argument('--per-task', type=int, default=1, help='keep up to N passing trajectories per task, in preference '
+                                                             'order (1: one per task)')
     ap.add_argument('--tokenizer-dir', default=rst.TOKDIR)
     ap.add_argument('--mini-yaml', default=os.path.join(rs.MSA_CONFIG, 'mini.yaml'), help='mini-swe-agent 2.4.6 mini.yaml')
     ap.add_argument('--msa-config', default=rs.MSA_CONFIG, help='mini-swe-agent 2.4.6 config dir (benchmarks/swebench'
@@ -388,6 +392,8 @@ def main():
     ap.add_argument('--max-tasks', type=int, help='only the first N tasks in sha1(instance_id) order (a test subset)')
     ap.add_argument('--procs', type=int, default=4)
     a = ap.parse_args()
+    if a.per_task < 1:
+        ap.error('--per-task must be >= 1')
     out_dir = os.path.dirname(os.path.abspath(a.out))
     os.makedirs(out_dir, exist_ok=True)
     vids, vkeys = rst.verified_sets(a.verified_ids or os.path.join(out_dir, 'swebench_verified_ids.json'))
@@ -432,12 +438,12 @@ def main():
                                teacher, pl, u, k))
         for c in cands.values():
             c.sort()
-        done, rendered_upto, tmp, rank = set(), {}, a.out + '.tmp', 0
+        nkept, rendered_upto, tmp, rank = collections.Counter(), {}, a.out + '.tmp', 0
         with open(tmp, 'wb') as f:
             while True:                                                 # pass 2: render in preference order per task
                 todo = collections.defaultdict(list)
                 for iid in sorted(cands):
-                    if iid not in done and rank < len(cands[iid]):
+                    if nkept[iid] < a.per_task and rank < len(cands[iid]):
                         u, k = cands[iid][rank][4:]
                         todo[u].append(k)
                         rendered_upto[iid] = rank + 1
@@ -452,7 +458,7 @@ def main():
                             per_pool[pl][why] += 1
                             per_teacher[tch][why] += 1
                             continue
-                        done.add(meta['task'])
+                        nkept[meta['task']] += 1
                         for kk, v in meta['obs'].items():
                             obs[kk] += v
                         per_pool[pl]['kept'] += 1
@@ -461,32 +467,38 @@ def main():
                         kept.append(dict({k: v for k, v in meta.items() if k != 'obs'}, offset=f.tell()))
                         f.write(line.encode() + b'\n')
                 rank += 1
-    kept.sort(key=lambda r: hashlib.sha1(r['task'].encode()).hexdigest())    # rows in a pool-mixed, fixed order
+    # rows in a pool-mixed, fixed order; a task's samples stay in the order kept (preference order: stable sort)
+    kept.sort(key=lambda r: hashlib.sha1(r['task'].encode()).hexdigest())
     with open(tmp, 'rb') as src, open(tmp + '2', 'wb') as f:
         for r in kept:
             src.seek(r.pop('offset'))
             f.write(src.readline())
     os.replace(tmp + '2', a.out)
     os.remove(tmp)
-    for iid, c in cands.items():         # a candidate never rendered: its task was kept from an earlier-ranked one
+    for iid, c in cands.items():         # a candidate never rendered: its task got N from earlier-ranked ones
         for j, (_, _, tch, pl, _, _) in enumerate(c):
             if j >= rendered_upto.get(iid, 0):
                 dropped['task_kept_other_candidate'] += 1
                 per_pool[pl]['task_kept_other_candidate'] += 1
                 per_teacher[tch]['task_kept_other_candidate'] += 1
-    by_task = {r['task']: r for r in kept}
+    by_task = collections.defaultdict(list)
+    for r in kept:
+        by_task[r['task']].append(r['teacher'])
     selection = collections.Counter()
     for iid, ts in task_teachers.items():
-        r = by_task.get(iid)
         key = '+'.join(sorted(ts))
         selection[f'tasks_with_candidates[{key}]'] += 1
-        selection[f'kept[{key}] -> {r["teacher"] if r else "none"}'] += 1
+        selection[f'kept[{key}] -> {",".join(by_task.get(iid, ["none"]))}'] += 1
     turns = [r['teacher_turns'] for r in kept]
     by = lambda key: {v: rs.tok_stats([r for r in kept if r[key] == v]) for v in sorted({r[key] for r in kept})}  # noqa
     qa = dict(source=REPO, config='swe', shards=a.shards, teachers=a.teachers, prefer=a.prefer, prompt=a.prompt,
               think_limit=a.think_limit, cap_tokens=rm.rcap.CAP_TOKENS, max_tokens=rm.MAX_TOKENS,
               selection_rule='per task: candidates by --prefer teacher, then sha1(instance_id:pool:sample_idx); the first '
-              'that passes', swebench_verified_ids=len(vids), records=overall['records'],
+              'that passes' if a.per_task == 1 else f'per task: candidates by --prefer teacher, then '
+              f'sha1(instance_id:pool:sample_idx); the first {a.per_task} that pass',
+              **({} if a.per_task == 1 else dict(per_task=a.per_task, tasks_by_samples_kept=dict(sorted(
+                  collections.Counter(nkept.values()).items())))),
+              swebench_verified_ids=len(vids), records=overall['records'],
               tasks_with_candidate=len(cands), kept=len(kept),
               dropped_first_reason={k: dropped[k] for k in REASONS if dropped[k]},
               all_records=dict(sorted(overall.items())), misaligned_rows=misaligned,
