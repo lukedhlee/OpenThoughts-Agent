@@ -86,7 +86,7 @@ def arm_rows(run_dir, name, arm, timeouts='all'):
         if not readout.usable(t) or e is None:
             continue
         teacher_turns = sum(1 for r in e['main'] if r.get('owner') == 'teacher')
-        if arm != 'control' and teacher_turns == 0:
+        if arm not in ('control', 'student_only') and teacher_turns == 0:
             continue
         if (e['takeover'] or {}).get('trigger') == 'done_claim' and not teacher_worked(e):
             continue

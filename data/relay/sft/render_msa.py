@@ -106,7 +106,7 @@ def as_rendered(m):
     return dict(m, tool_calls=tcs)
 
 
-def student_view(msgs, by_id, tok, cap=rcap.CAP_TOKENS, think_limit=THINK_LIMIT, strip_student=False):
+def student_view(msgs, by_id, tok, cap=rcap.CAP_TOKENS, think_limit=THINK_LIMIT, strip_student=False, train='teacher'):
     """(messages as the router's for_student showed them, per-assistant-turn info): teacher reasoning stripped, every
     teacher turn but the last of THIS list cut to `cap` tokens; strip_student (router --student-view-after-takeover
     strip, after a sticky takeover): the student's turns without their thinking."""
@@ -118,7 +118,7 @@ def student_view(msgs, by_id, tok, cap=rcap.CAP_TOKENS, think_limit=THINK_LIMIT,
                 raise ValueError(f'assistant message {i} has no router record')
             info.append(dict(i=i, owner=r['owner'], autofix=bool(r.get('autofix')), repair=bool(r.get('repair')),
                              turn=r.get('turn')))
-            if r['owner'] == 'teacher':
+            if r['owner'] == train:
                 teacher_idx.append(i)
     last_t = teacher_idx[-1] if teacher_idx else None
     out, k = [], 0
@@ -130,7 +130,7 @@ def student_view(msgs, by_id, tok, cap=rcap.CAP_TOKENS, think_limit=THINK_LIMIT,
         k += 1
         if meta['owner'] == 'student' and strip_student:
             m = {kk: v for kk, v in m.items() if kk != 'reasoning_content'}
-        if meta['owner'] == 'teacher':
+        if meta['owner'] == train:
             r_full = (m.get('reasoning_content') or '').strip()
             r, at = (rcap.cut_reasoning(r_full, tok, cap) if (i != last_t and r_full) else (r_full, None))
             m = {kk: v for kk, v in m.items() if kk != 'reasoning_content'}
@@ -152,8 +152,9 @@ def render(msgs, recs, tok, tpl, bos, cap=rcap.CAP_TOKENS, think_limit=THINK_LIM
     msgs = list(full)
     while msgs and msgs[-1]['role'] != 'assistant':      # observations after the last reply train nothing
         msgs.pop()
+    train = 'student' if ARM == 'student_only' else 'teacher'
     out, info = student_view(msgs, by_id, tok, cap, think_limit,
-                             strip_student=strip_after_takeover and takeover_seq(recs) is not None)
+                             strip_student=strip_after_takeover and takeover_seq(recs) is not None, train=train)
     text = tpl.render(messages=[as_rendered(m) for m in out], tools=[BASH_TOOL], bos_token=bos, add_generation_prompt=False)
     loss_ranges, pos = [], 0
     for meta in info:
@@ -162,7 +163,7 @@ def render(msgs, recs, tok, tpl, bos, cap=rcap.CAP_TOKENS, think_limit=THINK_LIM
         end = text.index(EOT, start) + len(EOT)
         body = text[start:end]
         think_end = start + body.index(END) + len(END) if (body.startswith(START) and END in body) else start
-        if meta['owner'] == 'teacher':
+        if meta['owner'] == train:
             loss_ranges.append((start, end) if (meta['think_trained'] or think_end == start) else (think_end, end))
         meta.update(span=(start, end), think_end=think_end)
         pos = end
@@ -237,8 +238,9 @@ def one_run(run):
         weak = c['cause'] == 'timeout' and not c.get('stalled')
         out.append(dict(c, run=name, n_tokens=row['n_tokens'], fits=row['fits'], trained_tokens=sum(row['loss']),
                         teacher_turns_rendered=sum(1 for m in row['turns'] if m['owner'] == 'teacher'),
+                        trained_turns=sum(1 for m in row['turns'] if m.get('think_trained') is not None),
                         cut_turns=sum(1 for m in row['turns'] if m.get('cut_at') is not None),
-                        long_think_masked=sum(1 for m in row['turns'] if m['owner'] == 'teacher' and m.get('cut_at') is None
+                        long_think_masked=sum(1 for m in row['turns'] if m.get('think_trained') is not None and m.get('cut_at') is None
                                               and m.get('reasoning_tokens', 0) > THINK_LIMIT),
                         autofix_student_turns=sum(1 for m in row['turns'] if m['owner'] == 'student' and m['autofix']),
                         view_count_logged=logged, view_count_rendered=mine, verifier_ran=ran, weak_timeout=weak,

@@ -66,6 +66,7 @@ TASK_LIST=${TASK_LIST:-}          # a subset of the tree to run (default: the tr
 N_ATTEMPTS=${N_ATTEMPTS:-1}       # rollouts per task
 MAX_INPUT=${MAX_INPUT:-65536}     # harbor's max_input_tokens; 131072 when Qwen serves 128k (the router reports it)
 MAX_OUTPUT=${MAX_OUTPUT:-8192}    # harbor's max_output_tokens; 16384 under the 65k/16k eval policy (the SFT arms and their 09-21 reference)
+MSA_INTERLEAVED=${MSA_INTERLEAVED:-true}  # msa: harbor re-sends earlier reasoning (true) or not (false, the no-refeed eval policy; student_only self-distillation)
 TEACHER_MAX_TOKENS=${TEACHER_MAX_TOKENS:-32768}
 CLOCK=${CLOCK:-paused}            # paused: the router's budgets, clock paused on model calls; wall: harbor's own 1x agent timeout;
                                   # repair: the router's budgets, the student's clock paused only while a teacher repair is in flight
@@ -236,7 +237,7 @@ log "routers ready: $(for arm in $ARMS; do printf '%s:%s ' $arm ${PORT[$arm]}; d
 export PYTHONPATH=$HARBOR_SRC${MSA_DIR:+:$MSA_DIR}
 for arm in $ARMS; do
   CFG=$R/${NAME}_$arm.yaml
-  sed "s#__JOB_NAME__#${NAME}_$arm#; s#__JOBS_DIR__#$JOBS_ROOT#; s#__API_BASE__#http://127.0.0.1:${PORT[$arm]}/v1#; s#__CONC__#$CONC#; s#__MAX_INPUT__#$MAX_INPUT#; s#__MAX_OUTPUT__#$MAX_OUTPUT#; s#__AGENT_MULT__#$AGENT_MULT#" $HERE/$JOB_TEMPLATE > $CFG
+  sed "s#__JOB_NAME__#${NAME}_$arm#; s#__JOBS_DIR__#$JOBS_ROOT#; s#__API_BASE__#http://127.0.0.1:${PORT[$arm]}/v1#; s#__CONC__#$CONC#; s#__MAX_INPUT__#$MAX_INPUT#; s#__MAX_OUTPUT__#$MAX_OUTPUT#; s#__AGENT_MULT__#$AGENT_MULT#; s#interleaved_thinking: true#interleaved_thinking: $MSA_INTERLEAVED#" $HERE/$JOB_TEMPLATE > $CFG
   $PY - "$CFG" "$TREE" "$MODE" "${TASK_LIST:-$TREE/TASKS.txt}" "$N_ATTEMPTS" "$SHUFFLE_SEED" <<'PY' || abort "config for $arm does not validate"
 import os, random, re, sys, yaml
 p, tree, mode, lst, att, seed = sys.argv[1:7]
