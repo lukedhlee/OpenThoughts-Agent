@@ -218,7 +218,10 @@ def student_autofix(answer, call_ids, af):
     """A student answer whose tool call harbor cannot parse, recovered with autofix.py's recover() when its action is
     unambiguous (invalid JSON escapes, raw control characters, a missing closing tag, Qwen-style XML, one bash fence):
     -> (tool_calls, kind, prose before the action) or (None, reason, '')."""
-    r = af.recover(answer)
+    try:
+        r = af.recover(answer)
+    except RecursionError:      # pathological nesting in the reply: unfixable, never a router death
+        return None, 'autofix_recursion', ''
     if isinstance(r, str):
         return None, r, ''
     cmds, meta, kind, prose = r

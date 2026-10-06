@@ -76,7 +76,7 @@ def json_objects(text):
             obj, end = dec.raw_decode(text, i)
             out.append((i, end, obj))
             i = text.find('{', end)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):   # RecursionError: a deeply nested array (2026-10-05 router death)
             out.append((i, None, None))
             i = text.find('{', i + 1)
     return out
