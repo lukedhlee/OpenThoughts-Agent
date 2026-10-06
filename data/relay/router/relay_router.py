@@ -1444,7 +1444,7 @@ class Router:
         return self.finish(ep, 'router', resp, rec, rec.get('turn'), main=True)
 
     def log(self, rec):
-        os.write(self._turns, (json.dumps(rec, ensure_ascii=False) + '\n').encode())
+        os.write(self._turns, (json.dumps(rec, ensure_ascii=False) + '\n').encode('utf-8', 'backslashreplace'))   # a lone surrogate (cut emoji in an observation) killed the router 2026-10-05; json reads \udXXX back
 
     def snapshot(self):
         path = os.path.join(self.a.log_dir, 'episodes.json')
