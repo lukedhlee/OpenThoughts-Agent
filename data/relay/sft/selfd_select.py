@@ -69,7 +69,7 @@ def main():
             if w['n_tokens'] > MAX_TOKENS:
                 n['windows_over_limit'] += 1
                 continue
-            out.append(dict(w, eval_len=ev, selfd=True))
+            out.append(dict(w, eval_len=ev, selfd=True, fits=True))   # the source row's fits (think-kept) no longer applies
     with open(a.out, 'w') as f:
         for w in out:
             f.write(json.dumps(w) + '\n')
