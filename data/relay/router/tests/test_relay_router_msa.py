@@ -406,3 +406,18 @@ def test_teacher_hint_reaches_only_the_teachers_system_message(tmp_path):
                              for b in treqs)
         assert hint not in json.dumps(d.msgs)                                  # harbor's history never holds it
         assert all(hint not in json.dumps(b.get('messages')) for b in st.student.requests)
+
+
+def test_assist_is_one_teacher_turn_and_the_student_keeps_the_episode(tmp_path):
+    with Stack(tmp_path, router_args=['--assist', '--assist-ctx', '']) as st:
+        out = {'echo step-1': 'The command timed out after 30 seconds and was killed.',
+               'echo step-3': 'The command timed out after 30 seconds and was killed.'}
+        Driver(st, 'work', outputs=out).run(6)
+        rows = st.turns('sid-work')
+        owners = [r['owner'] for r in rows]
+        # turn 3 follows the first timeout: one teacher turn, then the student again (non-sticky, no takeover)
+        assert owners[:4] == ['student', 'student', 'teacher', 'student']
+        assert rows[2]['assist'] and rows[2]['assist_kind'] == 'cmd_timeout' and not rows[2].get('takeover')
+        # the second timeout comes within --assist-gap (3) turns of the first assist: the student answers it
+        assert all(not r.get('assist') for r in rows[3:5])
+        assert st.router.counts['assists'] == 1

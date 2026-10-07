@@ -249,6 +249,9 @@ class Episode:
         self.repair_confirm = False       # the teacher claimed done in a repair turn: it answers that confirmation
         self.note_turn = None             # --verify-note: the turn of the done_claim takeover's confirmation request
         self.n_fed = 0                    # --harness msa: history messages already fed to the scanner
+        self.assists = []                 # --assist: [{'turn', 'kind'}] one-turn teacher interventions (non-sticky)
+        self.assist_key = None            # the request an assist answered (a retry of it is answered by the teacher again)
+        self.milestones = set()           # --assist: context check-ins already fired
 
     def summary(self):
         return dict(episode=self.idx, sid=self.sid, task_id=(self.task or {}).get('task_id'), owner=self.owner,
@@ -295,7 +298,7 @@ class Router:
         self.counts = dict(requests=0, upstream_errors=0, takeovers=0, synthetic=0, no_task_match=0, repairs=0,
                            repair_reply_rejected=0, repinned=0, autofixes=0, teacher_cut_at_cap=0,
                            view_count_errors=0, context_hard_ends=0, teacher_checked=0, teacher_parse_errors=0,
-                           teacher_autofix=0, teacher_resample=0, teacher_unparseable_passed=0, verify_notes=0,
+                           teacher_autofix=0, teacher_resample=0, teacher_unparseable_passed=0, verify_notes=0, assists=0,
                            upstream_5xx_failover=0, student_parse_errors=0)
         os.makedirs(a.log_dir, exist_ok=True)
         os.makedirs(os.path.join(a.log_dir, 'bodies'), exist_ok=True)
@@ -973,6 +976,16 @@ class Router:
             if fire:
                 self.take_over(ep, fire, t, now)
                 rec['takeover'] = self.takeover_rec(ep)
+        if ep.owner == 'student' and self.mode == 'relay' and self.a.assist:
+            why = 'retry' if (retry and ep.assist_key == key) else (None if retry else await self.assist_trigger(ep, body, messages, rec, t))
+            if why:
+                if why != 'retry':
+                    ep.assists.append(dict(turn=t, kind=why))
+                    ep.assist_key = key
+                    self.counts['assists'] += 1
+                    self.event('assist', episode=ep.idx, sid=ep.sid, turn=t, kind=why)
+                rec.update(assist=True, assist_kind=why, owner='teacher')
+                return await self.answer(ep, 'teacher', body, messages, rec, main=True)
         if ep.owner == 'student':
             return await self.answer_student_msa(ep, body, messages, rec, t, now)
         if self.mode == 'relay' and ep.takeover and self.a.student_row_max_tokens:
@@ -989,6 +1002,51 @@ class Router:
         if self.a.verify_note and ep.note_turn == t:
             rec['verify_note'] = True     # a retry of the done-claim takeover's request gets the note again
         return await self.answer(ep, 'teacher', body, messages, rec, main=True)
+
+    @staticmethod
+    def tool_results(messages):
+        """[(returncode or None, output)] of the trailing run of tool messages and every earlier one, oldest first."""
+        out = []
+        for m in messages:
+            if m.get('role') != 'tool':
+                continue
+            c = text_of(m.get('content'))
+            rc, o = None, c
+            try:
+                j = json.loads(c)
+                rc, o = j.get('returncode'), str(j.get('output', ''))
+            except (ValueError, AttributeError):
+                mm = re.search(r'<returncode>(-?\d+)</returncode>', c)
+                rc = int(mm.group(1)) if mm else None
+            out.append((rc, o))
+        return out
+
+    async def assist_trigger(self, ep, body, messages, rec, t):
+        """--assist (msa relay): a one-turn teacher intervention before the student answers this request, the student keeps
+        the episode. Calibrated on msafin's solo MSA2 episodes (2026-10-07): MSA2 failures are drift, not loops, so the
+        triggers are a command timeout (the 30 s cap), a failing-command streak or a repeated output, and one check-in at
+        each context milestone. At most one per --assist-gap turns and --assist-max per episode; never before turn 2."""
+        if t < 2 or len(ep.assists) >= self.a.assist_max or (ep.assists and t - ep.assists[-1]['turn'] < self.a.assist_gap):
+            return None
+        if messages and messages[-1].get('role') == 'tool':
+            res = self.tool_results(messages)
+            rc, out = res[-1]
+            if 'timed out' in out[:600].lower() or rc in (-1, 124, 137):
+                return 'cmd_timeout'
+            k = self.a.assist_error_streak
+            if len(res) >= k and all(r not in (0, None) for r, _ in res[-k:]):
+                return 'error_streak'
+            if len(out) >= 30 and sum(1 for _, o in res[-6:-1] if o == out) >= 2:
+                return 'same_output'
+        if self.a.assist_ctx:
+            n = rec.get('student_view_tokens')
+            if n is None:
+                n = await self.count_student_view(ep, body, messages, rec)
+            for m in self.a.assist_ctx:
+                if n is not None and n >= m and m not in ep.milestones:
+                    ep.milestones.add(m)
+                    return f'ctx_checkin_{m // 1000}k'
+        return None
 
     def call_ids(self, ep):
         n = ep.n_requests
@@ -1548,6 +1606,13 @@ def parse_args(argv=None):
     p.add_argument('--teacher-hint-text', default=None,
                    help='--harness msa: text appended to the system message of every teacher request only (not to '
                         "harbor's history, so not to training rows), e.g. a context-economy instruction")
+    p.add_argument('--assist', action='store_true',
+                   help='--harness msa relay: non-sticky one-turn teacher interventions (assist_trigger), the student keeps the episode')
+    p.add_argument('--assist-ctx', type=lambda v: [int(x) for x in v.split(',') if x], default=[20000, 35000],
+                   help='context check-in milestones (student-view tokens), one assist each')
+    p.add_argument('--assist-error-streak', type=int, default=4, help='assist after this many failing commands in a row')
+    p.add_argument('--assist-gap', type=int, default=3, help='minimum turns between two assists')
+    p.add_argument('--assist-max', type=int, default=6, help='assists per episode at most')
     p.add_argument('--context-budget-tokens', type=int, default=None,
                    help='context_budget takeover (sticky): the teacher takes the episode once the student view of a '
                         'request (counted on the student /tokenize) reaches this many tokens; off by default (32000 '
