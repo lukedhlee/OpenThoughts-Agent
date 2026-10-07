@@ -10,6 +10,7 @@ upstream mini-swe-agent 2.4.6's loop, tool mode, the session header) against the
 """
 import asyncio
 import json
+import time
 import re
 import sys
 import threading
@@ -421,3 +422,14 @@ def test_assist_is_one_teacher_turn_and_the_student_keeps_the_episode(tmp_path):
         # the second timeout comes within --assist-gap (3) turns of the first assist: the student answers it
         assert all(not r.get('assist') for r in rows[3:5])
         assert st.router.counts['assists'] == 1
+
+
+def test_time_budget_takeover_is_sticky(tmp_path):
+    with Stack(tmp_path, router_args=['--time-takeover-frac', '0.5'], budgets={'work': 0.2}) as st:
+        d = Driver(st, 'work')
+        d.step()
+        time.sleep(0.15)
+        d.run(3)
+        rows = st.turns('sid-work')
+        assert rows[0]['owner'] == 'student'
+        assert rows[1]['takeover']['trigger'] == 'time_budget' and all(r['owner'] == 'teacher' for r in rows[1:])

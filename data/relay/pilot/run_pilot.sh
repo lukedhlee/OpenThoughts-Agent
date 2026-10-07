@@ -215,7 +215,8 @@ for arm in $ARMS; do
     [ -n "$CTX_BUDGET" ] && M+=(--context-budget-tokens $CTX_BUDGET)
     [ -n "$ROW_MAX" ] && M+=(--student-row-max-tokens $ROW_MAX --student-row-reserve $ROW_RESERVE)
     [ "${STUDENT_VIEW_STRIP:-0}" = 1 ] && M+=(--student-view-after-takeover strip)
-    [ "${ASSIST:-0}" = 1 ] && M+=(--assist --assist-ctx "${ASSIST_CTX:-20000,35000}" --assist-error-streak ${ASSIST_ERR:-4} --assist-gap ${ASSIST_GAP:-3} --assist-max ${ASSIST_MAX:-6});; esac   # msa: one-turn teacher assists
+    [ "${ASSIST:-0}" = 1 ] && M+=(--assist --assist-ctx "${ASSIST_CTX:-20000,35000}" --assist-error-streak ${ASSIST_ERR:-4} --assist-gap ${ASSIST_GAP:-3} --assist-max ${ASSIST_MAX:-6})
+    [ -n "${TIME_TAKEOVER:-}" ] && M+=(--time-takeover-frac $TIME_TAKEOVER);; esac   # msa: one-turn teacher assists; time_budget hand-off
   case $CLOCK in wall) CARGS=(--budget-mode off);; repair) CARGS=(--budget-mode on);; paused) CARGS=(--budget-mode on --pause-model-calls);;
     *) abort "unknown CLOCK $CLOCK";; esac
   $PY $ROUTER "${M[@]}" "${HARNESS_ARGS[@]}" --arm $arm --port ${PORT[$arm]} --log-dir $R/router_$arm --tasks $TREE/router_tasks.json \

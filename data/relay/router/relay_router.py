@@ -976,6 +976,15 @@ class Router:
             if fire:
                 self.take_over(ep, fire, t, now)
                 rec['takeover'] = self.takeover_rec(ep)
+        if (ep.owner == 'student' and self.mode == 'relay' and self.a.time_takeover_frac and ep.task and ep.task.get('budget_sec')
+                and t >= self.a.context_budget_min_turn):
+            used = now - ep.t0 - ep.paused_sec
+            if used >= self.a.time_takeover_frac * ep.task['budget_sec']:
+                # time_budget (sticky): the student would otherwise spend the task's clock without submitting (guided relay
+                # 10-07: 13 % of episodes ended on the agent timeout with the student still in control, pass 14 %)
+                self.take_over(ep, dict(trigger='time_budget', kind='decision', turn=t,
+                                        reason=f"student used {used:.0f} s of {ep.task['budget_sec']:.0f} s"), t, now)
+                rec['takeover'] = self.takeover_rec(ep)
         if ep.owner == 'student' and self.mode == 'relay' and self.a.assist:
             why = 'retry' if (retry and ep.assist_key == key) else (None if retry else await self.assist_trigger(ep, body, messages, rec, t))
             if why:
@@ -1606,6 +1615,9 @@ def parse_args(argv=None):
     p.add_argument('--teacher-hint-text', default=None,
                    help='--harness msa: text appended to the system message of every teacher request only (not to '
                         "harbor's history, so not to training rows), e.g. a context-economy instruction")
+    p.add_argument('--time-takeover-frac', type=float, default=None,
+                   help='--harness msa relay: the teacher takes the episode (sticky) once the student has used this share of '
+                        "the task's agent budget (student clock, paused time excluded)")
     p.add_argument('--assist', action='store_true',
                    help='--harness msa relay: non-sticky one-turn teacher interventions (assist_trigger), the student keeps the episode')
     p.add_argument('--assist-ctx', type=lambda v: [int(x) for x in v.split(',') if x], default=[20000, 35000],
