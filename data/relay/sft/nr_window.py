@@ -12,8 +12,11 @@ prefix up to the window's last turn, with the <|start_think|>..<|end_think|> spa
 before the window (exactly the template's rendering of a turn without reasoning_content: checked token for token
 against re-tokenizing the decoded text), the window's turns as rendered, loss only on the window's turns. So each
 window's first turn sees exactly the eval's context and its later turns see at most k-1 recent reasoning spans.
-In every trained turn the <|start_think|> and <|end_think|> tokens are trained even where the reasoning between them is
-masked (cut or over the think limit), so the model always learns to close the block.
+In every trained turn the <|start_think|> token is trained, and so is <|end_think|> where it ends the turn's whole
+reasoning: the reasoning is trained, or it is masked for being over the think limit (longer than CAP_TOKENS, so never a
+cut). A turn whose reasoning was cut to reasoning_cap.CAP_TOKENS keeps <|end_think|> masked: training it there taught
+the msasubnr / msafinnr / msafinnr2 / msafinsd models to stop thinking at ~1,000 tokens (eval p99 1,000-1,123 reasoning
+tokens vs 4,400 for the same rows rendered without windows; 18 % of _relayfin_nr's trained <|end_think|> followed a cut).
 --mode one keeps a single window per row, at a random position (for plentiful SWE replay: about the source's token
 count, k trained turns per episode); --mode all keeps every window.
 
@@ -28,6 +31,7 @@ import random
 
 os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
 TOKDIR = '/scratch/11584/lukedhlee/models/grug-datakit-sft-20260921'
+CAP_TOKENS = 1000    # reasoning_cap.CAP_TOKENS: the renderers cut a turn's reasoning to at most this many tokens
 
 
 def load_ids():
@@ -53,6 +57,17 @@ def assistant_turns(ids):
             i = j
         i += 1
     return out
+
+
+def close_think(seg_ids, seg_loss):
+    """Train a trained turn's <|start_think|>, and its <|end_think|> unless the reasoning between them was cut."""
+    st = seg_ids.index(ST) if ST in seg_ids else None
+    et = seg_ids.index(ET, st) if st is not None and ET in seg_ids[st:] else None
+    if st is None:
+        return
+    seg_loss[st] = 1
+    if et is not None and (any(seg_loss[st + 1:et]) or et - st - 1 > CAP_TOKENS):
+        seg_loss[et] = 1
 
 
 def windows(r, k, mode, rng):
@@ -88,9 +103,7 @@ def windows(r, k, mode, rng):
             else:                    # inside the window (every turn from `first` to `last`)
                 seg_ids, seg_loss = ids[a:b + 1], list(loss[a:b + 1])
                 if (a, b) in win_set:
-                    for q, t in enumerate(seg_ids):
-                        if t in (ST, ET):
-                            seg_loss[q] = 1
+                    close_think(seg_ids, seg_loss)
                 else:
                     seg_loss = [0] * len(seg_loss)
                 new_ids += seg_ids
