@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The `terminus2_h8_sft` tab of laion/calibforge-relay-traces: exactly the 10,308 conversations our best Terminus-2
+"""The `terminus2_relay_sft` tab of laion/calibforge-relay-traces: exactly the 10,308 conversations our best Terminus-2
 model H8 (laion/snowball-67b-a2b-relay-sft-allkimi-step1203) trained on, in one table and one schema:
   * 5,916 CalibForge relay episodes: the dataset's `used` split, copied as is (source jupiter_0928 / horizon_0929);
   * 4,392 Kimi-2.5 SWE-smith Terminus-2 traces: the trials in kimi_trials.txt, taken from our converted copy of
@@ -7,7 +7,7 @@ model H8 (laion/snowball-67b-a2b-relay-sft-allkimi-step1203) trained on, in one 
     relay rows' form: <|start_think|>reasoning<|end_think|> + the Terminus-2 JSON), every assistant turn trained.
 
     python build_h8_sft_tab.py --relay-dir <download of laion/calibforge-relay-traces> --kimi <kimi_swesmith_v1 train
-                               parquet> --out <dir>/data/terminus2_h8_sft
+                               parquet> --out <dir>/data/terminus2_relay_sft
 """
 import argparse
 import glob
