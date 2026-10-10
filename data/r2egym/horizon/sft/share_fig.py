@@ -39,7 +39,14 @@ HARNESS = (('base0921', 'Grug 09-21 (base)\nTerminus-2 eval', '#b8b6b0'),
            ('m22base', 'Grug 09-21 (base)\nMSA2 eval', '#b8b6b0'),
            ('m22msaallswe', 'H8 recipe ported to MSA2\n(relay + SWE traces), MSA2 eval', RELAY[1]),
            ('m22msafin', 'msafin, best MSA2 recipe\n(filtered relay + strong SWE), MSA2 eval', '#2a9d5c'))
-HATCHED = ('m22base', 'm22msaallswe', 'm22msafin')
+# --status: the best model under each harness and the MSA2 steps that got there (gist header, 2026-10-10)
+STATUS = (('base0921', 'Grug 09-21 (base)\nTerminus-2 eval', '#b8b6b0'),
+          ('h8allkimi', 'H8, best Terminus-2 model\n(relay + Kimi), Terminus-2 eval', RELAY[1]), None,
+          ('m22base', 'Grug 09-21 (base)\nMSA2 eval', '#b8b6b0'),
+          ('m22msafin', 'msafin: filtered relay\n+ Orchard / SI2CA SWE traces', '#8fd1a8'),
+          ('m22msafing2', 'msafing2: + teacher assists\n(guided relay)', '#4fb37a'),
+          ('m22msafing2nrcf', 'msafing2nrcf: + rows rendered\nto the eval context (best MSA2)', '#1f7a47'))
+HATCHED = ('m22base', 'm22msaallswe', 'm22msafin', 'm22msafing2', 'm22msafing2nrcf')
 GAP = 0.5   # width of a None gap, in bar slots
 GRPO = ('rlh9s30', 'Relay SFT, continued + GRPO\n(30 steps on clean R2E-Gym)', RELAY[2])
 SETS = (('tb21', 'Terminal-Bench 2.1'), ('swe', 'SWE-bench Verified\n(random 100)'), ('tblite', 'OpenThoughts-TBLite'))
@@ -55,10 +62,12 @@ def main():
                     help='the matched comparison: Qwen-only vs relay traces on the same 3,872 task slots, each +/- Kimi')
     ap.add_argument('--tmax', action='store_true',
                     help='the TMax matched comparison: Qwen-only vs relay traces on 2,730 TMax task slots, alone and + the 5,916 CalibForge relay and 4,392 Kimi SWE-smith traces')
+    ap.add_argument('--status', action='store_true',
+                    help='best model per harness + the MSA2 steps (--data may be a flat eval_readout.py --out JSON)')
     ap.add_argument('--harness', action='store_true',
                     help='Terminus-2 vs MSA2: H8 under Terminus-2, the H8 recipe ported to MSA2, msafin (MSA2 readout via --extra)')
     a = ap.parse_args()
-    models = HARNESS if a.harness else TMAX if a.tmax else MATCHED if a.matched else MODELS
+    models = STATUS if a.status else HARNESS if a.harness else TMAX if a.tmax else MATCHED if a.matched else MODELS
     if a.grpo and not a.matched:
         k = [m[0] for m in models].index('h9acont') + 1
         models = tuple(m for m in models[:k] + (GRPO,) + models[k:] if m[0] != 'h8allkimi')   # GRPO started from H9
@@ -71,8 +80,9 @@ def main():
             at += 1
     slots = [x - (at - 1) / 2 for x in slots]
     models = tuple(m for m in models if m is not None)
-    bold = ('h8allkimi', 'm22msafin') if a.harness else ('t3tmax', 't1tmax') if a.tmax else ('mrel', 'mrelk') if a.matched else ('h8allkimi', 'h9acont', 'rlh9s30')
-    r = json.load(open(a.data))['readout']
+    bold = ('h8allkimi', 'm22msafing2nrcf') if a.status else ('h8allkimi', 'm22msafin') if a.harness else ('t3tmax', 't1tmax') if a.tmax else ('mrel', 'mrelk') if a.matched else ('h8allkimi', 'h9acont', 'rlh9s30')
+    r = json.load(open(a.data))
+    r = r.get('readout', r)
     if a.extra:
         r.update(json.load(open(a.extra)))
     plt.rcParams.update({'font.size': 15, 'font.family': 'DejaVu Sans'})
@@ -94,13 +104,20 @@ def main():
     ax.set_xticks(range(len(SETS)))
     ax.set_xticklabels([t for _, t in SETS], fontsize=15)
     ax.set_ylabel('pass@1 (%), mean of 3 runs')
-    ax.set_ylim(0, 60 if a.matched or a.tmax or a.harness else 85)
+    ax.set_ylim(0, 60 if a.matched or a.tmax or a.harness or a.status else 85)
     ax.grid(axis='y', color='#e5e5e5', zorder=0)
     for side in ('top', 'right'):
         ax.spines[side].set_visible(False)
     ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), frameon=False, fontsize=12.5,
-              ncol=5 if a.matched or a.tmax else 3)
-    if a.harness:
+              ncol=5 if a.matched or a.tmax else 4 if a.status else 3)
+    if a.status:
+        ax.set_title('Best SFT of Grug 67B-A2B 09-21 under each harness (2026-10-10)', fontsize=16, pad=14)
+        fig.text(0.01, 0.01, 'Plain bars: Terminus-2 eval (compacts context when it fills). Hatched bars: mini-swe-agent 2 (MSA2) eval: 2.4.6 tool mode, 65,536 context, '
+                 'earlier reasoning not re-sent, the attempt ends when the context fills.\nH8 = 5,916 CalibForge relay + 4,392 Kimi SWE-smith traces. '
+                 'msafin = CalibForge + TMax relay rows that passed and end on the submit + Orchard MiniMax-M2.5 + SI2CA Qwen3.5-122B SWE traces.\n'
+                 'msafing2 = its CalibForge rows regenerated with one-turn teacher assists. msafing2nrcf = those rows rendered as the eval sees them (no earlier reasoning).\n'
+                 'Seed 0 of each; 3 epochs, LR 3e-4, 3 eval runs; error bars ±1 SE over tasks.', ha='left', fontsize=10, color='#555')
+    elif a.harness:
         ax.set_title('Terminus-2 vs mini-swe-agent 2 (MSA2): best recipes, SFT of Grug 67B-A2B 09-21', fontsize=16, pad=14)
         fig.text(0.01, 0.01, 'Plain bars: Terminus-2 eval (compacts context when it fills). Hatched bars: MSA2 eval (mini-swe-agent 2.4.6 tool mode, 65,536 context, '
                  'earlier reasoning not re-sent; the attempt ends when the context fills).\nH8 = 5,916 CalibForge relay + 4,392 Kimi SWE-smith traces. Its MSA2 port '
@@ -125,7 +142,7 @@ def main():
             note = ('GRPO vs its start (paired per task, 95 % range): TB2.1 +4.2 [-0.2, +8.6], SWE -3.5 [-8.2, +1.0], TBLite +5.4 [-0.3, +11.6].\n'
                     + note)
         fig.text(0.99, 0.01, note, ha='right', fontsize=10.5, color='#666')
-    fig.tight_layout(rect=(0, 0.09 if a.harness else 0.06 if a.matched or a.tmax else 0.02, 1, 1))
+    fig.tight_layout(rect=(0, 0.13 if a.status else 0.09 if a.harness else 0.06 if a.matched or a.tmax else 0.02, 1, 1))
     fig.savefig(a.out, dpi=160, facecolor='white')
 
 
