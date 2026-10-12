@@ -28,8 +28,9 @@ assert (m/'chat_template.jinja').is_file()
 v=Tokenizer.from_file(str(m/'tokenizer.json')).get_vocab()
 old=Tokenizer.from_file(str(b/'tokenizer.json')).get_vocab()
 for token in ['<|begin_of_text|>','<|eot_id|>','<|start_header_id|>','<|end_header_id|>',
-              '<|start_think|>','<|end_think|>','<|tool_call|>','<|tool_result|>']:
+              '<|start_think|>','<|end_think|>']:
     assert token in v and v[token]==old[token], (token,v.get(token),old.get(token))
+assert v == old, 'Tokenizer vocabulary differs from the validated relay student'
 idx=json.loads((m/'model.safetensors.index.json').read_text())
 shards=set(idx['weight_map'].values())
 assert all((m/s).is_file() and (m/s).stat().st_size>0 for s in shards)
