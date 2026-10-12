@@ -68,7 +68,12 @@ export EARLY_MIN=10 MIN_EARLY_TURNS=4 STOP_AFTER=16 STOP_EVERY=120 STOP_HERR=0.2
 export TAKEOVER_MIN=0 TAKEOVER_MAX=1 TAKEOVER_AFTER=16
 export TUNNEL_PORTS=18180,18181 BRIDGE_PORT=18947 PORT0=22750
 echo 'Submitting two-node pilot; hard ceiling 6 node-hours' > "$X/$NAME.status"
-JOB=$(bash "$OTA/data/relay/horizon/serve_submit.sh" 2 1 03:00:00 "$NAME")
+JOB=${PILOT_JOB:-}
+if [ -z "$JOB" ]; then
+  JOB=$(bash "$OTA/data/relay/horizon/serve_submit.sh" 2 1 03:00:00 "$NAME")
+else
+  [ -n "$(squeue -h -j "$JOB" -u "$USER")" ]
+fi
 [[ $JOB =~ ^[0-9]+$ ]]
 echo "$JOB" > "$X/$NAME.job"
 if ! bash "$OTA/data/relay/horizon/launch_driver.sh" "$JOB" "$NAME"; then
@@ -76,3 +81,8 @@ if ! bash "$OTA/data/relay/horizon/launch_driver.sh" "$JOB" "$NAME"; then
   exit 1
 fi
 echo "Pilot submitted: job $JOB; 32 tasks; max 6 node-hours; run $X/runs/$NAME" | tee "$X/$NAME.status"
+# Keep this tmux session alive while the driver and reverse tunnels run. Horizon may
+# reap a login command's descendants when its final shell exits.
+while [ -n "$(squeue -h -j "$JOB")" ]; do sleep 30; done
+"$PY" "$OTA/data/relay/msa/gate.py" "$X/runs/$NAME" > "$X/$NAME.gate.json"
+echo "Pilot finished: job $JOB; gate $X/$NAME.gate.json" > "$X/$NAME.status"
