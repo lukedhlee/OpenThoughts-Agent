@@ -110,6 +110,19 @@ def test_nonstop_and_empty_rejected(tmp_path):
     )
 
 
+def test_concurrent_generation_keeps_order(tmp_path):
+    barrier = threading.Barrier(2, timeout=5)
+
+    def client(url, payload, timeout, key):
+        barrier.wait()  # both samples must be in flight at once
+        return {"choices": [{"finish_reason": "stop", "message": {"content": "lesson"}}]}
+
+    c = config("unused")
+    c["reflection"]["concurrency"] = 2
+    rows, bad = generate_reflections([source()], c, tmp_path, client=client)
+    assert not bad and [r["sample"] for r in rows] == [0, 1]
+
+
 @pytest.fixture
 def native():
     p = os.environ.get("REFLECTION_TEST_TOKENIZER")

@@ -28,7 +28,8 @@
     "temperature": 0.9,
     "top_p": 1.0,
     "max_tokens": 8192,
-    "include_feedback": true
+    "include_feedback": true,
+    "concurrency": 32
   },
   "training": {
     "objective": "reflection_only",
@@ -53,20 +54,14 @@
     "base_model": "/scratch/11584/lukedhlee/models/grug-antidoom-rlvr1-step12",
     "native_init": "/scratch/11584/lukedhlee/experiments/relay_rlvr1/sft/experiments/init-rlvr1-step12-native0",
     "mesh": {
-      "expert_axis_size": 4,
+      "expert_axis_size": 8,
       "replica_axis_size": 1,
       "model_axis_size": 1
     },
     "update_command": [
-      "srun",
-      "--ntasks=16",
-      "--ntasks-per-node=4",
-      "/home1/11584/lukedhlee/snowball/envs/marin-grug-sft/bin/python",
-      "-m",
-      "experiments.june_tpu_67b_a2b.moe.online_reflection",
-      "--request",
+      "bash",
+      "/home1/11584/lukedhlee/snowball/ota-reflection/data/relay/reflection/horizon/train_update.sh",
       "{request}",
-      "--response",
       "{response}"
     ]
   },

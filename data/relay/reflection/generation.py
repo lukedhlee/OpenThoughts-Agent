@@ -6,6 +6,7 @@ import json
 import os
 import re
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .core import ARMS, digest, reflection_prompt, write_json
@@ -76,89 +77,99 @@ def generate_reflections(
     settings = config["reflection"]
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    results = []
-    rejected = {}
+
+    def one(row, prompt, sample):
+        sid = digest(
+            {
+                "source": row["id"],
+                "sample": sample,
+                "arm": config["arm"],
+                "version": version,
+            }
+        )
+        payload = {
+            "model": endpoint["served_model"],
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": settings["temperature"],
+            "top_p": settings["top_p"],
+            "max_tokens": settings["max_tokens"],
+            # Grug has no server reasoning parser: keep native thought boundaries.
+            # Qwen uses its own parser and returns reasoning_content separately.
+            "skip_special_tokens": author == "teacher",
+        }
+        fingerprint = digest(
+            {
+                "payload": payload,
+                "endpoint": endpoint["url"],
+                "source": row,
+                "config": config,
+                "version": version,
+                "expected_model": expected_model,
+            }
+        )
+        p = out / (sid + ".json")
+        if p.exists():
+            record = json.loads(p.read_text())
+            if record["fingerprint"] != fingerprint:
+                raise ValueError(
+                    "generation settings/source changed at existing artifact"
+                )
+            return record
+        record = {
+            "sid": sid,
+            "fingerprint": fingerprint,
+            "source_id": row["id"],
+            "sample": sample,
+            "task": row["task"],
+            "trajectory_author": row["author"],
+            "reflection_author": author,
+            "reflection_model": config.get(author, {}).get("model"),
+            "reflection_checkpoint": expected_model,
+            "policy_version": version,
+            "prompt": prompt,
+        }
+        try:
+            response = client(
+                endpoint["url"],
+                payload,
+                config["runtime"]["timeout_sec"],
+                endpoint.get("api_key_env"),
+            )
+            choice = response["choices"][0]
+            message = normalize_message(choice["message"])
+            final = message["content"]
+            thinking = message["reasoning_content"]
+            # Preserve actual thinking. Empty thinking prefixes are removed at rendering, not fabricated.
+            record.update(
+                message=message,
+                finish_reason=choice.get("finish_reason"),
+                usage=response.get("usage"),
+                raw_response=response,
+            )
+            if choice.get("finish_reason") not in ("stop",):
+                record["rejected"] = "non_stop_completion"
+            elif not (final.strip() or thinking.strip()):
+                record["rejected"] = "empty"
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            record["rejected"] = "generation_error"
+            record["error_type"] = type(error).__name__
+        write_json(p, record)
+        return record
+
+    work = []
     for row in rows:
         prompt = reflection_prompt(row, settings)
-        for sample in range(settings["per_trajectory"]):
-            sid = digest(
-                {
-                    "source": row["id"],
-                    "sample": sample,
-                    "arm": config["arm"],
-                    "version": version,
-                }
-            )
-            payload = {
-                "model": endpoint["served_model"],
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": settings["temperature"],
-                "top_p": settings["top_p"],
-                "max_tokens": settings["max_tokens"],
-                # Grug has no server reasoning parser: keep native thought boundaries.
-                # Qwen uses its own parser and returns reasoning_content separately.
-                "skip_special_tokens": author == "teacher",
-            }
-            fingerprint = digest(
-                {
-                    "payload": payload,
-                    "endpoint": endpoint["url"],
-                    "source": row,
-                    "config": config,
-                    "version": version,
-                    "expected_model": expected_model,
-                }
-            )
-            p = out / (sid + ".json")
-            if p.exists():
-                record = json.loads(p.read_text())
-                if record["fingerprint"] != fingerprint:
-                    raise ValueError(
-                        "generation settings/source changed at existing artifact"
-                    )
-            else:
-                record = {
-                    "sid": sid,
-                    "fingerprint": fingerprint,
-                    "source_id": row["id"],
-                    "sample": sample,
-                    "task": row["task"],
-                    "trajectory_author": row["author"],
-                    "reflection_author": author,
-                    "reflection_model": config.get(author, {}).get("model"),
-                    "reflection_checkpoint": expected_model,
-                    "policy_version": version,
-                    "prompt": prompt,
-                }
-                try:
-                    response = client(
-                        endpoint["url"],
-                        payload,
-                        config["runtime"]["timeout_sec"],
-                        endpoint.get("api_key_env"),
-                    )
-                    choice = response["choices"][0]
-                    message = normalize_message(choice["message"])
-                    final = message["content"]
-                    thinking = message["reasoning_content"]
-                    # Preserve actual thinking. Empty thinking prefixes are removed at rendering, not fabricated.
-                    record.update(
-                        message=message,
-                        finish_reason=choice.get("finish_reason"),
-                        usage=response.get("usage"),
-                        raw_response=response,
-                    )
-                    if choice.get("finish_reason") not in ("stop",):
-                        record["rejected"] = "non_stop_completion"
-                    elif not (final.strip() or thinking.strip()):
-                        record["rejected"] = "empty"
-                except (OSError, ValueError, KeyError, IndexError) as error:
-                    record["rejected"] = "generation_error"
-                    record["error_type"] = type(error).__name__
-                write_json(p, record)
-            if record.get("rejected"):
-                why = record["rejected"]
-                rejected[why] = rejected.get(why, 0) + 1
-            else:
-                results.append(record)
+        work.extend((row, prompt, sample) for sample in range(settings["per_trajectory"]))
+    # Requests are independent and each record is written atomically under its own sid, so a bounded pool only
+    # changes wall time; results keep source/sample order.
+    with ThreadPoolExecutor(max_workers=settings.get("concurrency", 1)) as pool:
+        records = list(pool.map(lambda item: one(*item), work))
+    results = []
+    rejected = {}
+    for record in records:
+        if record.get("rejected"):
+            why = record["rejected"]
+            rejected[why] = rejected.get(why, 0) + 1
+        else:
+            results.append(record)
     return results, rejected

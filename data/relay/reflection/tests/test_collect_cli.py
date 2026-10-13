@@ -21,9 +21,16 @@ def test_five_checked_configs():
     }
     assert len({plan(c)["output_dir"] for c in configs}) == 5
     assert all(c["evaluation"]["reflection_in_context"] is False for c in configs)
-    assert plan(next(c for c in configs if c["arm"] == "roft"))[
-        "unconfigured_refresh_command"
-    ]
+    roft = next(c for c in configs if c["arm"] == "roft")
+    assert not plan(roft)["unconfigured_refresh_command"]
+    # The ROFT smoke differs from the experiment only in its name and counts.
+    smoke = load_config(root / "smoke" / "roft.json")
+    for section, keys in [("training", ("updates", "source_attempts", "schedule_steps")),
+                          ("reflection", ("per_trajectory", "concurrency"))]:
+        for key in keys:
+            smoke[section].pop(key), roft[section].pop(key)
+    smoke["runtime"]["collection"].pop("concurrency"), roft["runtime"]["collection"].pop("concurrency")
+    assert {**smoke, "name": None} == {**roft, "name": None}
 
 
 def test_collector_selects_fresh_unassisted_tasks_and_actual_response_cap(tmp_path):
