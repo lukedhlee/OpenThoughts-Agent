@@ -45,9 +45,34 @@ def load_renderer(tokenizer_dir):
     return tokenizer, format_messages, file_digest(root / "chat_template.jinja")
 
 
+# Chat-structure markers of either author's template. A completion that writes one inside its reasoning or answer
+# (e.g. a student that closes its thought twice and starts a new "assistant" turn) has broken the turn boundary;
+# rendering it would train the marker mid-turn, so it is rejected and counted, like any other boundary failure.
+CONTROL_MARKERS = (
+    "<|start_think|>",
+    "<|end_think|>",
+    "<|eot_id|>",
+    "<|start_header_id|>",
+    "<|end_header_id|>",
+    "<|begin_of_text|>",
+    "<|end_of_text|>",
+    "<|im_start|>",
+    "<|im_end|>",
+    "<think>",
+    "</think>",
+)
+
+
 def render_reflection(
     record, tokenizer, format_messages, sequence_length, template_digest
 ):
+    message = record["message"]
+    if any(
+        marker in (message.get(field) or "")
+        for marker in CONTROL_MARKERS
+        for field in ("content", "reasoning_content")
+    ):
+        raise ValueError("control_token_in_completion")
     messages = [{"role": "user", "content": record["prompt"]}]
     prefix = format_messages(messages, True)
     text = format_messages(messages + [record["message"]], False)
