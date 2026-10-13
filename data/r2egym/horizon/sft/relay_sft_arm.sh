@@ -107,6 +107,11 @@ if [ ! -f "$CACHE/train/.stats.json" ]; then
 fi
 say "cache: $(head -c 300 "$CACHE/train/.stats.json")"
 
+if [ "${PREP_ONLY:-0}" = 1 ]; then
+  say "ARM_PREP_DONE stage=$STAGE cache=$CACHE steps=$STEPS warmup=$WARMUP"
+  exit 0
+fi
+
 # 3. train: 3 passes on one cosine, one kept checkpoint per pass
 if [ ! -f "$LOGD/run_$RUN_ID.done" ]; then
   export SNOWBALL_LR=$LR SNOWBALL_WARMUP=$WARMUP EPOCHS=$EPOCHS SNOWBALL_SCHEDULE_EPOCHS=$EPOCHS SNOWBALL_RESUME=${RESUME:-0}
