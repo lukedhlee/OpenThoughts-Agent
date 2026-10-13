@@ -15,7 +15,8 @@ PYTHONPATH=$OTA $PY -c "import sys; from data.relay.reflection.core import load_
 mkdir -p "$OUT/logs"
 J=$(CC=gcc CXX=g++ CONFIG=$CONFIG REFLECTION_OTA=$OTA FIXED_SERVE=$FIXED POST_CHECK=${POST_CHECK:-0} \
   sbatch --parsable -N $((TRAIN + 1)) -t "$TIME" -J "cfr_$NAME" -o "$OUT/logs/job_%j.out" --export=ALL \
-  "$OTA/data/relay/reflection/horizon/job.sbatch")
+  "$OTA/data/relay/reflection/horizon/job.sbatch" | tail -1)   # TACC's submit filter prints a banner before the id
+[[ "$J" =~ ^[0-9]+$ ]] || { echo "no job id from sbatch: $J"; exit 1; }
 for p in 18080 18081; do
   setsid nohup bash "$OTA/data/r2egym/horizon/tunnel.sh" "$J" "$p" > "$OUT/logs/tunnel_${J}_$p.log" 2>&1 < /dev/null &
 done
