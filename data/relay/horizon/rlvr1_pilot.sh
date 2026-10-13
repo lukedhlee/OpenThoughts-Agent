@@ -104,7 +104,7 @@ echo "Run submitted: job $JOB; $TASK_COUNT tasks x $N_ATTEMPTS; max $CAP_NODE_H 
 # Keep this tmux session alive while the driver and reverse tunnels run. Horizon may
 # reap a login command's descendants when its final shell exits.
 while [ -n "$(squeue -h -j "$JOB")" ]; do sleep 30; done
-"$PY" "$OTA/data/relay/msa/gate.py" "$X/runs/$NAME" > "$X/$NAME.gate.json"
+"$PY" "$OTA/data/relay/msa/gate.py" "$X/runs/$NAME" --arm "${ARMS%% *}" > "$X/$NAME.gate.json"
 if [ -f "$X/runs/$NAME/ABORT" ]; then
   echo "Run aborted: job $JOB; $(cat "$X/runs/$NAME/ABORT"); gate $X/$NAME.gate.json" > "$X/$NAME.status"
   exit 1
