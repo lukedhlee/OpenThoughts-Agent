@@ -14,7 +14,7 @@ TRAIN=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | grep -vx "$NODE0" | past
 N=$(echo "$TRAIN" | tr ',' '\n' | wc -l)
 [ "$N" = "${REFLECTION_TRAIN_NODES:-4}" ] || { echo "expected ${REFLECTION_TRAIN_NODES:-4} training nodes, got $N ($TRAIN)"; exit 1; }
 OUT=$(dirname "$REQ")
-unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy ALL_PROXY all_proxy   # gRPC (JAX coordinator) honors these
+unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy ALL_PROXY all_proxy NO_PROXY no_proxy   # gRPC (JAX coordinator) honors these
 export CC=gcc CXX=g++ CUDA_HOME=${CUDA_HOME:-/home1/apps/nvidia/Linux_aarch64/26.9/cuda/13.3}
 export GIT_PYTHON_REFRESH=quiet WANDB_DISABLE_GIT=true WANDB_MODE=offline
 export CUDA_VISIBLE_DEVICES=0,1,2,3 PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1 JAX_PLATFORMS=cuda,cpu

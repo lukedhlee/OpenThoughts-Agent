@@ -125,7 +125,8 @@
       "context_length": 65536,
       "max_tokens": 16384,
       "temperature": 1.0,
-      "top_p": 1.0
+      "top_p": 1.0,
+      "infra_retries": true
     }
   },
   "evaluation": {

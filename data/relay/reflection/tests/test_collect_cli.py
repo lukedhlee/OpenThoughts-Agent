@@ -66,3 +66,15 @@ def test_collector_selects_fresh_unassisted_tasks_and_actual_response_cap(tmp_pa
     train.write_text("test\n")
     with pytest.raises(ValueError, match="overlaps"):
         make_job(req)
+
+
+def test_infra_retries_are_the_evaluation_policys():
+    c = load_config(Path(__file__).parents[1] / "configs" / "roft.json")
+    from data.relay.reflection.collect import infra_retry
+
+    c["runtime"]["collection"]["infra_retries"] = False
+    assert infra_retry(c) == {"max_retries": 0}
+    c["runtime"]["collection"]["infra_retries"] = True
+    retry = infra_retry(c)
+    assert retry["max_retries"] > 0 and "DaytonaProcessError" in retry["include_exceptions"]
+    assert not {"ContextLengthExceededError", "AgentTimeoutError"} & set(retry["include_exceptions"])

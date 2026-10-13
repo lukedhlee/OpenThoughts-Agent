@@ -13,6 +13,18 @@ from .core import validate_sources, write_json, write_jsonl
 from .harbor import import_trials
 
 
+def infra_retry(config):
+    """Harbor retries for infrastructure exceptions only, exactly the evaluation policy's list, when
+    runtime.collection.infra_retries is true; otherwise none. A retried trial reruns the same task on the same policy
+    version; model failures (wrong answer, context overflow, agent timeout) are never in that list."""
+    if not config["runtime"]["collection"].get("infra_retries"):
+        return {"max_retries": 0}
+    import yaml
+
+    policy = Path(__file__).parents[3] / config["evaluation"]["policy"]
+    return yaml.safe_load(policy.read_text())["retry"]
+
+
 def make_job(request):
     config = request["config"]
     runtime = config["runtime"]
@@ -48,7 +60,7 @@ def make_job(request):
         "timeout_multiplier": 1.0,
         "quiet": True,
         "release_trial_payloads_in_memory": True,
-        "retry": {"max_retries": 0},
+        "retry": infra_retry(config),
         "environment": {
             "type": "daytona",
             "delete": True,

@@ -121,7 +121,7 @@ def main():
         u["train"] = {"loss": resp["loss"], "supervised_tokens": resp["supervised_tokens"],
                       "native_step": meta.get("step"), "probe_max_abs_change": moved, "router_bias_max_drift": drift,
                       "router_bias_tensors": len(biases), "native_bytes": du(native), "hf_bytes": du(hf)}
-        gpu = d / "gpu_samples.log"
+        gpu = d / "training" / "gpu_samples.log"
         if gpu.exists():
             util, mem = [], []
             for line in gpu.read_text().splitlines():
