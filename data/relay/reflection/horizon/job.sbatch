@@ -6,6 +6,7 @@
 #   CONFIG        the experiment JSON (in the job checkout)
 #   FIXED_SERVE   "" (ROFT: the refresh adapter starts and refreshes the student) | student | teacher: a fixed author
 #                 server started once from the config's weights_path (offline arms)
+#   SOURCE_YAML   instead of the controller, run this harbor source-collection config (source_job.py)
 #   POST_CHECK=1  after the run, refresh the student server to the final export and check /models and a completion
 #SBATCH -p debug
 #SBATCH -A CCR24067
@@ -66,6 +67,16 @@ fi
 # ---- 3. the controller: its state.json is the durable resume point; a rerun of this job resumes it
 export PYTHONPATH=$OTA:$SB/harbor-msa-relay/src:${MSA_DIR:-$SB/envs/msa-2.4.6}
 cd "$OTA"
+if [ -n "${SOURCE_YAML:-}" ]; then
+  # Source collection only (source_job.py's harbor config against the fixed server); import on the login node after.
+  log "source collection: harbor jobs start -c $SOURCE_YAML"
+  $SB/envs/snowball/bin/harbor jobs start --config "$SOURCE_YAML" -y < /dev/null > "$REFLECTION_SERVE_DIR/harbor_sources.log" 2>&1
+  rc=$?
+  log "SOURCES_EXIT rc=$rc"
+  HJ=$($PY -c "import yaml,sys; c=yaml.safe_load(open(sys.argv[1])); print(c['jobs_dir']+'/'+c['job_name'])" "$SOURCE_YAML")
+  $PY $HZ/cleanup_sandboxes_async.py --key-file "$KEYF" --delete "$HJ" 2>&1 | tail -2
+  log "REFLECTION_JOB_DONE rc=$rc"; exit $rc
+fi
 log "controller start: cli run --config $CONFIG"
 $PY -m data.relay.reflection.cli run --config "$CONFIG" < /dev/null
 rc=$?
