@@ -62,6 +62,19 @@ assert n >= 1 and offset >= 0 and offset+n <= len(tasks)
 Path(sys.argv[3]).write_text('\n'.join(tasks[offset:offset+n])+'\n')
 print('TASK_PREFLIGHT_OK',len(tasks),'train tasks,',n,'selected at offset',offset,'heldout disjoint')
 PY
+# Recovery lists contain distinct train tasks with the same remaining attempt count.
+if [ -n "${RECOVERY_TASK_LIST:-}" ]; then
+  "$PY" - "$TREE/TASKS.txt" "$RECOVERY_TASK_LIST" "$TASK_FILE" <<'PYREC'
+import sys
+from pathlib import Path
+pool=set(Path(sys.argv[1]).read_text().splitlines())
+tasks=Path(sys.argv[2]).read_text().splitlines()
+assert tasks and len(tasks)==len(set(tasks)) and set(tasks)<=pool
+Path(sys.argv[3]).write_text('\n'.join(tasks)+'\n')
+print('RECOVERY_TASK_PREFLIGHT_OK',len(tasks),'distinct train tasks')
+PYREC
+  TASK_COUNT=$(wc -l < "$TASK_FILE")
+fi
 export STUDENT_MODEL=$MODEL
 export RELAY_PILOT_DIR=$OTA/data/relay/pilot
 export RELAY_EXP_DIR=$X E=$X JOBS_ROOT=$X/jobs
