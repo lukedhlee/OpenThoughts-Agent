@@ -52,7 +52,7 @@ def write_jsonl(path, rows):
 
 def load_config(path):
     c = json.loads(Path(path).read_text())
-    required = {'schema_version','name','arm','student','teacher','data','reflection','training','runtime','evaluation'}
+    required = {'schema_version','name','arm','student','teacher','data','reflection','training','runtime','evaluation','backend'}
     if set(c) != required or c['schema_version'] != 1:
         raise ValueError(f'config keys must be {sorted(required)}; schema_version=1')
     if c['arm'] not in ARMS:
@@ -78,8 +78,6 @@ def load_config(path):
         for field in fields:
             if type(c[section][field]) is not int or c[section][field] <= 0:
                 raise ValueError(f'{section}.{field} must be a positive integer')
-    if c['training']['microbatch_size'] != 1:
-        raise ValueError('current online backend requires microbatch_size=1')
     if c['arm']=='roft' and (c['data']['outcomes']!='all' or c['training']['passes_per_batch']!=1):
         raise ValueError('ROFT needs both outcomes and one pass, no replay')
     if c['evaluation'].get('reflection_in_context') is not False:

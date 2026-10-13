@@ -6,3 +6,5 @@ Changes: additive data/relay/reflection/ modules and tests only; optional isolat
 Depends on: stage 0.
 Next step: implements the parent stage-map requirement.
 GO/NO-GO gate (CPU): HTTP generation, native template masks and rejection accounting. No GPU jobs authorized this turn.
+
+Gate: PASS, 8 CPU tests including pinned RLVR1 native tokenizer; exact prompt prefixes, reflection/thinking/EOT masks, truncated-output rejection, mock HTTP and restart reuse.
