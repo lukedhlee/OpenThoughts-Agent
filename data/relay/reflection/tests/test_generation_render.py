@@ -65,6 +65,7 @@ def test_http_generation_and_resume(tmp_path):
         c = config(f"http://127.0.0.1:{server.server_port}/v1")
         rows, bad = generate_reflections([source()], c, tmp_path)
         assert len(rows) == 2 and not bad and len(seen) == 2
+        assert seen[0]["skip_special_tokens"] is False
         assert (
             seen[0]["max_tokens"] == 8192
             and "bad action" in seen[0]["messages"][0]["content"]
