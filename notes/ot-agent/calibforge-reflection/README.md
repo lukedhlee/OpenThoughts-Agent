@@ -1,6 +1,6 @@
 # CalibForge completion reflection experiments
 
-2026-10-13 · implementation authorized; job launch deferred to Luke and Horizon Claude Code.
+2026-10-13 · implementation and CPU gates complete; hardware prelaunch gate unrun; job launch deferred to Luke and Horizon Claude Code.
 Canonical repo: /Users/lukedhlee/OpenThoughts-Agent. Isolated checkout:
 /Users/lukedhlee/staged-work/calibforge-reflection/OpenThoughts-Agent,
 branch lukedhlee/calibforge-reflection. Evidence: agent_logs/2026-10-13_calibforge-reflection.md.
@@ -32,3 +32,5 @@ Qwen3.5/SWE-rebench reproduction. Numerical optimizer values must be read from o
 Validation: existing files' Git diff first (empty); each behavior gate uses real tokenizer where available and tiny
 CPU training plus controlled endpoint. GPU/actual HF export correctness remains a mandatory prelaunch gate; CPU
 results do not establish GB200 correctness or experiment success. Track rejected/infra/unknown outcomes separately.
+
+Completed local validation: 19 pipeline tests (native tokenizer included), 1 independently rerun Marin JAX/Optax accumulation/resume test, Ruff and Git whitespace checks pass. OTA changes are additive. Marin backend pin2eabece16a. Exact GB200 two-update/hardware/export/serving smoke is intentionally not run under implementation-only authorization.

@@ -36,7 +36,9 @@ def normalize_message(message):
                 thinking, content = content[len(begin) :].split(end, 1)
                 thinking, content = thinking.strip(), content.strip()
                 break
-    content = re.sub(r"(?:<\|eot_id\|>|<\|im_end\|>)\s*$", "", content).strip()
+    content = re.sub(
+        r"(?:<\|eot_id\|>|<\|end_of_text\|>|<\|im_end\|>)\s*$", "", content
+    ).strip()
     return {"role": "assistant", "content": content, "reasoning_content": thinking}
 
 
@@ -93,6 +95,9 @@ def generate_reflections(
                 "temperature": settings["temperature"],
                 "top_p": settings["top_p"],
                 "max_tokens": settings["max_tokens"],
+                # Grug has no server reasoning parser: keep native thought boundaries.
+                # Qwen uses its own parser and returns reasoning_content separately.
+                "skip_special_tokens": author == "teacher",
             }
             fingerprint = digest(
                 {
