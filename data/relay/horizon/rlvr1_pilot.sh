@@ -4,7 +4,7 @@ set -euo pipefail
 OTA=$(cd "$(dirname "$0")/../../.." && pwd)
 SB=$HOME/snowball
 S=/scratch/11584/$USER
-X=$S/experiments/relay_rlvr1
+X=${EXPERIMENT_ROOT:-$S/experiments/relay_rlvr1}
 PY=$SB/envs/snowball/bin/python
 MODEL=$S/models/grug-antidoom-rlvr1-step12
 REV=88f4d8b8c2a6083b9d107836b2a3a028e2465a8c
@@ -65,13 +65,24 @@ PY
 export STUDENT_MODEL=$MODEL
 export RELAY_PILOT_DIR=$OTA/data/relay/pilot
 export RELAY_EXP_DIR=$X E=$X JOBS_ROOT=$X/jobs
-export AGENT=msa HARBOR_SRC=$SB/harbor-msa-relay/src HARBOR_SHA=96fd911b
-export MSA_DIR=$SB/envs/msa-2.4.6
+case ${AGENT_MODE:-msa} in
+  msa)
+    export AGENT=msa HARBOR_SRC=$SB/harbor-msa-relay/src HARBOR_SHA=96fd911b
+    export MSA_DIR=$SB/envs/msa-2.4.6
+    export CTX_BUDGET=40000 TIME_TAKEOVER=0.6 ASSIST=1 ASSIST_CTX=20000,35000
+    export ASSIST_ERR=4 ASSIST_GAP=3 ASSIST_MAX=6
+    export TEACHER_HINT_TEXT='Work economically: the context window is limited and the episode ends when it is full. Keep command output short (pipe through head or tail, use grep -n and then sed -n on a line range; never cat binary or very large files). Change files with targeted edits (sed, or a short python patch) instead of rewriting whole files. Commands time out after 30 seconds, so run long jobs in the background with nohup and poll their output. Once the requirements are met and checked, submit rather than re-checking.'
+    ;;
+  terminus2)
+    export AGENT=terminus2 HARBOR_SRC=$SB/harbor-relay/src HARBOR_SHA=89098635
+    export CTX_BUDGET=32000 ASSIST=0
+    unset TIME_TAKEOVER TEACHER_HINT_TEXT MSA_DIR
+    ;;
+  *) echo 'AGENT_MODE must be msa or terminus2' >&2; exit 1;;
+esac
+export ARMS=${ARMS:-relay_repair}
 export NODES=$SERVE_NODES CAP_NODE_H IN_SERVE=1
 export TASK_LIST=$TASK_FILE N_ATTEMPTS=${N_ATTEMPTS:-1} CONC=${CONC:-8}
-export CTX_BUDGET=40000 TIME_TAKEOVER=0.6 ASSIST=1 ASSIST_CTX=20000,35000
-export ASSIST_ERR=4 ASSIST_GAP=3 ASSIST_MAX=6
-export TEACHER_HINT_TEXT='Work economically: the context window is limited and the episode ends when it is full. Keep command output short (pipe through head or tail, use grep -n and then sed -n on a line range; never cat binary or very large files). Change files with targeted edits (sed, or a short python patch) instead of rewriting whole files. Commands time out after 30 seconds, so run long jobs in the background with nohup and poll their output. Once the requirements are met and checked, submit rather than re-checking.'
 export GATE_LAT=120 GATE_MIN=15 SHUFFLE_SEED=list STAGGER_SEC=0
 export EARLY_MIN=10 MIN_EARLY_TURNS=4 STOP_AFTER=16 STOP_EVERY=120 STOP_HERR=0.25 STOP_OVF=1.01
 export TAKEOVER_MIN=0 TAKEOVER_MAX=1 TAKEOVER_AFTER=16
