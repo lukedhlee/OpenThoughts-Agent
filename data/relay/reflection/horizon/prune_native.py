@@ -24,6 +24,8 @@ def main():
     a = ap.parse_args()
     c = load_config(a.config)
     root = Path(c["runtime"]["output_dir"]) / c["name"]
+    if not (root / "state.json").exists():
+        return
     state = json.loads((root / "state.json").read_text())
     i = state["iteration"]
     if i < 2 or not state.get("optimizer"):

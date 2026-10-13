@@ -7,6 +7,7 @@
 #   FIXED_SERVE   "" (ROFT: the refresh adapter starts and refreshes the student) | student | teacher: a fixed author
 #                 server started once from the config's weights_path (offline arms)
 #   SOURCE_YAML   instead of the controller, run this harbor source-collection config (source_job.py)
+#   UPDATE_MARGIN_MIN  minutes before the allocation ends after which no new update starts (default 75)
 #   POST_CHECK=1  after the run, refresh the student server to the final export and check /models and a completion
 #SBATCH -p debug
 #SBATCH -A CCR24067
@@ -77,8 +78,17 @@ if [ -n "${SOURCE_YAML:-}" ]; then
   $PY $HZ/cleanup_sandboxes_async.py --key-file "$KEYF" --delete "$HJ" 2>&1 | tail -2
   log "REFLECTION_JOB_DONE rc=$rc"; exit $rc
 fi
-log "controller start: cli run --config $CONFIG"
-$PY -m data.relay.reflection.cli run --config "$CONFIG" < /dev/null
+# Start no update later than UPDATE_MARGIN_MIN before the allocation ends (one update's worst case), so the job never
+# dies inside an adapter; launch.sh again resumes at the next update.
+LEFT=$(squeue -h -j "$SLURM_JOB_ID" -o %L)
+DEADLINE=$($PY -c "
+import sys, time
+t = sys.argv[1]; d, _, hms = t.rpartition('-'); parts = [int(x) for x in hms.split(':')]
+while len(parts) < 3: parts.insert(0, 0)
+left = (int(d) if d else 0) * 86400 + parts[0] * 3600 + parts[1] * 60 + parts[2]
+print(int(time.time() + left - 60 * int(sys.argv[2])))" "$LEFT" "${UPDATE_MARGIN_MIN:-75}")
+log "controller start: cli run --config $CONFIG (time left $LEFT; no new update after $(date -d @$DEADLINE -Is))"
+$PY -m data.relay.reflection.cli run --config "$CONFIG" --deadline-epoch "$DEADLINE" < /dev/null
 rc=$?
 log "CONTROLLER_EXIT rc=$rc state=$(cat "$OUTD/state.json" 2>/dev/null | tr -d '\n' | head -c 600)"
 

@@ -191,3 +191,18 @@ def test_inflight_adapter_is_not_replayed(tmp_path):
     write_json(tmp_path / "train.inflight", {"request_digest": "previous"})
     with pytest.raises(ValueError, match="interrupted"):
         runner.adapter(c, "train", {"x": 1}, tmp_path)
+
+
+def test_deadline_pauses_between_updates_and_resumes(tmp_path, monkeypatch):
+    c = settings(tmp_path)
+    c["arm"] = "student_teacher"
+    c["runtime"]["endpoints"]["teacher"] = {"url": "unused", "served_model": "qwen"}
+    c["training"]["updates"] = 1
+    c["data"]["source_jsonl"] = str(tmp_path / "offline.jsonl")
+    write_jsonl(c["data"]["source_jsonl"], [source()])
+    events = []
+    fake_adapters(monkeypatch, events)
+    state = runner.run(c, client=client, renderer=renderer, deadline=0)
+    assert state["phase"] == "paused_deadline" and state["iteration"] == 0 and not events
+    state = runner.run(c, client=client, renderer=renderer)
+    assert state["completed"] and [n for n, _ in events] == ["train"]

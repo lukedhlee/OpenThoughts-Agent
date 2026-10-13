@@ -12,6 +12,7 @@ import math
 import random
 import statistics
 import subprocess
+import time
 from pathlib import Path
 
 from .core import (
@@ -91,7 +92,7 @@ def check_train_response(result, request):
             raise ValueError(f"missing {key} artifact")
 
 
-def run(config, *, client=None, renderer=None):
+def run(config, *, client=None, renderer=None, deadline=None):
     if config["arm"] == "vanilla":
         raise ValueError(
             "vanilla uses the existing SFT chain; use plan/validate-vanilla, not reflection run"
@@ -101,7 +102,7 @@ def run(config, *, client=None, renderer=None):
     with open(root / "owner.lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
-            return _run_locked(config, root, client, renderer)
+            return _run_locked(config, root, client, renderer, deadline)
         except Exception as error:
             path = root / "state.json"
             if path.exists():
@@ -117,7 +118,7 @@ def run(config, *, client=None, renderer=None):
             raise
 
 
-def _run_locked(config, root, client, renderer):
+def _run_locked(config, root, client, renderer, deadline=None):
     sha = digest(config)
     state_path = root / "state.json"
     if state_path.exists():
@@ -154,6 +155,12 @@ def _run_locked(config, root, client, renderer):
                 "offline updates would replay source attempts; reduce updates or supply more sources"
             )
     while state["iteration"] < config["training"]["updates"]:
+        # A deadline (epoch seconds) stops only between committed updates, never inside an adapter, so an allocation
+        # that ends leaves no ambiguous in-flight update; rerunning the same config resumes here.
+        if deadline is not None and time.time() >= deadline:
+            state["phase"] = "paused_deadline"
+            write_json(state_path, state)
+            return state
         i = state["iteration"] + 1
         directory = root / f"update-{i:04d}"
         directory.mkdir(exist_ok=True)

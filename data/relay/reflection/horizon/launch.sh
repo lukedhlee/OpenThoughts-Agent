@@ -13,7 +13,7 @@ NAME=$($PY -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "$C
 OUT=$($PY -c "import json,sys; print(json.load(open(sys.argv[1]))['runtime']['output_dir'])" "$CONFIG")/$NAME
 PYTHONPATH=$OTA $PY -c "import sys; from data.relay.reflection.core import load_config; load_config(sys.argv[1])" "$CONFIG"
 mkdir -p "$OUT/logs"
-J=$(CC=gcc CXX=g++ CONFIG=$CONFIG REFLECTION_OTA=$OTA FIXED_SERVE=$FIXED POST_CHECK=${POST_CHECK:-0} \
+J=$(CC=gcc CXX=g++ CONFIG=$CONFIG REFLECTION_OTA=$OTA FIXED_SERVE=$FIXED POST_CHECK=${POST_CHECK:-0} UPDATE_MARGIN_MIN=${UPDATE_MARGIN_MIN:-75} \
   sbatch --parsable -N $((TRAIN + 1)) -t "$TIME" -J "cfr_$NAME" -o "$OUT/logs/job_%j.out" --export=ALL \
   "$OTA/data/relay/reflection/horizon/job.sbatch" | tail -1)   # TACC's submit filter prints a banner before the id
 [[ "$J" =~ ^[0-9]+$ ]] || { echo "no job id from sbatch: $J"; exit 1; }

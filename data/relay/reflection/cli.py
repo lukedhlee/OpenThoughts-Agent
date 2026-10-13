@@ -46,6 +46,12 @@ def main():
     for command in ("plan", "run", "status", "prepare", "validate-vanilla"):
         a = sub.add_parser(command)
         a.add_argument("--config", required=True)
+        if command == "run":
+            a.add_argument(
+                "--deadline-epoch",
+                type=float,
+                help="start no new update after this time (epoch seconds)",
+            )
     a = sub.add_parser("import-harbor")
     a.add_argument("--roots", nargs="+", required=True)
     a.add_argument("--author", choices=("teacher", "student"), required=True)
@@ -76,7 +82,7 @@ def main():
             else json.dumps({"phase": "not_started"})
         )
     elif args.command == "run":
-        print(json.dumps(run(c), indent=2))
+        print(json.dumps(run(c, deadline=args.deadline_epoch), indent=2))
     elif args.command == "validate-vanilla":
         if c["arm"] != "vanilla":
             raise ValueError("requires vanilla arm")
