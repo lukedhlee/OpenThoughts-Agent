@@ -9,6 +9,8 @@ PY=$SB/envs/snowball/bin/python
 MODEL=$S/models/grug-antidoom-rlvr1-step12
 REV=88f4d8b8c2a6083b9d107836b2a3a028e2465a8c
 NAME=${RUN_NAME:-rlvr1_cf_pilot_20261012}
+TASK_COUNT=${TASK_COUNT:-32}
+TASK_FILE=$X/tasks${TASK_COUNT}.txt
 mkdir -p "$X"
 exec > >(tee -a "$X/$NAME.launch.log") 2>&1
 trap 'echo "FAILED at line $LINENO" > "$X/$NAME.status"' ERR
@@ -43,15 +45,16 @@ export TREE=$S/relay/calibforge_tree
 echo 'Restoring missing CalibForge snapshots (create only)' > "$X/$NAME.status"
 "$PY" "$OTA/data/relay/horizon/rlvr1_snapshots.py" "$TREE" "$KEYF" "$X/snapshot_logs"
 # Keep the original full staged tree (router task metadata), selecting a deterministic subset.
-"$PY" - "$TREE/TASKS.txt" "$OTA/data/relay/pilot/calibforge_heldout300.txt" "$X/tasks32.txt" <<'PY'
+"$PY" - "$TREE/TASKS.txt" "$OTA/data/relay/pilot/calibforge_heldout300.txt" "$TASK_FILE" "$TASK_COUNT" <<'PY'
 import random,sys
 from pathlib import Path
 tasks=Path(sys.argv[1]).read_text().splitlines()
 held=set(Path(sys.argv[2]).read_text().splitlines())
 assert len(tasks)==len(set(tasks)) and not set(tasks)&held
 random.Random(12).shuffle(tasks)
-Path(sys.argv[3]).write_text('\n'.join(tasks[:32])+'\n')
-print('TASK_PREFLIGHT_OK',len(tasks),'train tasks, 32 selected, heldout disjoint')
+n=int(sys.argv[4]); assert 1 <= n <= len(tasks)
+Path(sys.argv[3]).write_text('\n'.join(tasks[:n])+'\n')
+print('TASK_PREFLIGHT_OK',len(tasks),'train tasks,',n,'selected, heldout disjoint')
 PY
 export STUDENT_MODEL=$MODEL
 export RELAY_PILOT_DIR=$OTA/data/relay/pilot
@@ -59,7 +62,7 @@ export RELAY_EXP_DIR=$X E=$X JOBS_ROOT=$X/jobs
 export AGENT=msa HARBOR_SRC=$SB/harbor-msa-relay/src HARBOR_SHA=96fd911b
 export MSA_DIR=$SB/envs/msa-2.4.6
 export NODES=2 CAP_NODE_H=6 IN_SERVE=1
-export TASK_LIST=$X/tasks32.txt N_ATTEMPTS=1 CONC=8
+export TASK_LIST=$TASK_FILE N_ATTEMPTS=${N_ATTEMPTS:-1} CONC=${CONC:-8}
 export CTX_BUDGET=40000 TIME_TAKEOVER=0.6 ASSIST=1 ASSIST_CTX=20000,35000
 export ASSIST_ERR=4 ASSIST_GAP=3 ASSIST_MAX=6
 export TEACHER_HINT_TEXT='Work economically: the context window is limited and the episode ends when it is full. Keep command output short (pipe through head or tail, use grep -n and then sed -n on a line range; never cat binary or very large files). Change files with targeted edits (sed, or a short python patch) instead of rewriting whole files. Commands time out after 30 seconds, so run long jobs in the background with nohup and poll their output. Once the requirements are met and checked, submit rather than re-checking.'
@@ -80,7 +83,7 @@ if ! bash "$OTA/data/relay/horizon/launch_driver.sh" "$JOB" "$NAME"; then
   scancel "$JOB"
   exit 1
 fi
-echo "Pilot submitted: job $JOB; 32 tasks; max 6 node-hours; run $X/runs/$NAME" | tee "$X/$NAME.status"
+echo "Pilot submitted: job $JOB; $TASK_COUNT tasks x $N_ATTEMPTS; max 6 node-hours; run $X/runs/$NAME" | tee "$X/$NAME.status"
 # Keep this tmux session alive while the driver and reverse tunnels run. Horizon may
 # reap a login command's descendants when its final shell exits.
 while [ -n "$(squeue -h -j "$JOB")" ]; do sleep 30; done
