@@ -6,6 +6,31 @@ from pathlib import Path
 from .core import file_digest
 
 
+def atif_messages(trial_dir, result):
+    """Chat messages rebuilt from the last attempt's ATIF trajectory: agent steps are the raw replies, their
+    observations the harness's answers (tool output or format error)."""
+    rel = result.get("trial_relpath")
+    candidates = [trial_dir.parent / rel / "agent/trajectory.json"] if rel else []
+    candidates += sorted(trial_dir.glob("attempts/*/agent/trajectory.json"))[-1:]
+    for traj in candidates:
+        if not traj.exists():
+            continue
+        steps = json.loads(traj.read_text()).get("steps") or []
+        msgs = []
+        for step in steps:
+            source = step.get("source")
+            if source in ("system", "user"):
+                msgs.append({"role": source, "content": step.get("message") or ""})
+            elif source == "agent":
+                msgs.append({"role": "assistant", "content": step.get("message") or ""})
+                results = (step.get("observation") or {}).get("results") or []
+                text = "\n".join(str(r.get("content", "")) for r in results)
+                if text:
+                    msgs.append({"role": "user", "content": text})
+        return msgs
+    return None
+
+
 def import_trials(roots, *, author, model, revision, policy_version=0):
     rows = []
     rejected = {}
@@ -28,14 +53,17 @@ def import_trials(roots, *, author, model, revision, policy_version=0):
                 .get("metadata", {})
                 .get("all_messages")
             )
-            if not msgs:
-                traj = path.parent / "agent/trajectory.json"
-                if traj.exists():
-                    t = json.loads(traj.read_text())
-                    msgs = t.get("messages") if isinstance(t, dict) else t
+            experience_source = "all_messages"
+            if not msgs or not any(m.get("role") == "assistant" for m in msgs):
+                # MSA keeps only the harness's error feedback in all_messages when every reply was malformed (e.g.
+                # RepeatedFormatError): the model's replies survive only in the attempt's ATIF trajectory.
+                msgs = atif_messages(path.parent, result)
+                experience_source = "atif_trajectory"
             if not msgs or not any(m.get("role") == "assistant" for m in msgs):
                 reject("no_experience")
                 continue
+            if experience_source != "all_messages":
+                reject("recovered_from_atif")  # counted, not dropped
             task = result.get("task_name")
             task_path = (result.get("task_id") or {}).get("path")
             instruction = Path(task_path) / "instruction.md" if task_path else None
@@ -73,6 +101,7 @@ def import_trials(roots, *, author, model, revision, policy_version=0):
                         "text": feedback,
                     },
                     "termination": termination,
+                    "experience_source": experience_source,
                     "source_path": str(path.resolve()),
                     "source_sha256": file_digest(path),
                 }

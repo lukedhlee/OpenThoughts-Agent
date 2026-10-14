@@ -77,4 +77,5 @@ def test_infra_retries_are_the_evaluation_policys():
     c["runtime"]["collection"]["infra_retries"] = True
     retry = infra_retry(c)
     assert retry["max_retries"] > 0 and "DaytonaProcessError" in retry["include_exceptions"]
+    assert "EnvironmentStartTimeoutError" in retry["include_exceptions"]
     assert not {"ContextLengthExceededError", "AgentTimeoutError"} & set(retry["include_exceptions"])

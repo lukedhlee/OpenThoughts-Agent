@@ -4,8 +4,8 @@
 
 Tasks are collect.make_job's: the seed-shuffled training list from offset 0, so 1,280 = 20 x 64 covers exactly the
 tasks ROFT's 20 updates collect on. The agent block is collect.make_job's unchanged (MSA2 tool mode, 16k reply cap,
-65k context, no relay router, the student endpoint); only harbor's infrastructure retries are added, the same list the
-benchmark policy uses, so a Daytona or server hiccup is retried instead of leaving a hole. Import the finished job
+65k context, no relay router, the student endpoint); only harbor's infrastructure retries are added (collect.infra_retry: the
+benchmark policy's list plus sandbox-start and gateway errors), so a Daytona or server hiccup is retried instead of leaving a hole. Import the finished job
 with `cli import-harbor --author student` at the base revision.
 """
 
@@ -14,12 +14,8 @@ from pathlib import Path
 
 import yaml
 
-from data.relay.reflection.collect import make_job
+from data.relay.reflection.collect import infra_retry, make_job
 from data.relay.reflection.core import load_config
-
-RETRY = yaml.safe_load(
-    (Path(__file__).parents[3] / "tb2/jupiter/tb2_msa_rlvr1_norefeed_65k16k.yaml").read_text()
-)["retry"]
 
 
 def main():
@@ -38,7 +34,7 @@ def main():
     job["job_name"] = f"{config['name']}-sources-base-s{i}of{n}"
     job["jobs_dir"] = a.jobs_dir
     job["n_concurrent_trials"] = a.concurrency
-    job["retry"] = RETRY
+    job["retry"] = infra_retry({**config, "runtime": {**config["runtime"], "collection": {**config["runtime"]["collection"], "infra_retries": True}}})
     Path(a.out).write_text(yaml.safe_dump(job, sort_keys=False))
     print(f"{job['job_name']}: {len(job['tasks'])} tasks")
 

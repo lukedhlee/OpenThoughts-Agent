@@ -80,3 +80,25 @@ def test_import_preserves_verdict_separate_from_error(tmp_path):
     (p / "result.json").write_text(json.dumps(r))
     rows, _ = import_trials([tmp_path], author="teacher", model="qwen", revision="pin")
     assert rows[0]["feedback"]["verdict"] == "unknown"
+
+
+def test_import_recovers_all_malformed_episode_from_atif(tmp_path):
+    from data.relay.reflection.harbor import import_trials
+
+    trial = tmp_path / "job" / "trial-1"
+    (trial / "attempts/000/agent").mkdir(parents=True)
+    (trial / "result.json").write_text(json.dumps({
+        "id": "t1", "task_name": "train0", "trial_relpath": "trial-1/attempts/000",
+        "verifier_result": {"rewards": {"reward": 0.0}},
+        "agent_result": {"metadata": {"all_messages": [
+            {"role": "system", "content": "sys"}, {"role": "user", "content": "task"},
+            {"role": "user", "content": "Tool call error: never closed"}]}},
+    }))
+    (trial / "attempts/000/agent/trajectory.json").write_text(json.dumps({"steps": [
+        {"source": "system", "message": "sys"}, {"source": "user", "message": "task"},
+        {"source": "agent", "message": "<|start_think|>x<|end_think|><tool_call>{",
+         "observation": {"results": [{"content": "Tool call error: never closed"}]}}]}))
+    rows, bad = import_trials([tmp_path / "job"], author="student", model="m", revision="r")
+    assert bad == {"recovered_from_atif": 1} and rows[0]["experience_source"] == "atif_trajectory"
+    assert [m["role"] for m in rows[0]["messages"]] == ["system", "user", "assistant", "user"]
+    assert rows[0]["feedback"]["verdict"] == "fail"

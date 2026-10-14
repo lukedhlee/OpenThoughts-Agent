@@ -22,7 +22,14 @@ def infra_retry(config):
     import yaml
 
     policy = Path(__file__).parents[3] / config["evaluation"]["policy"]
-    return yaml.safe_load(policy.read_text())["retry"]
+    retry = yaml.safe_load(policy.read_text())["retry"]
+    # Also seen in CalibForge collection under load (2026-10-13): a Daytona sandbox that does not start within 300 s
+    # (16/64 trials of ROFT update 1) and a gateway error from the Daytona API. Both precede any model turn.
+    extra = [e for e in COLLECTION_INFRA if e not in retry["include_exceptions"]]
+    return dict(retry, include_exceptions=retry["include_exceptions"] + extra)
+
+
+COLLECTION_INFRA = ["EnvironmentStartTimeoutError", "DaytonaBadGatewayError"]
 
 
 def make_job(request):
