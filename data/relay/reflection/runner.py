@@ -155,9 +155,9 @@ def _run_locked(config, root, client, renderer, deadline=None):
                 "offline updates would replay source attempts; reduce updates or supply more sources"
             )
     while state["iteration"] < config["training"]["updates"]:
-        # A deadline (epoch seconds) stops only between committed updates, never inside an adapter, so an allocation
+        # A deadline (epoch seconds) or a PAUSE file in the run dir stops only between committed updates, never inside an adapter, so an allocation
         # that ends leaves no ambiguous in-flight update; rerunning the same config resumes here.
-        if deadline is not None and time.time() >= deadline:
+        if (deadline is not None and time.time() >= deadline) or (root / "PAUSE").exists():
             state["phase"] = "paused_deadline"
             write_json(state_path, state)
             return state

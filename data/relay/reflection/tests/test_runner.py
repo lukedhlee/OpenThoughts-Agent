@@ -204,5 +204,9 @@ def test_deadline_pauses_between_updates_and_resumes(tmp_path, monkeypatch):
     fake_adapters(monkeypatch, events)
     state = runner.run(c, client=client, renderer=renderer, deadline=0)
     assert state["phase"] == "paused_deadline" and state["iteration"] == 0 and not events
+    pause = Path(c["runtime"]["output_dir"]) / c["name"] / "PAUSE"
+    pause.write_text("")
+    assert runner.run(c, client=client, renderer=renderer)["phase"] == "paused_deadline" and not events
+    pause.unlink()
     state = runner.run(c, client=client, renderer=renderer)
     assert state["completed"] and [n for n, _ in events] == ["train"]
