@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "name": "cf-roft-0921-20261014",
+  "arm": "roft",
+  "student": {
+    "model": "open-athena/Grug-67B-A2B-Datakit-SFT-262K-2026.09.21",
+    "revision": "b8c07f7df1df65525abbfdbcd1572318ba11c42f",
+    "tokenizer_dir": "/scratch/11584/lukedhlee/models/grug-datakit-sft-20260921",
+    "weights_path": "/scratch/11584/lukedhlee/models/grug-datakit-sft-20260921"
+  },
+  "teacher": {
+    "model": "Qwen/Qwen3.8-27B",
+    "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    "tokenizer_dir": "/scratch/11584/lukedhlee/hf_hub/models--Qwen--Qwen3.8-27B/snapshots/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    "weights_path": "/scratch/11584/lukedhlee/hf_hub/models--Qwen--Qwen3.8-27B/snapshots/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+  },
+  "data": {
+    "seed": 0,
+    "outcomes": "all",
+    "train_tasks": "/scratch/11584/lukedhlee/relay/calibforge_tree/TASKS.txt",
+    "heldout_tasks": "/home1/11584/lukedhlee/snowball/ota-rlvr1-pair/data/relay/pilot/calibforge_heldout300.txt",
+    "task_tree": "/scratch/11584/lukedhlee/relay/calibforge_tree",
+    "source_jsonl": "/scratch/11584/lukedhlee/experiments/calibforge_reflection/sources/student.jsonl",
+    "vanilla_rows": "/scratch/11584/lukedhlee/experiments/relay_rlvr1/matched_sft/rlvr1_vanilla_rows.jsonl"
+  },
+  "reflection": {
+    "per_trajectory": 4,
+    "temperature": 0.9,
+    "top_p": 1.0,
+    "max_tokens": 8192,
+    "include_feedback": true,
+    "concurrency": 32
+  },
+  "training": {
+    "objective": "reflection_only",
+    "updates": 20,
+    "source_attempts": 64,
+    "sequence_length": 65536,
+    "microbatch_size": 16,
+    "passes_per_batch": 1,
+    "schedule_steps": 20,
+    "lr": 1e-05,
+    "beta1": 0.9,
+    "beta2": 0.98,
+    "epsilon": 1e-08,
+    "weight_decay": 0.1,
+    "grad_clip": 1.0,
+    "gradient_scale": 4.0,
+    "loss_reduction": "global_token_mean"
+  },
+  "backend": {
+    "marin_root": "/home1/11584/lukedhlee/snowball/marin-calibforge-roft",
+    "python": "/home1/11584/lukedhlee/snowball/envs/marin-grug-sft/bin/python",
+    "base_model": "/scratch/11584/lukedhlee/models/grug-datakit-sft-20260921",
+    "native_init": "/scratch/11584/lukedhlee/snowball-sft/experiments/snowball-base-inits/init-dk0921-step0",
+    "mesh": {
+      "expert_axis_size": 8,
+      "replica_axis_size": 1,
+      "model_axis_size": 1
+    },
+    "update_command": [
+      "bash",
+      "/home1/11584/lukedhlee/snowball/ota-reflection/data/relay/reflection/horizon/train_update.sh",
+      "{request}",
+      "{response}"
+    ]
+  },
+  "runtime": {
+    "output_dir": "/scratch/11584/lukedhlee/experiments/calibforge_reflection",
+    "timeout_sec": 600,
+    "adapter_timeout_sec": 7200,
+    "refresh_command": [
+      "bash",
+      "/home1/11584/lukedhlee/snowball/ota-reflection/data/relay/reflection/horizon/serve_model.sh",
+      "refresh",
+      "student",
+      "{model}",
+      "{version}"
+    ],
+    "endpoints": {
+      "student": {
+        "url": "http://127.0.0.1:29010/v1",
+        "served_model": "cf-student"
+      },
+      "teacher": {
+        "url": "http://127.0.0.1:29011/v1",
+        "served_model": "cf-teacher"
+      }
+    },
+    "commands": {
+      "refresh": [
+        "/home1/11584/lukedhlee/snowball/envs/snowball/bin/python",
+        "-m",
+        "data.relay.reflection.refresh",
+        "--request",
+        "{request}",
+        "--response",
+        "{response}"
+      ],
+      "collect": [
+        "/home1/11584/lukedhlee/snowball/envs/snowball/bin/python",
+        "-m",
+        "data.relay.reflection.collect",
+        "--request",
+        "{request}",
+        "--response",
+        "{response}"
+      ],
+      "train": [
+        "/home1/11584/lukedhlee/snowball/envs/marin-grug-sft/bin/python",
+        "-m",
+        "data.relay.reflection.marin_adapter",
+        "--request",
+        "{request}",
+        "--response",
+        "{response}"
+      ]
+    },
+    "collection": {
+      "harbor_bin": "/home1/11584/lukedhlee/snowball/envs/snowball/bin/harbor",
+      "harbor_root": "/home1/11584/lukedhlee/snowball/harbor-msa-relay",
+      "harbor_revision": "96fd911b",
+      "concurrency": 64,
+      "task_timeout_sec": 1800,
+      "context_length": 65536,
+      "max_tokens": 16384,
+      "temperature": 1.0,
+      "top_p": 1.0,
+      "infra_retries": true
+    }
+  },
+  "evaluation": {
+    "harness": "MSA2-2.4.6-tool",
+    "policy": "data/tb2/jupiter/tb2_msa_rlvr1_norefeed_65k16k.yaml",
+    "benchmarks": [
+      "TB2.1",
+      "SWE-r100",
+      "TBLite"
+    ],
+    "repetitions": 3,
+    "reflection_in_context": false
+  }
+}
