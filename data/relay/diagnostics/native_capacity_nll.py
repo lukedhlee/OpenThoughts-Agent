@@ -27,7 +27,7 @@ def main() -> None:
     ap.add_argument("--microbatch", type=int, default=16)
     ap.add_argument("--expert-axis", type=int, default=8)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--capacity-factor", type=float, default=1.25)
+    ap.add_argument("--capacity-factor", type=float, default=1.0)
     a = ap.parse_args()
 
     import equinox as eqx
@@ -101,7 +101,11 @@ def main() -> None:
             )
             raw_nll, overflow = per_position(params, batch)
             nll = np.asarray(multihost_utils.process_allgather(raw_nll, tiled=True))
-            overflow_value = np.asarray(multihost_utils.process_allgather(overflow)).tolist()
+            # A global scalar is replicated; gathering it with tiled=False is
+            # invalid for a non-fully-addressable multi-host JAX array.
+            if overflow.shape != () or not overflow.is_fully_replicated:
+                raise ValueError("Expected a replicated scalar overflow metric")
+            overflow_value = float(np.asarray(overflow.addressable_data(0)))
             batch_overflows.append(overflow_value)
             if jax.process_index() == 0:
                 print(f"offset={offset} overflow={overflow_value}", flush=True)
