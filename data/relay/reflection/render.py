@@ -45,12 +45,11 @@ def load_renderer(tokenizer_dir):
     return tokenizer, format_messages, file_digest(root / "chat_template.jinja")
 
 
-# Chat-structure markers of either author's template. A completion that writes one inside its reasoning or answer
-# (e.g. a student that closes its thought twice and starts a new "assistant" turn) has broken the turn boundary;
-# rendering it would train the marker mid-turn, so it is rejected and counted, like any other boundary failure.
+# Turn and document boundaries of either author's template. A completion that writes one inside its reasoning or
+# answer (an end-of-turn mid-text, a new header, a new document) has broken the turn it is supposed to be; rendering it
+# would train that boundary mid-turn, so it is rejected and counted. Think markers are not in this list: the RLVR1 student
+# often closes its thought two or more times, and the template reproduces exactly the tokens it sampled.
 CONTROL_MARKERS = (
-    "<|start_think|>",
-    "<|end_think|>",
     "<|eot_id|>",
     "<|start_header_id|>",
     "<|end_header_id|>",
@@ -58,8 +57,6 @@ CONTROL_MARKERS = (
     "<|end_of_text|>",
     "<|im_start|>",
     "<|im_end|>",
-    "<think>",
-    "</think>",
 )
 
 

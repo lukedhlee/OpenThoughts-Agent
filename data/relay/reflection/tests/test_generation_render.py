@@ -160,7 +160,10 @@ def test_native_masks(native, thinking):
     assert ("<|start_think|>" in target) == bool(thinking)
     with pytest.raises(ValueError, match="sequence_overflow"):
         render_reflection(record, tok, fmt, 8, sha)
-    # A completion that writes a turn marker inside its answer is rejected, not trained.
-    broken = dict(record, message=dict(record["message"], content="Look.<|end_think|>assistant\nPath: /app"))
+    # A completion that writes a turn boundary inside its answer is rejected, not trained; a repeated think close is kept.
+    broken = dict(record, message=dict(record["message"], content="Look.<|eot_id|><|start_header_id|>user<|end_header_id|>"))
     with pytest.raises(ValueError, match="control_token_in_completion"):
         render_reflection(broken, tok, fmt, 65536, sha)
+    twice = dict(record, message=dict(record["message"], content="More thought.<|end_think|>Check the logs."))
+    row = render_reflection(twice, tok, fmt, 65536, sha)
+    assert tok.decode(row["ids"][row["prompt_tokens"]:], skip_special_tokens=False).count("<|end_think|>") == 1 + bool(thinking)
