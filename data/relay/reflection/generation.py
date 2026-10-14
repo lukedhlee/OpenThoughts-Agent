@@ -27,7 +27,8 @@ def chat_completion(endpoint, payload, timeout, api_key_env=None):
 
 def normalize_message(message):
     content = (message.get("content") or "").strip()
-    thinking = (message.get("reasoning_content") or "").strip()
+    # vLLM's reasoning parser returns the thought as `reasoning` (this build) or `reasoning_content` (older ones).
+    thinking = (message.get("reasoning_content") or message.get("reasoning") or "").strip()
     if not thinking:
         for begin, end in [
             ("<|start_think|>", "<|end_think|>"),

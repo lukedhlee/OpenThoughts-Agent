@@ -108,6 +108,12 @@ def test_nonstop_and_empty_rejected(tmp_path):
         ]
         == "reason"
     )
+    # Qwen's thought arrives in `reasoning` from this vLLM build and must not be dropped.
+    assert normalize_message({"content": "\n\nlesson", "reasoning": "thought"}) == {
+        "role": "assistant",
+        "content": "lesson",
+        "reasoning_content": "thought",
+    }
 
 
 def test_concurrent_generation_keeps_order(tmp_path):
