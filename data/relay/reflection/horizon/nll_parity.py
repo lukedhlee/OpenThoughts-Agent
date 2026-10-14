@@ -14,6 +14,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+BUCKETS = (0, 2048, 4096, 8192, 16384)
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -34,6 +36,7 @@ def main():
         with urllib.request.urlopen(req, timeout=1800) as f:
             plp = json.load(f)["choices"][0]["prompt_logprobs"]
         total, count = 0.0, 0
+        buckets = {}
         for i, (token, weight) in enumerate(zip(row["ids"], row["loss"])):
             if not weight:
                 continue
@@ -42,19 +45,26 @@ def main():
             lp = lp["logprob"] if isinstance(lp, dict) else lp
             total += -lp
             count += 1
+            lo = max(b for b in BUCKETS if b <= i)
+            acc = buckets.setdefault(f"pos_{lo}", [0.0, 0])
+            acc[0] += -lp
+            acc[1] += 1
+        per_row.append({"sid": row["sid"], "tokens": count, "nll": total / count, **buckets})
         return total, count
 
+    per_row = []
     with ThreadPoolExecutor(8) as pool:
         parts = list(pool.map(one, rows))
     nll = sum(t for t, _ in parts) / sum(c for _, c in parts)
     # The backend's loss covers all rows; also recompute it over the same subset is impossible from the response, so
     # report the subset's vLLM NLL next to the backend's all-row loss plus per-row spread.
-    per_row = sorted(t / c for t, c in parts)
+    spread = sorted(t / c for t, c in parts)
     report = {"rows": len(rows), "tokens": sum(c for _, c in parts), "vllm_nll": round(nll, 4),
               "backend_loss_all_rows": round(trained["loss"], 4), "backend_rows": trained.get("supervised_tokens"),
-              "vllm_row_nll_p10_p50_p90": [round(per_row[int(q * (len(per_row) - 1))], 4) for q in (0.1, 0.5, 0.9)]}
+              "vllm_row_nll_p10_p50_p90": [round(spread[int(q * (len(spread) - 1))], 4) for q in (0.1, 0.5, 0.9)],
+              "per_row": per_row}
     Path(a.out).write_text(json.dumps(report, indent=1))
-    print(json.dumps(report))
+    print(json.dumps({k: v for k, v in report.items() if k != "per_row"}))
 
 
 if __name__ == "__main__":
