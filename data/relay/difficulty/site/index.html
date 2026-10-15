@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Student Difficulty Viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <div class="brand">Student difficulty <span class="sub">CalibForge Qwen3.8-27B teacher traces · MSA2 · teacher-forced student NLL</span></div>
+  <nav id="tabs">
+    <button data-view="traj" class="on">Trajectories</button>
+    <button data-view="spans">Spans</button>
+    <button data-view="bookmarks">Bookmarks <span id="bm-count"></span></button>
+    <button data-view="about">About</button>
+  </nav>
+  <div id="ckpt" class="seg" title="Which student's scores color the tokens"></div>
+</header>
+
+<div id="app">
+  <aside id="left">
+    <div class="pane-title">Trajectories <span class="hint">click a header to sort</span></div>
+    <table id="traj-table" class="tbl"></table>
+    <div class="legend-box">
+      <div class="pane-title">Color scale</div>
+      <canvas id="legend" width="260" height="34"></canvas>
+      <div id="legend-text" class="hint"></div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <section id="view-traj" class="view on">
+      <div id="controls">
+        <div class="ctl"><label>Color</label>
+          <div class="seg" id="mode">
+            <button data-mode="global" class="on" title="One NLL scale across every turn and trajectory">Global</button>
+            <button data-mode="pct" title="Rank tokens within their own turn">Turn percentile</button>
+          </div></div>
+        <div class="ctl" data-show="global"><label>Floor <b id="floor-v"></b></label><input id="floor" type="range" min="0" max="4" step="0.1"></div>
+        <div class="ctl" data-show="global"><label>Saturate at <b id="smax-v"></b></label><input id="smax" type="range" min="1" max="14" step="0.5"></div>
+        <div class="ctl" data-show="pct"><label>Color top <b id="pct-v"></b></label><input id="pct" type="range" min="1" max="50" step="1"></div>
+        <div class="ctl" data-show="delta"><label>±range <b id="dmax-v"></b></label><input id="dmax" type="range" min="0.5" max="8" step="0.5"></div>
+        <div class="ctl"><label>High-loss τ <b id="tau-v"></b></label><input id="tau" type="range" min="0.5" max="8" step="0.1"></div>
+        <div class="ctl"><label>Span gap <b id="gap-v"></b></label><input id="gap" type="range" min="0" max="12" step="1"></div>
+        <div class="ctl"><label>Smooth</label>
+          <select id="smooth" title="Color by the mean NLL of a window of tokens: isolated spikes fade, sustained regions stay">
+            <option value="1">off (raw)</option><option value="5">5 tokens</option><option value="15">15 tokens</option><option value="41">41 tokens</option>
+          </select></div>
+        <div class="ctl classes"><label>Score</label>
+          <label class="chk c0"><input type="checkbox" data-cls="reasoning" checked>reasoning</label>
+          <label class="chk c1"><input type="checkbox" data-cls="prose" checked>prose</label>
+          <label class="chk c2"><input type="checkbox" data-cls="command" checked>command</label>
+          <label class="chk cf"><input type="checkbox" data-cls="format">format</label>
+        </div>
+        <div class="ctl"><label>Show</label>
+          <label class="chk"><input type="checkbox" id="ws">whitespace</label>
+          <label class="chk"><input type="checkbox" id="bounds">token edges</label>
+          <label class="chk"><input type="checkbox" id="tools-collapsed" checked>fold tool output</label>
+        </div>
+        <div class="ctl nav">
+          <button id="prev-span" title="Previous high-loss span (p)">◀ span</button>
+          <span id="span-pos" class="hint"></span>
+          <button id="next-span" title="Next high-loss span (n)">span ▶</button>
+          <button id="hardest" title="Jump to the turn ranked first by the turn metric">hardest turn</button>
+        </div>
+      </div>
+      <div id="traj-head"></div>
+      <div id="overview">
+        <div class="ov-head">
+          <span class="pane-title">Turns</span>
+          <label class="hint">bar height</label>
+          <select id="metric">
+            <option value="mean">mean NLL (scored classes)</option>
+            <option value="high">high-loss fraction (≥ τ)</option>
+            <option value="spans">spans per 100 tokens</option>
+            <option value="max">max NLL</option>
+            <option value="sum">total NLL (grows with length)</option>
+          </select>
+          <button id="toggle-turn-table" class="small">turn table</button>
+        </div>
+        <div id="bars"></div>
+        <canvas id="heat" height="10"></canvas>
+        <div class="hint">Heat map: one row per turn, tokens left to right at a common scale; a pixel shows the highest NLL it covers. Click to jump.</div>
+        <div id="turn-table-wrap" hidden><table id="turn-table" class="tbl"></table></div>
+      </div>
+      <div id="convo"></div>
+    </section>
+
+    <section id="view-spans" class="view">
+      <div class="view-head">
+        <div class="pane-title">High-loss spans across all 20 trajectories</div>
+        <p class="hint" id="spans-note"></p>
+        <div class="filters">
+          <select id="sf-type"><option value="">every type</option><option>isolated</option><option>burst</option><option>extended</option></select>
+          <select id="sf-cls"><option value="">every class</option><option>reasoning</option><option>prose</option><option>command</option></select>
+          <select id="sf-sort"><option value="sum_nll">sort: total NLL</option><option value="max_nll">sort: max NLL</option><option value="n_tokens">sort: length</option><option value="mean">sort: mean NLL in span</option></select>
+          <input id="sf-q" type="search" placeholder="text contains…">
+          <button id="recompute-spans" title="Load every trajectory and recompute spans with the current τ, gap and class filters">recompute with current settings</button>
+          <span id="sf-count" class="hint"></span>
+        </div>
+      </div>
+      <div id="span-list"></div>
+    </section>
+
+    <section id="view-bookmarks" class="view">
+      <div class="view-head">
+        <div class="pane-title">Bookmarks and notes</div>
+        <p class="hint">Stored in this browser (localStorage). Shift-click two tokens in a turn to select a range, then bookmark it from the inspector. Export to keep or share.</p>
+        <div class="filters"><button id="bm-export">export JSON</button><label class="filebtn">import JSON<input id="bm-import" type="file" accept=".json"></label></div>
+      </div>
+      <div id="bm-list"></div>
+    </section>
+
+    <section id="view-about" class="view"><div id="about"></div></section>
+  </main>
+
+  <aside id="right">
+    <div class="pane-title">Token <span class="hint" id="pin-hint">hover a token · click to pin</span></div>
+    <div id="inspector"><p class="hint">No token selected.</p></div>
+    <div class="pane-title">Spans in this trajectory <span class="hint" id="local-span-count"></span></div>
+    <div id="local-spans"></div>
+  </aside>
+</div>
+<div id="loading">Loading…</div>
+<script src="app.js"></script>
+</body>
+</html>

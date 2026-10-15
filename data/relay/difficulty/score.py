@@ -10,11 +10,13 @@ Checks (--checks, on the first episode; any failure stops the run before the oth
   aligned     usage.prompt_tokens == len(ids), and every target position's entry carries the actual token id
               (vLLM always includes it, so an off-by-one would show a neighbour's id instead)
   generation  at sampled target positions j, a separate request with prompt ids[:j], max_tokens 1, logprobs K returns
-              the same top-K for its first generated token: prompt_logprobs[j] is the next-token distribution given
-              exactly ids[:j], i.e. the causal label shift is right
+              the same top-1 and nearly the same top-K for its first generated token as prompt_logprobs[j], and is
+              several times closer to it than to prompt_logprobs[j-1] or [j+1]: prompt_logprobs[j] is the next-token
+              distribution given exactly ids[:j], i.e. the causal label shift is right
   no_future   re-scoring the prefix that ends at turn k's <|eot_id|> gives turn k the same log-probs as the full
               episode: nothing after a turn (later turns, tool results) reaches its scores
-Numerical tolerance: bf16 batch composition moves log-probs by ~1e-3..1e-2; the checks bound the mean and max.
+  repeat      the identical request again: the per-token spread is the serving noise floor (bf16 kernels, MoE
+              routing near ties), the yardstick for every other comparison, recorded in run.json
 
     python score.py --renders <dir> --out <dir> --tag dk0921 --model-path <dir> [--url http://localhost:8000/v1]
 """
@@ -29,7 +31,7 @@ import sys
 import time
 import urllib.request
 
-TOL_MEAN, TOL_MAX = 0.02, 0.25
+TOL_MEAN = 0.05
 
 
 def post(url, payload, timeout=3600):
@@ -80,29 +82,48 @@ def score_episode(a, rec):
                 usage=usage, seconds=round(dt, 1)), plp
 
 
-def check_generation(a, rec, plp, n=12, seed=0):
+def _stats(d):
+    d = sorted(d)
+    return dict(compared=len(d), mean_abs=round(sum(d) / len(d), 5), p50=round(d[len(d) // 2], 5),
+                p99=round(d[min(len(d) - 1, int(0.99 * len(d)))], 5), max_abs=round(d[-1], 5))
+
+
+def check_generation(a, rec, plp, n=24, seed=0):
+    """Next-token distributions from generation (prompt ids[:j], one sampled token) against prompt_logprobs at j and at
+    the shifted alignments j-1 / j+1: the right alignment must agree on top-1 and be far closer than either shift."""
     ids, rng = rec['ids'], random.Random(seed)
     firsts = [t['tok_start'] for t in rec['turns']]
     js = sorted(set(rng.sample(firsts, min(4, len(firsts)))
-                    + rng.sample([j for t in rec['turns'] for j in range(t['tok_start'], t['tok_end'])], n)))
-    diffs, top1_same = [], 0
+                    + rng.sample([j for t in rec['turns'] for j in range(t['tok_start'] + 1, t['tok_end'] - 1)], n)))
+    res = {-1: [], 0: [], 1: []}
+    top1 = {-1: 0, 0: 0, 1: 0}
     for j in js:
         r = post(a.url + '/completions', dict(model=a.served_name, prompt=ids[:j], max_tokens=1, temperature=1.0,
                                                logprobs=a.k, return_tokens_as_token_ids=True))
         gen = r['choices'][0]['logprobs']['top_logprobs'][0]
         g = {int(k.split(':', 1)[1]): v for k, v in gen.items()}
-        p = {int(k): v['logprob'] for k, v in plp[j].items()}
-        common = set(g) & set(p)
-        assert len(common) >= min(len(g), a.k) - 1, f'position {j}: top-K differ {sorted(g)} vs {sorted(p)}'
-        diffs += [abs(g[c] - p[c]) for c in common]
-        top1_same += max(g, key=g.get) == max(p, key=p.get)
-    out = dict(positions=js, compared=len(diffs), mean_abs=sum(diffs) / len(diffs), max_abs=max(diffs),
-               top1_agree=f'{top1_same}/{len(js)}')
-    assert out['mean_abs'] < TOL_MEAN and out['max_abs'] < TOL_MAX, out
+        for off in res:
+            p = {int(k): v['logprob'] for k, v in plp[j + off].items()}
+            # distance over the generation's top-K; a token missing from p counts at p's K-th logprob (an upper bound)
+            floor = min(p.values())
+            res[off] += [abs(g[c] - p.get(c, floor)) for c in g]
+            top1[off] += max(g, key=g.get) == max(p, key=p.get)
+    out = dict(positions=js, **{f'offset_{o}': dict(_stats(res[o]), top1_agree=f'{top1[o]}/{len(js)}') for o in res})
+    m0 = out['offset_0']['mean_abs']
+    assert top1[0] >= 0.8 * len(js), out
+    assert m0 < 0.25 and m0 < 0.25 * min(out['offset_-1']['mean_abs'], out['offset_1']['mean_abs']), out
     return out
 
 
-def check_no_future(a, rec, full):
+def check_repeat(a, rec, full):
+    """The identical request again: the per-token spread is the serving noise floor (bf16 kernels, MoE routing)."""
+    plp, _, _ = prompt_logprobs(a, rec['ids'])
+    d = [abs(plp[j][str(rec['ids'][j])]['logprob'] - v) for j, v in zip(full['positions'], full['lp'])]
+    return _stats(d)
+
+
+def check_no_future(a, rec, full, noise):
+    """Turn k re-scored from a prompt that ends at its <|eot_id|>: same log-probs as in the full episode up to noise."""
     out = []
     ks = sorted({0, len(rec['turns']) // 2, len(rec['turns']) - 2} - {-1})
     by_pos = dict(zip(full['positions'], full['lp']))
@@ -110,9 +131,8 @@ def check_no_future(a, rec, full):
         t = rec['turns'][k]
         plp, _, _ = prompt_logprobs(a, rec['ids'][:t['tok_end']])
         d = [abs(plp[j][str(rec['ids'][j])]['logprob'] - by_pos[j]) for j in range(t['tok_start'], t['tok_end'])]
-        out.append(dict(turn=k, prefix_tokens=t['tok_end'], full_tokens=len(rec['ids']), compared=len(d),
-                        mean_abs=sum(d) / len(d), max_abs=max(d)))
-        assert out[-1]['mean_abs'] < TOL_MEAN and out[-1]['max_abs'] < TOL_MAX, out[-1]
+        out.append(dict(turn=k, prefix_tokens=t['tok_end'], full_tokens=len(rec['ids']), **_stats(d)))
+        assert out[-1]['mean_abs'] < max(TOL_MEAN, 3 * noise['mean_abs']), (out[-1], noise)
     return out
 
 
@@ -150,12 +170,14 @@ def main():
     if a.checks:
         rec = load(ids[0])
         res, plp = score_episode(a, rec)
+        rep = check_repeat(a, rec, res)
+        print('repeat (noise floor)', json.dumps(rep), flush=True)
         gen = check_generation(a, rec, plp)
         print('generation check', json.dumps(gen), flush=True)
-        nf = check_no_future(a, rec, res)
+        nf = check_no_future(a, rec, res, rep)
         print('no_future check', json.dumps(nf), flush=True)
         run['checks'] = dict(traj_id=rec['traj_id'], aligned='every target entry carries its token; usage matches',
-                             generation=gen, no_future=nf, tolerance=dict(mean=TOL_MEAN, max=TOL_MAX))
+                             repeat_noise=rep, generation=gen, no_future=nf)
 
     def one(i):
         rec = load(i)
