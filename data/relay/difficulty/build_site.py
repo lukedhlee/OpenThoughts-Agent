@@ -26,7 +26,13 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLASSES = ('reasoning', 'prose', 'command', 'think_tag', 'call_fmt', 'eot')
 CONTENT = {'reasoning', 'prose', 'command'}
-LABELS = {'dk0921': 'Grug 09-21 (Datakit SFT)', 'rlvr1s12': 'Grug RLVR1 Step12'}
+LABELS = {'dk0921': '09-21', 'rlvr1s12': 'RLVR1'}
+CONDITIONS = {'full_history': 'full history', 'norefeed': 'no-refeed'}
+
+
+def label(tag, run):
+    base = LABELS.get(tag.split('_')[0], tag.split('_')[0])
+    return base + ('' if run['condition'] == 'full_history' else ' · ' + CONDITIONS.get(run['condition'], run['condition']))
 EVAL_CONTEXT = 65536
 
 
@@ -74,6 +80,7 @@ def main():
     ap.add_argument('--out', required=True)
     ap.add_argument('--tau', type=float, default=2.3, help='high-loss NLL (nats); 2.3 = p < 0.10')
     ap.add_argument('--gap', type=int, default=3)
+    ap.add_argument('--max-spans', type=int, default=1500, help='per score set, largest total NLL first, in index.json')
     a = ap.parse_args()
     sys.path.insert(0, HERE)
     from render_full import load_student
@@ -108,8 +115,8 @@ def main():
                 lp = [x[0] for x in sc]
                 for x in sc:
                     vocab_ids.update(x[2])
-                per[tag] = dict(lp=[round(x, 4) for x in lp], rk=[x[1] for x in sc], top=[x[2] for x in sc],
-                                tlp=[[round(v, 3) for v in x[3]] for x in sc])
+                per[tag] = dict(lp=[round(x, 3) for x in lp], rk=[x[1] for x in sc], top=[x[2] for x in sc],
+                                tlp=[[round(v, 2) for v in x[3]] for x in sc])
                 nll = [-x for x in lp]
                 summ[tag] = turn_summary(nll, t['cls'], a.tau)
                 spans = spans_of(nll, t['cls'], a.tau, a.gap)
@@ -171,18 +178,21 @@ def main():
                           summary=ep_sum, turns=[dict(k=t['k'], n=len(t['ids']), history_tokens=t['history_tokens'],
                                                       s={tag: tsum[t['k']][tag] for tag in a.tags}) for t in turns]))
     span_rows.sort(key=lambda r: -r['sum_nll'])
-    config = dict(tags=[dict(tag=t, label=LABELS.get(t, t), model_path=runs[t]['model_path'],
+    config = dict(tags=[dict(tag=t, label=label(t, runs[t]), condition=runs[t]['condition'], model_path=runs[t]['model_path'],
                              model_id=runs[t].get('model_id'), revision=runs[t].get('revision'),
                              vllm_version=runs[t].get('vllm_version'), serve_args=runs[t].get('serve_args'),
                              prompt_logprobs_k=runs[t]['prompt_logprobs_k'], checks=runs[t].get('checks'),
                              slurm_job=runs[t].get('slurm_job')) for t in a.tags],
                   classes=CLASSES, content=sorted(CONTENT), tau=a.tau, gap=a.gap, eval_context=EVAL_CONTEXT,
-                  condition='full_history: every earlier turn with its reasoning, as the teacher saw it',
+                  conditions=dict(full_history='one pass over the episode: every earlier turn with its reasoning, '
+                                               'as the teacher saw it (collection ran interleaved_thinking true)',
+                                  norefeed='one request per turn: earlier assistant turns without their reasoning, '
+                                           'the student\'s MSA2 eval view (interleaved_thinking false)'),
                   sample=dict(pool=man['pool'], pool_rows=man['pool_rows'], pool_tasks=man['pool_tasks'],
                               seed=man['seed'], method=man['method'], exclusions=man['exclusions'],
                               teacher=man['teacher'], harness=man['harness']))
-    json.dump(dict(config=config, trajectories=index, spans=[r for r in span_rows if r['tag'] == a.tags[0]][:400]
-                   + [r for r in span_rows if r['tag'] != a.tags[0]][:400]),
+    json.dump(dict(config=config, trajectories=index,
+                   spans=[r for t in a.tags for r in [x for x in span_rows if x['tag'] == t][:a.max_spans]]),
               open(os.path.join(a.out, 'data', 'index.json'), 'w'), separators=(',', ':'), ensure_ascii=False)
     for name, rows in (('turns', turn_rows), ('spans', span_rows)):
         with open(os.path.join(a.out, 'tables', name + '.csv'), 'w', newline='') as f:

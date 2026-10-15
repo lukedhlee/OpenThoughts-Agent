@@ -16,7 +16,7 @@ const store = {
 };
 
 const S = Object.assign({
-  tag: null, mode: 'global', floor: 0.5, smax: 8, pctTop: 15, dmax: 3, tau: 2.3, gap: 3, smooth: 1,
+  tag: null, dA: null, dB: null, mode: 'global', floor: 0.5, smax: 8, pctTop: 15, dmax: 3, tau: 2.3, gap: 3, smooth: 1,
   show: { reasoning: true, prose: true, command: true, format: false },
   ws: false, bounds: false, foldTools: true, metric: 'mean', trajSort: ['content_mean', -1], turnSort: ['k', 1],
 }, store.get('settings', {}));
@@ -39,7 +39,7 @@ function divColor(t) {  // t in [-1, 1]: blue = easier for the second checkpoint
 }
 const isDelta = () => S.tag === 'delta';
 const tags = () => CFG.tags.map(t => t.tag);
-const tagLabel = t => t === 'delta' ? `Δ ${CFG.tags[1].label} − ${CFG.tags[0].label}` : (CFG.tags.find(x => x.tag === t) || {}).label || t;
+const tagLabel = t => t === 'delta' ? `Δ ${tagLabel(S.dB)} − ${tagLabel(S.dA)}` : (CFG.tags.find(x => x.tag === t) || {}).label || t;
 
 // ---------- data ----------
 async function getJSON(u) { const r = await fetch(u); if (!r.ok) throw new Error(u + ': ' + r.status); return r.json(); }
@@ -74,10 +74,10 @@ function visible(i) {
   return c < 3 ? S.show[CLASSES[c]] : S.show.format;
 }
 function rawVal(i) {
-  if (isDelta()) { const [a, b] = tags(); return nllOf(b, i) - nllOf(a, i); }
+  if (isDelta()) return nllOf(S.dB, i) - nllOf(S.dA, i);
   return nllOf(S.tag, i);
 }
-const spanTag = () => isDelta() ? tags()[0] : S.tag;
+const spanTag = () => isDelta() ? S.dA : S.tag;
 
 let VAL = null;    // displayed value per token (smoothed if asked); NaN for tokens not scored under the class filter
 function computeValues() {
@@ -174,7 +174,7 @@ function trajMetric(t, key) {
   if (key === 'domain') return t.domain;
   if (key === 'n_turns') return t.n_turns;
   if (key === 'n_targets') return t.n_targets;
-  if (isDelta()) { const [a, b] = tags(); return m(b) - m(a); }
+  if (isDelta()) return m(S.dB) - m(S.dA);
   return m(S.tag);
 }
 function renderTrajTable() {
@@ -382,7 +382,7 @@ function inspect(i) {
     const lp = G.lp[tag][i];
     return `<tr><td>${esc(tagLabel(tag))}</td><td class="ckcol">p ${fmt(Math.exp(lp), 4)} · NLL <b>${fmt(-lp, 3)}</b> · rank ${G.rk[tag][i]}</td></tr>`;
   }).join('');
-  const dl = tags().length > 1 ? `<tr><td>Δ NLL</td><td class="ckcol">${fmt(nllOf(tags()[1], i) - nllOf(tags()[0], i), 3)} (second − first)</td></tr>` : '';
+  const dl = isDelta() ? `<tr><td>${esc(tagLabel('delta'))}</td><td class="ckcol"><b>${fmt(nllOf(S.dB, i) - nllOf(S.dA, i), 3)}</b> nats</td></tr>` : '';
   const atag = spanTag();
   const alts = G.top[atag][i].map((id, j) => {
     const p = Math.exp(G.tlp[atag][i][j]);
@@ -534,7 +534,9 @@ function renderAbout() {
   $('#about').innerHTML = `
     <h3>What the colors mean</h3>
     <p>Each teacher (Qwen3.8-27B) token is colored by the student's negative log-probability of it, given the whole conversation before it and the teacher's earlier tokens in the same turn (teacher forcing). High NLL means the token surprised the student under this history. It is a hypothesis generator, not proof of missing knowledge: formatting conventions, arbitrary choices (file names, exact numbers) and wording the student would phrase differently all score high too.</p>
-    <h3>History scored</h3><p>${esc(c.condition)}. Tool outputs, system and task messages are context only. The student's eval (MSA2 no-refeed) shows earlier turns without their reasoning, so some tokens that refer back to earlier thinking are easier here than they would be at eval time.</p>
+    <h3>History scored (two conditions)</h3><p><b>full history</b>: ${esc(c.conditions.full_history)}.<br><b>no-refeed</b>: ${esc(c.conditions.norefeed)}.<br>
+    Tool outputs, system and task messages are context only in both. The same teacher tokens are scored in both, so Δ(no-refeed − full history) per token is how much the teacher's own earlier reasoning made that token predictable: the context a student at eval time does not have.</p>
+    <h3>Noise floor</h3><p>vLLM serving of this MoE is not bit-deterministic: repeating the identical request moves a token's log-prob by median ~0.0005, mean ~0.02, p99 ~0.3, max ~1.5–2 nats (MoE routing near ties). Treat per-token differences below ~0.3 nats, and Δ maps at small ±range, as noise; turn and span means average it out.</p>
     <h3>Sample</h3><p>${esc(s.method)}</p><p>Pool: <code>${esc(s.pool)}</code>, ${s.pool_rows} episodes, ${s.pool_tasks} tasks; seed ${s.seed}. Exclusions: ${s.exclusions.length ? esc(JSON.stringify(s.exclusions)) : 'none'}.</p>
     <p>Teacher: ${esc(s.teacher)}. Harness: ${esc(s.harness)}.</p>
     <h3>Checkpoints</h3><table>${ck}</table>
@@ -554,7 +556,7 @@ function drawLegend() {
     ctx.fillRect(x, 0, 1, 18);
   }
   let txt;
-  if (isDelta()) txt = `−${S.dmax} … 0 … +${S.dmax} nats (red: harder for ${CFG.tags[1].label})`;
+  if (isDelta()) txt = `−${S.dmax} … 0 … +${S.dmax} nats of ${tagLabel('delta')} (red: higher NLL under ${tagLabel(S.dB)})`;
   else if (S.mode === 'pct') txt = `top ${S.pctTop}% of each turn, by within-turn rank`;
   else txt = `NLL ${S.floor} … ${S.smax}+ nats (p ${Math.exp(-S.floor).toFixed(2)} … ${Math.exp(-S.smax).toExponential(0)}); underline = NLL ≥ τ ${S.tau}`;
   $('#legend-text').textContent = txt + (S.smooth > 1 ? ` · smoothed over ${S.smooth} tokens` : '');
@@ -566,6 +568,7 @@ function syncControls() {
   $('#smax').value = S.smax; $('#smax-v').textContent = S.smax;
   $('#pct').value = S.pctTop; $('#pct-v').textContent = S.pctTop + '%';
   $('#dmax').value = S.dmax; $('#dmax-v').textContent = S.dmax;
+  if (S.dA) { $('#dA').value = S.dA; $('#dB').value = S.dB; }
   $('#tau').value = S.tau; $('#tau-v').textContent = `${S.tau} (p<${Math.exp(-S.tau).toFixed(2)})`;
   $('#gap').value = S.gap; $('#gap-v').textContent = S.gap;
   $('#smooth').value = S.smooth; $('#metric').value = S.metric;
@@ -697,8 +700,14 @@ async function main() {
   CFG = INDEX.config;
   const ts = tags();
   if (!S.tag || (S.tag !== 'delta' && !ts.includes(S.tag)) || (S.tag === 'delta' && ts.length < 2)) S.tag = ts[0];
+  if (!ts.includes(S.dA)) S.dA = ts[0];
+  if (!ts.includes(S.dB) || S.dB === S.dA) S.dB = ts.find(t => t !== S.dA);
+  const opts = ts.map(t => `<option value="${t}">${esc(tagLabel(t))}</option>`).join('');
+  $('#dA').innerHTML = opts; $('#dB').innerHTML = opts;
+  $('#dA').onchange = e => { S.dA = e.target.value; changed(); };
+  $('#dB').onchange = e => { S.dB = e.target.value; changed(); };
   $('#ckpt').innerHTML = CFG.tags.map(t => `<button data-tag="${t.tag}" title="${esc(t.model_id || t.model_path)}">${esc(t.label)}</button>`).join('')
-    + (ts.length > 1 ? `<button data-tag="delta" title="NLL under ${esc(CFG.tags[1].label)} minus under ${esc(CFG.tags[0].label)}">Δ</button>` : '');
+    + (ts.length > 1 ? `<button data-tag="delta" title="difference between two score sets (choose the pair in the controls)">Δ</button>` : '');
   $$('#ckpt button').forEach(b => b.onclick = () => { S.tag = b.dataset.tag; changed(); });
   bind(); syncControls(); renderTrajTable(); renderBookmarks();
   const want = location.hash.slice(1) || store.get('traj', null) || INDEX.trajectories[0].traj_id;
