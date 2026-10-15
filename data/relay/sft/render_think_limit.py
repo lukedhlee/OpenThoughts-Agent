@@ -8,7 +8,9 @@
 render.py is imported from --render-dir, so the rendering code (template, capped history, mask rules, 65,536 row
 limit) is exactly that checkout's; only render_episode's think_limit argument changes (default 8,192, 09-21's old
 per-turn output limit; 16,384 under the 65k/16k TB policy, coordinator 2026-09-27). The limit only decides whether an
-uncut Qwen reasoning span is trained; it never changes the text, so row lengths are unchanged.
+uncut Qwen reasoning span is trained; it never changes the text, so row lengths are unchanged. --cap also passes
+render_episode's reasoning cap (default 1,000): a huge value keeps every older teacher turn's reasoning whole, which
+does change the text and the row lengths.
 
 Prints per-run stats: rows, rows over 65,536, trained tokens, Qwen turns whose uncut reasoning is over 8,192 and over
 16,384 tokens (masked at the old / new limit), and the max reasoning tokens in one Qwen turn.
@@ -107,6 +109,10 @@ def main():
     ap.add_argument('--autofix-loss', choices=('content', 'none'), default='content',
                     help="render_episode's autofix_loss: 'content' (render.py's default) trains an autofixed 09-21 turn's "
                          "rewritten action; 'none' masks it like every other 09-21 turn (relay SFT arm A, 2026-09-28)")
+    ap.add_argument('--cap', type=int, default=None,
+                    help="render_episode's reasoning cap in tokens for older teacher turns (default: render.py's own, "
+                         "1,000); a huge value renders every turn's reasoning whole, so it is trained when within "
+                         "--think-limit (the uncut Qwen-alone baseline, 2026-10-15)")
     a = ap.parse_args()
     if a.strip_copied_markers and not a.terminus_parser:
         ap.error('--strip-copied-markers needs --terminus-parser')
@@ -117,6 +123,7 @@ def main():
     name = os.path.basename(os.path.normpath(a.run_dir))
     want = {json.loads(l)['sid'] for l in open(a.manifest) if l.strip()}
     tok = render.rcap.load_tokenizer(os.path.join(a.tokenizer_dir, 'tokenizer.json'))
+    cap_kw = {} if a.cap is None else dict(cap=a.cap)
     tpl = render.load_template(os.path.join(a.tokenizer_dir, 'chat_template.jinja'))
     bos = json.load(open(os.path.join(a.tokenizer_dir, 'tokenizer_config.json'))).get('bos_token', '<|begin_of_text|>')
     bos = bos.get('content') if isinstance(bos, dict) else bos
@@ -162,9 +169,9 @@ def main():
                     continue
                 if a.strip_copied_markers:
                     strip['on'] = False
-                    ref = render.render_episode(traj, recs[sid], tok, tpl, bos, think_limit=a.think_limit, autofix_loss=a.autofix_loss)
+                    ref = render.render_episode(traj, recs[sid], tok, tpl, bos, think_limit=a.think_limit, autofix_loss=a.autofix_loss, **cap_kw)
                     strip['on'], strip['row_hit'] = True, False
-                row = render.render_episode(traj, recs[sid], tok, tpl, bos, think_limit=a.think_limit, autofix_loss=a.autofix_loss)
+                row = render.render_episode(traj, recs[sid], tok, tpl, bos, think_limit=a.think_limit, autofix_loss=a.autofix_loss, **cap_kw)
                 render.check_row(row, tok)
                 if a.strip_copied_markers:
                     st['rows_stripped'] += strip['row_hit']
