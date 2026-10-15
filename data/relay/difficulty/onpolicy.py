@@ -19,7 +19,9 @@ Sampled-token logprobs come from the decode path and teacher logprobs from the p
 some samples through the prefill path to measure the offset between the two (compared in analysis, not hidden).
 
     python onpolicy.py --renders <dir> --out <dir> --condition full_history|norefeed [--n 8] [--k 20] [--only t01 ...]
-writes <out>/<traj_id>.json.gz (per turn: teacher stats, sample stats + classes + finish reasons) and <out>/run.json.
+writes <out>/<traj_id>.json.gz (per turn: teacher stats, sample stats + classes + finish reasons) and one
+<out>/run.<worker>.json per worker. Workers share the trajectory list as a queue (atomic claims), so a condition can
+be spread over several servers by starting more workers with the same --out.
 """
 import argparse
 import concurrent.futures as cf
@@ -231,7 +233,17 @@ def main():
                slurm_job=os.environ.get('SLURM_JOB_ID'), started=time.strftime('%Y-%m-%dT%H:%M:%S%z'), episodes={},
                path_check=[])
     checked = 0
+    worker = f'{socket.gethostname().split(".")[0]}-{os.getpid()}'
+    run_path = os.path.join(a.out, f'run.{worker}.json')
     for tid in ids:
+        # shared queue: any number of workers on any number of servers; a trajectory is claimed atomically and
+        # skipped once its output exists (clear stale *.claim files before relaunching killed workers)
+        if os.path.exists(os.path.join(a.out, tid + '.json.gz')):
+            continue
+        try:
+            os.close(os.open(os.path.join(a.out, tid + '.claim'), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        except FileExistsError:
+            continue
         rec = json.load(open(os.path.join(a.renders, tid + '.json')))
         r = render(json.load(open(rec['msa_trajectory']))['messages'], tok, tpl, bos)
         assert hashlib.sha256(r['text'].encode()).hexdigest() == rec['text_sha256'], 'trajectory changed since rendering'
@@ -250,16 +262,18 @@ def main():
         turns = [dict(k=t['k'], prompt_tokens=len(p), teacher=dict(cls=''.join(str(CLASSES.index(c)) for c in t['cls']),
                                                                    **teacher[t['k']]), samples=ss)
                  for t, p, ss in zip(rec['turns'], prompts, samples)]
-        with gzip.open(os.path.join(a.out, tid + '.json.gz'), 'wt') as f:
+        tmp = os.path.join(a.out, f'.{tid}.{worker}.tmp')
+        with gzip.open(tmp, 'wt') as f:
             json.dump(dict(traj_id=tid, condition=a.condition, tag=a.tag, turns=turns), f)
+        os.replace(tmp, os.path.join(a.out, tid + '.json.gz'))
         gen = sum(len(s['ids']) for ss in samples for s in ss)
         run['episodes'][tid] = dict(turns=len(turns), samples=sum(len(ss) for ss in samples), generated_tokens=gen,
                                     length_capped=sum(s['finish'] == 'length' for ss in samples for s in ss),
                                     seconds=round(time.time() - t0, 1), text_sha256=rec['text_sha256'])
         print(tid, json.dumps(run['episodes'][tid]), flush=True)
-        json.dump(run, open(os.path.join(a.out, 'run.json'), 'w'), indent=1)
+        json.dump(run, open(run_path, 'w'), indent=1)
     run['finished'] = time.strftime('%Y-%m-%dT%H:%M:%S%z')
-    json.dump(run, open(os.path.join(a.out, 'run.json'), 'w'), indent=1)
+    json.dump(run, open(run_path, 'w'), indent=1)
 
 
 if __name__ == '__main__':
