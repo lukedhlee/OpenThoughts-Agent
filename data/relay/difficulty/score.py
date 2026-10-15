@@ -31,6 +31,8 @@ import sys
 import time
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 TOL_MEAN = 0.05
 
 
@@ -80,6 +82,37 @@ def score_episode(a, rec):
             top_lp.append([round(x[1], 5) for x in top])
     return dict(traj_id=rec['traj_id'], positions=pos, lp=lp, rank=rank, top_ids=top_ids, top_lp=top_lp,
                 usage=usage, seconds=round(dt, 1)), plp
+
+
+def score_episode_norefeed(a, rec):
+    """Condition norefeed: one request per turn, history without earlier reasoning (render_full.norefeed_prompts);
+    the turn's body positions are reported at their full-render positions."""
+    from render_full import load_student, norefeed_prompts, render
+    global _STUDENT
+    if '_STUDENT' not in globals():
+        _STUDENT = load_student(json.load(open(os.path.join(a.renders, 'render_report.json')))['tokenizer_dir'])
+    tok, tpl, bos = _STUDENT
+    r = render(json.load(open(rec['msa_trajectory']))['messages'], tok, tpl, bos)
+    import hashlib
+    assert hashlib.sha256(r['text'].encode()).hexdigest() == rec['text_sha256'], 'trajectory changed since rendering'
+    out = dict(traj_id=rec['traj_id'], positions=[], lp=[], rank=[], top_ids=[], top_lp=[], prompt_tokens=[],
+               usage=dict(prompt_tokens=0), seconds=0.0)
+    for t, (ids, n) in zip(rec['turns'], norefeed_prompts(r, tok)):
+        plp, usage, dt = prompt_logprobs(a, ids)
+        assert usage.get('prompt_tokens') == len(ids) and len(plp) == len(ids)
+        out['usage']['prompt_tokens'] += len(ids)
+        out['seconds'] += dt
+        out['prompt_tokens'].append(len(ids))
+        for j in range(n):
+            i = len(ids) - n + j
+            v, rk, top = entry(plp, i, ids[i])
+            out['positions'].append(t['tok_start'] + j)
+            out['lp'].append(v)
+            out['rank'].append(rk)
+            out['top_ids'].append([x[0] for x in top[:a.k]])
+            out['top_lp'].append([round(x[1], 5) for x in top[:a.k]])
+    out['seconds'] = round(out['seconds'], 1)
+    return out, None
 
 
 def _stats(d):
@@ -151,12 +184,15 @@ def main():
     ap.add_argument('--only', nargs='*', help='traj ids (default: every render)')
     ap.add_argument('--checks', action='store_true')
     ap.add_argument('--workers', type=int, default=4)
+    ap.add_argument('--condition', choices=('full_history', 'norefeed'), default='full_history',
+                    help='full_history: one pass, earlier turns with their reasoning (what the teacher saw); norefeed: '
+                         'per turn, earlier turns without reasoning (the student\'s MSA2 eval view)')
     a = ap.parse_args()
     ids = sorted(f[:-5] for f in os.listdir(a.renders) if f.startswith('t') and f.endswith('.json'))
     if a.only:
         ids = [i for i in ids if i in a.only]
     os.makedirs(a.out, exist_ok=True)
-    run = dict(tag=a.tag, condition='full_history', model_path=a.model_path, model_id=a.model_id, revision=a.revision,
+    run = dict(tag=a.tag, condition=a.condition, model_path=a.model_path, model_id=a.model_id, revision=a.revision,
                served_name=a.served_name, serve_args=a.serve_args, url=a.url, prompt_logprobs_k=a.k,
                vllm_version=get(a.url.rsplit('/v1', 1)[0] + '/version').get('version'),
                models=get(a.url + '/models'), host=socket.gethostname(), started=time.strftime('%Y-%m-%dT%H:%M:%S%z'),
@@ -181,7 +217,7 @@ def main():
 
     def one(i):
         rec = load(i)
-        res, _ = score_episode(a, rec)
+        res, _ = (score_episode_norefeed if a.condition == 'norefeed' else score_episode)(a, rec)
         with gzip.open(os.path.join(a.out, i + '.json.gz'), 'wt') as f:
             json.dump(res, f)
         nll = [-x for x in res['lp']]

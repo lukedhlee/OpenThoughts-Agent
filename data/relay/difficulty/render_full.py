@@ -183,6 +183,23 @@ def check_targets(r, tok):
     return n
 
 
+def norefeed_prompts(r, tok):
+    """Per turn: (prompt ids, body length) under the student's MSA2 eval view (tb2_msa_*_norefeed: interleaved_thinking
+    false), i.e. every earlier assistant turn without its reasoning, then the turn's own body exactly as in the full
+    render. The body's ids are checked equal to the full render's, so its scores line up position for position."""
+    stripped = [{k: v for k, v in m.items() if k != 'reasoning_content'} if m['role'] == 'assistant' else m
+                for m in r['full']]
+    out = []
+    for t in r['turns']:
+        prefix = r['tpl_render'](stripped[:t['msg']], True)
+        body = r['ids'][t['tok_start']:t['tok_end']]
+        p_ids = tok.encode(prefix, add_special_tokens=False).ids
+        ids = tok.encode(prefix + r['text'][t['start']:t['end']], add_special_tokens=False).ids
+        assert ids == p_ids + body, f"turn at message {t['msg']}: no-refeed prompt does not end in the turn's body"
+        out.append((ids, len(body)))
+    return out
+
+
 def episode_record(r, tok, meta):
     """The JSON the scorer and the site read (checkpoint independent: scores are keyed by token position)."""
     vocab_piece = [tok.id_to_token(i) for i in r['ids']]
