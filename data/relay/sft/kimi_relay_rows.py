@@ -31,6 +31,9 @@ def main():
     ap.add_argument('--tokenizer-dir', required=True)
     ap.add_argument('--think-limit', type=int, default=16384)
     ap.add_argument('--out', required=True)
+    ap.add_argument('--cap', type=int, default=None,
+                    help="render_episode's reasoning cap for older turns (default: render.py's own, 1,000); a huge value "
+                         "keeps every turn's reasoning whole, so it is trained when within --think-limit")
     a = ap.parse_args()
     import pyarrow.parquet as pq
     sys.path.insert(0, os.path.abspath(a.render_dir))
@@ -57,7 +60,8 @@ def main():
             if not ok or not turns or turns[0][0] != 'user' or turns[-1][0] != 'assistant':
                 st['bad_turn'] += 1
                 continue
-            row = render.render_episode(dict(turns=turns), [], tok, tpl, bos, autofix_loss='none', think_limit=a.think_limit)
+            row = render.render_episode(dict(turns=turns), [], tok, tpl, bos, autofix_loss='none', think_limit=a.think_limit,
+                                         **({} if a.cap is None else dict(cap=a.cap)))
             render.check_row(row, tok)
             if not row['fits']:
                 st['over_64k'] += 1
