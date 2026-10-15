@@ -37,9 +37,10 @@ def hbars(rows, groups, title, xmin=0.0, xmax=1.0, ref=None, fmt='{:.2f}', width
     x = lambda v: left + (width - left - 60) * (v - xmin) / (xmax - xmin)  # noqa: E731
     out = [f'<svg viewBox="0 0 {width} {h}" class="chart" role="img" aria-label="{esc(title)}">',
            f'<text x="0" y="14" class="ct">{esc(title)}</text>']
+    step = (width - left) / max(1, len(groups))
     for i, (key, lab, col) in enumerate(groups):
-        out.append(f'<rect x="{left + i * 170}" y="20" width="10" height="8" fill="{col}"/>'
-                   f'<text x="{left + i * 170 + 14}" y="28" class="lg">{esc(lab)}</text>')
+        out.append(f'<rect x="{left + i * step}" y="20" width="10" height="8" fill="{col}"/>'
+                   f'<text x="{left + i * step + 14}" y="28" class="lg">{esc(lab)}</text>')
     for t in [xmin + (xmax - xmin) * k / 4 for k in range(5)]:
         out.append(f'<line x1="{x(t)}" x2="{x(t)}" y1="{top}" y2="{h - 26}" class="grid"/>'
                    f'<text x="{x(t)}" y="{h - 12}" class="ax" text-anchor="middle">{fmt.format(t)}</text>')
@@ -85,7 +86,7 @@ def lines(series, xs, title, width=520, height=230, ylab='mean NLL'):
         for i, v in enumerate(s):
             out.append(f'<circle cx="{X(i)}" cy="{Y(v)}" r="3" fill="{col}"><title>{esc(lab)} {xs[i]}: {v:.3f}</title></circle>')
         out.append(f'<text x="{X(len(xs) - 1) + 8}" y="{Y(s[-1]) + 4}" class="lg" fill="{col}">{esc(lab)}</text>')
-    out.append(f'<text x="10" y="{top + 10}" class="ax">{esc(ylab)}</text></svg>')
+    out.append(f'<text x="{left}" y="{top - 6}" class="ax">{esc(ylab)}</text></svg>')
     return ''.join(out)
 
 
@@ -96,9 +97,9 @@ def stacked(rows, title, width=760):
     out = [f'<svg viewBox="0 0 {width} {h}" class="chart" role="img" aria-label="{esc(title)}">',
            f'<text x="0" y="14" class="ct">{esc(title)}</text>']
     for i, (c, lab, col) in enumerate(CATS):
-        out.append(f'<rect x="{left + (i % 4) * 135}" y="{18 + (i // 4) * 11}" width="9" height="8" fill="{col}"/>'
-                   f'<text x="{left + (i % 4) * 135 + 12}" y="{26 + (i // 4) * 11}" class="lg">{esc(lab)}</text>')
-    W = width - left - 70
+        out.append(f'<rect x="{left + (i % 4) * 150}" y="{18 + (i // 4) * 11}" width="9" height="8" fill="{col}"/>'
+                   f'<text x="{left + (i % 4) * 150 + 12}" y="{26 + (i // 4) * 11}" class="lg">{esc(lab)}</text>')
+    W = width - left - 80
     for r, (lab, cnt) in enumerate(rows):
         y = top + r * (bh + 6)
         n = sum(cnt.values()) or 1
@@ -109,8 +110,8 @@ def stacked(rows, title, width=760):
             if w > 0:
                 out.append(f'<rect x="{x0}" y="{y}" width="{w}" height="{bh}" fill="{col}"><title>{esc(lab)}: {esc(clab)} {cnt.get(c, 0)}/{n}</title></rect>')
             x0 += w
-        inf = sum(cnt.get(c, 0) for c in INFORMATIVE) / n
-        out.append(f'<text x="{left + W + 6}" y="{y + bh - 4}" class="rl">{inf:.0%} inf.</text>')
+        k_inf = sum(cnt.get(c, 0) for c in INFORMATIVE)
+        out.append(f'<text x="{left + W + 6}" y="{y + bh - 4}" class="rl">{k_inf}/{n} inf.</text>')
     out.append('</svg>')
     return ''.join(out)
 
@@ -173,7 +174,9 @@ def main():
         series.append(('all content', '#212529', [b2['mean_nll_by_checkpoint'][k] for k in cps]))
         cats = b2['categories']
         catbar = ''.join(f'<div class="cat"><b>{v:.1%}</b><span>{k[0]}→{k[1]}</span></div>' for k, v in cats.items())
-        prow = [(MEASURE_LABEL.get(p, p), {'x': (v['auroc'], v['ci'])}) for p, v in b2['predict_stay_hard'].items()]
+        bm = b2.get('predict_stay_hard_base_matched', {})
+        prow = [(MEASURE_LABEL.get(p, p), {'x': (v['auroc'], v['ci']), 'm': (bm.get(p), None)})
+                for p, v in b2['predict_stay_hard'].items()]
         prow.sort(key=lambda r: -r[1]['x'][0])
         sprow = sorted(b2['spearman_residual'].items(), key=lambda kv: -kv[1])
         parts.append(('b2', 'Benchmark 2 · Which tokens does SFT fail to teach?',
@@ -184,7 +187,8 @@ def main():
                       + '<div class="row">' + lines(series, xs, 'Mean NLL of the teacher tokens across SFT passes') +
                       f'<div><div class="cats">{catbar}</div><p class="hint">Rho-1 style categories, base → pass 3. '
                       f'Learned at pass 1 then hard again at pass 3: {b2["forgetting_events"]:.2%} of tokens.</p></div></div>'
-                      + hbars(prow, [('x', 'AUROC among tokens that start hard', '#2b8a3e')],
+                      + hbars(prow, [('x', 'AUROC among tokens that start hard', '#2b8a3e'),
+                                     ('m', 'same, at equal starting NLL (within deciles)', '#8ce99a')],
                               'Predicting which initially-hard tokens stay hard after 3 passes (base-model measures)', 0.3, 0.9, 0.5)
                       + '<p>Spearman of each base measure with the token\'s NLL after pass 3 (all content tokens): '
                       + ', '.join(f'{esc(MEASURE_LABEL.get(p, p))} {v:.2f}' for p, v in sprow) + '.</p>'))

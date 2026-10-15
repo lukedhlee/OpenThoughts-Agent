@@ -34,6 +34,7 @@ select { background: var(--panel); border: 1px solid var(--line); border-radius:
 .brand .sub { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 8px; }
 #tabs { display: flex; gap: 4px; }
 #tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+#tabs .navlink { align-self: center; margin-left: 6px; font-size: 12px; color: var(--accent); text-decoration: none; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 .seg button { border: 0; border-radius: 0; border-right: 1px solid var(--line); }
 .seg button:last-child { border-right: 0; }

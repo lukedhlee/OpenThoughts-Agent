@@ -26,8 +26,10 @@ Yardsticks:
   B1 off-policy detection   per turn, AUROC of the teacher's turn against the student's N own samples at the same
                             prompt; token level, pooled AUROC of teacher vs own-sample content tokens per class
   B2 learnability (SFT)     the vanilla clean-pair SFT trained on these very episodes (passes 1-3); per token NLL at
-                            base, 146, 292, 438. Rho-1 categories (H = NLL >= tau). Main task: among tokens that start
-                            hard, which stay hard after three passes (H->H "fails to learn") vs get learned (H->L)
+                            base, 146, 292, 438, restricted to tokens SFT actually trained (earlier-turn reasoning over
+                            1,000 tokens was cut and masked; kept as a control). Rho-1 categories (H = NLL >= tau).
+                            Main task: among trained tokens that start hard, which stay hard after three passes (H->H
+                            "fails to learn") vs get learned (H->L)
   B3 stability              Spearman of each token measure between 09-21 and RLVR1 (and full vs no-refeed)
   (B4, judged informativeness, is built from windows.jsonl written here and labelled separately)
 
@@ -207,6 +209,12 @@ def main():
                 cls = np.array([CLASSES.index(c) for c in t['cls']])
                 m = np.isin(cls, CONTENT)
                 n = len(cls)
+                # Was the token an SFT target? render_msa.py cuts every earlier teacher turn's reasoning to
+                # reasoning_cap.CAP_TOKENS (1,000) and masks reasoning that was cut; prose and tool calls are always
+                # trained. So reasoning is trained only in the episode's last turn or when it is <= 1,000 tokens.
+                n_reason = int((cls == 0).sum())
+                reason_trained = k == len(rec['turns']) - 1 or n_reason <= 1000
+                rows['trained'].append(((cls != 0) | reason_trained)[m])
                 for key in TOKEN_MEASURES:
                     rows[key].append(tm[key][m])
                 rows['dnr'].append((nr[tid][k] - fullk5[tid][k])[m])
@@ -218,6 +226,10 @@ def main():
                 for s in a.sft:
                     rows[s].append(sft[s][tid][k][m])
         F = {k: np.concatenate(v) for k, v in rows.items()}
+        tr = F['trained'].astype(bool)
+        control = dict(n=int((~tr).sum()), mean_nll={s: float(F[s][~tr].mean()) for s in ['k5base'] + a.sft},
+                       share_of_content=float((~tr).mean()))
+        F = {k: v[tr] for k, v in F.items()}          # learnability is only defined for tokens SFT trained on
         b0, bf = F['k5base'], F[a.sft[-1]]
         cats = dict(HH=float(((b0 >= TAU) & (bf >= TAU)).mean()), HL=float(((b0 >= TAU) & (bf < TAU)).mean()),
                     LH=float(((b0 < TAU) & (bf >= TAU)).mean()), LL=float(((b0 < TAU) & (bf < TAU)).mean()))
@@ -226,7 +238,7 @@ def main():
         hard = b0 >= TAU
         y_stay = bf[hard] >= TAU                                  # H->H among initially hard
         preds = list(TOKEN_MEASURES) + ['dnr', 'xstudent', 'position']
-        b2 = dict(categories=cats, mean_nll_by_checkpoint=dict(base=float(b0.mean()), **mono),
+        b2 = dict(untrained_control=control, categories=cats, mean_nll_by_checkpoint=dict(base=float(b0.mean()), **mono),
                   forgetting_events=float(fe.mean()), n_tokens=int(len(b0)), n_hard=int(hard.sum()),
                   stay_hard_rate=float(y_stay.mean()), predict_stay_hard={}, spearman_residual={},
                   by_class={CLASSES[c]: dict(base=float(b0[F['cls'] == c].mean()),
@@ -240,6 +252,18 @@ def main():
             fn = lambda parts: auroc(np.concatenate([q[0][q[1]] for q in parts]), np.concatenate([q[0][~q[1]] for q in parts]))  # noqa: E731
             b2['predict_stay_hard'][p] = dict(auroc=round(fn(list(per_traj.values())), 4), ci=boot_ci(per_traj, fn, n=200))
             b2['spearman_residual'][p] = round(spearman(F[p], bf), 4)
+            # base-matched: AUROC within deciles of base NLL (among initially hard), weighted by bin size, so a
+            # measure gets no credit for merely restating how far above the threshold the token starts
+            q = np.quantile(b0[hard], np.linspace(0, 1, 11))
+            binid = np.clip(np.searchsorted(q, b0[hard], side='right') - 1, 0, 9)
+            aucs, ws = [], []
+            for bi in range(10):
+                sel_ = binid == bi
+                yy, xx = y_stay[sel_], x[sel_]
+                if yy.sum() and (~yy).sum():
+                    aucs.append(auroc(xx[yy], xx[~yy]))
+                    ws.append(sel_.sum())
+            b2.setdefault('predict_stay_hard_base_matched', {})[p] = round(float(np.average(aucs, weights=ws)), 4)
         res['b2'] = b2
         print('B2', json.dumps({p: v['auroc'] for p, v in b2['predict_stay_hard'].items()}), cats, flush=True)
         # windows for the judged benchmark: top tokens per measure, one per turn, plus ground-truth H->H
@@ -249,8 +273,9 @@ def main():
             rec = renders[tid]
             for k, t in enumerate(rec['turns']):
                 cls = [CLASSES.index(c) for c in t['cls']]
+                reason_trained = k == len(rec['turns']) - 1 or sum(c == 0 for c in cls) <= 1000
                 for j, c in enumerate(cls):
-                    if c in CONTENT:
+                    if c in CONTENT and (c != 0 or reason_trained):
                         flat_index.append((tid, k, j))
         sel = {p: F[p] for p in preds}
         sel['sft_stays_hard'] = np.where(hard & (bf >= TAU), bf, -np.inf)
