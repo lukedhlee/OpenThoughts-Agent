@@ -7,6 +7,8 @@ const FORMAT = [3, 4, 5];
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => Array.from(el.querySelectorAll(s));
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const SPECIAL = { '<|start_think|>': '⟨think⟩', '<|end_think|>': '⟨/think⟩', '<|eot_id|>': '⟨eot⟩' };
+const showSpecial = s => s.replace(/<\|(start_think|end_think|eot_id)\|>/g, m => SPECIAL[m]);
 const fmt = (x, d = 2) => (x == null || Number.isNaN(x)) ? '–' : Number(x).toFixed(d);
 const pct = x => (x == null || Number.isNaN(x)) ? '–' : (100 * x).toFixed(1) + '%';
 
@@ -16,7 +18,7 @@ const store = {
 };
 
 const S = Object.assign({
-  tag: null, dA: null, dB: null, mode: 'global', floor: 0.5, smax: 8, pctTop: 15, dmax: 3, tau: 2.3, gap: 3, smooth: 1,
+  tag: null, dA: null, dB: null, mode: 'global', floor: 1, smax: 8, pctTop: 15, dmax: 3, tau: 2.3, gap: 3, smooth: 1,
   show: { reasoning: true, prose: true, command: true, format: false },
   ws: false, bounds: false, foldTools: true, metric: 'mean', trajSort: ['content_mean', -1], turnSort: ['k', 1],
 }, store.get('settings', {}));
@@ -179,7 +181,7 @@ function trajMetric(t, key) {
 }
 function renderTrajTable() {
   const cols = [['traj_id', 'id'], ['domain', 'domain'], ['n_turns', 'turns', 1], ['n_targets', 'targets', 1],
-    ['content_mean', isDelta() ? 'Δμ' : 'μ NLL', 1], ['content_high', isDelta() ? 'Δhigh' : 'high', 1], ['spans', 'sp/100', 1]];
+    ['content_mean', isDelta() ? 'Δμ' : 'μ NLL', 1], ['content_high', isDelta() ? 'Δhigh pp' : 'high', 1], ['spans', 'sp/100', 1]];
   const [sk, sd] = S.trajSort;
   const rows = INDEX.trajectories.slice().sort((x, y) => {
     const a = trajMetric(x, sk), b = trajMetric(y, sk);
@@ -411,12 +413,12 @@ function inspect(i) {
 }
 
 // ---------- spans: local list & navigation ----------
-function spanText(s) { let x = ''; for (let i = s.a; i <= s.b; i++) x += G.piece[i]; return x; }
+function spanText(s) { let x = ''; for (let i = s.a; i <= s.b; i++) x += G.piece[i]; return showSpecial(x); }
 function spanCtx(s) {
   let pre = '', post = '';
   for (let i = Math.max(G.tStart[s.k], s.a - 30); i < s.a; i++) pre += G.piece[i];
   for (let i = s.b + 1; i < Math.min(G.tEnd[s.k], s.b + 15); i++) post += G.piece[i];
-  return [pre.slice(-160), post.slice(0, 90)];
+  return [showSpecial(pre.slice(-160)), showSpecial(post.slice(0, 90))];
 }
 function renderLocalSpans() {
   const list = SPANS.slice().sort((x, y) => y.sum - x.sum).slice(0, 60);
@@ -445,6 +447,7 @@ function gotoSpan(d) {
 }
 function scrollToTurn(k) {
   const el = $('#turn-' + k); if (!el) return;
+  history.replaceState(null, '', '#' + TRAJ.meta.traj_id + ':' + k);
   el.scrollIntoView({ block: 'start' });
   $$('#convo .msg.focus').forEach(e => e.classList.remove('focus'));
   el.classList.add('focus');
@@ -482,7 +485,7 @@ function renderGlobalSpans() {
     <div class="sp-meta"><b>${r.traj_id}</b><span>turn ${r.turn}</span><span class="type-${r.type}">${r.type}</span><span>${r.cls}</span>
     <span>${r.n_tokens} tok · ${r.n_high} high</span><span>Σ ${fmt(r.sum_nll, 1)} · max ${fmt(r.max_nll, 1)}</span>
     ${r.beyond_eval_context ? '<span class="beyond-tag">beyond eval context</span>' : ''}<span>${esc((INDEX.trajectories.find(t => t.traj_id === r.traj_id) || {}).domain || '')}</span></div>
-    <div class="sp-text"><span class="ctxt">…${esc(r.before.slice(-160))}</span><span class="core" style="background:${seqColor(r.max_nll / 10)}">${esc(r.text)}</span><span class="ctxt">${esc(r.after)}…</span></div></div>`).join('');
+    <div class="sp-text"><span class="ctxt">…${esc(showSpecial(r.before.slice(-160)))}</span><span class="core" style="background:${seqColor(r.max_nll / 10)}">${esc(showSpecial(r.text))}</span><span class="ctxt">${esc(showSpecial(r.after))}…</span></div></div>`).join('');
 }
 async function recomputeGlobalSpans() {
   const btn = $('#recompute-spans'); btn.disabled = true;
@@ -691,7 +694,7 @@ async function openTraj(id) {
     renderHead(); renderConvo(); recolor(); renderTrajTable();
     $('#main').scrollTop = 0;
     store.set('traj', id);
-    location.hash = id;
+    history.replaceState(null, '', '#' + id);
   } finally { $('#loading').classList.remove('on'); }
 }
 
@@ -710,8 +713,12 @@ async function main() {
     + (ts.length > 1 ? `<button data-tag="delta" title="difference between two score sets (choose the pair in the controls)">Δ</button>` : '');
   $$('#ckpt button').forEach(b => b.onclick = () => { S.tag = b.dataset.tag; changed(); });
   bind(); syncControls(); renderTrajTable(); renderBookmarks();
-  const want = location.hash.slice(1) || store.get('traj', null) || INDEX.trajectories[0].traj_id;
+  // deep links: #t05 opens a trajectory, #t05:12 also scrolls to turn 12
+  // #spans / #bookmarks / #about open a view
+  const h = location.hash.slice(1), views = ['spans', 'bookmarks', 'about'];
+  const [want, turn] = (h && !views.includes(h) ? h : store.get('traj', null) || INDEX.trajectories[0].traj_id).split(':');
   await openTraj(INDEX.trajectories.some(t => t.traj_id === want) ? want : INDEX.trajectories[0].traj_id);
-  showView(store.get('view', 'traj'));
+  showView(views.includes(h) ? h : h ? 'traj' : store.get('view', 'traj'));
+  if (turn != null && G && +turn < G.tStart.length) { scrollToTurn(+turn); history.replaceState(null, '', '#' + want + ':' + turn); }
 }
 main().catch(e => { document.body.insertAdjacentHTML('afterbegin', `<pre style="color:#c00;padding:10px">${esc(String(e.stack || e))}\n\nServe this directory over HTTP (python3 -m http.server), not file://.</pre>`); });
