@@ -82,9 +82,13 @@ case $ROLE in
     else [ -f "$DRAFT/model.safetensors" ] || { echo "no draft at $DRAFT"; exit 1; }; fi
     CHAT=(); [ -f "$MODEL/chat_template.jinja" ] && CHAT=(--chat-template "$MODEL/chat_template.jinja")
     GEN='{"temperature":1.0,"top_p":1.0,"top_k":-1}'
+    # STUDENT_MAXLEN (default the eval's 65,536): a longer context for teacher-forced scoring of long histories
+    # (difficulty/serve_hold.sbatch). Grug's vLLM model uses max_seq_len only as the RoPE cache length, so positions
+    # inside 65,536 compute the same function either way.
+    SML=${STUDENT_MAXLEN:-65536}
     serve $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name snowball --port 8000 \
       --tensor-parallel-size 1 --data-parallel-size 4 --enable-expert-parallel \
-      --max-model-len 65536 --hf-overrides '{"max_position_embeddings": 65536, "max_seq_len": 65536}' \
+      --max-model-len $SML --hf-overrides "{\"max_position_embeddings\": $SML, \"max_seq_len\": $SML}" \
       --max-num-seqs 32 --gpu-memory-utilization 0.90 \
       "${SPEC[@]}" --override-generation-config "$GEN" "${CHAT[@]}";;
   teacher)
