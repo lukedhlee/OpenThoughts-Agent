@@ -13,6 +13,7 @@ Per token both carry the same derived statistics, all from the top-K (default 20
              -> surprise p-value = 1 - above: on the student's own samples it is ~uniform (probability integral
              transform), so "teacher tokens with p < 0.01" has a known 1 % false-positive rate under the student
   h_lb       entropy of the top-K plus the tail mass as one token: a lower bound on the student's entropy here
+  m2         E[(log p)^2] over the same support: Var[log p] = m2 - h_lb^2, for the standardized log-prob
   rank       1..K, K+1 = outside the top-K
 Sampled-token logprobs come from the decode path and teacher logprobs from the prefill path; `--path-check` re-scores
 some samples through the prefill path to measure the offset between the two (compared in analysis, not hidden).
@@ -134,11 +135,14 @@ def stats(lp, top):
     if not in_top:
         above = mass
     h_lb = -sum(p * math.log(p) for p in ps if p > 0) - (tail * math.log(tail) if tail > 0 else 0.0)
-    return dict(nll=-lp, gap=top[0][1] - lp, above=above, h_lb=h_lb, rank=rank)
+    # second moment of log p under the student (top-K + tail as one token): with h_lb gives Var[log p], for the
+    # standardized log-prob z = (log p(token) + H) / sd (Fast-DetectGPT's analytic curvature, arXiv 2310.05130)
+    m2 = sum(p * math.log(p) ** 2 for p in ps if p > 0) + (tail * math.log(tail) ** 2 if tail > 0 else 0.0)
+    return dict(nll=-lp, gap=top[0][1] - lp, above=above, h_lb=h_lb, m2=m2, rank=rank)
 
 
 def pack(rows):
-    keys = ('nll', 'gap', 'above', 'h_lb', 'rank')
+    keys = ('nll', 'gap', 'above', 'h_lb', 'm2', 'rank')
     return {k: [round(r[k], 4) if k != 'rank' else r[k] for r in rows] for k in keys}
 
 
