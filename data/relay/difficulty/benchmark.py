@@ -289,10 +289,11 @@ def main():
         if not A or not B:
             continue
         key = f'{p1[0]}/{p1[1]} vs {p2[0]}/{p2[1]}'
-        res['b3'][key] = {}
+        common = sorted(set(A) & set(B))
+        res['b3'][key] = {'_n_traj': len(common)}
         for m in TOKEN_MEASURES:
-            xa = np.concatenate([tm[m] for tid in A for tm in A[tid]])
-            xb = np.concatenate([tm[m] for tid in B for tm in B[tid]])
+            xa = np.concatenate([tm[m] for tid in common for tm in A[tid]])
+            xb = np.concatenate([tm[m] for tid in common for tm in B[tid]])
             res['b3'][key][m] = round(spearman(xa, xb), 4)
         print('B3', key, res['b3'][key], flush=True)
     json.dump(res, open(os.path.join(a.out, 'benchmark.json'), 'w'), indent=1)
