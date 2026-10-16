@@ -30,11 +30,12 @@ here (`sft/horizon_sft_chain.sh`) is the Jupiter one with Horizon paths. Port-ga
 
 1. **Code:** `git clone -b lukedhlee/horizon-snowball-sft https://github.com/lukedhlee/marin.git ~/snowball/marin-sft`
    for this Kimi reference run. **Relay SFT needs `-b relay-v1` instead** (the tag on branch `lukedhlee/horizon-snowball-sft-0921`):
-   only that branch has the 09-21 recipe and the `relay_*` stages (§ Relay SFT arms).
-   (use `--filter=blob:none`); OT-Agent job checkout `~/snowball/ota-train` (this branch).
-2. **Env (once):** from `$SCRATCH/snowball-sft/logs`:
+   only that branch has the 09-21 recipe and the `relay_*` stages (§ Relay SFT arms). Clone with
+   `--filter=blob:none`. The OT-Agent checkout is `~/snowball/ota`, as `data/relay/README.md` section 1 clones it.
+2. **Env (once):** it needs the uv from `data/relay/README.md` section 1, step 2 (`$ROOT/bin/uv`; pass
+   `UV=<ROOT>/bin/uv` in the `--export` below if your ROOT is not `~/snowball`). From `$SCRATCH/snowball-sft/logs`:
    `J=$(sbatch --parsable --export=ALL,MARIN_ROOT=$HOME/snowball/marin-sft,SNOWBALL_ENV=$HOME/snowball/envs/marin-grug-sft,SNOWBALL_UV_CACHE=$SCRATCH/cache/uv-grug $HOME/snowball/marin-sft/experiments/june_tpu_67b_a2b/moe/horizon_snowball_env.sbatch | tail -1)`
-   then `setsid nohup bash ~/snowball/ota-train/data/r2egym/horizon/tunnel.sh $J > tunnel.$J.log 2>&1 < /dev/null &`.
+   then `setsid nohup bash ~/snowball/ota/data/r2egym/horizon/tunnel.sh $J > tunnel.$J.log 2>&1 < /dev/null &`.
    Done at `ENV_BUILD_OK`. (Horizon's sbatch prints a banner; take the last line of `--parsable`.)
 3. **Data:** a parquet with a `conversations` column in serve format (think spans as `<|start_think|>` /
    `<|end_think|>` special tokens) plus `parquet.list`. The Kimi set rebuilds from HF in ~4 min on the login node:
@@ -42,7 +43,7 @@ here (`sft/horizon_sft_chain.sh`) is the Jupiter one with Horizon paths. Port-ga
    then `data/swesmith/kimi_sft_convert.py` with the id lists in `data/swesmith/kimi_ids/`
    (`taskindex_to_instance.json`, `kimi_train_ids.txt`, `kimi_heldout_ids.txt`) and the Stage-3 snapshot as tokenizer.
    Expect 4,398 train rows / 66,269,429 tokens / 628 held-out.
-4. **Chain (login node, tmux):** `tmux new -d -s sft_kimi_hz "bash ~/snowball/ota-train/data/r2egym/horizon/sft/kimi_ref_lr5e-5.sh"`.
+4. **Chain (login node, tmux):** `tmux new -d -s sft_kimi_hz "bash ~/snowball/ota/data/r2egym/horizon/sft/kimi_ref_lr5e-5.sh"`.
    It submits prep (1 node) -> gate (2 nodes) -> import (4 nodes, CPU) -> run (16 nodes) -> export (4 nodes, CPU), each
    gated on its OK marker; log `$SCRATCH/snowball-sft/logs/chain.log`. For another dataset copy the
    wrapper and change the stage, parquet list, dataset pin, output and run id (the stage must exist in marin STAGES).

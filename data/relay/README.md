@@ -232,9 +232,25 @@ sbatch -A CCR24067 -p debug -N 1 -t 02:00:00 -o $SCRATCH/relay/rows/rows.%j.out 
   the same passes and failures on that task. It writes `mrel_rows.jsonl`, `mqwen_rows.jsonl`, and the same with the
   Kimi rows added (`mrelk`, `mqwenk`), plus `match.json` with the counts.
 - A row is `{sid, n_tokens, fits, ids, loss, turns}`: 09-21 token ids and a 0/1 loss mask.
+- **The reasoning cap is a choice.** The render line above uses the default: every older teacher turn shows only its
+  first 1,000 reasoning tokens, and a cut span is not trained. The 10-15 "u" stages (`relay_mqwenu`, `relay_mqwenku`,
+  ...) were rendered with `--cap 1000000000` on `render_think_limit.py` instead, which keeps every turn's reasoning
+  whole (longer rows; see "The reasoning cap" in section 4).
 
-The Kimi SWE-smith rows need the Kimi parquet, built once before `rows.sh` (download and convert on the login node,
-about 4 minutes):
+**One arm, no control or Kimi.** Run `rows.sh` with your arm only (`for ARM in relay_repair`) and replace its last two
+commands (`kimi_relay_rows.py` and the matched `build_matched_arms.py`) with:
+
+```bash
+$PY $SFT/build_matched_arms.py --relay-only --relay-census $O/census_relay_repair.jsonl \
+  --relay-rendered $O/rendered_relay_repair --out $O/arms/relay_repair_rows.jsonl
+```
+
+It applies the same filters, with no matching and no per-task cap, and writes the counts to `relay_repair_rows.json`.
+Don't concatenate the rendered files instead: that skips the filters, and `relay_rows_to_parquet.py` refuses the
+result at its first row that does not fit.
+
+The matched path's Kimi SWE-smith rows need the Kimi parquet, built once before `rows.sh` (download and convert on
+the login node, about 4 minutes):
 
 ```bash
 mkdir -p $SCRATCH/relay/kimi && cd $SCRATCH/relay/kimi
@@ -287,14 +303,41 @@ tmux new -d -s sft_mrel "ARM=mrel ROWS=$SCRATCH/relay/rows/arms/mrel_rows.jsonl 
 - Exports land in `$SCRATCH/snowball-sft/experiments/snowball-relay-sft/relay_<ARM>/lr3e-4-sched3/export-step<N>-hf-bf16`,
   one per pass. The recipe: LR 3e-4 (`LR`), 3 passes on one cosine (`EPOCHS`), warmup 5 %, seed 0, 16 x 65,536 tokens
   per step on 4 nodes, router bias frozen at 09-21's.
-- `WALL` is the training job's time limit (default 02:30:00); raise it for arms of more than a few hundred steps.
-- A new arm name needs a new stage: add one line to `STAGES` in `experiments/june_tpu_67b_a2b/moe/vista_snowball_chat.py`
-  on your marin branch (copy the `relay_mrel` line, give it a new revision string and a `max_steps` above 3 passes), then
-  pass that revision as `DATASET_REVISION`.
+- A new arm name needs a new stage. Add this line to `STAGES` in
+  `experiments/june_tpu_67b_a2b/moe/vista_snowball_chat.py` on your marin branch, below the other `relay_*` stages,
+  with a new revision string and a `max_steps` above 3 passes, and commit it (`arm.log` records only marin's HEAD
+  sha). Then pass that revision as `DATASET_REVISION`.
+
+  ```python
+  STAGES["relay_<arm>"] = dataclasses.replace(_relay_stage("<arm>"), dataset_revision="<rev>", max_steps=<N>)
+  ```
+- For a first smoke SFT, give it at least about 200 rows (about 10 steps per pass), so the loss can show a trend.
+- With `EPOCHS=3` the three 4-node exports run side by side, so the arm holds 12 nodes for those minutes.
+- To run without W&B, pass `WANDB_CLI=/bin/false KEYS=/dev/null`. The sync step then fails and says so in `arm.log`;
+  the arm still writes the per-step loss TSV next to it and reaches `ARM_DONE`.
 - To start from a fine-tuned export instead of 09-21, import that export the same way into a new init dir and pass
   `SNOWBALL_INIT=<that dir>`.
 - Each arm keeps one native checkpoint per pass, about 625 GiB each, in `$SCRATCH`. Delete them once the exports are
   checked.
+
+`relay_sft_arm.sh` reads these environment variables:
+
+| knob | default | what it sets |
+|---|---|---|
+| `ARM` | required | the arm; its marin stage is `relay_<ARM>` |
+| `ROWS` | required for a new arm | the rows file |
+| `DATASET_REVISION` | `final_v2` | must equal the stage's pinned revision |
+| `EPOCHS` | `3` | passes on one cosine; one checkpoint and one export per pass |
+| `LR` | `3e-4` | the learning rate; outputs go to `lr<LR>-sched<EPOCHS>` |
+| `WALL` | `02:30:00` | the training job's time limit; raise it for arms of more than a few hundred steps |
+| `SNOWBALL_SCRATCH` | `$SCRATCH/snowball-sft` | data, caches, checkpoints, exports and logs |
+| `MARIN_ROOT` | `~/snowball/marin-sft` | the marin checkout |
+| `MARIN_PYTHON` | `~/snowball/envs/marin-grug-sft/bin/python` | the marin env |
+| `BASE_0921` | `$SCRATCH/models/grug-datakit-sft-20260921` | the 09-21 export (tokenizer and export config) |
+| `SNOWBALL_INIT` | `$SNOWBALL_SCRATCH/experiments/snowball-base-inits/init-dk0921-step0` | the native init the run starts from |
+| `WANDB_CLI` | `~/snowball/envs/snowball/bin/wandb` | the W&B CLI for the final sync |
+| `KEYS` | `~/.config/otagent/secrets.env` | sourced before the sync, for the W&B key |
+| `WANDB_ENTITY_ARM`, `WANDB_PROJECT_ARM` | `lukedhlee-marin`, `horizon-relay-sft` | where the run syncs |
 
 ### 3.6 Evaluate and read out
 

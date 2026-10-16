@@ -18,6 +18,13 @@ they are reported. mrelk / mqwenk add the Kimi rows of H8 (4,392: the 4,398 minu
 
     python build_matched_arms.py --relay-census <census.jsonl> --relay-rendered <dir> \
         --qwen-census <census.jsonl> --qwen-rendered <dir> --kimi-from <h8_rows.jsonl> --out-dir <dir>
+
+--relay-only: one arm alone (no control arm, no Kimi): the same eligibility rule on that arm's census and rendered
+dir, no matching and no per-task cap, every eligible row into --out (in file and line order) and the counts into
+<out>.json. Concatenating rendered files instead skips these filters, and relay_rows_to_parquet.py refuses the
+result at its first row that does not fit.
+
+    python build_matched_arms.py --relay-only --relay-census <census.jsonl> --relay-rendered <dir> --out <rows.jsonl>
 """
 import argparse
 import collections
@@ -72,16 +79,43 @@ def pool(census, rendered, st):
     return out
 
 
+def relay_only(a):
+    st = collections.Counter()
+    P = pool(a.relay_census, a.relay_rendered, st)
+    lines = []
+    for f in sorted({r['file'] for r in P.values()}):
+        for line in open(f):
+            if head(line)['sid'] in P:
+                lines.append(line if line.endswith('\n') else line + '\n')
+    assert len(lines) == len(P), (len(lines), len(P))     # a session id rendered twice
+    os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+    with open(a.out, 'w') as fo:
+        fo.writelines(lines)
+    rep = dict(pool=st, rows=len(lines), tokens=sum(head(l)['n_tokens'] for l in lines),
+               trained=sum(trained(l) for l in lines))
+    json.dump(rep, open(os.path.splitext(a.out)[0] + '.json', 'w'), indent=1)
+    print(json.dumps(rep, indent=1))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--relay-census', required=True)
     ap.add_argument('--relay-rendered', required=True)
-    ap.add_argument('--qwen-census', required=True)
-    ap.add_argument('--qwen-rendered', required=True)
-    ap.add_argument('--kimi-from', required=True, help='H8 rows: its kimi:* rows are the Kimi part')
-    ap.add_argument('--out-dir', required=True)
+    ap.add_argument('--qwen-census')
+    ap.add_argument('--qwen-rendered')
+    ap.add_argument('--kimi-from', help='H8 rows: its kimi:* rows are the Kimi part')
+    ap.add_argument('--out-dir')
     ap.add_argument('--per-task', type=int, default=2)
+    ap.add_argument('--relay-only', action='store_true', help='one arm, no matching: its eligible rows -> --out')
+    ap.add_argument('--out', help='--relay-only: the rows file')
     a = ap.parse_args()
+    if a.relay_only:
+        if not a.out:
+            ap.error('--relay-only needs --out')
+        return relay_only(a)
+    missing = [o for o in ('qwen_census', 'qwen_rendered', 'kimi_from', 'out_dir') if not getattr(a, o)]
+    if missing:
+        ap.error(f"the matched arms need {', '.join('--' + o.replace('_', '-') for o in missing)} (or --relay-only)")
     os.makedirs(a.out_dir, exist_ok=True)
     rep = dict(relay=collections.Counter(), qwen=collections.Counter())
     R = pool(a.relay_census, a.relay_rendered, rep['relay'])
