@@ -41,8 +41,9 @@ remainder, then to categories inside each stratum the same way, with a seeded dr
 - **Tree.** Built by `data/calibforge/daytona/build_tree.py --all --only <2,735 candidates>` from
   `~/.local/share/otagent/calibforge-work/tree-remainder-20260929/` on the Mac. The build names the three snapshots we
   hold: `harbor__313e69c036ad__snapshot` (ubuntu2404, 1,355 tasks), `harbor__13bf95818376__snapshot` (tb2verifier,
-  1,067) and `harbor__239bee0dfdf6__snapshot` (bookworm, 191).
-- **Copy on Horizon.** `/scratch/11584/lukedhlee/relay/calibforge_tree/` holds the 2,613 task dirs and `TASKS.txt` (=
+  1,067) and `harbor__239bee0dfdf6__snapshot` (bookworm, 191). To rebuild it on Horizon from public sources (the task
+  table is committed as `data/calibforge/calibforge_tasks.parquet`), follow `data/relay/README.md` section 3.1.
+- **Copy on Horizon.** Luke's `$SCRATCH/relay/calibforge_tree/` holds the 2,613 task dirs and `TASKS.txt` (=
   this remainder). It also has `TASKS_pilot1000.txt`, `router_tasks.json` (all 2,613), `router_tasks_pilot1000.json`,
   `pool.json` and `coverage.tsv`. Its file checksum matches the Mac tree. For the pilot, pass
   `TASK_LIST=$TREE/TASKS_pilot1000.txt`.

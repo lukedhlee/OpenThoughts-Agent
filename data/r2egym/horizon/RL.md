@@ -28,7 +28,7 @@ Everything lives in `data/r2egym/horizon/rl/` (this branch) and runs on the logi
    per-task attempts/solves, the band (solved ≥ 1 of 8), per-repo counts; masked/unscored trials are reported, never
    counted as failures.
 
-Run dirs: `/scratch/11584/lukedhlee/experiments/rl/<name>/` (configs, sbatch, logs, gateway, trials for probes).
+Run dirs: `$SCRATCH/experiments/rl/<name>/` (configs, sbatch, logs, gateway, trials for probes).
 
 ## What the job does on Horizon (deltas from the Jupiter sbatch)
 

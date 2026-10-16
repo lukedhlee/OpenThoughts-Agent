@@ -70,7 +70,7 @@ export PYTHONPATH=/Users/lukedhlee/harbor-wt/snowball-r2egym/src
 hf download hamishivi/agent-task-calibforge task-data.tar.gz --repo-type dataset --revision f605550ac21c37cecc34e6767a753219e0ca58d3 --local-dir <dl>
 # sha256 79672cdec29ec9160b663e99dd0bb17be656c74756dea59c68a4fe2d285abb80
 /Users/lukedhlee/harbor/.venv/bin/python data/calibforge/daytona/build_tree.py \
-  --parquet ai_memory/active/snowball-sft/research/2026-09-24_env_checks/calibforge/calibforge_tasks.parquet \
+  --parquet data/calibforge/calibforge_tasks.parquet \
   --source <dl>/task-data.tar.gz --cache ~/.local/share/otagent/calibforge-work --out <new tree>
 /Users/lukedhlee/harbor/.venv/bin/python data/calibforge/daytona/recover_pool.py prepare --tree <new tree> --bundle <new bundle>
 /Users/lukedhlee/harbor/.venv/bin/python data/calibforge/daytona/recover_pool.py set-digests --bundle <new bundle> \

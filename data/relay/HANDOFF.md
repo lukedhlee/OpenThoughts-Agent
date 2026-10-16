@@ -1,5 +1,8 @@
 # Relay SFT: handoff (2026-10-01)
 
+**To run the recipe or a variant on Horizon, start at `README.md` in this folder.** It has the prerequisites, a smoke
+run, every stage's exact command and the gotchas. This file is the results summary and the pinned code.
+
 **What this is.** A recipe that lifts Grug 67B-A2B 09-21 on agent benchmarks by fine-tuning it on *relay* traces: the
 student model works a terminal task until it hands over, and Qwen3.8-27B finishes it; only Qwen's turns are trained.
 Relay traces beat Qwen-alone traces of the same tasks by +6 (TB2.1), +22 (SWE-bench) and +10 (TB-lite) points in a
@@ -20,7 +23,7 @@ https://gist.github.com/lukedhlee/8669f5b6f97e4e3bae72344a8fd51f4b
 | piece | repo, branch, commit |
 |---|---|
 | relay generation, rendering, matching, export, evals | `lukedhlee/OpenThoughts-Agent` `lukedhlee/vista-moe-grpo-30b` (this repo), `data/relay/` + `data/r2egym/horizon/sft/` |
-| SFT training (Levanter / marin), stages, HF import with frozen router bias | `lukedhlee/marin` `lukedhlee/horizon-snowball-sft-0921` @ 8afe028c7, `experiments/june_tpu_67b_a2b/moe/` |
+| SFT training (Levanter / marin), stages, HF import with frozen router bias | `lukedhlee/marin` `lukedhlee/horizon-snowball-sft-0921` @ 8afe028c7 (the arms below; later commits on the branch add stages), `experiments/june_tpu_67b_a2b/moe/` |
 | harbor with the relay hooks (Terminus-2 relay, setup_files) | `marin-community/harbor` `lukedhlee/terminus2-relay` @ 89098635 |
 | RL (GRPO on R2E-Gym, separate track) | `marin-community/MarinSkyRL` @ a03b2773; Horizon launcher in `data/r2egym/horizon/rl/` |
 
@@ -49,10 +52,15 @@ no-op gate `data/tmax/daytona/gate.py`).
 
 ```bash
 python data/relay/sft/hz_pool_census.py --arm relay_repair --runs <run dirs> --out census.jsonl   # labels + QA tags
-python data/relay/sft/render_think_limit.py --render-dir <OTA@d0ddd237>/data/relay/sft --run-dir <run> --arm relay_repair \
-  --manifest <eligible rows> --tokenizer-dir <09-21> --think-limit 16384 --strip-copied-markers \
-  --terminus-parser <harbor>/harbor/agents/terminus_2/terminus_json_plain_parser.py --autofix-loss none --out rows.jsonl
+python data/relay/sft/render_think_limit.py --render-dir data/relay/sft --run-dir <run> --arm relay_repair \
+  --manifest census.jsonl --tokenizer-dir <09-21> --think-limit 16384 --strip-copied-markers \
+  --terminus-parser <harbor>/harbor/agents/terminus_2/terminus_json_plain_parser.py --autofix-loss none \
+  --out rendered/<run>.rendered.jsonl                                                            # once per run dir
 ```
+
+The census output is the render's manifest (only each line's `sid` is read). The arm builders read only
+`<dir>/*.rendered.jsonl`, so keep that name. `render.py` is unchanged since d0ddd237, so the current checkout renders the
+same rows.
 
 A row is `{sid, ids, loss, n_tokens, fits, turns}`: token ids (09-21 tokenizer) and a 0/1 loss mask; only Qwen's turns
 carry loss. Filters (identical for every arm): drop weak timeouts and episodes whose verifier never ran, drop `leak`
@@ -72,19 +80,21 @@ ARM=<stage suffix> ROWS=<rows.jsonl> DATASET_REVISION=<stage pin> [SNOWBALL_INIT
 
 It converts rows to parquet and counts packs (1 node), builds the cache, trains (4 nodes, 16 x 65,536 tokens per step,
 ~7 s/step), and exports one HF checkpoint per pass. Recipe: LR 3e-4, warmup 5 %, one cosine over 3 passes, seed 0,
-init = 09-21 imported with `pending_qb_betas = -router_bias` and the router bias frozen. To continue from a fine-tuned
+init = 09-21 imported with `pending_qb_betas = -router_bias` and the router bias frozen (`README.md` 3.5 has the
+first-time import). To continue from a fine-tuned
 export, import it first (`horizon_snowball_import.sbatch` with `SNOWBALL_PENDING_FROM_BIAS=true`) and pass the init.
 
 ### 4. Evaluate
 
 ```bash
 MODELS='<tag>=<HF export dir>' REPS=1 GROUPED=1 bash data/r2egym/horizon/sft/eval_sft.sh   # one 5-node unit per rep
-python data/r2egym/horizon/sft/eval_readout.py --tags <tag> [<other>] --day '2026*'         # pass@1 ± SE, paired diffs
+python data/r2egym/horizon/sft/eval_readout.py --tags <tag> [<other>] --day <YYYYMMDD>      # pass@1 ± SE, paired diffs
 ```
 
 One unit runs TB2.1 (88), SWE-bench Verified random-100 and OpenThoughts-TBLite (100) once each under the 65k / 16k
 policy (Terminus-2, 16 concurrent trials, one try per task); we run 3 units (reps) per model. `eval_dispatch.sh` starts
-units as arms finish, within a Daytona sandbox cap.
+units as arms finish, within a Daytona sandbox cap. Evaluate compared models in one queue and pass that queue's
+`--day`: without it the readout pools every day's runs of a tag.
 
 ## What we learned (for the next person)
 

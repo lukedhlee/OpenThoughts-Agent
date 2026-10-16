@@ -23,26 +23,28 @@ here (`sft/horizon_sft_chain.sh`) is the Jupiter one with Horizon paths. Port-ga
 - **NCCL bootstrap** on `ib*` (compute nodes name their IPoIB ports `ibs2`, `ibP2p1s0`, `ibP16s4`, `ibP18p1s0`; the
   login node's `ibp1s0` is not what compute nodes have).
 - **Paths.** Code and env in `/home1` (`~/snowball/marin-sft`, `~/snowball/envs/marin-grug-sft`, 11 GB: the home quota
-  went 45 % -> 69 %), data, caches, checkpoints and logs in `/scratch/11584/$USER/snowball-sft` (purged after 10 days
+  went 45 % -> 69 %), data, caches, checkpoints and logs in `$SCRATCH/snowball-sft` (purged after 10 days
   untouched; native checkpoints are ~625 GiB each, delete them once the export is verified).
 
 ## How to run (the Kimi SWE-smith reference, or your own stage)
 
 1. **Code:** `git clone -b lukedhlee/horizon-snowball-sft https://github.com/lukedhlee/marin.git ~/snowball/marin-sft`
+   for this Kimi reference run. **Relay SFT needs `-b lukedhlee/horizon-snowball-sft-0921` instead:** only that branch has
+   the 09-21 recipe and the `relay_*` stages (§ Relay SFT arms).
    (use `--filter=blob:none`); OT-Agent job checkout `~/snowball/ota-train` (this branch).
-2. **Env (once):** from `/scratch/11584/$USER/snowball-sft/logs`:
-   `J=$(sbatch --parsable --export=ALL,MARIN_ROOT=$HOME/snowball/marin-sft,SNOWBALL_ENV=$HOME/snowball/envs/marin-grug-sft,SNOWBALL_UV_CACHE=/scratch/11584/$USER/cache/uv-grug $HOME/snowball/marin-sft/experiments/june_tpu_67b_a2b/moe/horizon_snowball_env.sbatch | tail -1)`
+2. **Env (once):** from `$SCRATCH/snowball-sft/logs`:
+   `J=$(sbatch --parsable --export=ALL,MARIN_ROOT=$HOME/snowball/marin-sft,SNOWBALL_ENV=$HOME/snowball/envs/marin-grug-sft,SNOWBALL_UV_CACHE=$SCRATCH/cache/uv-grug $HOME/snowball/marin-sft/experiments/june_tpu_67b_a2b/moe/horizon_snowball_env.sbatch | tail -1)`
    then `setsid nohup bash ~/snowball/ota-train/data/r2egym/horizon/tunnel.sh $J > tunnel.$J.log 2>&1 < /dev/null &`.
    Done at `ENV_BUILD_OK`. (Horizon's sbatch prints a banner; take the last line of `--parsable`.)
 3. **Data:** a parquet with a `conversations` column in serve format (think spans as `<|start_think|>` /
    `<|end_think|>` special tokens) plus `parquet.list`. The Kimi set rebuilds from HF in ~4 min on the login node:
    `hf download --repo-type dataset open-athena/Kimi-2.5-swesmith-sandboxes-with_tests-oracle_verified_120s-maxeps-32k --revision 1b87a9cf78b897a2355105d47afd44d818cad25d --local-dir src_kimi`,
-   then `data/swesmith/kimi_sft_convert.py` with the id lists in `ai_memory/active/snowball-sft/data/`
+   then `data/swesmith/kimi_sft_convert.py` with the id lists in `data/swesmith/kimi_ids/`
    (`taskindex_to_instance.json`, `kimi_train_ids.txt`, `kimi_heldout_ids.txt`) and the Stage-3 snapshot as tokenizer.
    Expect 4,398 train rows / 66,269,429 tokens / 628 held-out.
 4. **Chain (login node, tmux):** `tmux new -d -s sft_kimi_hz "bash ~/snowball/ota-train/data/r2egym/horizon/sft/kimi_ref_lr5e-5.sh"`.
    It submits prep (1 node) -> gate (2 nodes) -> import (4 nodes, CPU) -> run (16 nodes) -> export (4 nodes, CPU), each
-   gated on its OK marker; log `/scratch/11584/$USER/snowball-sft/logs/chain.log`. For another dataset copy the
+   gated on its OK marker; log `$SCRATCH/snowball-sft/logs/chain.log`. For another dataset copy the
    wrapper and change the stage, parquet list, dataset pin, output and run id (the stage must exist in marin STAGES).
 5. **Read the loss:** the run log's tqdm lines (`Progress on:train N.0it/96.0it ... loss=`) in
    `logs/snowball-<stage>.<job>.log`.
@@ -78,8 +80,26 @@ Tools: `sft/heldout_nll.sbatch` (held-out NLL through vLLM; `MODEL=<export> NAME
 Horizon retrained Jupiter's 09-28 relay SFT arms A (relay, 246 steps) and B (Qwen alone, 147 steps) on Jupiter's rows.
 Everything runs from the login node in tmux; each step is a Slurm job.
 
+**First time.** `relay_sft_arm.sh` stops unless three things exist:
+- the 09-21 export at `$SCRATCH/models/grug-datakit-sft-20260921` (`BASE_0921`):
+  `hf download open-athena/Grug-67B-A2B-Datakit-SFT-262K-2026.09.21 --revision b8c07f7df1df65525abbfdbcd1572318ba11c42f --local-dir $SCRATCH/models/grug-datakit-sft-20260921`;
+- the `-0921` marin branch at `~/snowball/marin-sft` with its env (steps 1 and 2 above, on that branch);
+- the 09-21 init with its sidecar, `$SCRATCH/snowball-sft/experiments/snowball-base-inits/init-dk0921-step0/snowball_base.json`.
+  Make it with the import job (4 CPU nodes, 45-minute limit; remove a partial dir before retrying):
+
+```bash
+mkdir -p $SCRATCH/snowball-sft/logs $SCRATCH/snowball-sft/experiments/snowball-base-inits
+sbatch -o $SCRATCH/snowball-sft/logs/import.%j.log \
+  --export=ALL,MARIN_ROOT=$HOME/snowball/marin-sft,MARIN_PYTHON=$HOME/snowball/envs/marin-grug-sft/bin/python,SNOWBALL_HF_CHECKPOINT=$SCRATCH/models/grug-datakit-sft-20260921,SNOWBALL_INIT=$SCRATCH/snowball-sft/experiments/snowball-base-inits/init-dk0921-step0,SNOWBALL_BASE_CONFIG_FROM_HF=true,SNOWBALL_PENDING_FROM_BIAS=true \
+  $HOME/snowball/marin-sft/experiments/june_tpu_67b_a2b/moe/horizon_snowball_import.sbatch
+```
+
+This is the import step of marin's `pair_kimi0921.sh`, run on its own: that script's data step downloads a private
+dataset. `ARM=relay|qwen` default to Jupiter's rows, which only Luke has; for any other rows pass `ARM=<stage suffix>
+ROWS=<rows.jsonl> DATASET_REVISION=<the stage's pin>` (`data/relay/README.md` 3.5).
+
 1. **Train one arm:** `ARM=relay|qwen bash data/r2egym/horizon/sft/relay_sft_arm.sh` (marin branch
-   `lukedhlee/horizon-snowball-sft-0921`, init `init-dk0921-step0` from `pair_kimi0921.sh`'s import). It converts the
+   `lukedhlee/horizon-snowball-sft-0921`, init `init-dk0921-step0`). It converts the
    rows and counts packs on a compute node, stops unless the steps per pass equal Jupiter's (A 82, B 49), builds the cache,
    trains (~7 s/step), exports every pass, and syncs W&B (`lukedhlee-marin/horizon-relay-sft`). About 30 min of training
    per arm. The trainer's tqdm lines stop updating early; `GUARDED_RUN_EXIT rc=0` is the end signal.

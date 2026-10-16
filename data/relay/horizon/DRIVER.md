@@ -4,13 +4,21 @@
 tunnels. One tunnel carries far more than a relay run needs.** Relay-like Daytona traffic for 192 concurrent trials ran
 with no errors and a p99 of 1.1 s per command. Even at 384 seats with no think gaps (300 commands/s, several times a
 relay run's rate), there were no errors, and each tunnel's ssh process on the login node stayed under 8 % of a core.
-The driver still opens two tunnels, so that one dropping does not stall the run. Finished runs go to Jupiter through
-the private HF dataset repo `lukeleeai/relay-rollouts-horizon` (Luke's namespace: the laion org's private storage is full, 09-29).
+The driver still opens two tunnels, so that one dropping does not stall the run. The full runbook, from prerequisites
+to evals, is `../README.md`.
 
 ## Launch a run end to end
 
+Before the first run: the snowball venv (`data/r2egym/horizon/build_env.sbatch`), then
+`bash data/relay/horizon/build_relay_env.sh` on the login node (python-socks for the bridge, `envs/relay-extra`,
+`envs/msa-2.4.6`, the serve models), a task tree with `TASKS.txt` and `router_tasks.json`, and the Daytona eval-org key
+in `~/.config/otagent/daytona_eval.env`. `driver.sbatch` sets `MSA_DIR=${MSA_DIR:-$SB/envs/msa-2.4.6}` (used only with
+`AGENT=msa`) and stops with `python_socks missing` before it starts the bridge if the venv lacks python-socks. The
+pre-flight tells `Daytona unreachable` (HTTP 000: the bridge or the tunnels are down) apart from `Daytona key rejected`.
+
 1. **Serve job** (the serving side, `SERVING.md`):
-   `S=$(STUDENT_MODEL=<student snapshot> bash serve_submit.sh 8 4 <time> relay_srv_<name>)`.
+   `S=$(STUDENT_MODEL=<student dir> bash serve_submit.sh 8 4 <time> relay_srv_<name>)`. Always set `STUDENT_MODEL`:
+   unset, the job serves the Stage-3 model, and the router follows whatever was served, so nothing fails.
 2. **Driver job**, on the login node, from `~/snowball/ota/data/relay/horizon`:
    `NODES=8 CAP_NODE_H=<cap> TREE=<tree> TASK_LIST=<list> N_ATTEMPTS=2 bash launch_driver.sh $S <name>`.
    It submits `driver.sbatch` as `relay_drv_<name>` and starts one `tunnel.sh` per port in `TUNNEL_PORTS`
@@ -21,10 +29,11 @@ the private HF dataset repo `lukeleeai/relay-rollouts-horizon` (Luke's namespace
    - `$E/logs/relay_drv_<name>_<job>.out`: the job's own output.
    - `$E/logs/driver_<job>/bridge.log`: the proxy, with a stats line every minute.
 
-   `E` is `/scratch/11584/lukedhlee/experiments/relay/pilot`.
-4. **Transfer.** After `RUN_DONE`, run `bash push_rollouts.sh <name>` on the Horizon login node, under setsid or tmux.
-   Then run `bash pull_rollouts.sh <name>` on the Jupiter login node, from a worktree at this commit
-   (`code/ota-relay-hz`).
+   `E` is `$SCRATCH/experiments/relay/pilot`.
+4. **Transfer (only to render on Jupiter).** After `RUN_DONE`, run `bash push_rollouts.sh <name>` on the Horizon login
+   node, under setsid or tmux. Then run `bash pull_rollouts.sh <name>` on the Jupiter login node. The default `REPO`,
+   `lukeleeai/relay-rollouts-horizon`, is Luke's private repo; set `REPO` to your own. Rows can also be rendered on
+   Horizon directly (`../README.md` 3.4).
 
 `launch_driver.sh` sets everything explicitly. It uses the full relay runs' settings (`relay_repair`, `CLOCK=repair`,
 32k context budget, 64k row limit, Qwen at 128k, `STAGGER_SEC=180`, the latency/KV gate from minute 15, the stop rule,
