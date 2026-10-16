@@ -1102,7 +1102,7 @@ class Router:
         task = ep.task or {}
         extra = dict(request_kind=kind, task_id=task.get('task_id'), harness=self.a.harness)
         if self.a.trigger_config:
-            extra.update(ep.hooks, teacher_only=self.teacher_only, sid=ep.sid, seq=ep.n_requests)
+            extra.update(ep.hooks, teacher_only=self.teacher_only, sid=ep.sid, seq=ep.n_requests, arm=self.a.arm)
         ep.last_ev = iv.Event('request', t, is_retry=retry, messages=messages, last_result=ep.last_result, scanner=ep.sc,
                               clock=iv.Clock(self.clock(ep, now), task.get('budget_sec') or None),
                               view_tokens=view_tokens, extra=extra)

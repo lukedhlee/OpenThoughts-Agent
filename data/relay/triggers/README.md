@@ -104,7 +104,7 @@ triggers:                         # list order is priority; every fire is logged
     teacher: big_teacher
   - use: llm_judge
     log_only: true                # shadow: logged, never acted on
-    params: {endpoint: judge, prompt_file: prompts/stuck.txt, threshold: 0.7, every: 2, max_calls: 15}
+    params: {endpoint: teacher, prompt_file: /abs/path/stuck.txt, threshold: 0.7, every: 2, max_calls: 15}
 ```
 
 Per-entry keys: `use`, `name`, `params`, `where`, `span`, `phases`, `log_only`, `teacher_note`, `release`, `view`,
@@ -153,8 +153,10 @@ The `control` arm (the teacher alone) ignores `TRIGGER_CONFIG`, so it stays the 
   `turns.jsonl`). That gives live fire rates and labels, which replay can then score.
 - **Then act.** In a relay arm the router acts on your config. Every teacher turn's record carries
   `intervention = {id, trigger, where, span, i, teacher, view}`, every fire is in `decisions`, and `events.jsonl` has
-  `intervention` and `handback` events. `pilot/readout.py` reports interventions per trigger, and the SFT renderers
-  train every teacher turn and mask every student turn around any number of interventions.
+  `intervention` and `handback` events. An `intervention` event can have no teacher turn behind it, when the router
+  ends the episode on that same request (e.g. `context_hard_end`), so event and record counts can differ by one.
+  `pilot/readout.py` reports interventions per trigger, and the SFT renderers train every teacher turn and mask every
+  student turn around any number of interventions.
 - **Offline against the real router:** `python data/relay/router/router_replay.py run --trigger-config my.yaml ...`
   pushes recorded traffic through the live router code with your config.
 

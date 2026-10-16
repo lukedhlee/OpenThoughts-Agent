@@ -5,13 +5,14 @@ Stage 4 of notes/ot-agent/relay-triggers (stage4_judge_scope.md): the trigger, i
 latency accounting. Offline (replay) it posts to a URL itself; online it calls the router's named endpoints.
 
     triggers:
-      - use: judge:LlmJudge          # this file (router/ is on sys.path in the router and in replay); after
-                                     # judge.register(), also the built-in `llm_judge`
+      - use: judge:LlmJudge          # this file (router/ is on sys.path in the router and in replay); in the router
+                                     # also `use: llm_judge` (registered while it loads --trigger-config)
         phases: [request]            # request (default): judge the result of the last action; reply: judge the
                                      # proposed action before the harness sees it (where: rewrite discards it)
         span: 2
         params:
-          endpoint: ${JUDGE_URL}     # a URL (http://host:8000/v1), or a name from the config's `endpoints:`
+          endpoint: ${JUDGE_URL}     # a URL (http://host:8000/v1); online also an endpoint name: teacher, or a
+                                     # name from the config's `endpoints:`
           model: judge               # the served name: needed for a URL; for a name the router sets its own
           prompt: |                  # string.Template: $task $history $last_result $reply $proposal $turn $phase
             ...                      # (or prompt_file: path; default DEFAULT_PROMPT)
@@ -20,7 +21,7 @@ latency accounting. Offline (replay) it posts to a URL itself; online it calls t
           timeout_s: 20              # a timeout (or an HTTP error, or unparseable output) is no decision
           every: 2                   # ask on turns divisible by `every`
           max_calls: 15              # asks per episode (a retry of the same request is not a new ask)
-          log: judge_calls.jsonl     # one line per ask: outcome, score, latency, tokens
+          log: judge_calls.jsonl     # one line per ask: arm, outcome, score, latency, tokens
 
 What the judge sees (student_view): only what the student saw. Its input is built from Event.messages (the harness's
 history as the student saw it), Event.last_result and Event.reply, never from Event.extra, files or the task's
@@ -31,7 +32,8 @@ router's verify notes, Event.extra['teacher_only'] (the router's own note / hint
 
 Cost and latency: every ask is counted in `stats` and, with `log`, written as one JSON line (outcome fired / quiet /
 timeout / malformed / error / unresolved, score, latency_s = the call's wall time, waited_s = how long observe()
-blocked on it, prompt and completion tokens, cached, prefetched). Identical prompts reuse one answer process-wide
+blocked on it, prompt and completion tokens, cached, prefetched, and the arm: Event.extra['arm'], so one run's
+student_only and relay arms, which share the log, can be told apart). Identical prompts reuse one answer process-wide
 (cache: true), so replay's live and shadow controllers, which see the same events, call the judge once; a timeout or
 an error is never cached. A decision's info carries rationale, score or verdict, latency, tokens and the model the
 endpoint served.
@@ -45,16 +47,17 @@ router's retries included: passed to call_endpoint when it takes it (the router 
 and enforced here too. Without the router (replay) a name resolves through set_resolver(fn(name) -> url), else it is
 no decision ('unresolved').
 
-Router hooks still open:
-  * overlap: prefetch(ev) starts the ask in the background; observe() at the same (phase, turn) awaits it instead of
-    asking again. A request-time judge prefetched at finish() of turn t, with the history up to the reply just
-    returned, runs alongside the tool call and is awaited at request t + 1 (it then judges the view of the prefetch,
-    without that request's result). The router does not call prefetch yet; when it does, a call overlapping the
-    tool must not pause the agent clock.
+In the router (--trigger-config):
+  * prefetch: when the student will answer turn t + 1 too, the router calls prefetch(ev) for a request-time judge
+    right after the student's reply to turn t, with the history up to that reply; the ask runs alongside the tool
+    call, and observe() at request t + 1 awaits it instead of asking again (it then judges the view of the prefetch,
+    without that request's result; a retry reuses the answer). A prefetched call does not pause the agent clock;
+    only the time observe() waits on it does. A prefetch for a turn the router never asks is cancelled at the next
+    ask (the one after the episode's last turn just finishes, unlogged).
   * teacher-only text: Event.extra['teacher_only'] = [the verify note text, the teacher hint text, ...].
-  * `use: llm_judge` resolves here once register() has run (interventions.py keeps a stage-4 stub under that name,
-    and importing this module changes nothing): the router (and replay) can call judge.register() at start, or
-    interventions' stub can import this module lazily. Until then, `use: judge:LlmJudge`.
+  * `use: llm_judge` is this class: the router calls register() while it loads the config (interventions.py keeps a
+    stage-4 stub under that name otherwise, and importing this module changes nothing). replay.py does not register
+    it, so there use `judge:LlmJudge`.
 """
 import asyncio
 import collections
@@ -500,7 +503,8 @@ class LlmJudge:
                                                               'completion_tokens', 'cached')},
                                    prefetched=bool(ans.get('prefetched')),
                                    model=ans.get('served_model') or self.model,
-                                   task_id=ev.extra.get('task_id'), sid=ev.extra.get('sid'), seq=ev.extra.get('seq'))
+                                   task_id=ev.extra.get('task_id'), sid=ev.extra.get('sid'), seq=ev.extra.get('seq'),
+                                   arm=ev.extra.get('arm'))
         fd = os.open(self.log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
         try:
             os.write(fd, (json.dumps(rec) + '\n').encode())    # one write per line: concurrent episodes interleave

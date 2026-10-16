@@ -3,12 +3,13 @@
 #   JUDGE_URL=http://<host>:8000/v1 python data/relay/triggers/replay.py --runs <...> --config <this file> --out out/
 # then read judge_calls.jsonl (every ask: score, outcome, latency, tokens) to pick the threshold.
 triggers:
-  - use: judge:LlmJudge           # data/relay/router/judge.py (also `llm_judge` after judge.register())
+  - use: judge:LlmJudge           # data/relay/router/judge.py, in replay and online (online `use: llm_judge` too)
     span: 2                       # the teacher answers 2 turns, then hands back
     log_only: true                # shadow: logged, never acted on; drop this line to let it act
     policy: {cooldown: 3, max_interventions: 3, observe: armed}   # armed: no judge call while it could not act
     params:
-      endpoint: ${JUDGE_URL}      # a URL; online, the router's endpoint name instead (e.g. judge)
+      endpoint: ${JUDGE_URL}      # a URL; online, an endpoint name instead: teacher (no endpoints: block needed) or a
+                                  # name from the config's endpoints:
       model: judge                # the served model name
       threshold: 0.7
       every: 2                    # ask on every other turn

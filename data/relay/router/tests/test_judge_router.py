@@ -58,7 +58,7 @@ def test_judge_through_the_routers_named_endpoint(tmp_path):
     check_calls(rows, bodies, 200)
     lines = [json.loads(x) for x in (tmp_path / 'calls.jsonl').read_text().splitlines()]
     assert [(x['turn'], x['prefetched']) for x in lines] == [(1, False)] + [(t, True) for t in range(2, 7)]
-    assert {x['model'] for x in lines} == {'judge'}
+    assert {x['model'] for x in lines} == {'judge'} and {x['arm'] for x in lines} == {'relay'}   # the router's --arm
     assert [x['turn'] for x in lines if x['outcome'] == 'fired'] == [3]
     assert all(x['latency_s'] > 0 and x['prompt_tokens'] == 123 for x in lines)
 

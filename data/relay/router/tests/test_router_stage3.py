@@ -430,3 +430,5 @@ def test_unknown_endpoint_name_fails_at_start(tmp_path):
         rr.Router(a)
     msg = str(e.value)
     assert "'nojudge'" in msg and "'other'" in msg and "endpoint 'judge'" not in msg
+    a.trigger_config = config(tmp_path, {'triggers': [{'use': 'llm_judge', 'params': {'endpoint': 'teacher'}}]})[1]
+    assert rr.Router(a).trigger_specs[0].trigger.endpoint == 'teacher'   # the router's own, no endpoints: block
