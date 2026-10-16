@@ -4,8 +4,9 @@
 The relay router asks one interventions.Controller per episode who answers each request. Without --trigger-config it
 builds the Controller's config from its own flags (legacy_config): relay-router/1's hard-coded decisions re-expressed,
 in today's order, so routing and every turns.jsonl record stay as they were. With --trigger-config <yaml> that file
-replaces those flags (the router refuses both, LEGACY_FLAGS). --mode teacher / student never hand an episode over, so
-there every trigger only logs (shadow()).
+replaces those flags (the router refuses both, REFUSED_FLAGS), except --repair-on-parse-error: in --mode relay it keeps
+the arm's parse-error repair in front of the config's triggers (with_repair). --mode teacher / student never hand an
+episode over, so there every trigger only logs (shadow()).
 
 Triggers that need the router's view of an episode live here and join interventions' built-ins when this module is
 imported (the router imports it), so a YAML config names them like any other built-in:
@@ -32,8 +33,8 @@ import interventions as iv  # noqa: E402
 # relay_triggers' takeover triggers in env_fires / dec_fires order (today's evaluation order: the first fire wins)
 ENV_TRIGGERS = ('edit_failed', 'loop', 'no_progress_wait', 'error_streak')
 DEC_TRIGGERS = ('submit_check', 'gave_up', 'success_claim_unchecked', 'success_contradicted', 'destructive')
-# the flags a --trigger-config replaces: (argparse dest, option); --verify-note(-text) only in --mode relay, where the
-# done claim's note is its teacher_note (--mode teacher's note on its own first confirmation stays a router flag)
+# the flags legacy_config reads: (argparse dest, option); --verify-note(-text) only in --mode relay, where the done
+# claim's note is its teacher_note (--mode teacher's note on its own first confirmation stays a router flag)
 LEGACY_FLAGS = (('takeover', '--takeover'), ('repair_on_parse_error', '--repair-on-parse-error'),
                 ('context_budget_tokens', '--context-budget-tokens'),
                 ('context_budget_min_turn', '--context-budget-min-turn'),
@@ -41,6 +42,8 @@ LEGACY_FLAGS = (('takeover', '--takeover'), ('repair_on_parse_error', '--repair-
                 ('assist_error_streak', '--assist-error-streak'), ('assist_gap', '--assist-gap'),
                 ('assist_max', '--assist-max'))
 RELAY_NOTE_FLAGS = (('verify_note', '--verify-note'), ('verify_note_text', '--verify-note-text'))
+# the ones a --trigger-config replaces (the router refuses them next to it); --repair-on-parse-error stays: with_repair
+REFUSED_FLAGS = tuple(f for f in LEGACY_FLAGS if f[0] != 'repair_on_parse_error')
 
 
 def tool_results(messages):
@@ -141,7 +144,7 @@ def legacy_config(a, parser_loaded, note_text):
         return dict(triggers=[dict(use=n) for n in env + dec] + ([first] if done else []))
     T = []
     if parser_loaded and not msa:
-        T.append(dict(use='repair_confirm', span=1, policy=dict(earliest_turn=1, on_retry='observe')))
+        T.append(repair_confirm_entry())
     T += [dict(use=n, span=-1, policy=dict(observe='armed')) for n in env]
     if a.context_budget_tokens:
         # asked from turn 1 (today's count is logged on every student request); the fire itself waits for min_turn
@@ -156,7 +159,7 @@ def legacy_config(a, parser_loaded, note_text):
                       policy=dict(cooldown=max(0, a.assist_gap - 1), max_interventions=a.assist_max, earliest_turn=2,
                                   observe='armed', on_retry='observe')))
     if (a.repair_on_parse_error if msa else parser_loaded):
-        T.append(dict(use='parse_repair', where='rewrite', span=1, policy=dict(earliest_turn=1, on_retry='observe')))
+        T.append(parse_repair_entry())
     note = dict(teacher_note=note_text) if a.verify_note else {}
     if msa and done:
         T.append(dict(claim, where='rewrite', span=-1, **note, policy=dict(earliest_turn=1)))
@@ -164,6 +167,34 @@ def legacy_config(a, parser_loaded, note_text):
     if done and not msa:
         T.append(dict(claim, where='next', span=-1, **note, policy=dict(earliest_turn=1)))
     return dict(policy={}, triggers=T)
+
+
+def repair_confirm_entry():
+    return dict(use='repair_confirm', span=1, policy=dict(earliest_turn=1, on_retry='observe'))
+
+
+def parse_repair_entry():
+    return dict(use='parse_repair', where='rewrite', span=1, policy=dict(earliest_turn=1, on_retry='observe'))
+
+
+def with_repair(a, specs):
+    """--repair-on-parse-error next to --trigger-config, in --mode relay: the arm keeps its parse-error repair. The
+    legacy entries, as legacy_config builds them (parse_repair; on Terminus-2 repair_confirm before it), go in front of
+    the config's own triggers, unless the config has its own parse_repair entry, which then wins (and its own
+    repair_confirm likewise). -> (specs, what was done, for the router's start log; None when the flag does nothing)."""
+    if not (a.trigger_config and a.repair_on_parse_error and a.mode == 'relay'):
+        return specs, None
+    if any(isinstance(s.trigger, iv.ParseRepair) for s in specs):
+        return specs, "--repair-on-parse-error: the config's own parse_repair entry wins, none added"
+    confirm = a.harness != 'msa' and not any(isinstance(s.trigger, iv.RepairConfirm) for s in specs)
+    added = ['repair_confirm', 'parse_repair'] if confirm else ['parse_repair']
+    clash = sorted({s.name for s in specs} & set(added))
+    if clash:
+        raise iv.ConfigError(f'--repair-on-parse-error adds the triggers {clash} in front of the config; the config '
+                             f'has entries of that name: rename them (name:)')
+    T = ([repair_confirm_entry()] if confirm else []) + [parse_repair_entry()]
+    note = f"--repair-on-parse-error: {', '.join(added)} added in front of the config's triggers"
+    return iv.load_config(dict(triggers=T))[1] + list(specs), note
 
 
 def shadow(specs):
@@ -234,7 +265,7 @@ def scanner_names(specs):
 
 def conflicts(a, default):
     """The legacy intervention flags set alongside --trigger-config (default(dest) -> the flag's default)."""
-    flags = LEGACY_FLAGS + (RELAY_NOTE_FLAGS if a.mode == 'relay' else ())
+    flags = REFUSED_FLAGS + (RELAY_NOTE_FLAGS if a.mode == 'relay' else ())
     return [opt for dest, opt in flags if getattr(a, dest) != default(dest)]
 
 

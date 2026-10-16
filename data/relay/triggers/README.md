@@ -131,9 +131,11 @@ calls; `on_retry`; `owners`, to ask it on the teacher's turns too). Unknown keys
 ## 4. Run it online
 
 Point the relay launcher at your YAML with `TRIGGER_CONFIG`. In the arms that run it, it replaces the legacy
-intervention knobs: `ASSIST`, `TIME_TAKEOVER`, the context budget, the takeover-trigger knobs, the repair arm's
-`--repair-on-parse-error` (add a `parse_repair` entry if you want repairs) and, in relay arms, `VERIFY_NOTE` (give a
-`done_claim` entry a `teacher_note` instead). The run dir keeps a checked copy of the config and the `path/file.py`
+intervention knobs: `ASSIST`, `TIME_TAKEOVER`, the context budget, the takeover-trigger knobs and, in relay arms,
+`VERIFY_NOTE` (give a `done_claim` entry a `teacher_note` instead). The `relay_repair` arm keeps its parse-error
+repair: when the harness can't parse the student's reply, the teacher answers that turn instead, as without a
+config. Its `parse_repair` (and on Terminus-2 `repair_confirm`) goes in front of your triggers, unless your config has
+its own `parse_repair` entry; then yours is used. The run dir keeps a checked copy of the config and the `path/file.py`
 triggers it names in `trigger_config/`, with `SHA256SUMS`, and `run.meta` records the sha. A judge's `prompt_file` is
 read where it is, so give it an absolute path.
 

@@ -314,6 +314,10 @@ class Router:
         # config today's flags stand for (router_triggers.legacy_config); --mode teacher / student only log the fires
         self.trigger_policy, self.trigger_specs = cfg or iv.load_config(
             rtg.legacy_config(a, self.parser is not None, self.note_text))
+        # --repair-on-parse-error next to a config (the relay_repair arm): its parse-error repair stays, in front
+        self.trigger_specs, self.repair_note = rtg.with_repair(a, self.trigger_specs)
+        if self.repair_note:
+            print(f'RELAY_ROUTER {self.repair_note}', flush=True)
         if a.mode != 'relay':
             self.trigger_specs = rtg.shadow(self.trigger_specs)
         if a.trigger_config:   # the config's relay_triggers takeover triggers stand for --takeover
@@ -1891,8 +1895,9 @@ def parse_args(argv=None):
                         'in the 2026-09-26 check)')
     p.add_argument('--trigger-config', default=None,
                    help='YAML trigger config (interventions.load_config; notes/ot-agent/relay-triggers): who answers '
-                        'each request. Replaces the intervention flags (--takeover, --repair-on-parse-error, '
-                        '--context-budget-*, --time-takeover-frac, --assist*, in relay --verify-note*); `python '
+                        'each request. Replaces the intervention flags (--takeover, --context-budget-*, '
+                        '--time-takeover-frac, --assist*, in relay --verify-note*; with --repair-on-parse-error the '
+                        'relay arm keeps its parse_repair in front, unless the config has its own); `python '
                         'router_triggers.py <flags>` prints the config those flags stand for. Records then also carry '
                         'decisions (every fire) and intervention')
     p.add_argument('--student-view-after-takeover', choices=['keep', 'strip'], default='keep',
@@ -1946,7 +1951,7 @@ async def serve(a, ready_event=None):
                  teacher_format_guard=a.teacher_format_guard, teacher_resamples=a.teacher_resamples,
                  verify_note=a.verify_note, verify_note_text=router.note_text if a.verify_note else None,
                  **({'trigger_config': dict(path=a.trigger_config, policy=dataclasses.asdict(router.trigger_policy),
-                                            triggers=[s.name for s in router.trigger_specs])}
+                                            triggers=[s.name for s in router.trigger_specs], repair=router.repair_note)}
                     if a.trigger_config else {}))
     if not a.skip_health:
         ok, report = await router.health_check()

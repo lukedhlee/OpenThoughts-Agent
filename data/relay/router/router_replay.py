@@ -366,7 +366,8 @@ async def replay_group(rr, rec, out_dir, inject, trigger_cfg):
         if trigger_cfg is True:
             with open(p, 'w') as f:
                 yaml.safe_dump(rtg.legacy_config(a, parser_loaded, note), f, sort_keys=False, width=1000)
-        drop = {o for _, o in rtg.LEGACY_FLAGS} | ({o for _, o in rtg.RELAY_NOTE_FLAGS} if a.mode == 'relay' else set())
+        # as run_pilot.sh: --repair-on-parse-error stays (a relay_repair run keeps its repair in front of the config)
+        drop = {o for _, o in rtg.REFUSED_FLAGS + (rtg.RELAY_NOTE_FLAGS if a.mode == 'relay' else ())}
         argv = strip_flags(argv, drop) + ['--trigger-config', p]
     a = rr.parse_args(argv)
     msa = a.harness == 'msa'

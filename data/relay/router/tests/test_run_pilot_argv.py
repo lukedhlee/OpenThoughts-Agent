@@ -4,7 +4,8 @@ set) and the run's copy of the config (router_triggers.stage_config).
 Without a config every arm's argv is today's: run_pilot_routers_8e4e515a.sh (the inline code router_argv.sh replaced,
 verbatim) and router_argv.sh build the same argv on 120 random knob settings, AGENT=msa among them. With one, the arms
 that run it get --trigger-config and lose exactly the flags the router refuses next to it (the router's own parser
-accepts every argv built here); control stays the teacher-alone baseline. Plain bash 3.2 (a Mac's) runs it all.
+accepts every argv built here); relay_repair keeps --repair-on-parse-error (the router puts its parse_repair in front
+of the config); control stays the teacher-alone baseline. Plain bash 3.2 (a Mac's) runs it all.
 
     python -m pytest -q data/relay/router/tests/test_run_pilot_argv.py
 """
@@ -30,7 +31,7 @@ KNOBS = dict(AGENT='terminus2', HARBOR_SRC='/c/harbor/src', R='/runs/x', TREE='/
              TEACHER_MAX_TOKENS='32768', TEACHER_GUARD='1', TEACHER_RESAMPLES='2', VERIFY_NOTE='1', MAX_INPUT='131072',
              CTX_BUDGET='32000', ROW_MAX='65536', ROW_RESERVE='8192', ASSIST='1', TIME_TAKEOVER='0.6', CLOCK='paused',
              FAILOVER_5XX='1', BALANCE='active', TEACHER_HINT_TEXT='Keep it short.')
-REFUSED = ('--repair-on-parse-error', '--context-budget-tokens', '--assist', '--assist-ctx', '--time-takeover-frac')
+REFUSED = ('--context-budget-tokens', '--assist', '--assist-ctx', '--time-takeover-frac')
 
 
 def argv(tc='', **knobs):
@@ -46,7 +47,7 @@ def argv(tc='', **knobs):
 def test_without_a_config_the_intervention_flags_are_today_s():
     a = argv()
     rp = a['relay_repair']
-    for flag in REFUSED + ('--verify-note', '--terminus-parser', '--autofix'):
+    for flag in REFUSED + ('--repair-on-parse-error', '--verify-note', '--terminus-parser', '--autofix'):
         assert flag in rp, flag
     assert not any('--trigger-config' in x for x in a.values())
     assert rp[rp.index('--teacher-hint-text') + 1] == 'Keep it short.'      # an argument with spaces stays one
@@ -67,8 +68,9 @@ def test_with_a_config_the_router_gets_it_instead_of_the_flags(tmp_path):
         assert p.trigger_config == str(tc) and p.mode == ('student' if arm == 'student_only' else 'relay')
     assert '--trigger-config' not in a['control'] and '--verify-note' in a['control']   # the baseline as before
     assert '--autofix' in a['relay_repair'] and '--student-row-max-tokens' in a['relay_repair']
-    t2 = argv(str(tc))['relay_repair']            # Terminus-2: the parser stays for a parse_repair entry
-    assert '--terminus-parser' in t2 and '--repair-on-parse-error' not in t2
+    assert [arm for arm in ARMS if '--repair-on-parse-error' in a[arm]] == ['relay_repair']   # the arm keeps its repair
+    t2 = argv(str(tc))['relay_repair']            # Terminus-2: the parser too
+    assert '--terminus-parser' in t2 and rr.parse_args(t2).repair_on_parse_error   # the router accepts it with TC
 
 
 OLD_SH = HERE / 'run_pilot_routers_8e4e515a.sh'
@@ -79,8 +81,8 @@ CHOICES = dict(AGENT=('terminus2', 'msa'), TURL=('', 'http://t:8000/v1'), SURL=(
                ASSIST_CTX=(None, '10000,20000'), ASSIST_ERR=(None, '2'), ASSIST_GAP=(None, '5'), ASSIST_MAX=(None, '3'),
                TIME_TAKEOVER=(None, '', '0.6'), CLOCK=('wall', 'repair', 'paused'), FAILOVER_5XX=('0', '1'),
                BALANCE=('active', 'pinned'))       # None: unset
-DROPPED = {'--repair-on-parse-error': 0, '--context-budget-tokens': 1, '--assist': 0, '--assist-ctx': 1,
-           '--assist-error-streak': 1, '--assist-gap': 1, '--assist-max': 1, '--time-takeover-frac': 1}   # flag: n args
+DROPPED = {'--context-budget-tokens': 1, '--assist': 0, '--assist-ctx': 1, '--assist-error-streak': 1,
+           '--assist-gap': 1, '--assist-max': 1, '--time-takeover-frac': 1}   # flag: n args
 RELAY_DROPPED = {'--verify-note': 0, '--verify-note-text': 1}
 TC = '/runs/x/trigger_config/trig.yaml'
 

@@ -46,9 +46,10 @@
 # TRIGGER_CONFIG=<yaml> (2026-10-16, data/relay/triggers/README.md): who answers each request comes from this trigger
 # config (relay_router.py --trigger-config) instead of the intervention knobs. The relay arms act on it; student_only
 # runs it in shadow (every fire logged, the student answers everything: online shadow testing); control stays the
-# teacher-alone baseline, without it. For the arms that run it, the knobs the router refuses next to a config are left
-# out: ASSIST*, TIME_TAKEOVER, CTX_BUDGET, the relay_repair arm's --repair-on-parse-error (a parse_repair entry decides;
-# its parser and --autofix stay) and, in relay arms, VERIFY_NOTE (a done_claim entry's teacher_note is the note).
+# teacher-alone baseline, without it. The relay_repair arm keeps its parse-error repair: the router puts today's
+# parse_repair (and on Terminus-2 repair_confirm) in front of the config's triggers, unless the config has its own
+# parse_repair entry. For the arms that run it, the knobs the router refuses next to a config are left out: ASSIST*,
+# TIME_TAKEOVER, CTX_BUDGET and, in relay arms, VERIFY_NOTE (a done_claim entry's teacher_note is the note).
 # Pre-flight copies the YAML and the `path/file.py` triggers it names (relative to it) into <run>/trigger_config/,
 # checks that the copy loads, and writes SHA256SUMS there; run.meta records the source, the copy and its sha256. A
 # judge's prompt_file is read as given, so name it by an absolute path. Unset: the routers' argv is today's.
@@ -165,7 +166,7 @@ TC=
 if [ -n "$TRIGGER_CONFIG" ]; then   # the run's own copy (and its .py triggers), checked to load; sha256 in run.meta
   TC=$($PY $HERE/../router/router_triggers.py stage "$TRIGGER_CONFIG" $R/trigger_config 2> $R/trigger_config.err | tail -1)
   [ -n "$TC" ] && [ -f "$TC" ] || { log "TRIGGER_CONFIG $TRIGGER_CONFIG: $(tail -3 $R/trigger_config.err)"; scancel $JOB; exit 1; }
-  log "trigger config $TRIGGER_CONFIG -> $TC (sha256 $(awk 'NR==1{print substr($1, 1, 16)}' $R/trigger_config/SHA256SUMS)); for its arms ASSIST, TIME_TAKEOVER, CTX_BUDGET, the repair flag$([ "$VERIFY_NOTE" = 1 ] && echo ' and (relay) VERIFY_NOTE') are left out"
+  log "trigger config $TRIGGER_CONFIG -> $TC (sha256 $(awk 'NR==1{print substr($1, 1, 16)}' $R/trigger_config/SHA256SUMS)); for its arms ASSIST, TIME_TAKEOVER, CTX_BUDGET$([ "$VERIFY_NOTE" = 1 ] && echo ' and (relay) VERIFY_NOTE') are left out; relay_repair keeps its repair"
 fi
 set -a; source $KEYF; set +a
 DC=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -H "Authorization: Bearer $DAYTONA_API_KEY" https://app.daytona.io/api/api-keys/current)

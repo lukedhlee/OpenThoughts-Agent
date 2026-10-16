@@ -126,11 +126,12 @@ def test_shadow_done_claim_fires_on_the_first_claim_only():
 def test_trigger_config_replaces_the_intervention_flags(tmp_path, capsys):
     p = tmp_path / 'c.yaml'
     p.write_text('triggers: []\n')
-    for extra in (['--assist'], ['--context-budget-tokens', '9'], ['--takeover', 'loop'], ['--verify-note'],
-                  ['--repair-on-parse-error']):
+    for extra in (['--assist'], ['--context-budget-tokens', '9'], ['--takeover', 'loop'], ['--verify-note']):
         with pytest.raises(SystemExit):
             rr.parse_args(['--mode', 'relay', '--trigger-config', str(p)] + extra + BASE)
         assert '--trigger-config replaces ' + extra[0] in capsys.readouterr().err
+    # the relay_repair arm keeps its repair next to a config (router_triggers.with_repair)
+    rr.parse_args(['--mode', 'relay', '--trigger-config', str(p), '--repair-on-parse-error'] + BASE)
     # control's own verify note stays a router flag; flags that are not interventions stay too
     rr.parse_args(['--mode', 'teacher', '--trigger-config', str(p), '--verify-note', '--port', '0', '--log-dir', 'x',
                    '--teacher-url', 'u', '--teacher-model', 'm'])
@@ -186,6 +187,72 @@ def test_trigger_config_routes_as_its_flags(tmp_path, capsys, sc, args):
         if r['owner'] == 'teacher' and (r.get('assist') or r.get('repair') or r.get('takeover')):
             assert r['intervention']['trigger'] in ('assist', 'parse_repair', 'done_claim', 'loop', 'context_budget')
     assert router.cfg['enabled'] == ['done_claim', 'loop', 'no_progress_wait']
+
+
+def _msa_yaml(tmp, capsys, args, keep_repair):
+    """The YAML an msa flag set stands for, with or without its parse_repair entry."""
+    rtg.main(['--mode', 'relay', '--harness', 'msa'] + args + BASE)
+    cfg = yaml.safe_load(capsys.readouterr().out)
+    cfg['triggers'] = [e for e in cfg['triggers'] if keep_repair or e['use'] != 'parse_repair']
+    p = tmp / ('with_repair.yaml' if keep_repair else 'no_repair.yaml')
+    p.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    return p
+
+
+def test_repair_flag_next_to_a_config_keeps_the_arms_repairs(tmp_path, capsys):
+    """The relay_repair arm under TRIGGER_CONFIG: --repair-on-parse-error with a config that has no parse_repair puts
+    today's parse_repair in front of the config's triggers, so the episode routes as the flags alone do. Without the
+    flag the same config lets the student's unparseable replies through (the 2026-10-16 Horizon loop)."""
+    args = ['--repair-on-parse-error', '--autofix']
+    legacy, _ = _episode(tmp_path / 'flags', args, 'badjson')
+    p = _msa_yaml(tmp_path, capsys, args, keep_repair=False)
+    kept, router = _episode(tmp_path / 'kept', args + ['--trigger-config', str(p)], 'badjson')
+    assert any(r.get('repair') for r in legacy)
+    assert [{k: r.get(k) for k in FIELDS} for r in kept] == [{k: r.get(k) for k in FIELDS} for r in legacy]
+    assert {r['intervention']['trigger'] for r in kept if r.get('repair')} == {'parse_repair'}
+    assert router.trigger_specs[0].name == 'parse_repair' and 'added in front' in router.repair_note
+    assert capsys.readouterr().out.count('RELAY_ROUTER --repair-on-parse-error') == 1          # logged once
+    lost, _ = _episode(tmp_path / 'lost', ['--autofix', '--trigger-config', str(p)], 'badjson')
+    assert not any(r.get('repair') for r in lost)
+
+
+def test_a_configs_own_parse_repair_wins_over_the_flag(tmp_path, capsys):
+    """The config has its parse_repair entry: the flag adds nothing (no second parse_repair) and says so once."""
+    args = ['--repair-on-parse-error', '--autofix']
+    p = _msa_yaml(tmp_path, capsys, args, keep_repair=True)
+    rows, router = _episode(tmp_path / 'own', args + ['--trigger-config', str(p)], 'badjson')
+    assert [s.name for s in router.trigger_specs] == [s.name for s in iv.load_config(str(p))[1]]
+    assert [s.name for s in router.trigger_specs].count('parse_repair') == 1 and 'wins' in router.repair_note
+    assert capsys.readouterr().out.count('RELAY_ROUTER --repair-on-parse-error') == 1
+    assert any(r.get('repair') for r in rows)
+
+
+def _router(tmp, args):
+    return rr.Router(rr.parse_args(args + ['--port', '0', '--log-dir', str(tmp / 'r'), '--student-url', 'u',
+                                           '--student-model', 's', '--teacher-url', 'u', '--teacher-model', 't']))
+
+
+@pytest.mark.skipif(not HAVE_PARSER, reason="Terminus-2's parser (harbor) not on sys.path")
+def test_t2_repair_flag_adds_repair_confirm_and_parse_repair_as_legacy_builds_them(tmp_path):
+    """Terminus-2: repair_confirm then parse_repair, row for row as legacy_config writes them, in front of the
+    config's own triggers; a config with its own parse_repair gets neither; a name clash is a ConfigError."""
+    p = tmp_path / 'c.yaml'
+    p.write_text('triggers: [{use: loop}, {use: done_claim, where: next, span: -1}]\n')
+    router = _router(tmp_path, ['--mode', 'relay', '--repair-on-parse-error', '--trigger-config', str(p)])
+    legacy = [s for s in specs_of(['--mode', 'relay', '--repair-on-parse-error'])
+              if s.name in ('repair_confirm', 'parse_repair')]
+    assert [row(s) for s in router.trigger_specs] == [row(s) for s in legacy] + [
+        row(s) for s in iv.load_config(str(p))[1]]
+    assert router.parser is not None
+    p.write_text('triggers: [{use: loop}, {use: parse_repair, where: rewrite, span: 2}]\n')
+    router = _router(tmp_path, ['--mode', 'relay', '--repair-on-parse-error', '--trigger-config', str(p)])
+    assert [s.name for s in router.trigger_specs] == ['loop', 'parse_repair'] and router.trigger_specs[1].span == 2
+    p.write_text('triggers: [{use: loop, name: parse_repair}]\n')
+    with pytest.raises(iv.ConfigError, match='rename them'):
+        _router(tmp_path, ['--mode', 'relay', '--repair-on-parse-error', '--trigger-config', str(p)])
+    p.write_text('triggers: [{use: loop}]\n')                       # shadow (student_only): nothing added
+    router = _router(tmp_path, ['--mode', 'student', '--repair-on-parse-error', '--trigger-config', str(p)])
+    assert [s.name for s in router.trigger_specs] == ['loop'] and router.repair_note is None
 
 
 def _assisted_then_retry(tmp, args, wait=0.0, budgets=None):
