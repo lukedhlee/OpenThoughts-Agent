@@ -27,8 +27,8 @@ it is a job.
 | 7 | A staged task tree with `TASKS.txt` and `router_tasks.json` | section 2 (smoke tree) and section 3.1 (full tree) |
 
 Step 2, the venv. The two SHAs must match `build_env.sbatch`'s values, and `SNOWBALL_RUSTUP=1` installs the cargo the
-vLLM build needs. This sequence is reconstructed from Luke's 09-29 build logs and has not yet been run end to end by a
-fresh user (unverified):
+vLLM build needs. This sequence was run end to end by a fresh user on 2026-10-16 (login steps 4 min, the job 31 min,
+then the serve smoke below passed):
 
 ```bash
 ROOT=$HOME/snowball SNOWBALL_RUSTUP=1 MSRL_SHA=a03b2773 HARBOR_SHA=dcf609bc \
@@ -38,8 +38,9 @@ setsid nohup bash ~/snowball/ota/data/r2egym/horizon/tunnel.sh $J > ~/tunnel.$J.
 ```
 
 The job writes `sb_build.<J>.out` in the submit dir. Its `eagle3` step builds `~/snowball/src/marin_vllm_eagle3`, the
-serve overlay `serve_env.sh` points at. That step has not yet run on Horizon from this script, so check that the dir
-exists after the job and ask Luke if it does not.
+serve overlay `serve_env.sh` points at; the job ends with `smoke: PASS` and `END ok`. If you build somewhere other than
+`~/snowball`, pass the same dir as `ROOT=` to the build scripts and as `SNOWBALL_ROOT=` to everything that serves or
+drives.
 
 Step 4, the 09-21 base. `relay_sft_arm.sh`, `nr_window.py` and `msa_select.py` read it from this exact directory:
 
@@ -70,7 +71,7 @@ done
 
 The smoke runs both arms on the 4 shortest tasks of a 100-task tree, with 1 student node, 1 teacher node and a 1-node
 driver job. It proves serving, the tunnels, Daytona, the routers, harbor and the readout before anything large. These
-exact smoke settings have not been run yet (unverified); each piece matches the scripts.
+exact settings passed on a fresh build on 2026-10-16 in 22 minutes and about 1.1 node-hours.
 
 Stage the smoke tree from the public CalibForge bundle (2,457 tasks, checked by sha256), keeping the 100 tasks in
 `pilot/relay100_tasks.txt`:
@@ -102,7 +103,7 @@ ARMS="control relay_repair" NODES=2 CAP_NODE_H=4 GATE_LAT=120 TREE=$SCRATCH/rela
 
 Watch `$SCRATCH/experiments/relay/pilot/runs/$N/driver.log`. The run passed when that log ends with `RUN_DONE`, the run
 dir has no `ABORT` file, and every `H` line in `readout.txt` there says `PASS`. The `S` lines judge pass and takeover
-rates, which mean nothing on 4 tasks. If the driver job fails before `run_pilot.sh` starts, its own log is
+rates, which mean nothing on 4 tasks, so the final verdict line says `NO SCALE` on a smoke. If the driver job fails before `run_pilot.sh` starts, its own log is
 `$SCRATCH/experiments/relay/pilot/logs/relay_drv_${N}_<job>.out`, and the bridge log is in `logs/driver_<job>/`. The
 usual early stops:
 

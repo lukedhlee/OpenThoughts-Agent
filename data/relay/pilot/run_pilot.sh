@@ -422,4 +422,4 @@ $PY $HERE/readout.py --run-dir $R --name $NAME --gate final --json $R/readout.js
   ${TAKEOVER_MIN:+--takeover-min $TAKEOVER_MIN} ${TAKEOVER_MAX:+--takeover-max $TAKEOVER_MAX} > /dev/null 2> $R/readout.txt
 cat $R/readout.txt
 log "RUN_DONE $(tr '\n' ' ' < $R/run.meta)"
-[ "${DRIVER_IN_SERVE:-0}" = 1 ] && { log "serve job $JOB cancelled after the readout"; scancel $JOB; }
+if [ "${DRIVER_IN_SERVE:-0}" = 1 ]; then log "serve job $JOB cancelled after the readout"; scancel $JOB; fi   # an if, not &&: as the last command, a false && made every separate-driver run exit 1 (sacct FAILED)

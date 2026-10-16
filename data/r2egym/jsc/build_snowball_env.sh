@@ -153,6 +153,13 @@ step_clones() {
   clone_pin "$ROOT/marinskyrl-marin" "$MSRL_REPO" "$MSRL_BRANCH" "$MSRL_SHA"
   clone_pin "$ROOT/harbor-marin"     "$HARBOR_REPO" "$HARBOR_BRANCH" "$HARBOR_SHA"
   clone_pin "$OTA"                    "$OTA_REPO" "$OTA_BRANCH" "$OTA_SHA"
+  local HERE_JSC; HERE_JSC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  if [ ! -d "$ROOT/snowball" ] && [ -f "$HERE_JSC/snowball-v2.freeze" ] && git -C "$HERE_JSC" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    # run from a checkout (Horizon: $ROOT/ota at a pinned tag): its own data/r2egym/jsc, so the freeze and the smoke
+    # client match the code being built instead of the working branch's tip at clone time
+    say "clones: data/r2egym/jsc from this checkout ($(git -C "$HERE_JSC" rev-parse --short=8 HEAD)) -> $ROOT/snowball"
+    mkdir -p "$ROOT/snowball" && cp -R "$HERE_JSC"/. "$ROOT/snowball/" || die "copy jsc"
+  fi
   if [ ! -d "$ROOT/snowball" ]; then
     say "clones: data/r2egym/jsc from $JSC_BRANCH -> $ROOT/snowball"
     git -C "$OTA" fetch -q origin "$JSC_BRANCH" || die "fetch $JSC_BRANCH"
@@ -356,7 +363,7 @@ except Exception as e:
     bad += 1; print("FAIL vllm registry", type(e).__name__, str(e)[:200])
 print("IMPORT_SMOKE_FAILURES", bad); raise SystemExit(1 if bad else 0)
 PY
-  local rc=$?; [ $rc -eq 0 ] && say "smoke: PASS — next: sbatch $ROOT/snowball/serve_smoke.sbatch (after fixing its paths) for the GPU serve check" || die "smoke failed (rc=$rc)"
+  local rc=$?; [ $rc -eq 0 ] && say "smoke: PASS — next: the GPU serve check (Horizon: sbatch $ROOT/ota/data/r2egym/horizon/serve_smoke.sbatch with ROOT exported)" || die "smoke failed (rc=$rc)"
 }
 
 # ----------------------------------------------------------------------------- main
