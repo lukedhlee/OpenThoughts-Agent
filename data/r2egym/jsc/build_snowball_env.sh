@@ -330,7 +330,9 @@ step_eagle3() { # opt-in (not in the default list): the EAGLE-3 overlay that ser
   # vllm_flash_attn/*, _version.py, ...): copying only vllm/*.so leaves out _vllm_fa2_C/_vllm_fa3_C and vLLM dies at start.
   say "eagle3: copy the base build's generated files into the overlay"
   ( cd "$SRC" && git ls-files --others --ignored --exclude-standard vllm | grep -v __pycache__ | tar -cf - -T - ) | tar -xf - -C "$D" || die "copy generated files"
-  OMP_NUM_THREADS=1 PYTHONPATH=$D "$PY" -c "import vllm, vllm.vllm_flash_attn; assert vllm.__file__.startswith('$D'), vllm.__file__" || die "overlay import"
+  # From $D, not the caller's cwd: step_vllm leaves the shell in $SRC, and `python -c` puts the cwd ahead of PYTHONPATH,
+  # so run in the same process after step vllm the check imported the base tree (Horizon fresh build, 2026-10-16).
+  ( cd "$D" && OMP_NUM_THREADS=1 PYTHONPATH=$D "$PY" -c "import vllm, vllm.vllm_flash_attn; assert vllm.__file__.startswith('$D'), vllm.__file__" ) || die "overlay import"
   mark_done eagle3
 }
 
