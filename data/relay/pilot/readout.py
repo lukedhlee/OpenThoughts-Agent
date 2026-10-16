@@ -17,6 +17,8 @@ Definitions (the pilot spec, notes/relay/relay_pilot_100.md, is the authority):
   censored        the episode was ended by the run's deadline (router ending 'deadline'); excluded from rates
   real failure    reward 0 with no harness error, no verifier timeout, not censored
   takeover        the first router record of an episode that carries `takeover`; its turn is the first teacher turn
+  intervention    (router --trigger-config) every teacher turn's record carries `intervention` {id, trigger, where,
+                  span, i, teacher}: an episode may have several, each of k turns or to the end (or until released)
   recovery        pass rate over relay episodes with a takeover (by trigger too)
   kept traces     passes + as many real failures as passes (1:1), relay counting only takeover episodes
 """
@@ -183,10 +185,13 @@ def router_view(router_dir):
     eps = collections.OrderedDict()
     for r in recs:
         e = eps.setdefault(r['sid'], dict(sid=r['sid'], task_id=r.get('task_id'), main=[], aux=[], takeover=None,
-                                          ending=None, done_claim_dropped=0))
+                                          ending=None, done_claim_dropped=0, interventions=collections.OrderedDict()))
         (e['main'] if r.get('turn') is not None else e['aux']).append(r)
         if r.get('takeover') and e['takeover'] is None:
             e['takeover'] = dict(r['takeover'], first_teacher_record=r)
+        if r.get('intervention') and r.get('turn') is not None:   # --trigger-config: id -> the intervention's turns
+            iv = e['interventions'].setdefault(r['intervention']['id'], dict(r['intervention'], records=[]))
+            iv['records'].append(r)
         if r.get('ending'):
             e['ending'] = r['ending']
         e['done_claim_dropped'] += bool(r.get('done_claim_dropped'))
@@ -415,8 +420,10 @@ def takeover_guards(e, t):
     no verification command in the teacher turns before that claim, and the task fails), g2 context exceeded after
     the takeover, and the teacher's cost (turns, completion and prompt tokens)."""
     t0 = e['takeover']['turn']
+    own = ((e['takeover'].get('first_teacher_record') or {}).get('intervention') or {}).get('id')   # its turns only (hand-backs)
     teacher = sorted((r for r in e['main'] if r.get('owner') == 'teacher' and r.get('turn') is not None
-                      and r['turn'] >= t0 and r.get('upstream_status') == 200), key=lambda r: r['turn'])
+                      and r['turn'] >= t0 and r.get('upstream_status') == 200
+                      and (own is None or (r.get('intervention') or {}).get('id') == own)), key=lambda r: r['turn'])
     verified, claim_at = False, None
     for i, r in enumerate(teacher[:2]):
         pr = reply_of(r)
@@ -555,6 +562,35 @@ def context_budget_view(rv, rows):
                                    max_abs_diff=max((abs(a_ - b_) for a_, b_ in same), default=None)))
 
 
+def interventions_view(rv, rows):
+    """(router --trigger-config) every intervention: how many per episode, by trigger, where and span; how many turns
+    the teacher took under each; how many were handed back (the span done, or released) and how; recovery (pass rate)
+    of the episodes that had one. None for a run whose records carry no `intervention`."""
+    eps = list(rv['eps'].values())
+    ivs = [(e, I) for e in eps for I in e['interventions'].values()]
+    if not ivs:
+        return None
+    by_sid = {t['sid']: t for t in rows if t['sid']}
+    hb = {(x.get('sid'), x.get('id')): x for x in rv['events'] if x.get('event') == 'handback'}
+    per_ep = [len(e['interventions']) for e in eps]
+    out = dict(episodes=len(eps), episodes_with=sum(1 for n in per_ep if n), interventions=len(ivs),
+               per_episode_mean=round(len(ivs) / len(eps), 3), per_episode_max=max(per_ep), by_trigger={})
+    for trig in sorted({I['trigger'] for _, I in ivs}):
+        mine = [(e, I) for e, I in ivs if I['trigger'] == trig]
+        turns = [sum(1 for r in I['records'] if not r.get('retry')) for _, I in mine]
+        back = [hb.get((e['sid'], I['id'])) for e, I in mine]
+        sc = [t for t in (by_sid.get(e['sid']) for e in {id(e): e for e, _ in mine}.values()) if usable(t)]
+        p = sum(1 for t in sc if is_pass(t))
+        out['by_trigger'][trig] = dict(
+            n=len(mine), where=dict(collections.Counter(I['where'] for _, I in mine)),
+            span=dict(collections.Counter(str(I['span']) for _, I in mine)),
+            teachers=dict(collections.Counter(I.get('teacher') or 'teacher' for _, I in mine)),
+            teacher_turns_p50=q(turns, .5), teacher_turns_max=max(turns), start_turn_p50=q([I['start_turn'] for _, I in mine], .5),
+            handed_back=sum(1 for b in back if b), released=sum(1 for b in back if b and b.get('released_by')),
+            episodes_scored=len(sc), passes=p, recovery=round(p / len(sc), 4) if sc else None)
+    return out
+
+
 def would_fire(rv, rows):
     by_sid = {t['sid']: t for t in rows if t['sid']}
     c = collections.Counter()
@@ -563,6 +599,8 @@ def would_fire(rv, rows):
         if not usable(t):
             continue
         fired = {f['trigger'] for r in e['main'] for f in (r.get('would_fire') or [])}
+        # --trigger-config: every shadow decision (a coworker's trigger has no would_fire of its own)
+        fired |= {d['trigger'] for r in e['main'] for d in (r.get('decisions') or []) if d.get('outcome') == 'shadow'}
         outcome = 'pass' if is_pass(t) else 'fail'
         c[f'{outcome}_episodes'] += 1
         for f in fired:
@@ -589,14 +627,20 @@ def repair_view(rv, rows):
             seen[r['turn']] = r          # a retried request keeps its last record
         main = [seen[k] for k in sorted(seen)]
         for i, r in enumerate(main):
+            span = (r.get('intervention') or {}).get('span', -1)
             kind = 'router' if r['owner'] == 'router' else 'student' if r['owner'] == 'student' else \
-                'teacher_repair' if r.get('repair') else 'teacher_sticky'
+                'teacher_repair' if r.get('repair') else 'teacher_sticky' if span == -1 else 'teacher_span'
             own[kind] += 1
-            if r.get('repair_kind') == 'parse_error' and i + 1 < len(main):
-                nxt = main[i + 1]
+            j = i                         # a repair of k turns (--trigger-config): what follows its last turn
+            rid = (r.get('intervention') or {}).get('id')
+            while rid is not None and j + 1 < len(main) and (main[j + 1].get('intervention') or {}).get('id') == rid:
+                j += 1
+            if r.get('repair_kind') == 'parse_error' and j + 1 < len(main):
+                nxt = main[j + 1]
                 # Guided relay can schedule a one-turn assist immediately after a
                 # parse repair without transferring episode ownership.
-                if nxt['owner'] == 'student' or nxt.get('repair') or nxt.get('assist') or nxt.get('takeover') or nxt['owner'] == 'router':
+                if nxt['owner'] == 'student' or nxt.get('repair') or nxt.get('assist') or nxt.get('takeover') or nxt['owner'] == 'router' \
+                        or nxt.get('intervention'):   # another intervention starts at once (--trigger-config)
                     back_to_student += 1
                 else:
                     not_back += 1
@@ -746,6 +790,9 @@ def main():
                  summarizations_per_episode=dict(sorted(summ.items())),
                  throughput=throughput(rv, a.run_dir, nodes), teacher_format=teacher_format_view(rv),
                  student_think_modes=sorted({r.get('student_think') for r in rv['recs'] if r.get('student_think')}))
+        iv = interventions_view(rv, rows)
+        if iv is not None:
+            o['interventions'] = iv
         if arm in RELAY_ARMS:
             o['student'] = student_view(rv)
             o['takeovers'] = relay_takeovers(rv, rows)

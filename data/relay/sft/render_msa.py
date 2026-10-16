@@ -11,7 +11,10 @@ One row per episode, rendered with 09-21's own chat template exactly as the stud
   * tool results: as harbor sent them (name "bash"); upstream's format-error user messages verbatim.
 Loss as sft/render.py (Terminus-2): teacher turn = content + tool call + <|eot_id|> always, its reasoning span only if
 never cut and <= THINK_LIMIT tokens; student turns, router turns, system/user/tool turns masked (autofix loss none:
-09-28's arm C showed training autofixed student actions adds nothing).
+09-28's arm C showed training autofixed student actions adds nothing). Any number of interventions (router
+--trigger-config): every teacher turn trained, every student turn around them masked; a teacher turn follows its
+intervention's student_view_after_handback (full: never cut, stripped: no reasoning); --student-view-after-takeover
+strip applies only while a sticky takeover holds the episode (a released one gives the student its thinking back).
 The row is checked against the router's own count: the student-view token count the router logged for the episode's
 last student-view request must equal the rendered prefix up to that request (+ the generation prompt).
 
@@ -117,7 +120,8 @@ def student_view(msgs, by_id, tok, cap=rcap.CAP_TOKENS, think_limit=THINK_LIMIT,
             if r is None:
                 raise ValueError(f'assistant message {i} has no router record')
             info.append(dict(i=i, owner=r['owner'], autofix=bool(r.get('autofix')), repair=bool(r.get('repair')),
-                             turn=r.get('turn')))
+                             turn=r.get('turn'), view=((r.get('intervention') or {}).get('view') or {}).get(
+                                 'student_view_after_handback', 'capped')))
             if r['owner'] == train:
                 teacher_idx.append(i)
     last_t = teacher_idx[-1] if teacher_idx else None
@@ -131,8 +135,9 @@ def student_view(msgs, by_id, tok, cap=rcap.CAP_TOKENS, think_limit=THINK_LIMIT,
         if meta['owner'] == 'student' and strip_student:
             m = {kk: v for kk, v in m.items() if kk != 'reasoning_content'}
         if meta['owner'] == train:
-            r_full = (m.get('reasoning_content') or '').strip()
-            r, at = (rcap.cut_reasoning(r_full, tok, cap) if (i != last_t and r_full) else (r_full, None))
+            r_full = '' if meta['view'] == 'stripped' else (m.get('reasoning_content') or '').strip()
+            r, at = (rcap.cut_reasoning(r_full, tok, cap) if (i != last_t and r_full and meta['view'] == 'capped')
+                     else (r_full, None))
             m = {kk: v for kk, v in m.items() if kk != 'reasoning_content'}
             if r:
                 m['reasoning_content'] = r
@@ -146,6 +151,15 @@ def takeover_seq(recs):
     return min((r['seq'] for r in recs if r.get('takeover')), default=None)
 
 
+def sticky_at(recs, seq=None):
+    """Does a sticky takeover hold the episode at request `seq` (default: its end)? Its latest takeover, not handed
+    back since (no student turn after it): the router strips the student's thinking only then."""
+    seq = max((r['seq'] for r in recs), default=0) if seq is None else seq
+    t = max((r['seq'] for r in recs if r.get('takeover') and r['seq'] <= seq), default=None)
+    return t is not None and not any(t < r['seq'] <= seq and r.get('owner') == 'student' and r.get('turn') is not None
+                                     for r in recs)
+
+
 def render(msgs, recs, tok, tpl, bos, cap=rcap.CAP_TOKENS, think_limit=THINK_LIMIT, strip_after_takeover=False):
     by_id = owners(recs)
     full = [view(m) for m in msgs if m.get('role') != 'exit']
@@ -154,7 +168,7 @@ def render(msgs, recs, tok, tpl, bos, cap=rcap.CAP_TOKENS, think_limit=THINK_LIM
         msgs.pop()
     train = 'student' if ARM == 'student_only' else 'teacher'
     out, info = student_view(msgs, by_id, tok, cap, think_limit,
-                             strip_student=strip_after_takeover and takeover_seq(recs) is not None, train=train)
+                             strip_student=strip_after_takeover and sticky_at(recs), train=train)
     text = tpl.render(messages=[as_rendered(m) for m in out], tools=[BASH_TOOL], bos_token=bos, add_generation_prompt=False)
     loss_ranges, pos = [], 0
     for meta in info:
@@ -183,7 +197,7 @@ def view_count(row, recs, tok, tpl, bos):
         return last['student_view_tokens'], None
     ts = takeover_seq(recs)
     msgs, _ = student_view(row['full'][:n_prefix], row['by_id'], tok,
-                           strip_student=row['strip'] and ts is not None and ts < last['seq'])
+                           strip_student=row['strip'] and ts is not None and ts < last['seq'] and sticky_at(recs, last['seq']))
     text = tpl.render(messages=[as_rendered(m) for m in msgs], tools=[BASH_TOOL], bos_token=bos, add_generation_prompt=True)
     return last['student_view_tokens'], len(tok.encode(text, add_special_tokens=False).ids)
 
