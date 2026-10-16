@@ -43,11 +43,21 @@
 # rate over finished relay episodes against [TAKEOVER_MIN, TAKEOVER_MAX] once TAKEOVER_AFTER are in (TAKEOVER_ACTION
 # flag|stop), and the student's EAGLE-3 mean acceptance length from its servers' /metrics (flag below ACCEPT_FLAG, stop
 # below ACCEPT_STOP, 0 = off). A flag is logged and appended to <run>/FLAGS; it never cancels anything.
+# TRIGGER_CONFIG=<yaml> (2026-10-16, data/relay/triggers/README.md): who answers each request comes from this trigger
+# config (relay_router.py --trigger-config) instead of the intervention knobs. The relay arms act on it; student_only
+# runs it in shadow (every fire logged, the student answers everything: online shadow testing); control stays the
+# teacher-alone baseline, without it. For the arms that run it, the knobs the router refuses next to a config are left
+# out: ASSIST*, TIME_TAKEOVER, CTX_BUDGET, the relay_repair arm's --repair-on-parse-error (a parse_repair entry decides;
+# its parser and --autofix stay) and, in relay arms, VERIFY_NOTE (a done_claim entry's teacher_note is the note).
+# Pre-flight copies the YAML and the `path/file.py` triggers it names (relative to it) into <run>/trigger_config/,
+# checks that the copy loads, and writes SHA256SUMS there; run.meta records the source, the copy and its sha256. A
+# judge's prompt_file is read as given, so name it by an absolute path. Unset: the routers' argv is today's.
 set -uo pipefail
 JOB=${1:?serve job id}; NAME=${2:?run name}; MODE=${3:-full}
 C=/e/project1/transfernetx/lee27/code
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROUTER=$HERE/../router/relay_router.py
+source $HERE/router_argv.sh          # router_argv <arm> <port> -> RARGV
 PY=${PY:-$C/envs/snowball-v2/bin/python}; HARBOR=${HARBOR:-$C/envs/snowball-v2/bin/harbor}
 AGENT=${AGENT:-terminus2}           # terminus2 | msa
 if [ "$AGENT" = msa ]; then
@@ -80,6 +90,7 @@ SHUFFLE_SEED=${SHUFFLE_SEED:-}     # set: tasks run in a uniform shuffled order 
                                   # 'list': the task list's own order; empty: longest agent budget first (the default so far)
 FAILOVER_5XX=${FAILOVER_5XX:-1}    # 1: an upstream 5xx (a crashed engine) fails over to another server like a connection error
 VERIFY_NOTE=${VERIFY_NOTE:-0}      # 1: the verification note on Qwen's confirmation request (relay: done_claim takeover; control: the first)
+TRIGGER_CONFIG=${TRIGGER_CONFIG:-}  # a trigger config (YAML) in place of the intervention knobs (header); TC = the run's copy
 [ $CLOCK = wall ] && AGENT_MULT=1.0 || AGENT_MULT=8.0
 OVF_AFTER=${OVF_AFTER:-0}; OVF_MAX=${OVF_MAX:-0.20}   # relay backstop: cancel when overflow > OVF_MAX after OVF_AFTER episodes (0 = off)
 STOP_AFTER=${STOP_AFTER:-0}; STOP_OVF=${STOP_OVF:-0.30}; STOP_FMT=${STOP_FMT:-0.98}; STOP_HERR=${STOP_HERR:-0.10}; STOP_EVERY=${STOP_EVERY:-900}
@@ -128,6 +139,8 @@ write_meta() {
   printf 'serve_job=%s\nnodes=%s\nnode_hours=%s\nharbor=%s\nota=%s\narms=%s\nconc=%s\nmode=%s\ndeadline=%s\nend=%s\n' "$JOB" "$NODES" \
     "$(awk -v s="${el:-0}" -v n=$NODES -v d="${del:-0}" -v k=$DRIVER_NODES 'BEGIN{printf "%.3f", (n*s + k*d)/3600}')" "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" \
     "$(git -C $HERE rev-parse --short=8 HEAD 2>/dev/null)" "$ARMS" "$CONC" "$MODE" "${DEADLINE:-}" "$(date -Is)" > $R/run.meta
+  [ -n "${TC:-}" ] && printf 'trigger_config=%s\ntrigger_config_copy=%s\ntrigger_config_sha256=%s\n' "$TRIGGER_CONFIG" "$TC" \
+    "$(awk 'NR==1{print $1}' $R/trigger_config/SHA256SUMS)" >> $R/run.meta
   [ -n "$DRIVER_JOB" ] && printf 'serve_node_hours=%s\ndriver_job=%s\ndriver_nodes=%s\ndriver_node_hours=%s\n' \
     "$(awk -v s="${el:-0}" -v n=$NODES 'BEGIN{printf "%.3f", n*s/3600}')" "$DRIVER_JOB" "$DRIVER_NODES" \
     "$(awk -v d="${del:-0}" -v k=$DRIVER_NODES 'BEGIN{printf "%.3f", k*d/3600}')" >> $R/run.meta
@@ -137,7 +150,7 @@ cleanup_sandboxes() {
   [ ${#jobs[@]} -gt 0 ] && $PY ${CLEANUP_PY:-$HERE/cleanup_sandboxes.py} --key-file $KEYF --delete "${jobs[@]}" 2>&1 | tail -3
 }
 abort() { log "ABORT: $*"; echo "$*" > $R/ABORT; stop_harbor; stop_routers; release_serve "abort"; cleanup_sandboxes; write_meta; exit 1; }
-log "run_pilot $NAME agent=$AGENT job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE failover_5xx=$FAILOVER_5XX max_input=$MAX_INPUT max_output=$MAX_OUTPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR herr_exclude=${HERR_EXCLUDE:-none} target_fail=$TARGET_FAIL base=$TARGET_BASE shuffle=${SHUFFLE_SEED:-off}"
+log "run_pilot $NAME agent=$AGENT job=$JOB mode=$MODE arms=[$ARMS] conc=$CONC cap=${CAP_NODE_H} node-h clock=$CLOCK ctx_budget=${CTX_BUDGET:-off} row_max=${ROW_MAX:-off} teacher_guard=$TEACHER_GUARD verify_note=$VERIFY_NOTE failover_5xx=$FAILOVER_5XX max_input=$MAX_INPUT max_output=$MAX_OUTPUT teacher_max_tokens=$TEACHER_MAX_TOKENS balance=$BALANCE stagger=$STAGGER_SEC gate=$GATE_MIN/$GATE_LAT/$GATE_KV tasks=${TASK_LIST:-$TREE/TASKS.txt} x$N_ATTEMPTS stop=${STOP_AFTER}:$STOP_OVF/$STOP_FMT/$STOP_HERR herr_exclude=${HERR_EXCLUDE:-none} target_fail=$TARGET_FAIL base=$TARGET_BASE shuffle=${SHUFFLE_SEED:-off}${TRIGGER_CONFIG:+ trigger_config=$TRIGGER_CONFIG}"
 
 # ---- 1. pre-flight --------------------------------------------------------------------------------------------------
 [ "$(git -C ${HARBOR_SRC%/src} rev-parse --short=8 HEAD)" = "$HARBOR_SHA" ] || { log "harbor at ${HARBOR_SRC%/src} is not $HARBOR_SHA"; scancel $JOB; exit 1; }
@@ -148,6 +161,12 @@ else
   [ -z "$(comm -12 <(sort $TREE/TASKS.txt) <(sort $HERE/calibforge_heldout300.txt))" ] || { log "pilot tasks overlap the held-out split"; scancel $JOB; exit 1; }
 fi
 $PY -c "import aiohttp, yaml" || { log "aiohttp/yaml missing in $PY"; scancel $JOB; exit 1; }
+TC=
+if [ -n "$TRIGGER_CONFIG" ]; then   # the run's own copy (and its .py triggers), checked to load; sha256 in run.meta
+  TC=$($PY $HERE/../router/router_triggers.py stage "$TRIGGER_CONFIG" $R/trigger_config 2> $R/trigger_config.err | tail -1)
+  [ -n "$TC" ] && [ -f "$TC" ] || { log "TRIGGER_CONFIG $TRIGGER_CONFIG: $(tail -3 $R/trigger_config.err)"; scancel $JOB; exit 1; }
+  log "trigger config $TRIGGER_CONFIG -> $TC (sha256 $(awk 'NR==1{print substr($1, 1, 16)}' $R/trigger_config/SHA256SUMS)); for its arms ASSIST, TIME_TAKEOVER, CTX_BUDGET, the repair flag$([ "$VERIFY_NOTE" = 1 ] && echo ' and (relay) VERIFY_NOTE') are left out"
+fi
 set -a; source $KEYF; set +a
 DC=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -H "Authorization: Bearer $DAYTONA_API_KEY" https://app.daytona.io/api/api-keys/current)
 case $DC in 2??|3??) ;;   # 000 = no answer at all: on Horizon the driver's CONNECT bridge (HTTPS_PROXY) is down, not the key
@@ -203,34 +222,9 @@ if [ -n "${HTTPS_PROXY:-}${https_proxy:-}" ]; then   # model traffic never goes 
 fi
 
 # ---- 3. routers -----------------------------------------------------------------------------------------------------
-PARSER=$HARBOR_SRC/harbor/agents/terminus_2/terminus_json_plain_parser.py
-PARSER_ARGS=(--terminus-parser $PARSER); HARNESS_ARGS=()
-[ "$AGENT" = msa ] && { PARSER_ARGS=(); HARNESS_ARGS=(--harness msa); }
 for arm in $ARMS; do
-  TARGS=(); [ -n "$TURL" ] && TARGS=(--teacher-url $TURL --teacher-model qwen38 --teacher-max-tokens $TEACHER_MAX_TOKENS)
-  if [ -n "$TURL" ] && [ "$TEACHER_GUARD" = 1 ]; then TARGS+=(--teacher-format-guard --teacher-resamples $TEACHER_RESAMPLES)
-    case $arm in relay_repair) ;; *) TARGS+=("${PARSER_ARGS[@]}");; esac; fi   # relay_repair passes the parser below
-  [ -n "$TURL" ] && [ "$VERIFY_NOTE" = 1 ] && TARGS+=(--verify-note)
-  [ -n "$TURL" ] && [ "$VERIFY_NOTE" = 1 ] && [ -n "${VERIFY_NOTE_TEXT:-}" ] && TARGS+=(--verify-note-text "$VERIFY_NOTE_TEXT")
-  [ -n "$TURL" ] && [ -n "${TEACHER_HINT_TEXT:-}" ] && TARGS+=(--teacher-hint-text "$TEACHER_HINT_TEXT")   # msa: teacher-only instruction
-  [ "$MAX_INPUT" != 65536 ] && TARGS+=(--report-max-model-len $MAX_INPUT)
-  SARGS=(); [ -n "$SURL" ] && SARGS=(--student-url $SURL --student-model snowball)   # empty on a teacher-only serve
-  case $arm in control) M=(--mode teacher);; student_only) M=(--mode student);; relay) M=(--mode relay --student-think strip);; relay_keep) M=(--mode relay --student-think keep);;
-    relay_repair) M=(--mode relay --student-think strip --repair-on-parse-error "${PARSER_ARGS[@]}"
-                  --autofix --student-tokenizer $STUDENT_TOKENIZER);;
-    *) abort "unknown arm $arm";; esac
-  case $arm in relay*)
-    [ -n "$CTX_BUDGET" ] && M+=(--context-budget-tokens $CTX_BUDGET)
-    [ -n "$ROW_MAX" ] && M+=(--student-row-max-tokens $ROW_MAX --student-row-reserve $ROW_RESERVE)
-    [ "${STUDENT_VIEW_STRIP:-0}" = 1 ] && M+=(--student-view-after-takeover strip)
-    [ "${ASSIST:-0}" = 1 ] && M+=(--assist --assist-ctx "${ASSIST_CTX:-20000,35000}" --assist-error-streak ${ASSIST_ERR:-4} --assist-gap ${ASSIST_GAP:-3} --assist-max ${ASSIST_MAX:-6})
-    [ -n "${TIME_TAKEOVER:-}" ] && M+=(--time-takeover-frac $TIME_TAKEOVER);; esac   # msa: one-turn teacher assists; time_budget hand-off
-  case $CLOCK in wall) CARGS=(--budget-mode off);; repair) CARGS=(--budget-mode on);; paused) CARGS=(--budget-mode on --pause-model-calls);;
-    *) abort "unknown CLOCK $CLOCK";; esac
-  $PY $ROUTER "${M[@]}" "${HARNESS_ARGS[@]}" --arm $arm --port ${PORT[$arm]} --log-dir $R/router_$arm --tasks $TREE/router_tasks.json \
-    "${CARGS[@]}" --balance $BALANCE \
-    --engine-metrics --deadline-epoch $DEADLINE "${SARGS[@]}" "${TARGS[@]}" $([ "$FAILOVER_5XX" = 1 ] && echo --failover-5xx) \
-    > $R/router_$arm.log 2>&1 &
+  router_argv $arm ${PORT[$arm]}   # router_argv.sh: the knobs (and TC) -> this arm's router flags
+  $PY $ROUTER "${RARGV[@]}" > $R/router_$arm.log 2>&1 &
   RPID[$arm]=$!
 done
 for arm in $ARMS; do

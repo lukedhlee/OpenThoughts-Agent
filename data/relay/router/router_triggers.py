@@ -15,6 +15,7 @@ imported (the router imports it), so a YAML config names them like any other bui
            used up only when the assist acts).
 
     python router_triggers.py <relay_router.py flags>    # the config those flags stand for, as YAML
+    python router_triggers.py stage <yaml> <dir>         # a run's copy of a config (run_pilot.sh TRIGGER_CONFIG)
 """
 import dataclasses
 import json
@@ -223,8 +224,49 @@ def conflicts(a, default):
     return [opt for dest, opt in flags if getattr(a, dest) != default(dest)]
 
 
+def stage_config(src, dest):
+    """A run's own copy of a trigger config (run_pilot.sh TRIGGER_CONFIG): the YAML and the `path/file.py` triggers it
+    names relative to itself go into dest (same relative paths), the copy must load, and dest/SHA256SUMS lists every
+    file the config uses (an absolute path is recorded, not copied). Returns the copy's path."""
+    import hashlib
+    import shutil
+    import yaml
+    src = os.path.abspath(src)
+    with open(src) as f:
+        raw = yaml.safe_load(f) or {}
+    files, todo = {os.path.basename(src): src}, [raw]
+    while todo:                           # every `use:` (entries, releases, combinators' children)
+        x = todo.pop()
+        if isinstance(x, dict):
+            u = x.get('use')
+            if isinstance(u, str) and u.rpartition(':')[0].endswith('.py'):
+                p = u.rpartition(':')[0]
+                files[p] = p if os.path.isabs(p) else os.path.join(os.path.dirname(src), p)
+            todo += list(x.values())
+        elif isinstance(x, list):
+            todo += x
+    os.makedirs(dest, exist_ok=True)
+    sums = []
+    for rel, path in files.items():
+        if not os.path.isfile(path):
+            raise iv.ConfigError(f'{src}: {rel} does not exist')
+        if not os.path.isabs(rel):
+            os.makedirs(os.path.dirname(os.path.join(dest, rel)) or dest, exist_ok=True)
+            shutil.copyfile(path, os.path.join(dest, rel))
+        sums.append(f"{hashlib.sha256(open(path, 'rb').read()).hexdigest()}  {rel}\n")
+    with open(os.path.join(dest, 'SHA256SUMS'), 'w') as f:
+        f.writelines(sums)
+    copy = os.path.join(dest, os.path.basename(src))
+    load_trigger_config(copy)             # it must load as it will in the router (plugins next to the copy)
+    return copy
+
+
 def main(argv=None):
     import yaml
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ['stage']:
+        print(stage_config(argv[1], argv[2]))
+        return
     import relay_router as rr
     a = rr.parse_args(argv)
     msa = a.harness == 'msa'
