@@ -7,15 +7,15 @@
 # Env setup is gate2_horizon.sbatch's with compile caches node-local under /tmp (SERVE_CACHE_LOCAL in serve_node.sh).
 # Deltas from serve_node.sh: VLLM_SERVER_DEV_MODE=1 (only for POST /reset_prefix_cache between points).
 #
-#   MODEL=<hf dir> SESS=<sessions.jsonl> LABEL=h9 CONCS="32 128" ORDER="on off" sbatch -t 01:05:00 draft_bench.sbatch
+#   MODEL=<hf dir> SESS=<sessions.jsonl> LABEL=h9 CONCS="32 128" ORDER="on off" sbatch -t 01:05:00 -o $SCRATCH/experiments/rl/draft_bench/logs/%x.%j.out draft_bench.sbatch
 #SBATCH -J draft_bench
 #SBATCH -A CCR24067
 #SBATCH -p debug
 #SBATCH -N 1
 #SBATCH -t 01:05:00
-#SBATCH -o /scratch/11584/lukedhlee/experiments/rl/draft_bench/logs/%x.%j.out
+#SBATCH -o %x.%j.out
 set -uo pipefail
-ROOT=${ROOT:-$HOME/snowball}; S=/scratch/11584/$USER
+ROOT=${ROOT:-$HOME/snowball}; S=$SCRATCH
 HERE=${HERE:-$HOME/OpenThoughts-Agent-rl/data/r2egym/horizon/rl/draft_bench}
 O=$S/experiments/rl/draft_bench; mkdir -p $O/logs
 PY=$ROOT/envs/snowball/bin/python

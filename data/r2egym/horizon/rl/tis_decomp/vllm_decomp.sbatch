@@ -8,16 +8,16 @@
 # H9 set (login node, stdlib): python3 data/r2egym/horizon/gate2_score.py build --trials
 #   $S/experiments/rl/screen_h9/trials/eval_sessions/screen_h9_eval_step0 --out $E/h9_set.jsonl --n 96
 #   --edges 4096,16384,32768,49152 --seed 0   (sha256 d557600b..., 42,442 completion tokens)
-#   sbatch ~/OpenThoughts-Agent-rl/data/r2egym/horizon/rl/tis_decomp/vllm_decomp.sbatch
+#   sbatch -o $SCRATCH/experiments/rl/tis_decomp/logs/%x.%j.out ~/OpenThoughts-Agent-rl/data/r2egym/horizon/rl/tis_decomp/vllm_decomp.sbatch
 #SBATCH -J tisd_vllm
 #SBATCH -A CCR24067
 #SBATCH -p debug
 #SBATCH -N 1
 #SBATCH -t 00:55:00
-#SBATCH -o /scratch/11584/lukedhlee/experiments/rl/tis_decomp/logs/%x.%j.out
+#SBATCH -o %x.%j.out
 unset LD_PRELOAD   # first command: TACC's XALT preload prints an NVML warning into every $(...) capture
 set -uo pipefail
-ROOT=$HOME/snowball; S=/scratch/11584/$USER
+ROOT=$HOME/snowball; S=$SCRATCH
 HERE=${HERE:-$HOME/OpenThoughts-Agent-rl/data/r2egym/horizon/rl/tis_decomp}
 PY=$ROOT/envs/snowball/bin/python
 export PYTHONPATH=$ROOT/src/marin_vllm_eagle3${PYTHONPATH:+:$PYTHONPATH}   # the EAGLE-3 overlay shadows the venv's vllm

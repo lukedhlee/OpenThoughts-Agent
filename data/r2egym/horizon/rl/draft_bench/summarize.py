@@ -2,7 +2,7 @@
 """summarize.py — table of draft_bench results (results_*.jsonl) with ON/OFF ratios, plus the server log's own
 'SpecDecoding metrics' mean acceptance length averaged (draft-token weighted) over each measurement window.
 
-  python summarize.py /scratch/11584/$USER/experiments/rl/draft_bench
+  python summarize.py $SCRATCH/experiments/rl/draft_bench
 """
 import glob, json, re, sys, time
 

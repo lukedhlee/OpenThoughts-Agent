@@ -1,20 +1,20 @@
 #!/bin/bash
 # rl_logprob_parity.sbatch — gate-5 proxy on one Horizon node: MarinSkyRL trainer log-probs (4 processes, one GB200
 # each, the full 67B model per GPU) on the 96 gate-2 turns, then the comparison against Horizon's and Jupiter's vLLM.
-# ~0.5-1 node-h. See rl_logprob_parity.py.   sbatch data/r2egym/horizon/rl_logprob_parity.sbatch
+# ~0.5-1 node-h. See rl_logprob_parity.py.   sbatch -o $SCRATCH/horizon_gates/logs/rl_lp_parity.%j.out data/r2egym/horizon/rl_logprob_parity.sbatch
 #SBATCH -J rl_lp_parity
 #SBATCH -A CCR24067
 #SBATCH -p debug
 #SBATCH -N 1
 #SBATCH -t 01:30:00
-#SBATCH -o /scratch/11584/lukedhlee/horizon_gates/logs/rl_lp_parity.%j.out
+#SBATCH -o rl_lp_parity.%j.out
 set -uo pipefail
 export CC=gcc CXX=g++ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 OMP_NUM_THREADS=8 TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 PY=${PY:-$HOME/snowball/envs/snowball/bin/python}
 HERE=${HERE:-$HOME/snowball/ota-train/data/r2egym/horizon}
-G=/scratch/11584/lukedhlee/horizon_gates
-MODEL=${MODEL:-$(ls -d /scratch/11584/lukedhlee/hf_hub/models--laion--snowball-67b-a2b-sft-s3-nemotron-terminal-step1888/snapshots/* | head -1)}
+G=$SCRATCH/horizon_gates
+MODEL=${MODEL:-$(ls -d $SCRATCH/hf_hub/models--laion--snowball-67b-a2b-sft-s3-nemotron-terminal-step1888/snapshots/* | head -1)}
 OUT=$G/rl_lp_parity.$SLURM_JOB_ID
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1
 "$PY" -c "import torch, skyrl_train, flash_attn; print('torch', torch.__version__, 'skyrl_train', skyrl_train.__file__, 'flash_attn', flash_attn.__version__)"

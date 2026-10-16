@@ -2,8 +2,8 @@
 # Gist-style Terminus-2 teacher-only vs relay comparison, from RLVR1 step 12.
 set -euo pipefail
 OTA=$(cd "$(dirname "$0")/../../.." && pwd)
-X=/scratch/11584/$USER/experiments/relay_rlvr1_t2
-TREE=/scratch/11584/$USER/relay/calibforge_tree
+X=$SCRATCH/experiments/relay_rlvr1_t2
+TREE=$SCRATCH/relay/calibforge_tree
 mkdir -p "$X"
 python3 - "$TREE/TASKS.txt" "$OTA/data/relay/pilot/calibforge_heldout300.txt" "$X/manifest.json" "$OTA" <<'PY'
 import hashlib,json,random,subprocess,sys

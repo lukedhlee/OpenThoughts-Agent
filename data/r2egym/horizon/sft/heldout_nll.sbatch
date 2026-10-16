@@ -3,17 +3,17 @@
 # Horizon port of data/swesmith/heldout_nll.sbatch: same server args (TP1 x DP4 x EP4, 4,096-token prefill chunks,
 # 0.85 utilization, no draft) and the same scorer (data/swesmith/heldout_nll.py); Horizon env from serve_env.sh
 # (snowball venv + EAGLE-3 overlay, CC=gcc). ~15 min per export on one node.
-#   MODEL=<hf export dir> NAME=<tag> sbatch data/r2egym/horizon/sft/heldout_nll.sbatch
+#   MODEL=<hf export dir> NAME=<tag> sbatch -o $SCRATCH/snowball-sft/logs/heldout_nll_%j.log data/r2egym/horizon/sft/heldout_nll.sbatch
 #SBATCH --job-name=heldout_nll
 #SBATCH --time=00:45:00
 #SBATCH -N 1
 #SBATCH -p debug
 #SBATCH -A CCR24067
-#SBATCH --output=/scratch/11584/lukedhlee/snowball-sft/logs/heldout_nll_%j.log
+#SBATCH --output=heldout_nll_%j.log
 set -uo pipefail
 export CC=gcc CXX=g++
 C=${SNOWBALL_ROOT:-$HOME/snowball}
-S=${SNOWBALL_SCRATCH:-/scratch/11584/$USER/snowball-sft}
+S=${SNOWBALL_SCRATCH:-$SCRATCH/snowball-sft}
 PY=$C/envs/snowball/bin/python
 export PYTHONPATH=$C/src/marin_vllm_eagle3${PYTHONPATH:+:$PYTHONPATH}
 MODEL=${MODEL:?hf export dir}

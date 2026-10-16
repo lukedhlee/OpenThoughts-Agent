@@ -22,7 +22,7 @@
 #SBATCH -o %x_%j.out
 set -uo pipefail
 SERVE_JOB=${SERVE_JOB:?SERVE_JOB}; RUN_NAME=${RUN_NAME:?RUN_NAME}; RUN_MODE=${RUN_MODE:-full}
-SB=${SNOWBALL_ROOT:-$HOME/snowball}; S=${SCRATCH_DIR:-${SCRATCH:?SCRATCH is not set}}
+SB=${SNOWBALL_ROOT:-$HOME/snowball}; S=${SCRATCH_DIR:-${SCRATCH:?set SCRATCH (TACC sets it at login)}}
 OTA=${OTA:-$SB/ota}; HZ=$OTA/data/relay/horizon
 TUNNEL_PORTS=${TUNNEL_PORTS:-18080,18081}; BRIDGE_PORT=${BRIDGE_PORT:-18946}
 export PY=${PY:-$SB/envs/snowball/bin/python} HARBOR=${HARBOR:-$SB/envs/snowball/bin/harbor}

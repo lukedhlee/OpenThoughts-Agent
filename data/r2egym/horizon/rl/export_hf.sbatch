@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=144
-#SBATCH --output=/scratch/11584/lukedhlee/experiments/rl/exports/logs/%x_%j.out
+#SBATCH --output=%x_%j.out
 #SBATCH --job-name=snowball_export_hf
 #SBATCH -p debug
 #SBATCH --account CCR24067
@@ -11,8 +11,8 @@
 # Horizon port of Jupiter's code/snowball/export_hf.sbatch (by diff): paths, no modules, XALT unset; BASE = the arm's own
 # start checkpoint (config/tokenizer/chat template of the 09-21 relay SFT export), not the Stage-3 base.
 # export_hf.sbatch — offline FSDP2 -> HF consolidation of a Snowball GRPO checkpoint (CPU only, one node, ~858 GB host RAM).
-# Usage: RUN=<run name> STEP=<N> BASE=<start export> sbatch --export=ALL,RUN=...,STEP=...,BASE=... export_hf.sbatch
-#   -> /scratch/11584/lukedhlee/experiments/rl/exports/<RUN>_step<N>/model  (config/tokenizer copied from BASE)
+# Usage: RUN=<run name> STEP=<N> BASE=<start export> sbatch -o $SCRATCH/experiments/rl/exports/logs/%x_%j.out --export=ALL,RUN=...,STEP=...,BASE=... export_hf.sbatch
+#   -> $SCRATCH/experiments/rl/exports/<RUN>_step<N>/model  (config/tokenizer copied from BASE)
 # Route A of runbooks/rl-training.md § "FSDP -> HF export". Runs --inspect first; aborts before writing on any layout it cannot reassemble.
 set -euo pipefail
 unset LD_PRELOAD   # TACC XALT pollutes command output
@@ -20,7 +20,7 @@ export CC=gcc CXX=g++ OMP_NUM_THREADS=16
 PY=$HOME/snowball/envs/snowball/bin/python
 SCRIPT=$HOME/snowball/marinskyrl-marin/skyrl-train/scripts/consolidate_sharded_checkpoint.py
 : "${BASE:?set BASE to the start export of the arm}"
-E=/scratch/11584/lukedhlee/experiments/rl
+E=$SCRATCH/experiments/rl
 : "${RUN:?set RUN}"; : "${STEP:?set STEP}"
 SRC=${SRC:-$E/$RUN/$RUN/checkpoints/global_step_$STEP/policy}
 DST=${DST:-$E/exports/${RUN}_step${STEP}/model}

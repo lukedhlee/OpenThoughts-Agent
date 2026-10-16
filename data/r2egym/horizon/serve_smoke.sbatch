@@ -9,7 +9,7 @@
 #SBATCH -t 01:00:00
 #SBATCH -o %x.%j.out
 set -uo pipefail
-ROOT=${ROOT:-$HOME/snowball}; S=/scratch/11584/$USER
+ROOT=${ROOT:-$HOME/snowball}; S=$SCRATCH
 PY=$ROOT/envs/snowball/bin/python
 export PYTHONPATH=$ROOT/src/marin_vllm_eagle3${PYTHONPATH:+:$PYTHONPATH}   # the EAGLE-3 overlay shadows the venv's vllm
 export PATH=$ROOT/envs/snowball/bin:$PATH                                     # ninja for FlashInfer JIT

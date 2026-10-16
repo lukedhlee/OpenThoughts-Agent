@@ -2,20 +2,20 @@
 # trainer_decomp.sbatch — tis_decomp, trainer side, one Horizon node (~0.4 node-h): 4 processes, one GB200 each with
 # the whole model (as rl_logprob_parity.sbatch), Stage-3 on the 96 gate-2 turns then H9 on its 96 screen turns; every
 # variant of trainer_decomp.py; then analyze.py. Needs vllm_decomp.sbatch's outputs (routing for the replays).
-#   sbatch --dependency=afterany:<vllm job> ~/OpenThoughts-Agent-rl/data/r2egym/horizon/rl/tis_decomp/trainer_decomp.sbatch
+#   sbatch --dependency=afterany:<vllm job> -o $SCRATCH/experiments/rl/tis_decomp/logs/%x.%j.out ~/OpenThoughts-Agent-rl/data/r2egym/horizon/rl/tis_decomp/trainer_decomp.sbatch
 #SBATCH -J tisd_trainer
 #SBATCH -A CCR24067
 #SBATCH -p debug
 #SBATCH -N 1
 #SBATCH -t 00:50:00
-#SBATCH -o /scratch/11584/lukedhlee/experiments/rl/tis_decomp/logs/%x.%j.out
+#SBATCH -o %x.%j.out
 unset LD_PRELOAD   # first command: TACC's XALT preload prints an NVML warning into every $(...) capture
 set -uo pipefail
 export CC=gcc CXX=g++ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 OMP_NUM_THREADS=8 TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 PY=${PY:-$HOME/snowball/envs/snowball/bin/python}
 HERE=${HERE:-$HOME/OpenThoughts-Agent-rl/data/r2egym/horizon/rl/tis_decomp}
-S=/scratch/11584/$USER; E=$S/experiments/rl/tis_decomp; G=$S/horizon_gates
+S=$SCRATCH; E=$S/experiments/rl/tis_decomp; G=$S/horizon_gates
 S3=${S3:-$(readlink -f $S/models/snowball-s3-nemotron-terminal-step1888)}
 H9=${H9:-$S/snowball-sft/experiments/snowball-relay-sft/relay_acont/lr3e-4-sched3/export-step999-hf-bf16}
 OUT=$E/trainer.$SLURM_JOB_ID

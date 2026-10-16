@@ -2,10 +2,10 @@
 # Complete the MSA2 experiment with fresh teacher-only controls on the same train pool.
 set -euo pipefail
 OTA=$(cd "$(dirname "$0")/../../.." && pwd)
-X=/scratch/11584/$USER/experiments/relay_rlvr1_msa_control
-TREE=/scratch/11584/$USER/relay/calibforge_tree
+X=$SCRATCH/experiments/relay_rlvr1_msa_control
+TREE=$SCRATCH/relay/calibforge_tree
 mkdir -p "$X"
-python3 - "$TREE/TASKS.txt" "$OTA/data/relay/pilot/calibforge_heldout300.txt" "$X/manifest.json" "$OTA" <<'PY'
+python3 - "$TREE/TASKS.txt" "$OTA/data/relay/pilot/calibforge_heldout300.txt" "$X/manifest.json" "$OTA" "$SCRATCH/experiments/relay_rlvr1" <<'PY'
 import hashlib,json,random,subprocess,sys
 from pathlib import Path
 tasks=Path(sys.argv[1]).read_text().splitlines()
@@ -24,7 +24,7 @@ m=dict(base='open-athena/Grug-67B-A2B-Antidoom-RLVR1-Step12-2026.10.02',
        harness='mini-swe-agent-host / mini-swe-agent 2.4.6 tool mode',arm='control',
        tasks=2613,attempts=5226,heldout_overlap=0,shards=shards,nodes=8,cap_node_hours=48,
        ota_commit=subprocess.check_output(['git','-C',sys.argv[4],'rev-parse','HEAD'],text=True).strip(),
-       relay_experiment='/scratch/11584/lukedhlee/experiments/relay_rlvr1',
+       relay_experiment=sys.argv[5],
        matching='Same (task, outcome) multiset and count, at most two per task, identical QA and submit filter',
        primary_sft_arms=['vanilla_teacher_only','relay_teacher_supervision'],
        training=dict(init='init-rlvr1-step12-native0',lr=0.0003,passes=3,batch=16,context=65536,seed=0,

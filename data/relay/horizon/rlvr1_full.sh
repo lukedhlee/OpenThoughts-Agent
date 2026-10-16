@@ -2,8 +2,8 @@
 # Cover the remaining CalibForge train pool, preserving the existing first 128 tasks.
 set -euo pipefail
 OTA=$(cd "$(dirname "$0")/../../.." && pwd)
-X=/scratch/11584/$USER/experiments/relay_rlvr1
-TREE=/scratch/11584/$USER/relay/calibforge_tree
+X=$SCRATCH/experiments/relay_rlvr1
+TREE=$SCRATCH/relay/calibforge_tree
 mkdir -p "$X"
 python3 - "$TREE/TASKS.txt" "$X/tasks128.txt" "$OTA/data/relay/pilot/calibforge_heldout300.txt" "$X/full_manifest.json" <<'PY'
 import hashlib,json,random,sys

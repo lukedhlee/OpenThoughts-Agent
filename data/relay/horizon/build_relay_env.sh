@@ -6,7 +6,7 @@
 #   bash data/relay/horizon/build_relay_env.sh [socks extra msa models]   (default all; knobs SNOWBALL_ROOT SCRATCH_DIR UV PY ENVS)
 # By diff from ~/snowball/bootstrap/relay_prep.sh + dl_models.sh (2026-09-29): $HOME/$SCRATCH paths, pinned versions, msa, import checks.
 set -uo pipefail
-R=${SNOWBALL_ROOT:-$HOME/snowball}; S=${SCRATCH_DIR:-${SCRATCH:?SCRATCH is not set}}
+R=${SNOWBALL_ROOT:-$HOME/snowball}; S=${SCRATCH_DIR:-${SCRATCH:?set SCRATCH (TACC sets it at login)}}
 UV=${UV:-$R/bin/uv}; PY=${PY:-$R/envs/snowball/bin/python}; ENVS=${ENVS:-$R/envs}
 STEPS=${*:-socks extra msa models}
 export UV_CACHE_DIR=$S/cache/snowball_build/uv HF_HOME=$S/cache/hf HF_HUB_CACHE=$S/hf_hub

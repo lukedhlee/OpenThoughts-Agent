@@ -14,10 +14,10 @@ import pyarrow.parquet as pq
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--map", default=os.path.expanduser("~/OpenThoughts-Agent-rl/data/r2egym/overlap/tasktrove_v3_upstream_map.tsv"))
-ap.add_argument("--tasks", default="/scratch/11584/lukedhlee/rl_pool/tree/task_tree/TASKS.txt")
-ap.add_argument("--swebv", default="/scratch/11584/lukedhlee/rl_pool/src/swebv.parquet")
+ap.add_argument("--tasks", default=f"{os.environ['SCRATCH']}/rl_pool/tree/task_tree/TASKS.txt")
+ap.add_argument("--swebv", default=f"{os.environ['SCRATCH']}/rl_pool/src/swebv.parquet")
 ap.add_argument("--repos", default="sympy=sympy/sympy")
-ap.add_argument("--cache", default="/scratch/11584/lukedhlee/rl_pool/src/gh_cache.json")
+ap.add_argument("--cache", default=f"{os.environ['SCRATCH']}/rl_pool/src/gh_cache.json")
 ap.add_argument("--workers", type=int, default=3)
 ap.add_argument("--task-list", default=None, help="only these task names (default: every task of --repos)")
 a = ap.parse_args()

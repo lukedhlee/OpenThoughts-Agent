@@ -3,7 +3,7 @@
 set -euo pipefail
 OTA=$(cd "$(dirname "$0")/../../.." && pwd)
 SB=$HOME/snowball
-S=/scratch/11584/$USER
+S=$SCRATCH
 X=${EXPERIMENT_ROOT:-$S/experiments/relay_rlvr1}
 PY=$SB/envs/snowball/bin/python
 MODEL=$S/models/grug-antidoom-rlvr1-step12

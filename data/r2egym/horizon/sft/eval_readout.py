@@ -73,7 +73,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--tags', nargs='+', required=True)
     ap.add_argument('--day', default='*')
-    ap.add_argument('--jobs', default=f"/scratch/11584/{os.environ.get('USER')}/experiments/sft_eval/tb2_jobs")
+    ap.add_argument('--jobs', default=f"{os.environ['SCRATCH']}/experiments/sft_eval/tb2_jobs")
     ap.add_argument('--ref', nargs='*', default=[], help='TAG=SET:<job dir>[,<job dir>] single-run references')
     ap.add_argument('--out')
     ap.add_argument('--pairs-with', nargs='*', default=None,

@@ -66,8 +66,8 @@ SUBSETS = ('minisweagent/qwen38_27b/swe-rebench-v2', 'minisweagent/qwen38_27b/sc
 N_SHARDS = 22
 ARM = 'swe_traces'
 VERIFIED_REPO = 'princeton-nlp/SWE-bench_Verified'
-TOKDIR = '/scratch/11584/lukedhlee/models/grug-datakit-sft-20260921'
-MINI_YAML = os.path.expanduser('~/snowball/envs/msa-2.4.6/minisweagent/config/mini.yaml')
+TOKDIR = os.environ['SCRATCH'] + '/models/grug-datakit-sft-20260921'
+MINI_YAML = os.path.join(os.environ.get('SNOWBALL_ROOT', os.path.expanduser('~/snowball')), 'envs/msa-2.4.6/minisweagent/config/mini.yaml')
 COLUMNS = ['instance_id', 'repo', 'language', 'trajectory_id', 'messages', 'resolved', 'hf_dataset_name']
 PR_RE = re.compile(r'^<pr_description>\nConsider the following PR description:\n(.*?)\n</pr_description>\n', re.S)
 # <system_information> of the Daytona sandboxes in our mini-swe-agent-host evals (the 10 most frequent of 5,402

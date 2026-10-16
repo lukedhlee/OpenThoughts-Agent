@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ST = f"/scratch/11584/{os.environ.get('USER')}/experiments/sft_eval/state"
+ST = f"{os.environ['SCRATCH']}/experiments/sft_eval/state"
 SETS = (('tb21', 'TB2.1'), ('swe', 'SWE-bench Verified r100'), ('tblite', 'TB-lite'))
 
 

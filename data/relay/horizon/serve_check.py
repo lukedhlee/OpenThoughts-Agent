@@ -4,7 +4,7 @@ on the Horizon login node or inside the job). Teacher: a thinking question per s
 non-empty answer and no think tags left in it. Student: the serve_relay.sbatch smoke (think markers kept). --conc N sends
 N requests at once to every server and reports decode tokens/s per server.
 
-    python3 serve_check.py 35812 [--conc 16] [--exp /scratch/11584/$USER/experiments/relay/pilot]
+    python3 serve_check.py 35812 [--conc 16] [--exp $SCRATCH/experiments/relay/pilot]
 """
 import argparse, json, os, time, urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -39,7 +39,7 @@ def student(url, max_tokens):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("job")
-    ap.add_argument("--exp", default=os.environ.get("RELAY_EXP_DIR", f"/scratch/11584/{os.environ.get('USER')}/experiments/relay/pilot"))
+    ap.add_argument("--exp", default=os.environ.get("RELAY_EXP_DIR", f"{os.environ['SCRATCH']}/experiments/relay/pilot"))
     ap.add_argument("--conc", type=int, default=1)
     ap.add_argument("--max-tokens", type=int, default=24000)
     a = ap.parse_args()
