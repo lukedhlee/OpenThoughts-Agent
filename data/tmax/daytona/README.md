@@ -1,5 +1,8 @@
 # TMax on Daytona: one shared ubuntu 22.04 snapshot, each task's own Dockerfile replayed at start
 
+The TMax tree is built from `laion/TMax-15K-Harbor`, which only laion org members can read. For the CalibForge relay
+recipe on Horizon, start at `data/relay/README.md`.
+
 **The conversion is built and its replay machinery has been tested. It has not run on Daytona yet. TMax becomes
 runnable after four things: two snapshot slots are freed (the eval org holds 41 against its cap of 40), the one TMax
 snapshot is built, the no-op gate passes, and the relay runs on the gate's pass list.** The task lists and how they

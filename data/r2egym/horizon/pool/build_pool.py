@@ -26,8 +26,7 @@ R = f"{os.environ['SCRATCH']}/rl_pool"
 ap = argparse.ArgumentParser()
 ap.add_argument("--root", default=R)
 ap.add_argument("--map", default=os.path.expanduser("~/OpenThoughts-Agent-rl/data/r2egym/overlap/tasktrove_v3_upstream_map.tsv"))
-ap.add_argument("--split-dir", default=os.path.expanduser(
-    "~/OpenThoughts-Agent/ai_memory/active/snowball-r2egym/experiments/analysis/tt_v2_split"))
+ap.add_argument("--split-dir", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "tt_v2_split"))
 ap.add_argument("--nemotron-repos", default="numpy,datalad,pandas,pillow")
 ap.add_argument("--seed", type=int, default=20261001)
 ap.add_argument("--heldout-frac", type=float, default=0.10)
