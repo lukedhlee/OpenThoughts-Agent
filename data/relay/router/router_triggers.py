@@ -7,19 +7,15 @@ in today's order, so routing and every turns.jsonl record stay as they were. Wit
 replaces those flags (the router refuses both, LEGACY_FLAGS). --mode teacher / student never hand an episode over, so
 there every trigger only logs (shadow()).
 
-Triggers that need the router's view of an episode live here; load_config() resolves them by name like interventions'
-own built-ins (interventions still holds stage 0's placeholder for assist, so they join its registry only while a config
-loads; register() installs them for good, for a tool outside the router):
+Triggers that need the router's view of an episode live here and join interventions' built-ins when this module is
+imported (the router imports it), so a YAML config names them like any other built-in:
 
   assist   msa --assist (was Router.assist_trigger): a one-turn teacher intervention before the student answers, on a
            command timeout, a failing-command streak, a repeated output, or a context milestone (each milestone once,
            used up only when the assist acts).
-  done_claim_first
-           done_claim as would_fire logs it (--mode teacher / student): the episode's first claim only.
 
     python router_triggers.py <relay_router.py flags>    # the config those flags stand for, as YAML
 """
-import contextlib
 import dataclasses
 import json
 import os
@@ -115,52 +111,16 @@ class Assist:
         self._offered = None
 
 
-class FirstClaim:
-    """done_claim as the router's would_fire reports it (--mode teacher / student): relay_triggers' scanner fires it on
-    the episode's first claim only, while interventions' DoneClaim (relay semantics) judges every claim. The reply as
-    the router judged it: its parsed action, else its text; none when the harness rejected it (msa: would_fire is not
-    computed then). Name done_claim, so records and --takeover read as today."""
-    name = 'done_claim'
-    phases = frozenset({'reply'})
-
-    async def observe(self, ev):
-        r = ev.reply
-        if ev.scanner is None or r is None:
-            return None
-        view = r.action if r.action is not None else (None if r.parse_error else r.text)
-        if view is None:
-            return None
-        cfg = dict(rt.CALIBRATED_CONFIG, enabled=['done_claim'])
-        f = next((f for f in ev.scanner.current_fires(view, cfg) if f['trigger'] == 'done_claim'), None)
-        return iv.Decision(self.name, f.get('reason') or self.name) if f else None
-
-
-ROUTER_BUILTINS = {'assist': Assist, 'done_claim_first': FirstClaim}
+ROUTER_BUILTINS = (Assist,)
 
 
 def register():
-    """Add the router's triggers to interventions' built-ins for good (replacing stage 0's placeholders)."""
-    iv.BUILTINS.update(ROUTER_BUILTINS)
+    """Add the router's triggers to interventions' built-ins (done on import)."""
+    for cls in ROUTER_BUILTINS:
+        iv.BUILTINS[cls.name] = cls
 
 
-@contextlib.contextmanager
-def _router_builtins():
-    saved = {name: iv.BUILTINS.get(name) for name in ROUTER_BUILTINS}
-    register()
-    try:
-        yield
-    finally:
-        for name, cls in saved.items():
-            if cls is None:
-                iv.BUILTINS.pop(name, None)
-            else:
-                iv.BUILTINS[name] = cls
-
-
-def load_config(src):
-    """interventions.load_config with the router's triggers among the built-ins."""
-    with _router_builtins():
-        return iv.load_config(src)
+register()
 
 
 def legacy_config(a, parser_loaded, note_text):
@@ -176,7 +136,8 @@ def legacy_config(a, parser_loaded, note_text):
     if a.mode != 'relay':
         # would-fire only (shadow() makes every entry log_only on both owners' turns): the takeover triggers, the done
         # claim on the episode's first claim as the scanner fires it
-        return dict(triggers=[dict(use=n) for n in env + dec] + ([dict(use='done_claim_first')] if done else []))
+        first = dict(use='done_claim', params=dict(harness='msa' if msa else 'terminus2', first_only=True))
+        return dict(triggers=[dict(use=n) for n in env + dec] + ([first] if done else []))
     T = []
     if parser_loaded and not msa:
         T.append(dict(use='repair_confirm', span=1, policy=dict(earliest_turn=1, on_retry='observe')))
@@ -237,7 +198,7 @@ def main(argv=None):
     note = a.verify_note_text or (rr.VERIFY_NOTE_MSA if msa else rr.VERIFY_NOTE if a.mode == 'relay'
                                   else rr.VERIFY_NOTE_OWN)
     cfg = legacy_config(a, parser_loaded, note)
-    load_config(cfg)                      # it must load as written
+    iv.load_config(cfg)                   # it must load as written
     sys.stdout.write(yaml.safe_dump(cfg, sort_keys=False, width=1000))
 
 

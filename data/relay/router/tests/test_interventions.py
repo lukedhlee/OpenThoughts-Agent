@@ -439,7 +439,6 @@ BAD_CONFIGS = [
     ('bad_params', {'triggers': [{'use': 'scripted', 'params': {'turnz': [1]}}]}, 'bad params'),
     ('bad_scanner_param', {'triggers': [{'use': 'loop', 'params': {'loop_q': 1}}]}, 'unknown param'),
     ('bad_regex', {'triggers': [{'use': 'action_error', 'params': {'patterns': ['(']}}]}, 'bad regex'),
-    ('stub_assist', {'triggers': [{'use': 'assist'}]}, 'stage 2'),
     ('stub_judge', {'triggers': [{'use': 'llm_judge'}]}, 'stage 4'),
     ('not_a_mapping', [1, 2], 'mapping'),
 ]
@@ -454,8 +453,8 @@ def test_config_errors(name, cfg, match):
 def test_registry_names():
     for n in ('action_error', 'scripted', 'loop', 'no_progress_wait', 'edit_failed', 'error_streak', 'gave_up',
               'destructive', 'submit_check', 'success_claim_unchecked', 'success_contradicted', 'done_claim',
-              'parse_repair', 'repair_confirm', 'context_budget', 'time_budget', 'assist', 'llm_judge'):
-        assert n in iv.BUILTINS, n
+              'parse_repair', 'repair_confirm', 'context_budget', 'time_budget', 'llm_judge'):
+        assert n in iv.BUILTINS, n     # assist is the router's (router_triggers registers it)
 
 
 # ---- action_error and scripted -------------------------------------------------------------------------------

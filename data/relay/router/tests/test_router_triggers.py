@@ -1,9 +1,10 @@
 """CPU tests for stage 2 of notes/ot-agent/relay-triggers: the router's decisions through interventions.Controller.
 
 The legacy config the router builds from its flags (router_triggers.legacy_config), --trigger-config (it replaces those
-flags, routes the same, and adds the decisions / intervention record fields), the assist trigger moved out of the
-router with today's retry order, and router_replay.py on a logged msa episode (the stage-2 differential replay's tool).
-Router-level, no harbor needed.
+flags, routes the same, and adds the decisions / intervention record fields), today's retry rules (an assisted request,
+a Terminus-2 done claim), the previous action's result online (action_error takes over, action_ok hands back), and
+router_replay.py on a logged msa episode (the stage-2 differential replay's tool). Router-level, no harbor agent needed
+(the Terminus-2 parse-repair case needs its parser on sys.path).
 
     python -m pytest -q data/relay/router/tests/test_router_triggers.py
 """
@@ -18,11 +19,21 @@ import yaml
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
+import fake_openai  # noqa: E402
 import interventions as iv  # noqa: E402
 import relay_router as rr  # noqa: E402
 import router_replay  # noqa: E402
 import router_triggers as rtg  # noqa: E402
+import test_relay_router_msa as msa_tests  # noqa: E402
+from fake_openai import t2  # noqa: E402
+from test_relay_router import Stack as T2Stack, _post, instruction  # noqa: E402
 from test_relay_router_msa import Driver, Stack, post  # noqa: E402
+
+try:
+    rr.load_terminus_parser()
+    HAVE_PARSER = True
+except SystemExit:
+    HAVE_PARSER = False
 
 BASE = ['--port', '0', '--log-dir', 'x', '--student-url', 'u', '--student-model', 's', '--teacher-url', 'u',
         '--teacher-model', 't']
@@ -39,7 +50,7 @@ FIELDS = ('turn', 'owner', 'repair', 'repair_kind', 'assist', 'assist_kind', 'do
 
 def specs_of(args, parser_loaded=True):
     a = rr.parse_args(args + BASE)
-    return rtg.load_config(rtg.legacy_config(a, parser_loaded, 'NOTE'))[1]
+    return iv.load_config(rtg.legacy_config(a, parser_loaded, 'NOTE'))[1]
 
 
 def row(s):
@@ -89,7 +100,8 @@ def test_control_and_student_only_log_every_fire(tmp_path):
         specs = rr.Router(a).trigger_specs
         assert [s.name for s in specs] == ['loop', 'no_progress_wait', 'done_claim']
         assert all(s.log_only and s.owners == {'student', 'teacher'} for s in specs)
-        assert isinstance(specs[-1].trigger, rtg.FirstClaim)
+        claim = specs[-1].trigger
+        assert isinstance(claim, iv.DoneClaim) and claim.first_only
 
 
 def test_shadow_done_claim_fires_on_the_first_claim_only():
@@ -101,7 +113,7 @@ def test_shadow_done_claim_fires_on_the_first_claim_only():
     work = json.dumps(dict(analysis='a', plan='p', commands=[dict(keystrokes='ls\n', duration=1.0)]))
     sc = rt.EpisodeScanner('terminus2')
     sc.add_message({'role': 'user', 'content': 'Task Description:\nfix it\n\nCurrent terminal state:\nroot@h:/app# '})
-    first, every = rtg.FirstClaim(), iv.DoneClaim()
+    first, every = iv.DoneClaim(first_only=True), iv.DoneClaim()
     got = []
     for reply in (work, claim, work, claim):
         ev = iv.Event('reply', sc.turn + 1, scanner=sc, reply=iv.Reply(reply, rt.parse_reply(reply, 'terminus2')))
@@ -129,10 +141,10 @@ def test_print_trigger_config_round_trips(capsys):
     """`python router_triggers.py <flags>` prints the config the flags stand for; it loads to the same triggers."""
     rtg.main(MSA_ASSIST + BASE)
     cfg = yaml.safe_load(capsys.readouterr().out)
-    want = [row(s) for s in rtg.load_config(rtg.legacy_config(rr.parse_args(MSA_ASSIST + BASE), False,
-                                                              rr.VERIFY_NOTE_MSA))[1]]
-    assert [row(s) for s in rtg.load_config(cfg)[1]] == want
-    assert iv.BUILTINS['assist'] is iv.Assist         # stage 0's placeholder is back once a config has loaded
+    want = [row(s) for s in iv.load_config(rtg.legacy_config(rr.parse_args(MSA_ASSIST + BASE), False,
+                                                             rr.VERIFY_NOTE_MSA))[1]]
+    assert [row(s) for s in iv.load_config(cfg)[1]] == want
+    assert iv.BUILTINS['assist'] is rtg.Assist        # the router's assist, registered when router_triggers loads
     assert cfg['triggers'][6]['teacher_note'] == rr.VERIFY_NOTE_MSA
 
 
@@ -238,3 +250,112 @@ def test_replay_reproduces_logged_msa_episodes(tmp_path):
     with pytest.raises(SystemExit) as e:
         router_replay.main(['diff', str(tmp_path / 'a'), str(tmp_path / 'b')])
     assert e.value.code == 0
+
+
+# ---- Terminus-2: a retry of the request a done claim was made on (today's rule) --------------------------------
+PROMPT = '\n\nCurrent terminal state:\nroot@h:/app# '
+CONFIRM = ('Current terminal state:\nroot@h:/app# \n\n' + fake_openai.CONFIRM_MARK +
+           ' This will trigger your solution to be graded and you won\'t be able to make any further corrections.')
+TRACEBACK = 'Traceback (most recent call last):\n  File "/app/run.py", line 1, in <module>\nNameError: x'
+
+
+def t2_obs(cmd, out=''):
+    return f'New Terminal Output:\n\nroot@h:/app# {cmd}\n' + (out + '\n' if out else '') + 'root@h:/app# '
+
+
+class T2Harness:
+    """Terminus-2's side, by hand: posts the history and appends each reply with the observation it chooses."""
+
+    def __init__(self, st, sc, sid):
+        self.st, self.sid = st, sid
+        self.msgs = [{'role': 'user', 'content': instruction(sc) + PROMPT}]
+
+    def ask(self):
+        status, resp = _post(self.st.url + '/chat/completions', {'model': 'relay', 'messages': self.msgs},
+                             {rr.SESSION_HEADER: self.sid})
+        assert status == 200, resp
+        return resp['choices'][0]['message']['content']
+
+    def then(self, reply, observation):
+        self.msgs = self.msgs + [{'role': 'assistant', 'content': reply}, {'role': 'user', 'content': observation}]
+
+
+def scripted_student(monkeypatch, replies):
+    """The fake student answers SCENARIO=scripted requests with these replies in order (a retry gets the next one)."""
+    q, orig = list(replies), fake_openai.student_json
+    monkeypatch.setattr(fake_openai, 'student_json', lambda sc, n: q.pop(0) if sc == 'scripted' else orig(sc, n))
+
+
+def test_t2_retry_keeps_a_pending_done_claim(tmp_path, monkeypatch):
+    """A done claim stays pending through a retry of the request it was made on; the retry's own reply makes no
+    claim, so Terminus-2's next request (no confirmation) logs the claim as dropped, as today."""
+    scripted_student(monkeypatch, [t2('look', ['ls\n']), t2('done', [], True), t2('more', ['pwd\n']),
+                                   t2('next', ['whoami\n'])])
+    with T2Stack(tmp_path) as st:
+        h = T2Harness(st, 'scripted', 's1')
+        h.then(h.ask(), t2_obs('ls', 'a'))
+        h.ask()                           # the claim: pending until the next request
+        h.then(h.ask(), t2_obs('pwd', '/app'))   # a transport retry of it: the student answers again, no claim
+        h.ask()
+        rows = st.turns('s1')
+    assert [r['retry'] for r in rows] == [False, False, True, False]
+    assert rows[1]['done_claim'] and not rows[2].get('done_claim')
+    assert rows[3].get('done_claim_dropped') is True
+
+
+@pytest.mark.skipif(not HAVE_PARSER, reason="Terminus-2's parser (harbor) not on sys.path")
+def test_t2_retry_repaired_then_confirmed_is_the_done_claim_takeover(tmp_path, monkeypatch):
+    """The retry's reply is unparseable: the teacher repairs it and claims done, so Terminus-2 asks for confirmation.
+    The pending student claim takes the episode there (done_claim, sticky), as today; the Controller alone would have
+    dropped it at the retry and answered with a one-turn repair confirmation."""
+    bad = '<|start_think|>BADFORMAT<|end_think|><tool_call>{"keystrokes": "ls -la\\n", "duration": 0.1}</tool_call>'
+    scripted_student(monkeypatch, [t2('look', ['ls\n']), t2('done', [], True), bad])
+    with T2Stack(tmp_path, router_args=['--repair-on-parse-error']) as st:
+        st.teacher.script = [t2('teacher-step repair: finished', [], True)]
+        h = T2Harness(st, 'scripted', 's1')
+        h.then(h.ask(), t2_obs('ls', 'a'))
+        h.ask()                           # the claim: pending
+        h.then(h.ask(), CONFIRM)          # retry: unparseable -> the teacher's repair, which claims done
+        h.ask()                           # Terminus-2's confirmation request
+        rows, owner = st.turns('s1'), st.router.episodes['s1'].owner
+    assert rows[2]['retry'] and rows[2]['repair'] and rows[2]['repair_kind'] == 'parse_error'
+    assert rows[3]['request_kind'] == 'confirm' and not rows[3].get('repair')
+    assert (rows[3]['takeover']['trigger'], rows[3]['takeover']['fired_turn']) == ('done_claim', 2) and owner == 'teacher'
+
+
+# ---- the previous action's result online: action_error takes the next turn, action_ok hands back ---------------
+def test_msa_action_error_takes_over_and_action_ok_hands_back(tmp_path, monkeypatch):
+    """A failing command (returncode 1): the teacher answers the next request and keeps the episode until its own
+    command succeeds; then the student has it again."""
+    cfg = tmp_path / 'trig.yaml'
+    cfg.write_text('triggers:\n  - use: action_error\n    release: {use: action_ok}\n')
+    codes = {'echo step-1': 1}
+    monkeypatch.setattr(msa_tests, 'observation', lambda cmd, out='', rc=0: json.dumps(
+        {'returncode': codes.get(cmd, 0), 'output': out or f'{cmd} done'}, indent=2))
+    with Stack(tmp_path / 'r', router_args=['--trigger-config', str(cfg)]) as st:
+        Driver(st, 'work').run(5)
+        rows, owner = st.turns('sid-work'), st.router.episodes['sid-work'].owner
+        events = [json.loads(x) for x in (st.log_dir / 'events.jsonl').read_text().splitlines()]
+    assert [r['owner'] for r in rows] == ['student', 'student', 'teacher', 'student', 'student']
+    assert rows[2]['takeover']['trigger'] == 'action_error' and rows[2]['takeover']['reason'] == 'exit code 1'
+    rel = [d for d in rows[3]['decisions'] if d['kind'] == 'release']
+    assert [(d['trigger'], d['outcome'], d['reason']) for d in rel] == [('action_error.release', 'acted', 'exit code 0')]
+    assert owner == 'student' and [e['turn'] for e in events if e['event'] == 'handback'] == [4]
+
+
+def test_t2_action_error_on_an_output_pattern_and_action_ok_hands_back(tmp_path):
+    """Terminus-2 results carry no exit code: a Traceback in the new terminal output is the failure; a clean output
+    from the teacher's command hands back."""
+    cfg = tmp_path / 'trig.yaml'
+    cfg.write_text(yaml.safe_dump({'triggers': [{
+        'use': 'action_error', 'params': {'exit_codes': None, 'patterns': ['Traceback']},
+        'release': {'use': 'action_ok', 'params': {'exit_code': None, 'patterns': ['Traceback']}}}]}))
+    with T2Stack(tmp_path, router_args=['--trigger-config', str(cfg)]) as st:
+        h = T2Harness(st, 'loop', 's1')
+        h.then(h.ask(), t2_obs('python run.py', TRACEBACK))
+        h.then(h.ask(), t2_obs('echo teacher-0', 'teacher-0'))      # the teacher's turn
+        h.ask()
+        rows = st.turns('s1')
+    assert [r['owner'] for r in rows] == ['student', 'teacher', 'student']
+    assert rows[1]['takeover']['trigger'] == 'action_error'
+    assert rows[1]['takeover']['reason'] == 'output matches /Traceback/'

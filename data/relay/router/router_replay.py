@@ -17,12 +17,15 @@ run   For each sampled episode, rebuild harbor's requests in order from the logs
       The router writes its usual logs; the replay adds responses.jsonl (what harbor got back), calls.jsonl (every
       upstream call: who, path, body hash) and replay.json (fidelity: request_sha matches, stub misses, and who
       answered each request against the recording). --inject-retries N sends every Nth request twice (a transport
-      retry), to exercise the retry paths the recordings do not hold.
+      retry), to exercise the retry paths the recordings do not hold. --trigger-config <yaml> runs any config through
+      the router on the recorded traffic in place of the run's intervention flags (--all-modes: on control and
+      student-only runs too, where every trigger only logs; the records' decisions are its fires);
+      --trigger-config-from-flags uses the YAML the run's own flags stand for.
 diff  Two replays, request by request: who answered, the legacy decision fields, the whole turns.jsonl line, and the
       events, upstream calls and responses. --ignore drops record keys (the additive --trigger-config fields).
 
     python router_replay.py run --router <relay_router.py> --sample <dir> --out <dir> [--inject-retries N]
-        [--trigger-config-from-flags]
+        [--trigger-config <yaml> | --trigger-config-from-flags] [--all-modes]
     python router_replay.py diff <replay A> <replay B> [--ignore decisions,intervention]
 """
 import argparse
@@ -342,6 +345,8 @@ def local_argv(rec, out_dir, extra=()):
 
 
 async def replay_group(rr, rec, out_dir, inject, trigger_cfg):
+    """trigger_cfg: True = the run's intervention flags as their YAML (router_triggers.legacy_config), a path = that
+    YAML in their place, None = the run's own flags."""
     os.makedirs(out_dir, exist_ok=True)
     argv = local_argv(rec, out_dir)
     if trigger_cfg:
@@ -351,9 +356,11 @@ async def replay_group(rr, rec, out_dir, inject, trigger_cfg):
         note = a.verify_note_text or (rr.VERIFY_NOTE_MSA if a.harness == 'msa' else rr.VERIFY_NOTE
                                       if a.mode == 'relay' else rr.VERIFY_NOTE_OWN)
         import yaml
-        p = os.path.join(out_dir, 'trigger_config.yaml')
-        with open(p, 'w') as f:
-            yaml.safe_dump(rtg.legacy_config(a, parser_loaded, note), f, sort_keys=False, width=1000)
+        p = os.path.abspath(trigger_cfg) if isinstance(trigger_cfg, str) else os.path.join(out_dir,
+                                                                                            'trigger_config.yaml')
+        if trigger_cfg is True:
+            with open(p, 'w') as f:
+                yaml.safe_dump(rtg.legacy_config(a, parser_loaded, note), f, sort_keys=False, width=1000)
         drop = {o for _, o in rtg.LEGACY_FLAGS} | ({o for _, o in rtg.RELAY_NOTE_FLAGS} if a.mode == 'relay' else set())
         argv = strip_flags(argv, drop) + ['--trigger-config', p]
     a = rr.parse_args(argv)
@@ -420,11 +427,12 @@ def cmd_run(args):
         if args.runs and run not in args.runs.split(','):
             continue
         rec = Recording(args.sample, run, arm, eps, flags[f'{run}/{arm}'])
-        if args.trigger_config_from_flags and rr.parse_args(local_argv(rec, '/tmp')).mode != 'relay' \
-                and not args.all_modes:
+        if (args.trigger_config_from_flags or args.trigger_config) and not args.all_modes and \
+                rr.parse_args(local_argv(rec, '/tmp')).mode != 'relay':
             continue
         out = os.path.join(args.out, f'{run}__{arm}')
-        fid = asyncio.run(replay_group(rr, rec, out, args.inject_retries, args.trigger_config_from_flags))
+        cfg = args.trigger_config or args.trigger_config_from_flags or None
+        fid = asyncio.run(replay_group(rr, rec, out, args.inject_retries, cfg))
         total.update({k: v for k, v in fid.items() if isinstance(v, int)})
         print(f'{run}/{arm}: {fid}', flush=True)
     print('TOTAL', dict(total))
@@ -504,7 +512,10 @@ def main(argv=None):
     r.add_argument('--inject-retries', type=int, default=0, help='send every Nth request twice')
     r.add_argument('--trigger-config-from-flags', action='store_true',
                    help='replace the intervention flags with --trigger-config <the YAML they stand for> (relay runs)')
-    r.add_argument('--all-modes', action='store_true', help='with --trigger-config-from-flags: control and '
+    r.add_argument('--trigger-config', default=None,
+                   help='replace the intervention flags with this YAML (relay runs; with --all-modes control and '
+                        'student-only runs too, where every trigger only logs)')
+    r.add_argument('--all-modes', action='store_true', help='with --trigger-config(-from-flags): control and '
                                                             'student-only runs too')
     d = sub.add_parser('diff')
     d.add_argument('a')

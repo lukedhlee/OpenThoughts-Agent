@@ -50,7 +50,9 @@ who answers each request:
   * Decisions (2026-10-16, notes/ot-agent/relay-triggers stage 2): every intervention above is a trigger asked by one
     interventions.Controller per episode, on the config the flags stand for (router_triggers.legacy_config; routing
     and records unchanged), or on --trigger-config <yaml> in their place, which also logs every fire (decisions) and
-    the intervention the teacher answers under.
+    the intervention the teacher answers under. Triggers see the previous action's result (action_results.py, the
+    replay's too: Event.last_result), so e.g. action_error takes over on a failing command; a release (action_ok)
+    that ends a takeover gives the student the episode back (event handback).
   * Verify note (--verify-note, off by default; Luke 2026-09-26): the teacher's request that asks it to confirm a
     completion claim gets a note appended to Terminus-2's "Are you sure?" message (relay: VERIFY_NOTE, the exact text of
     the verify-note replay; --mode teacher: VERIFY_NOTE_OWN, the same text without the "another agent" framing, since
@@ -129,6 +131,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'triggers'))
 import relay_triggers as rt  # noqa: E402
 sys.path.insert(0, HERE)
+import action_results as ar  # noqa: E402
 import autofix as af  # noqa: E402
 import interventions as iv  # noqa: E402
 import msa_tool as mt  # noqa: E402
@@ -255,6 +258,7 @@ class Episode:
         self.paused_at_takeover = 0.0
         self.note_turn = None             # --mode teacher --verify-note: the turn of the first confirmation request
         self.n_fed = 0                    # --harness msa: history messages already fed to the scanner
+        self.last_result = None           # what the previous action did (Event.last_result; a retry keeps it)
 
     def summary(self):
         return dict(episode=self.idx, sid=self.sid, task_id=(self.task or {}).get('task_id'), owner=self.owner,
@@ -290,14 +294,14 @@ class Router:
         self.msa = a.harness == 'msa'
         self.note_text = a.verify_note_text or (VERIFY_NOTE_MSA if self.msa else VERIFY_NOTE if a.mode == 'relay'
                                                 else VERIFY_NOTE_OWN)
-        cfg = rtg.load_config(a.trigger_config) if a.trigger_config else None
+        cfg = iv.load_config(a.trigger_config) if a.trigger_config else None
         self.parser = self.parser_path = self.parser_sha = None
         if (a.repair_on_parse_error or a.teacher_format_guard or rtg.wants_parser(cfg and cfg[1])) and not self.msa:
             # msa: msa_tool.py's checks
             self.parser, self.parser_path, self.parser_sha = load_terminus_parser(a.terminus_parser)
         # who answers each request: one interventions.Controller per episode, on the --trigger-config file or on the
         # config today's flags stand for (router_triggers.legacy_config); --mode teacher / student only log the fires
-        self.trigger_policy, self.trigger_specs = cfg or rtg.load_config(
+        self.trigger_policy, self.trigger_specs = cfg or iv.load_config(
             rtg.legacy_config(a, self.parser is not None, self.note_text))
         if a.mode != 'relay':
             self.trigger_specs = rtg.shadow(self.trigger_specs)
@@ -846,6 +850,7 @@ class Router:
         # feed what harbor holds into the scanner (lazily, so a retried request does not advance it)
         key = (len(messages), sha(text_of(messages[-1].get('content'))))
         retry = key == ep.last_main_key
+        prev_screen = ep.sc.prev_screen   # the screen the previous action's new output is cut against
         if not retry and kind != 'initial':
             if kind == 'handoff':
                 # summarization replaced the history; the observation of the last reply never reached the model
@@ -860,6 +865,8 @@ class Router:
             ep.pending_reply = None
         ep.last_main_key = key
         t = ep.sc.turn + 1
+        if not retry:
+            ep.last_result = ar.terminus2(messages, kind, prev_screen)
         rec.update(turn=t, retry=retry)
 
         # budgets and endings
@@ -870,10 +877,20 @@ class Router:
             return self.hard_end(ep, rec, t, None)
         if ep.ending:
             return self.synthetic(ep, rec)
-        # a done claim is pending until this request: its confirmation -> the teacher takes the episode (done_claim)
+        # a done claim is pending until this request: its confirmation -> the teacher takes the episode (done_claim).
+        # Today's rule kept: a retry of the request the claim was made on leaves it pending (the Controller drops a
+        # pending decision on a retry), and the retry's own reply may claim again
         ev = self.request_event(ep, body, messages, rec, t, now, kind, retry)
+        held = ep.ctl.pending if retry and ep.ctl.pending and isinstance(ep.ctl.pending[0].trigger, iv.DoneClaim) \
+            else None
+        if held:
+            ep.ctl.pending = None
+        n0 = len(ep.ctl.records)
         r0 = await ep.ctl.begin_request(ev)
-        self.begun(ep, r0, rec, t, now, kind)
+        if held:
+            ep.ctl.pending = held
+        rb = ep.ctl.records[n0:]          # begin_request's fires (its routing carries none)
+        self.begun(ep, r0, rb, rec, t, now, kind)
         if self.a.budget_mode == 'on' and ep.task and ep.task.get('budget_sec'):
             b = ep.task['budget_sec']
             # the owner's clock: wall time minus the paused time (model calls; repairs only without --pause-model-calls)
@@ -892,7 +909,7 @@ class Router:
         # Terminus-2's confirmation (repair_confirm, then the student resumes); environment triggers; context_budget
         # (the student's own view of this request, counted)
         r = await ep.ctl.on_request(ev)
-        if self.routed(ep, r, r0, rec, t, now):
+        if self.routed(ep, r, r0, len(rb), rec, t, now):
             return await self.answer(ep, 'teacher', body, messages, rec, main=True, ev=ev)
         if r.who == 'student':
             return await self.answer_student(ep, body, messages, rec, t, now, ev)
@@ -941,6 +958,8 @@ class Router:
             ep.n_fed = len(messages)
         ep.last_main_key = key
         t = ep.sc.turn + 1
+        if not retry:
+            ep.last_result = ar.msa(messages)
         rec.update(turn=t, retry=retry)
 
         if not ep.ending and self.a.deadline_epoch and now >= self.a.deadline_epoch:
@@ -951,8 +970,10 @@ class Router:
         if ep.ending:
             return self.synthetic(ep, rec)
         ev = self.request_event(ep, body, messages, rec, t, now, kind, retry)
+        n0 = len(ep.ctl.records)
         r0 = await ep.ctl.begin_request(ev)
-        self.begun(ep, r0, rec, t, now, kind)
+        rb = ep.ctl.records[n0:]          # begin_request's fires (its routing carries none)
+        self.begun(ep, r0, rb, rec, t, now, kind)
         if self.a.budget_mode == 'on' and ep.task and ep.task.get('budget_sec'):
             b = ep.task['budget_sec']
             if ep.owner == 'student' and self.mode in ('relay', 'student') and now - ep.t0 - ep.paused_sec >= self.a.student_budget_frac * b:
@@ -969,7 +990,7 @@ class Router:
         # the student would otherwise spend the task's clock without submitting; guided relay 10-07: 13 % of episodes
         # ended on the agent timeout with the student still in control, pass 14 %), assist (one teacher turn)
         r = await ep.ctl.on_request(ev)
-        if self.routed(ep, r, r0, rec, t, now):
+        if self.routed(ep, r, r0, len(rb), rec, t, now):
             return await self.answer(ep, 'teacher', body, messages, rec, main=True, ev=ev)
         if r.who == 'student':
             return await self.answer_student_msa(ep, body, messages, rec, t, now, ev)
@@ -996,7 +1017,7 @@ class Router:
             n = rec.get('student_view_tokens')
             return n if n is not None else await self.count_student_view(ep, body, messages, rec)
         task = ep.task or {}
-        return iv.Event('request', t, is_retry=retry, messages=messages, scanner=ep.sc,
+        return iv.Event('request', t, is_retry=retry, messages=messages, last_result=ep.last_result, scanner=ep.sc,
                         clock=iv.Clock(now - ep.t0 - ep.paused_sec, task.get('budget_sec') or None),
                         view_tokens=view_tokens,
                         extra=dict(request_kind=kind, task_id=task.get('task_id'), harness=self.a.harness))
@@ -1012,21 +1033,27 @@ class Router:
         return dict(trigger=I.trigger, kind=getattr(trig, 'kind', None) or 'decision', reason=I.reason,
                     turn=I.fired_turn, prompt_tokens=int(I.score) if isinstance(trig, iv.ContextBudget) else None)
 
-    def log_routing(self, rec, r, skip=0):
+    def log_routing(self, rec, records, r=None):
         """--trigger-config only (additive fields): every fire of this request (acted, pending, suppressed and why,
-        shadow) and the intervention the teacher answers under."""
+        shadow) and the intervention the teacher answers under (r: the routing)."""
         if not self.a.trigger_config:
             return
-        rec.setdefault('decisions', []).extend(x.as_dict() for x in r.records[skip:])
-        if r.who == 'teacher' and r.intervention is not None:
+        rec.setdefault('decisions', []).extend(x.as_dict() for x in records)
+        if r is not None and r.who == 'teacher' and r.intervention is not None:
             rec['intervention'] = r.intervention.as_dict()
 
-    def begun(self, ep, r0, rec, t, now, kind):
-        """begin_request's routing: a pending done claim's confirmation starts the teacher's takeover (sticky), one
-        Terminus-2 did not confirm is logged as dropped."""
-        self.log_routing(rec, r0)
+    def begun(self, ep, r0, recs, rec, t, now, kind):
+        """begin_request's routing and fires (recs): a pending done claim's confirmation starts the teacher's takeover
+        (sticky), one Terminus-2 did not confirm is logged as dropped; a release (--trigger-config) that ended the
+        teacher's takeover gives the student the episode back."""
+        self.log_routing(rec, recs, r0)
+        if ep.owner == 'teacher' and self.mode == 'relay' and not ep.ctl.sticky:
+            rel = next((x for x in recs if x.decision.kind == 'release' and x.outcome == 'acted'), None)
+            ep.owner = 'student'
+            self.event('handback', episode=ep.idx, sid=ep.sid, turn=t, trigger=rel and rel.decision.trigger,
+                       reason=rel and rel.decision.reason)
         if not rec['retry'] and any(x.why == 'dropped' and isinstance(self.trigger_of(ep, x.decision.trigger),
-                                                                      iv.DoneClaim) for x in r0.records):
+                                                                      iv.DoneClaim) for x in recs):
             # Terminus-2 did not accept the claim (e.g. its parser rejected the reply): no confirmation turn
             self.event('done_claim_dropped', episode=ep.idx, sid=ep.sid, turn=t, request_kind=kind)
             rec['done_claim_dropped'] = True
@@ -1034,11 +1061,12 @@ class Router:
             self.take_over(ep, self.fire_of(ep, r0.intervention), t, now)
             rec['takeover'] = self.takeover_rec(ep)
 
-    def routed(self, ep, r, r0, rec, t, now):
-        """on_request's routing (r0: begin_request's). A sticky intervention a request-time trigger starts is today's
-        takeover. Returns True when the teacher answers this request for one turn and the student keeps the episode
-        (Terminus-2's repair confirmation, an msa assist, a retry of an assisted request), with its record fields."""
-        self.log_routing(rec, r, len(r0.records))
+    def routed(self, ep, r, r0, skip, rec, t, now):
+        """on_request's routing (r0: begin_request's, whose skip fires r.records repeats). A sticky intervention a
+        request-time trigger starts is today's takeover. Returns True when the teacher answers this request for one
+        turn and the student keeps the episode (Terminus-2's repair confirmation, an msa assist, a retry of an
+        assisted request), with its record fields."""
+        self.log_routing(rec, r.records[skip:], r)
         I = r.intervention
         if r.who == 'teacher' and r.why == 'start' and I.sticky:
             if I is not r0.intervention:
@@ -1119,7 +1147,7 @@ class Router:
         # reply-time triggers: parse_repair (--repair-on-parse-error), done_claim (the submit), the decision triggers
         r = await ep.ctl.on_reply(dataclasses.replace(ev, phase='reply', reply=iv.Reply(
             text_of(served.get('content')), view, err or None)))
-        self.log_routing(rec, r)
+        self.log_routing(rec, r.records, r)
         if r.who == 'teacher' and isinstance(self.trigger_of(ep, r.intervention.trigger), iv.ParseRepair):
             # parse_error repair: harbor would turn this reply into a format error; the teacher answers the same
             # request for one turn and the student keeps the episode
@@ -1257,7 +1285,7 @@ class Router:
         # reply-time triggers: parse_repair (Terminus-2's parser rejects the reply), the decision triggers, done_claim
         r = await ep.ctl.on_reply(dataclasses.replace(ev, phase='reply', reply=iv.Reply(
             content, None if perr else rt.parse_reply(content, 'terminus2'), perr)))
-        self.log_routing(rec, r)
+        self.log_routing(rec, r.records, r)
         if r.who == 'teacher' and isinstance(self.trigger_of(ep, r.intervention.trigger), iv.ParseRepair):
             # parse_error (non-sticky repair): Terminus-2 would reject this reply; it never reaches harbor. The
             # teacher answers the same request, one turn, and the student keeps the episode.
@@ -1392,7 +1420,7 @@ class Router:
             action = (rt.tool_reply(msg) if msg.get('tool_calls') else None) if self.msa else \
                 rt.parse_reply(content, 'terminus2')
             r = await ep.ctl.on_reply(dataclasses.replace(ev, phase='reply', reply=iv.Reply(content, action)))
-            self.log_routing(rec, r)
+            self.log_routing(rec, r.records, r)
         return self.finish(ep, who, resp, rec, t, main=main)
 
     async def teacher_call(self, ep, b, rec):

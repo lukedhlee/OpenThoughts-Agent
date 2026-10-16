@@ -58,6 +58,7 @@ for _d in (os.path.join(RELAY, 'pilot'), os.path.join(RELAY, 'router'), HERE):
         sys.path.insert(0, _d)
 import relay_triggers as rt  # noqa: E402
 import interventions as iv  # noqa: E402  # pyright: ignore[reportMissingImports] - on sys.path above
+import action_results as ar  # noqa: E402  # pyright: ignore[reportMissingImports] - on sys.path above
 import msa_tool as mt  # noqa: E402  # pyright: ignore[reportMissingImports] - on sys.path above
 import readout  # noqa: E402  # pyright: ignore[reportMissingImports] - on sys.path above
 
@@ -67,10 +68,6 @@ PARSER_REL = os.path.join('harbor', 'agents', 'terminus_2', 'terminus_json_plain
 CLASS_OF_MODE = {'student': 'student_alone', 'relay': 'relay', 'teacher': 'teacher_alone'}
 CLASSES = ('student_alone', 'relay', 'teacher_alone')
 ENV_TRIGGERS = ('edit_failed', 'loop', 'no_progress_wait', 'error_streak')   # relay_triggers.env_fires, in its order
-# Terminus-2 observations after which nothing ran: its parser rejected the reply, or the reply hit the output limit
-T2_NOT_RUN = ('Previous response had parsing errors', 'NONE of the actions you just requested were performed')
-T2_LIMIT_MARK = '[... output limited to'          # Terminus-2 cut the new terminal output
-TIMED_OUT_RE = re.compile(r'timed out', re.I)
 EPISODE_RE = re.compile(rb'"episode": (\d+)')
 TOKENIZER_LOG_RE = re.compile(r"student tokenizer from the serve job's meta: (\S+)")
 POLICY = '__policy__'                             # the whole config's first intervention
@@ -463,63 +460,6 @@ def _history(r, bodies, returned, log, stats):
     return H, body
 
 
-def _t2_result(H, kind, prev_screen):
-    """Terminus-2: the previous reply's keystrokes and the new terminal output they produced (what the scanner reads:
-    the screen part after the last header, minus what the previous screen already showed). No exit code (the screen
-    carries none); truncated when Terminus-2 cut the output. None when nothing ran (the first request, a parse-error
-    re-prompt, a reply cut at the output limit, the request after summarization)."""
-    if kind in ('initial', 'handoff') or len(H) < 2 or H[-2].get('role') != 'assistant':
-        return None
-    obs = _text(H[-1].get('content'))
-    if any(m in obs for m in T2_NOT_RUN):
-        return None
-    r = rt.parse_reply(_text(H[-2].get('content')), 'terminus2')
-    if not r['ok']:
-        return None
-    cmds = [c for c, _ in cast(list, r['cmds'])]
-    k, scr = rt.screen_part(obs)
-    out = rt.new_output(k, scr, cmds, prev_screen) if k else ''
-    return iv.ActionResult(command='\n'.join(c.rstrip('\n') for c in cmds if c.strip()), output=out,
-                           truncated=T2_LIMIT_MARK in out)
-
-
-def _msa_result(H):
-    """mini-swe-agent: the previous turn's bash commands (one per line) and their tool results: exit_code the first
-    non-zero returncode (else 0), output the outputs joined (head and tail when mini-swe-agent elided the middle:
-    truncated), timed_out when the harness reports the command timed out. None when the request ends with a user
-    message (the first request, a format-error re-prompt)."""
-    if not H or H[-1].get('role') != 'tool':
-        return None
-    i = len(H)
-    while i > 0 and H[i - 1].get('role') == 'tool':
-        i -= 1
-    a = H[i - 1] if i > 0 else {}
-    cmds = mt.commands(a.get('tool_calls')) if a.get('role') == 'assistant' else []
-    rcs, outs, timed_out, truncated = [], [], False, False
-    for m in H[i:]:
-        c = _text(m.get('content'))
-        try:
-            j = json.loads(c)
-        except ValueError:
-            j = None
-        if isinstance(j, dict):
-            rc = j.get('returncode')
-            if 'output' in j:
-                o = str(j['output'])
-            else:
-                o = '\n'.join(str(j[k]) for k in ('output_head', 'output_tail') if k in j)
-            truncated = truncated or 'elided_chars' in j or 'output_head' in j
-            timed_out = timed_out or bool(TIMED_OUT_RE.search(str(j.get('exception_info') or '')))
-        else:
-            mm = re.search(r'<returncode>(-?\d+)</returncode>', c)
-            rc, o = (int(mm.group(1)) if mm else None), c
-        rcs.append(rc if isinstance(rc, int) else None)
-        outs.append(o)
-    code = next((x for x in rcs if x not in (None, 0)), 0 if any(x is not None for x in rcs) else None)
-    return iv.ActionResult(command='\n'.join(cmds), exit_code=code, timed_out=timed_out, output='\n'.join(outs),
-                           truncated=truncated)
-
-
 def _msa_parse_error(served):
     p = mt.parse(_text(served.get('content')), served.get('reasoning_content') or served.get('reasoning'),
                  lambda j: f'call_{j}')
@@ -655,7 +595,7 @@ def iter_events(ep, reply_parse='harness', stats=None, info=None):
             pending_reply = None
         stats['turn_ok' if sc.turn + 1 == r['turn'] else 'turn_mismatch'] += 1
         if not retry:                        # a retry is the same request: the same result
-            last_result = _msa_result(H) if msa else _t2_result(H, kind, prev_screen)
+            last_result = ar.msa(H) if msa else ar.terminus2(H, kind, prev_screen)   # as the router computes it
         real = None
         if owner == 'student' and r.get('owner') != 'student':
             real = 'reply' if r.get('discarded_student_reply') else 'request'

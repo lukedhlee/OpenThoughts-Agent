@@ -88,17 +88,22 @@ Config (load_config(path_or_dict) -> (Policy, [TriggerSpec]); Controller.from_co
         view: {show_rejected_reply: true}   # optional, per intervention
         teacher: teacher             # optional endpoint name
 
-Today's behavior -> the legacy config stage 2 builds from the router's flags (Policy defaults: cooldown 0, no cap,
-earliest_turn 2; entries in config order, which is today's evaluation order):
+Today's behavior -> the legacy config the router builds from its flags (router_triggers.legacy_config; Policy
+defaults: cooldown 0, no cap, earliest_turn 2; entries in config order, which is today's evaluation order):
   request time (always next)
     repair_confirm  Terminus-2: the teacher's one-turn repair claimed done, so it answers the confirmation too.
                     span 1; earliest 1, on_retry observe (today a retry of that confirmation goes to the student).
     edit_failed, loop, no_progress_wait, error_streak
                     --takeover environment triggers. span -1; observe armed; scanner order, the first fire wins.
-    context_budget  --context-budget-tokens. span -1; earliest --context-budget-min-turn, on_retry observe, armed.
-    time_budget     msa --time-takeover-frac. span -1; policy as context_budget.
-    assist          msa --assist. span 1; cooldown --assist-gap - 1, max --assist-max, earliest 2, observe armed. One
-                    trigger for its four kinds, so the gap and the cap stay shared and repairs do not count.
+    context_budget  --context-budget-tokens. span -1; earliest 1 (today the student's view is counted, and logged,
+                    from turn 1) with params min_turn --context-budget-min-turn inside the trigger; on_retry observe,
+                    armed.
+    time_budget     msa --time-takeover-frac. span -1; earliest --context-budget-min-turn, on_retry observe, armed.
+    assist          msa --assist (router_triggers.Assist). span 1; cooldown --assist-gap - 1, max --assist-max,
+                    earliest 2, observe armed, on_retry observe. One trigger for its four kinds, so the gap and the cap
+                    stay shared and repairs do not count. It never fires on a retry; a retry of an assisted request
+                    asks the budgets again first (today's order), and when none acts the router has the teacher
+                    answer it again (assist_kind retry, not another assist).
   reply time
     parse_repair    rewrite, span 1; earliest 1, on_retry observe. Terminus-2: on whenever its parser is loaded
                     (--repair-on-parse-error or --teacher-format-guard); msa: --repair-on-parse-error. The router's
@@ -108,7 +113,9 @@ earliest_turn 2; entries in config order, which is today's evaluation order):
     gave_up, destructive, ... (--takeover decision triggers)
                     rewrite, span -1; observe armed; dec_fires order.
     done_claim      Terminus-2: next, span -1; params confirm_kind confirm (any other next request drops it: today's
-                    done_claim_dropped), teacher_note VERIFY_NOTE (--verify-note), earliest 1. Listed last.
+                    done_claim_dropped), teacher_note VERIFY_NOTE (--verify-note), earliest 1. Listed last. Today's
+                    retry rule is kept by the router: a retry of the request the claim was made on leaves it pending
+                    (the Controller alone would drop it).
   take_over         sticky, at most once: any span -1 decision (a sticky span never hands back); ctl.sticky is today's
                     ep.owner == 'teacher'.
   --mode teacher / student
@@ -1481,14 +1488,6 @@ class _Stub:
     def __init__(self, **params):
         raise ConfigError(f'built-in {self.name!r} has no body before stage {self.stage} of '
                           'notes/ot-agent/relay-triggers')
-
-
-@builtin
-class Assist(_Stub):
-    """msa --assist (cmd_timeout, error_streak, same_output, ctx check-ins) moves from Router.assist_trigger in stage 2:
-    request phase, span 1, observe armed, cooldown --assist-gap - 1, max --assist-max; a context milestone is used up
-    only when the assist acts (on_outcome)."""
-    name, phases, stage = 'assist', frozenset({'request'}), 2
 
 
 @builtin
