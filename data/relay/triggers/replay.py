@@ -49,6 +49,7 @@ import os
 import re
 import statistics
 import sys
+from typing import Any, cast
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RELAY = os.path.dirname(HERE)
@@ -56,9 +57,9 @@ for _d in (os.path.join(RELAY, 'pilot'), os.path.join(RELAY, 'router'), HERE):
     if _d not in sys.path:
         sys.path.insert(0, _d)
 import relay_triggers as rt  # noqa: E402
-import interventions as iv  # noqa: E402
-import msa_tool as mt  # noqa: E402
-import readout  # noqa: E402
+import interventions as iv  # noqa: E402  # pyright: ignore[reportMissingImports] - on sys.path above
+import msa_tool as mt  # noqa: E402  # pyright: ignore[reportMissingImports] - on sys.path above
+import readout  # noqa: E402  # pyright: ignore[reportMissingImports] - on sys.path above
 
 TEMPLATE = os.path.join(RELAY, 'router', 'tests', 'grug0921_chat_template.jinja')   # 09-21's chat template
 BOS = '<|begin_of_text|>'
@@ -77,7 +78,7 @@ POLICY = '__policy__'                             # the whole config's first int
 
 def _rr():
     """relay_router (strip_think, load_terminus_parser), imported on first use: it needs aiohttp."""
-    import relay_router
+    import relay_router  # pyright: ignore[reportMissingImports] - router/ is on sys.path
     return relay_router
 
 
@@ -177,7 +178,7 @@ class RunLog:
         self.mode = self.start.get('mode') or self.flag('--mode') or \
             {'student_only': 'student', 'control': 'teacher'}.get(self.arm, 'relay')
         self.harness = self.start.get('harness') or self.flag('--harness') or 'terminus2'
-        self.enabled = list(self.start.get('takeover') or rt.CALIBRATED_CONFIG['enabled'])
+        self.enabled: list[str] = list(cast(list, self.start.get('takeover') or rt.CALIBRATED_CONFIG['enabled']))
         self.note = (self.start.get('verify_note_text') or None) if self.start.get('verify_note') else None
         self.hint = self.flag('--teacher-hint-text')
         # the router parsed Terminus-2 replies itself only in relay mode with the parser loaded (answer_student)
@@ -475,7 +476,7 @@ def _t2_result(H, kind, prev_screen):
     r = rt.parse_reply(_text(H[-2].get('content')), 'terminus2')
     if not r['ok']:
         return None
-    cmds = [c for c, _ in r['cmds']]
+    cmds = [c for c, _ in cast(list, r['cmds'])]
     k, scr = rt.screen_part(obs)
     out = rt.new_output(k, scr, cmds, prev_screen) if k else ''
     return iv.ActionResult(command='\n'.join(c.rstrip('\n') for c in cmds if c.strip()), output=out,
@@ -814,19 +815,20 @@ def _metrics(eps, turn_of):
     return m
 
 
-def _block(eps, names):
+def _block(eps, names) -> dict[str, Any]:
     owned = [e for e in eps if e['cls'] != 'teacher_alone']    # the teacher owns those: nothing to take over
-    out = dict(episodes=len(eps), triggers={},
-               policy=_metrics(owned, lambda e: (e['policy'] or {}).get('decided_turn')) if owned else None)
+    triggers: dict[str, Any] = {}
+    out: dict[str, Any] = dict(episodes=len(eps), triggers=triggers, policy=_metrics(
+        owned, lambda e: (e['policy'] or {}).get('decided_turn')) if owned else None)
     for n in names:
-        out['triggers'][n] = dict(
+        triggers[n] = dict(
             first_fire=_metrics(eps, lambda e, n=n: (e['first_fire'].get(n) or {}).get('turn')),
             first_actionable=_metrics(owned, lambda e, n=n: (e['first_actionable'].get(n) or {}).get('decided_turn'))
             if owned else None)
     return out
 
 
-def summarize(rows, names):
+def summarize(rows, names) -> dict[str, Any]:
     """summary.json: per class (student_alone: clean labels; relay and teacher_alone: reported separately) and per
     group, per trigger, the metrics of its first fire on the recorded history and of its first actionable fire alone,
     plus the whole policy's first intervention."""
@@ -955,7 +957,7 @@ def compare_would_fire(ep, fires, info):
 async def _run(a, episodes, out, stats):
     rows, names, check_rows, check = [], [], [], collections.defaultdict(collections.Counter)
     builtin_extra = collections.Counter()
-    cfg = None if a.builtin_check else load_trigger_config(a.config)
+    cfg: tuple | None = None if a.builtin_check else load_trigger_config(a.config)
     cfgs = {}
     with open(os.path.join(out, 'per_episode.jsonl'), 'w') as pe, open(os.path.join(out, 'fires.jsonl'), 'w') as fe:
         for k, ep in enumerate(episodes):
@@ -968,7 +970,7 @@ async def _run(a, episodes, out, stats):
                     cfgs[ep.log.dir] = would_fire_config(ep.log)
                 c = cfgs[ep.log.dir]
             else:
-                c = cfg
+                c = cast(tuple, cfg)
             recs = await areplay_episode(ep, c, a.reply_parse, a.per_trigger, stats)
             fires, summ = recs[:-1], recs[-1]
             for f in fires:
@@ -1039,9 +1041,10 @@ def main(argv=None):
     print(f'\nwrote {a.out}/per_episode.jsonl, fires.jsonl, summary.json')
     if not a.builtin_check:
         return 0
-    res = dict(classes={k: dict(v) for k, v in check.items()}, builtin_done_claim_extra_fires=dict(builtin_extra),
-               mismatches=[x for x in check_rows if x['kind'] == 'mismatch'],
-               unlogged=[x for x in check_rows if x['kind'] == 'unlogged'])
+    res: dict[str, Any] = dict(classes={k: dict(v) for k, v in check.items()},
+                               builtin_done_claim_extra_fires=dict(builtin_extra),
+                               mismatches=[x for x in check_rows if x['kind'] == 'mismatch'],
+                               unlogged=[x for x in check_rows if x['kind'] == 'unlogged'])
     with open(os.path.join(a.out, 'builtin_check.json'), 'w') as f:
         json.dump(res, f, indent=1)
     print('\nbuilt-in check vs the logged would_fire (request by request, trigger and reason):')
