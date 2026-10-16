@@ -47,6 +47,10 @@ who answers each request:
     If none parses, the last reply is passed through as served (harbor re-prompts as usual) and logged
     teacher_unparseable_passed. Per record: teacher_guard = {attempts, outcome, parse_errors}. Summarization replies
     are not checked (they are free text).
+  * Decisions (2026-10-16, notes/ot-agent/relay-triggers stage 2): every intervention above is a trigger asked by one
+    interventions.Controller per episode, on the config the flags stand for (router_triggers.legacy_config; routing
+    and records unchanged), or on --trigger-config <yaml> in their place, which also logs every fire (decisions) and
+    the intervention the teacher answers under.
   * Verify note (--verify-note, off by default; Luke 2026-09-26): the teacher's request that asks it to confirm a
     completion claim gets a note appended to Terminus-2's "Are you sure?" message (relay: VERIFY_NOTE, the exact text of
     the verify-note replay; --mode teacher: VERIFY_NOTE_OWN, the same text without the "another agent" framing, since
@@ -108,6 +112,7 @@ handles them).
 import argparse
 import asyncio
 import collections
+import dataclasses
 import gzip
 import hashlib
 import json
@@ -125,8 +130,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'triggers'))
 import relay_triggers as rt  # noqa: E402
 sys.path.insert(0, HERE)
 import autofix as af  # noqa: E402
+import interventions as iv  # noqa: E402
 import msa_tool as mt  # noqa: E402
 import reasoning_cap as rcap  # noqa: E402
+import router_triggers as rtg  # noqa: E402
 
 ROUTER_VERSION = 'relay-router/1 (2026-09-26 teacher format guard, verify note; 2026-10-02 --harness msa)'
 SESSION_HEADER = 'X-Harbor-Session-Id'
@@ -229,8 +236,8 @@ class Episode:
         self.task = task                  # {'task_id', 'budget_sec'} or None
         self.t0 = time.time()
         self.last_t = self.t0
-        self.owner = owner                # 'student' | 'teacher'
-        self.pending = None               # done_claim fire waiting for the confirmation request
+        self.owner = owner                # 'student' | 'teacher' (sticky: ctl.sticky)
+        self.ctl = None                   # interventions.Controller: who answers each request (Router.episode sets it)
         self.takeover = None              # {'trigger', 'kind', 'reason', 'turn', 'elapsed_sec', ...}
         self.takeover_t = None
         self.sc = rt.EpisodeScanner('terminus2')
@@ -246,12 +253,8 @@ class Episode:
         self.pinned = {}                  # who -> the server this episode is pinned to
         self.paused_sec = 0.0             # wall time the episode's clock was stopped (model calls in flight)
         self.paused_at_takeover = 0.0
-        self.repair_confirm = False       # the teacher claimed done in a repair turn: it answers that confirmation
-        self.note_turn = None             # --verify-note: the turn of the done_claim takeover's confirmation request
+        self.note_turn = None             # --mode teacher --verify-note: the turn of the first confirmation request
         self.n_fed = 0                    # --harness msa: history messages already fed to the scanner
-        self.assists = []                 # --assist: [{'turn', 'kind'}] one-turn teacher interventions (non-sticky)
-        self.assist_key = None            # the request an assist answered (a retry of it is answered by the teacher again)
-        self.milestones = set()           # --assist: context check-ins already fired
 
     def summary(self):
         return dict(episode=self.idx, sid=self.sid, task_id=(self.task or {}).get('task_id'), owner=self.owner,
@@ -287,9 +290,20 @@ class Router:
         self.msa = a.harness == 'msa'
         self.note_text = a.verify_note_text or (VERIFY_NOTE_MSA if self.msa else VERIFY_NOTE if a.mode == 'relay'
                                                 else VERIFY_NOTE_OWN)
+        cfg = rtg.load_config(a.trigger_config) if a.trigger_config else None
         self.parser = self.parser_path = self.parser_sha = None
-        if (a.repair_on_parse_error or a.teacher_format_guard) and not self.msa:   # msa: msa_tool.py's checks
+        if (a.repair_on_parse_error or a.teacher_format_guard or rtg.wants_parser(cfg and cfg[1])) and not self.msa:
+            # msa: msa_tool.py's checks
             self.parser, self.parser_path, self.parser_sha = load_terminus_parser(a.terminus_parser)
+        # who answers each request: one interventions.Controller per episode, on the --trigger-config file or on the
+        # config today's flags stand for (router_triggers.legacy_config); --mode teacher / student only log the fires
+        self.trigger_policy, self.trigger_specs = cfg or rtg.load_config(
+            rtg.legacy_config(a, self.parser is not None, self.note_text))
+        if a.mode != 'relay':
+            self.trigger_specs = rtg.shadow(self.trigger_specs)
+        if a.trigger_config:   # the config's relay_triggers takeover triggers stand for --takeover
+            self.cfg['enabled'] = rtg.scanner_names(self.trigger_specs)
+            self.logged_cfg = dict(self.cfg, enabled=[t for t in rt.LOGGED if t not in self.cfg['enabled']])
         self.episodes = {}
         self.by_first = {}
         self.n_episodes = 0
@@ -424,6 +438,7 @@ class Router:
                 self.counts['no_task_match'] += 1
             self.n_episodes += 1
             ep = Episode(sid, self.n_episodes, first, task, 'teacher' if self.mode == 'teacher' else 'student')
+            ep.ctl = iv.Controller(self.trigger_policy, self.trigger_specs, initial_owner=ep.owner)
             if self.msa:
                 ep.sc = rt.EpisodeScanner(None)   # its tool-calling turns parse as harness 'tools'
             ep.student_think = self.a.student_think
@@ -823,8 +838,8 @@ class Router:
                    n_messages=len(messages), request_sha=sha(json.dumps(messages, sort_keys=True, ensure_ascii=False)),
                    seq=ep.n_requests, student_think=self.a.student_think, paused_sec=round(ep.paused_sec, 3),
                    student_clock_sec=round(now - ep.t0 - ep.paused_sec, 3))
-        if kind in AUX_KINDS:
-            who = ep.owner
+        if kind in AUX_KINDS:   # routed by the owner, no turn, no trigger asked
+            who = (await ep.ctl.begin_request(iv.Event('request', ep.sc.turn, main=False))).who
             rec.update(turn=None, owner=who)
             return await self.answer(ep, who, body, messages, rec, main=False)
 
@@ -855,17 +870,10 @@ class Router:
             return self.hard_end(ep, rec, t, None)
         if ep.ending:
             return self.synthetic(ep, rec)
-        if ep.pending is not None and ep.owner == 'student':
-            if kind == 'confirm':
-                self.take_over(ep, ep.pending, t, now)
-                rec['takeover'] = self.takeover_rec(ep)
-                ep.note_turn = t
-            elif not retry:
-                # Terminus-2 did not accept the claim (e.g. its parser rejected the reply): no confirmation turn
-                self.event('done_claim_dropped', episode=ep.idx, sid=ep.sid, turn=t, request_kind=kind)
-                rec['done_claim_dropped'] = True
-            if not retry:
-                ep.pending = None
+        # a done claim is pending until this request: its confirmation -> the teacher takes the episode (done_claim)
+        ev = self.request_event(ep, body, messages, rec, t, now, kind, retry)
+        r0 = await ep.ctl.begin_request(ev)
+        self.begun(ep, r0, rec, t, now, kind)
         if self.a.budget_mode == 'on' and ep.task and ep.task.get('budget_sec'):
             b = ep.task['budget_sec']
             # the owner's clock: wall time minus the paused time (model calls; repairs only without --pause-model-calls)
@@ -880,28 +888,14 @@ class Router:
                 self.event('ending', episode=ep.idx, sid=ep.sid, ending=ep.ending, turn=t, elapsed_sec=now - ep.t0)
                 return self.synthetic(ep, rec)
 
-        # the teacher claimed done in a repair turn: it answers Terminus-2's confirmation, then the student resumes
-        if ep.repair_confirm and ep.owner == 'student':
-            if not retry:
-                ep.repair_confirm = False
-            if kind == 'confirm':
-                rec.update(owner='teacher', repair=True, repair_kind='confirm')
-                return await self.answer(ep, 'teacher', body, messages, rec, main=True)
-        # environment triggers act on the request, before the student is asked
-        if ep.owner == 'student' and self.mode == 'relay' and not retry:
-            env = [f for f in ep.sc.current_fires(None, self.cfg) if f['kind'] == 'environment']
-            if env:
-                self.take_over(ep, env[0], t, now)
-                rec['takeover'] = self.takeover_rec(ep)
-        # context_budget: the student's own view of this request, counted before the student is asked
-        if ep.owner == 'student' and self.mode == 'relay' and self.a.context_budget_tokens:
-            n = await self.count_student_view(ep, body, messages, rec)
-            fire = rt.context_budget_fire(n, t, self.a.context_budget_tokens, self.a.context_budget_min_turn)
-            if fire:
-                self.take_over(ep, fire, t, now)
-                rec['takeover'] = self.takeover_rec(ep)
-        if ep.owner == 'student':
-            return await self.answer_student(ep, body, messages, rec, t, now)
+        # request-time triggers, before the student is asked: the teacher claimed done in a repair turn, so it answers
+        # Terminus-2's confirmation (repair_confirm, then the student resumes); environment triggers; context_budget
+        # (the student's own view of this request, counted)
+        r = await ep.ctl.on_request(ev)
+        if self.routed(ep, r, r0, rec, t, now):
+            return await self.answer(ep, 'teacher', body, messages, rec, main=True, ev=ev)
+        if r.who == 'student':
+            return await self.answer_student(ep, body, messages, rec, t, now, ev)
         # trainability hard end: once the teacher owns the episode, 09-21's view must leave the reply reserve
         if self.mode == 'relay' and ep.takeover and self.a.student_row_max_tokens:
             n = rec['student_view_tokens'] if 'student_view_tokens' in rec else \
@@ -914,12 +908,15 @@ class Router:
                            takeover_trigger=ep.takeover['trigger'])
                 return self.hard_end(ep, rec, t, n)
         rec['owner'] = 'teacher'
+        note = r.teacher_note             # relay: the done_claim takeover's confirmation (and a retry of it)
         if self.a.verify_note and kind == 'confirm' and self.mode == 'teacher' and ep.note_turn is None:
             ep.note_turn = t              # control: the episode's FIRST confirmation only (the replay's condition); a
                                           # note on every one made Qwen re-verify forever (baseline5, 2026-09-26)
-        if self.a.verify_note and kind == 'confirm' and ep.note_turn == t:
+        if self.a.verify_note and kind == 'confirm' and self.mode == 'teacher' and ep.note_turn == t:
+            note = self.note_text
+        if note:
             rec['verify_note'] = True     # the teacher confirms a claim: the done_claim takeover's, or control's first
-        return await self.answer(ep, 'teacher', body, messages, rec, main=True)
+        return await self.answer(ep, 'teacher', body, messages, rec, main=True, ev=ev, note=note)
 
     async def handle_msa(self, ep, body, messages):
         """--harness msa: handle() for mini-swe-agent tool mode. The history only grows (no summarization), so the
@@ -953,6 +950,9 @@ class Router:
             return self.hard_end(ep, rec, t, None)
         if ep.ending:
             return self.synthetic(ep, rec)
+        ev = self.request_event(ep, body, messages, rec, t, now, kind, retry)
+        r0 = await ep.ctl.begin_request(ev)
+        self.begun(ep, r0, rec, t, now, kind)
         if self.a.budget_mode == 'on' and ep.task and ep.task.get('budget_sec'):
             b = ep.task['budget_sec']
             if ep.owner == 'student' and self.mode in ('relay', 'student') and now - ep.t0 - ep.paused_sec >= self.a.student_budget_frac * b:
@@ -965,38 +965,14 @@ class Router:
             if ep.ending:
                 self.event('ending', episode=ep.idx, sid=ep.sid, ending=ep.ending, turn=t, elapsed_sec=now - ep.t0)
                 return self.synthetic(ep, rec)
-        if ep.owner == 'student' and self.mode == 'relay' and not retry:
-            env = [f for f in ep.sc.current_fires(None, self.cfg) if f['kind'] == 'environment']
-            if env:
-                self.take_over(ep, env[0], t, now)
-                rec['takeover'] = self.takeover_rec(ep)
-        if ep.owner == 'student' and self.mode == 'relay' and self.a.context_budget_tokens:
-            n = await self.count_student_view(ep, body, messages, rec)
-            fire = rt.context_budget_fire(n, t, self.a.context_budget_tokens, self.a.context_budget_min_turn)
-            if fire:
-                self.take_over(ep, fire, t, now)
-                rec['takeover'] = self.takeover_rec(ep)
-        if (ep.owner == 'student' and self.mode == 'relay' and self.a.time_takeover_frac and ep.task and ep.task.get('budget_sec')
-                and t >= self.a.context_budget_min_turn):
-            used = now - ep.t0 - ep.paused_sec
-            if used >= self.a.time_takeover_frac * ep.task['budget_sec']:
-                # time_budget (sticky): the student would otherwise spend the task's clock without submitting (guided relay
-                # 10-07: 13 % of episodes ended on the agent timeout with the student still in control, pass 14 %)
-                self.take_over(ep, dict(trigger='time_budget', kind='decision', turn=t,
-                                        reason=f"student used {used:.0f} s of {ep.task['budget_sec']:.0f} s"), t, now)
-                rec['takeover'] = self.takeover_rec(ep)
-        if ep.owner == 'student' and self.mode == 'relay' and self.a.assist:
-            why = 'retry' if (retry and ep.assist_key == key) else (None if retry else await self.assist_trigger(ep, body, messages, rec, t))
-            if why:
-                if why != 'retry':
-                    ep.assists.append(dict(turn=t, kind=why))
-                    ep.assist_key = key
-                    self.counts['assists'] += 1
-                    self.event('assist', episode=ep.idx, sid=ep.sid, turn=t, kind=why)
-                rec.update(assist=True, assist_kind=why, owner='teacher')
-                return await self.answer(ep, 'teacher', body, messages, rec, main=True)
-        if ep.owner == 'student':
-            return await self.answer_student_msa(ep, body, messages, rec, t, now)
+        # request-time triggers, before the student is asked: environment triggers, context_budget, time_budget (sticky:
+        # the student would otherwise spend the task's clock without submitting; guided relay 10-07: 13 % of episodes
+        # ended on the agent timeout with the student still in control, pass 14 %), assist (one teacher turn)
+        r = await ep.ctl.on_request(ev)
+        if self.routed(ep, r, r0, rec, t, now):
+            return await self.answer(ep, 'teacher', body, messages, rec, main=True, ev=ev)
+        if r.who == 'student':
+            return await self.answer_student_msa(ep, body, messages, rec, t, now, ev)
         if self.mode == 'relay' and ep.takeover and self.a.student_row_max_tokens:
             n = rec['student_view_tokens'] if 'student_view_tokens' in rec else \
                 await self.count_student_view(ep, body, messages, rec)
@@ -1008,60 +984,93 @@ class Router:
                            takeover_trigger=ep.takeover['trigger'])
                 return self.hard_end(ep, rec, t, n)
         rec['owner'] = 'teacher'
-        if self.a.verify_note and ep.note_turn == t:
+        if r.teacher_note:
             rec['verify_note'] = True     # a retry of the done-claim takeover's request gets the note again
-        return await self.answer(ep, 'teacher', body, messages, rec, main=True)
+        return await self.answer(ep, 'teacher', body, messages, rec, main=True, ev=ev, note=r.teacher_note)
+
+    # ---- the Controller's routing, in today's record fields -------------------------------------------------------
+    def request_event(self, ep, body, messages, rec, t, now, kind, retry):
+        """What the triggers see of this request (built from the past only). view_tokens counts the student's own view
+        on its /tokenize once per request (logged as student_view_tokens; a failed count is tried again)."""
+        async def view_tokens():
+            n = rec.get('student_view_tokens')
+            return n if n is not None else await self.count_student_view(ep, body, messages, rec)
+        task = ep.task or {}
+        return iv.Event('request', t, is_retry=retry, messages=messages, scanner=ep.sc,
+                        clock=iv.Clock(now - ep.t0 - ep.paused_sec, task.get('budget_sec') or None),
+                        view_tokens=view_tokens,
+                        extra=dict(request_kind=kind, task_id=task.get('task_id'), harness=self.a.harness))
 
     @staticmethod
-    def tool_results(messages):
-        """[(returncode or None, output)] of the trailing run of tool messages and every earlier one, oldest first."""
-        out = []
-        for m in messages:
-            if m.get('role') != 'tool':
-                continue
-            c = text_of(m.get('content'))
-            rc, o = None, c
-            try:
-                j = json.loads(c)
-                rc, o = j.get('returncode'), str(j.get('output', ''))
-            except (ValueError, AttributeError):
-                mm = re.search(r'<returncode>(-?\d+)</returncode>', c)
-                rc = int(mm.group(1)) if mm else None
-            out.append((rc, o))
-        return out
+    def trigger_of(ep, name):
+        return next(s.trigger for s in ep.ctl.specs if s.name == name)
 
-    async def assist_trigger(self, ep, body, messages, rec, t):
-        """--assist (msa relay): a one-turn teacher intervention before the student answers this request, the student keeps
-        the episode. Calibrated on msafin's solo MSA2 episodes (2026-10-07): MSA2 failures are drift, not loops, so the
-        triggers are a command timeout (the 30 s cap), a failing-command streak or a repeated output, and one check-in at
-        each context milestone. At most one per --assist-gap turns and --assist-max per episode; never before turn 2."""
-        if t < 2 or len(ep.assists) >= self.a.assist_max or (ep.assists and t - ep.assists[-1]['turn'] < self.a.assist_gap):
-            return None
-        if messages and messages[-1].get('role') == 'tool':
-            res = self.tool_results(messages)
-            rc, out = res[-1]
-            if 'timed out' in out[:600].lower() or rc in (-1, 124, 137):
-                return 'cmd_timeout'
-            k = self.a.assist_error_streak
-            if len(res) >= k and all(r not in (0, None) for r, _ in res[-k:]):
-                return 'error_streak'
-            if len(out) >= 30 and sum(1 for _, o in res[-6:-1] if o == out) >= 2:
-                return 'same_output'
-        if self.a.assist_ctx:
-            n = rec.get('student_view_tokens')
-            if n is None:
-                n = await self.count_student_view(ep, body, messages, rec)
-            for m in self.a.assist_ctx:
-                if n is not None and n >= m and m not in ep.milestones:
-                    ep.milestones.add(m)
-                    return f'ctx_checkin_{m // 1000}k'
-        return None
+    def fire_of(self, ep, I):
+        """An intervention as take_over's fire: today's trigger, kind ('environment' for the relay_triggers request-time
+        detectors, else 'decision'), reason, the turn it fired at, and context_budget's prompt_tokens."""
+        trig = self.trigger_of(ep, I.trigger)
+        return dict(trigger=I.trigger, kind=getattr(trig, 'kind', None) or 'decision', reason=I.reason,
+                    turn=I.fired_turn, prompt_tokens=int(I.score) if isinstance(trig, iv.ContextBudget) else None)
+
+    def log_routing(self, rec, r, skip=0):
+        """--trigger-config only (additive fields): every fire of this request (acted, pending, suppressed and why,
+        shadow) and the intervention the teacher answers under."""
+        if not self.a.trigger_config:
+            return
+        rec.setdefault('decisions', []).extend(x.as_dict() for x in r.records[skip:])
+        if r.who == 'teacher' and r.intervention is not None:
+            rec['intervention'] = r.intervention.as_dict()
+
+    def begun(self, ep, r0, rec, t, now, kind):
+        """begin_request's routing: a pending done claim's confirmation starts the teacher's takeover (sticky), one
+        Terminus-2 did not confirm is logged as dropped."""
+        self.log_routing(rec, r0)
+        if not rec['retry'] and any(x.why == 'dropped' and isinstance(self.trigger_of(ep, x.decision.trigger),
+                                                                      iv.DoneClaim) for x in r0.records):
+            # Terminus-2 did not accept the claim (e.g. its parser rejected the reply): no confirmation turn
+            self.event('done_claim_dropped', episode=ep.idx, sid=ep.sid, turn=t, request_kind=kind)
+            rec['done_claim_dropped'] = True
+        if r0.why == 'start' and r0.intervention.sticky:
+            self.take_over(ep, self.fire_of(ep, r0.intervention), t, now)
+            rec['takeover'] = self.takeover_rec(ep)
+
+    def routed(self, ep, r, r0, rec, t, now):
+        """on_request's routing (r0: begin_request's). A sticky intervention a request-time trigger starts is today's
+        takeover. Returns True when the teacher answers this request for one turn and the student keeps the episode
+        (Terminus-2's repair confirmation, an msa assist, a retry of an assisted request), with its record fields."""
+        self.log_routing(rec, r, len(r0.records))
+        I = r.intervention
+        if r.who == 'teacher' and r.why == 'start' and I.sticky:
+            if I is not r0.intervention:
+                self.take_over(ep, self.fire_of(ep, I), t, now)
+                rec['takeover'] = self.takeover_rec(ep)
+            return False
+        J = ep.ctl.interventions[-1] if ep.ctl.interventions else None
+        if r.who == 'student' and rec['retry'] and J is not None and J.last_turn == t and isinstance(
+                self.trigger_of(ep, J.trigger), rtg.Assist):
+            # a retry of an assisted request: the budgets were asked again first (assist's on_retry: observe), as
+            # today; none acted, so the teacher answers it again (not counted as another assist)
+            rec.update(assist=True, assist_kind='retry', owner='teacher')
+            return True
+        if r.who != 'teacher' or I is None or I.sticky or r.why not in ('start', 'retry'):
+            return False
+        trig = self.trigger_of(ep, I.trigger)
+        if isinstance(trig, iv.RepairConfirm):
+            rec.update(owner='teacher', repair=True, repair_kind='confirm')
+        elif isinstance(trig, rtg.Assist):
+            if r.why == 'start':
+                self.counts['assists'] += 1
+                self.event('assist', episode=ep.idx, sid=ep.sid, turn=t, kind=I.reason)
+            rec.update(assist=True, assist_kind=I.reason if r.why == 'start' else 'retry', owner='teacher')
+        else:
+            rec['owner'] = 'teacher'
+        return True
 
     def call_ids(self, ep):
         n = ep.n_requests
         return lambda j: f'call_{n}_{j}'
 
-    async def answer_student_msa(self, ep, body, messages, rec, t, now):
+    async def answer_student_msa(self, ep, body, messages, rec, t, now, ev):
         rec['owner'] = 'student'
         msgs, sstats = self.for_student(ep, messages)
         rec['student_view'] = sstats
@@ -1099,45 +1108,47 @@ class Router:
                     self.counts['autofixes'] += 1
                 else:
                     rec['autofix_unfixable'] = kind
-        if err and self.mode == 'relay' and self.a.repair_on_parse_error:
+        view = None
+        if not err:
+            ch['message'] = mt.message(p)
+            view = rt.tool_reply(dict(content=p.content, tool_calls=p.tool_calls))
+            rec['logged'] = self.logged_signals(ep, view)
+            if self.mode == 'student':
+                rec['would_fire'] = [dict(trigger=f['trigger'], reason=f.get('reason'))
+                                     for f in ep.sc.current_fires(view, self.cfg)]
+        # reply-time triggers: parse_repair (--repair-on-parse-error), done_claim (the submit), the decision triggers
+        r = await ep.ctl.on_reply(dataclasses.replace(ev, phase='reply', reply=iv.Reply(
+            text_of(served.get('content')), view, err or None)))
+        self.log_routing(rec, r)
+        if r.who == 'teacher' and isinstance(self.trigger_of(ep, r.intervention.trigger), iv.ParseRepair):
             # parse_error repair: harbor would turn this reply into a format error; the teacher answers the same
             # request for one turn and the student keeps the episode
             ep.n_repairs += 1
             self.counts['repairs'] += 1
-            rec.update(repair=True, repair_kind='parse_error', repair_reason=err[:500], owner='teacher',
+            rec.update(repair=True, repair_kind='parse_error', repair_reason=r.intervention.reason, owner='teacher',
                        discarded_student_reply=resp, discarded_usage=resp.get('usage'),
                        student_latency_sec=rec.pop('latency_sec'), student_sent_body=rec.pop('sent_body'))
             self.event('repair', episode=ep.idx, sid=ep.sid, turn=t, reason=err[:200])
-            return await self.answer(ep, 'teacher', body, messages, rec, main=True)
-        if err:
-            # passed as served: harbor parses it itself and answers with upstream's format error
-            return self.finish(ep, 'student', resp, rec, t, main=True)
-        ch['message'] = mt.message(p)
-        view = rt.tool_reply(dict(content=p.content, tool_calls=p.tool_calls))
-        rec['logged'] = self.logged_signals(ep, view)
-        dec = [] if self.mode != 'relay' else [f for f in ep.sc.current_fires(view, self.cfg) if f['kind'] == 'decision']
-        if self.mode == 'student':
-            rec['would_fire'] = [dict(trigger=f['trigger'], reason=f.get('reason')) for f in ep.sc.current_fires(view, self.cfg)]
-        if (self.mode == 'relay' and 'done_claim' in self.cfg['enabled'] and view['done']
-                and not any(f['trigger'] == 'done_claim' for f in dec)):
-            # the scanner fires done_claim only on the episode's first submit; a teacher repair turn may have claimed
-            dec.append(dict(trigger='done_claim', kind='decision', turn=t, reason='submit command (student)'))
-        if dec:
+            return await self.answer(ep, 'teacher', body, messages, rec, main=True, ev=ev)
+        if r.who == 'teacher':
             # decision trigger (the done claim included): the student's reply never runs; the teacher answers the
             # same request and keeps the episode
-            first = next((f for f in dec if f['trigger'] == 'done_claim'), dec[0])
-            self.take_over(ep, first, t, now, discarded=resp)
-            rec.update(discarded_student_reply=resp, discarded_usage=resp.get('usage'),
-                       takeover=self.takeover_rec(ep), owner='teacher')
+            if r.intervention.sticky:
+                self.take_over(ep, self.fire_of(ep, r.intervention), t, now, discarded=resp)
+                rec.update(discarded_student_reply=resp, discarded_usage=resp.get('usage'),
+                           takeover=self.takeover_rec(ep), owner='teacher')
+            else:                         # a --trigger-config span of k turns: the student keeps the episode
+                rec.update(discarded_student_reply=resp, discarded_usage=resp.get('usage'), owner='teacher')
             rec['student_latency_sec'] = rec.pop('latency_sec')
             rec['student_sent_body'] = rec.pop('sent_body')
-            if first['trigger'] == 'done_claim':
+            if isinstance(self.trigger_of(ep, r.intervention.trigger), iv.DoneClaim):
                 rec['done_claim'] = True
                 self.event('done_claim', episode=ep.idx, sid=ep.sid, turn=t)
-                ep.note_turn = t
-                if self.a.verify_note:
-                    rec['verify_note'] = True
-            return await self.answer(ep, 'teacher', body, messages, rec, main=True)
+            if r.teacher_note:
+                rec['verify_note'] = True
+            return await self.answer(ep, 'teacher', body, messages, rec, main=True, ev=ev, note=r.teacher_note)
+        # the student's reply goes to harbor (as served when harbor cannot parse it: harbor answers with upstream's
+        # format error)
         return self.finish(ep, 'student', resp, rec, t, main=True)
 
     async def count_student_view(self, ep, body, messages, rec):
@@ -1202,7 +1213,7 @@ class Router:
             return [dict(trigger='detector_error', reason=repr(e)[:200])]
         return [dict(trigger=f['trigger'], kind=f['kind'], reason=f.get('reason')) for f in fs]
 
-    async def answer_student(self, ep, body, messages, rec, t, now):
+    async def answer_student(self, ep, body, messages, rec, t, now, ev):
         rec['owner'] = 'student'
         msgs, sstats = self.for_student(ep, messages)
         rec['student_view'] = sstats
@@ -1221,6 +1232,7 @@ class Router:
             return web.Response(status=status, body=data, content_type='application/json')
         resp = json.loads(data)
         content = text_of(resp['choices'][0]['message'].get('content'))
+        perr = None
         if self.parser is not None and self.mode == 'relay':
             pr = self.parser.parse_response(content)
             if pr.error and self.a.autofix:
@@ -1236,55 +1248,59 @@ class Router:
                     pr = self.parser.parse_response(content)
                 else:
                     rec['autofix_unfixable'] = fx.reason
-            if pr.error:
-                # parse_error (non-sticky repair): Terminus-2 would reject this reply; it never reaches harbor. The
-                # teacher answers the same request, one turn, and the student keeps the episode.
-                ep.n_repairs += 1
-                self.counts['repairs'] += 1
-                rec.update(repair=True, repair_kind='parse_error', repair_reason=pr.error[:500], owner='teacher',
-                           discarded_student_reply=resp, discarded_usage=resp.get('usage'),
-                           student_latency_sec=rec.pop('latency_sec'), student_sent_body=rec.pop('sent_body'))
-                self.event('repair', episode=ep.idx, sid=ep.sid, turn=t, reason=pr.error[:200])
-                return await self.answer(ep, 'teacher', body, messages, rec, main=True)
-        rec['logged'] = self.logged_signals(ep, content)
-        dec = [] if self.mode != 'relay' else [f for f in ep.sc.current_fires(content, self.cfg) if f['kind'] == 'decision']
-        if self.mode == 'student':
-            rec['would_fire'] = [dict(trigger=f['trigger'], reason=f.get('reason'))
-                                 for f in ep.sc.current_fires(content, self.cfg)]
-        if (self.mode == 'relay' and 'done_claim' in self.cfg['enabled'] and not any(f['trigger'] == 'done_claim' for f in dec)
-                and rt.parse_reply(content, 'terminus2')['done']):
-            # the scanner fires done_claim only on the episode's first task_complete; a teacher repair turn may have
-            # claimed first, so judge the student's own claim directly
-            dec.append(dict(trigger='done_claim', kind='decision', turn=t, reason='task_complete: true (student)'))
-        done = [f for f in dec if f['trigger'] == 'done_claim']
-        other = [f for f in dec if f['trigger'] != 'done_claim']
-        if other:
+            perr = pr.error or None
+        if perr is None:
+            rec['logged'] = self.logged_signals(ep, content)
+            if self.mode == 'student':
+                rec['would_fire'] = [dict(trigger=f['trigger'], reason=f.get('reason'))
+                                     for f in ep.sc.current_fires(content, self.cfg)]
+        # reply-time triggers: parse_repair (Terminus-2's parser rejects the reply), the decision triggers, done_claim
+        r = await ep.ctl.on_reply(dataclasses.replace(ev, phase='reply', reply=iv.Reply(
+            content, None if perr else rt.parse_reply(content, 'terminus2'), perr)))
+        self.log_routing(rec, r)
+        if r.who == 'teacher' and isinstance(self.trigger_of(ep, r.intervention.trigger), iv.ParseRepair):
+            # parse_error (non-sticky repair): Terminus-2 would reject this reply; it never reaches harbor. The
+            # teacher answers the same request, one turn, and the student keeps the episode.
+            ep.n_repairs += 1
+            self.counts['repairs'] += 1
+            rec.update(repair=True, repair_kind='parse_error', repair_reason=r.intervention.reason, owner='teacher',
+                       discarded_student_reply=resp, discarded_usage=resp.get('usage'),
+                       student_latency_sec=rec.pop('latency_sec'), student_sent_body=rec.pop('sent_body'))
+            self.event('repair', episode=ep.idx, sid=ep.sid, turn=t, reason=perr[:200])
+            return await self.answer(ep, 'teacher', body, messages, rec, main=True, ev=ev)
+        if r.who == 'teacher':
             # decision trigger: the student's reply never runs; the teacher answers the same request
-            self.take_over(ep, other[0], t, now, discarded=resp)
-            rec.update(discarded_student_reply=resp, discarded_usage=resp.get('usage'),
-                       takeover=self.takeover_rec(ep), owner='teacher')
+            if r.intervention.sticky:
+                self.take_over(ep, self.fire_of(ep, r.intervention), t, now, discarded=resp)
+                rec.update(discarded_student_reply=resp, discarded_usage=resp.get('usage'),
+                           takeover=self.takeover_rec(ep), owner='teacher')
+            else:                         # a --trigger-config span of k turns: the student keeps the episode
+                rec.update(discarded_student_reply=resp, discarded_usage=resp.get('usage'), owner='teacher')
             rec['student_latency_sec'] = rec.pop('latency_sec')
             rec['student_sent_body'] = rec.pop('sent_body')
-            return await self.answer(ep, 'teacher', body, messages, rec, main=True)
-        if done:
-            ep.pending = done[0]
+            return await self.answer(ep, 'teacher', body, messages, rec, main=True, ev=ev)
+        if any(x.outcome == 'pending' and isinstance(self.trigger_of(ep, x.decision.trigger), iv.DoneClaim)
+               for x in r.records):
+            # done_claim: the claim goes through; the teacher takes the episode at Terminus-2's confirmation request
             rec['done_claim'] = True
             self.event('done_claim', episode=ep.idx, sid=ep.sid, turn=t)
         return self.finish(ep, 'student', resp, rec, t, main=True)
 
-    async def answer(self, ep, who, body, messages, rec, main):
+    async def answer(self, ep, who, body, messages, rec, main, ev=None, note=None):
+        """ev: the request's Event (main requests); note: the verify note (rec['verify_note']), the intervention's
+        teacher_note in relay, VERIFY_NOTE_OWN on control's first confirmation."""
         if who == 'teacher':
             msgs, stats = self.for_teacher(ep, messages)
             rec['refeed'] = stats
             if rec.get('verify_note') and self.msa:
                 # the done-claim takeover's request: the note after the last tool result (or format-error message)
                 last = msgs[-1]
-                msgs = msgs[:-1] + [dict(last, content=text_of(last.get('content')) + '\n\n' + self.note_text)]
+                msgs = msgs[:-1] + [dict(last, content=text_of(last.get('content')) + '\n\n' + note)]
                 self.counts['verify_notes'] += 1
             elif rec.get('verify_note'):
                 last = msgs[-1]
                 if last.get('role') == 'user' and CONFIRM_MARK in text_of(last.get('content')):
-                    msgs = msgs[:-1] + [dict(last, content=text_of(last.get('content')) + '\n\n' + self.note_text)]
+                    msgs = msgs[:-1] + [dict(last, content=text_of(last.get('content')) + '\n\n' + note)]
                     self.counts['verify_notes'] += 1
                 else:
                     rec['verify_note'] = False
@@ -1370,6 +1386,13 @@ class Router:
                                  for f in ep.sc.current_fires(content, self.cfg)]
         elif main:
             rec['logged'] = self.logged_signals(ep, text_of(msg.get('content')))
+        if main and who == 'teacher' and ep.ctl.observes_teacher and ev is not None:
+            # triggers that also watch the teacher's turns (--mode teacher's would-fire): logged, never acted on
+            content = text_of(msg.get('content'))
+            action = (rt.tool_reply(msg) if msg.get('tool_calls') else None) if self.msa else \
+                rt.parse_reply(content, 'terminus2')
+            r = await ep.ctl.on_reply(dataclasses.replace(ev, phase='reply', reply=iv.Reply(content, action)))
+            self.log_routing(rec, r)
         return self.finish(ep, who, resp, rec, t, main=main)
 
     async def teacher_call(self, ep, b, rec):
@@ -1629,6 +1652,12 @@ def parse_args(argv=None):
                    help='context_budget takeover (sticky): the teacher takes the episode once the student view of a '
                         'request (counted on the student /tokenize) reaches this many tokens; off by default (32000 '
                         'in the 2026-09-26 check)')
+    p.add_argument('--trigger-config', default=None,
+                   help='YAML trigger config (interventions.load_config; notes/ot-agent/relay-triggers): who answers '
+                        'each request. Replaces the intervention flags (--takeover, --repair-on-parse-error, '
+                        '--context-budget-*, --time-takeover-frac, --assist*, in relay --verify-note*); `python '
+                        'router_triggers.py <flags>` prints the config those flags stand for. Records then also carry '
+                        'decisions (every fire) and intervention')
     p.add_argument('--student-view-after-takeover', choices=['keep', 'strip'], default='keep',
                    help="--harness msa: after a sticky takeover, the student's turns in 09-21's view (the hard-end count "
                         "and the SFT row) keep their thinking (keep) or drop it (strip, as the teacher saw them)")
@@ -1659,6 +1688,9 @@ def parse_args(argv=None):
     p.add_argument('--status-every', type=float, default=60.0)
     a = p.parse_args(argv)
     a.arm = a.arm or a.mode
+    if a.trigger_config and rtg.conflicts(a, p.get_default):
+        p.error(f'--trigger-config replaces {", ".join(rtg.conflicts(a, p.get_default))}: put them in the YAML (python '
+                f'router_triggers.py <these flags> prints them as one) or drop --trigger-config')
     for who in {'relay': ('student', 'teacher'), 'teacher': ('teacher',), 'student': ('student',)}[a.mode]:
         if not getattr(a, f'{who}_url') or not getattr(a, f'{who}_model'):
             p.error(f'--mode {a.mode} needs --{who}-url and --{who}-model')
@@ -1675,7 +1707,10 @@ async def serve(a, ready_event=None):
                  student_row_max_tokens=a.student_row_max_tokens, student_row_reserve=a.student_row_reserve,
                  terminus_parser=router.parser_path, terminus_parser_sha256=router.parser_sha,
                  teacher_format_guard=a.teacher_format_guard, teacher_resamples=a.teacher_resamples,
-                 verify_note=a.verify_note, verify_note_text=router.note_text if a.verify_note else None)
+                 verify_note=a.verify_note, verify_note_text=router.note_text if a.verify_note else None,
+                 **({'trigger_config': dict(path=a.trigger_config, policy=dataclasses.asdict(router.trigger_policy),
+                                            triggers=[s.name for s in router.trigger_specs])}
+                    if a.trigger_config else {}))
     if not a.skip_health:
         ok, report = await router.health_check()
         print(json.dumps(report, indent=1), flush=True)
