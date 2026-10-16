@@ -70,6 +70,8 @@ Extensions for trying new intervention ideas without touching the router (all of
   * Decision.info: free-form diagnostics (features, a judge's rationale), kept in DecisionRecord.as_dict.
 
 Config (load_config(path_or_dict) -> (Policy, [TriggerSpec]); Controller.from_config):
+    endpoints:                       # optional, read by the router: named model servers a `teacher:` (or a judge) uses
+      teacher2: {url: http://node:8000/v1, model: qwen38}    # url may be a list; `name: url` takes --teacher-model
     policy: {cooldown: 0, max_interventions: null, earliest_turn: 2, show_rejected_reply: false,
              student_view_after_handback: capped, failed_turn_view: keep, release: []}
     triggers:                        # list order = priority
@@ -805,7 +807,7 @@ class Controller:
 
 # ==== config =================================================================================================
 BUILTINS = {}
-TOP_KEYS = ('policy', 'triggers')
+TOP_KEYS = ('policy', 'triggers', 'endpoints')   # endpoints: named model servers, read by the router
 ENTRY_KEYS = ('use', 'name', 'params', 'where', 'span', 'phases', 'log_only', 'teacher_note', 'policy', 'release',
               'view', 'teacher')
 RELEASE_KEYS = ('use', 'name', 'params', 'phases', 'log_only')   # a release entry (per trigger or under policy)
@@ -832,6 +834,8 @@ def load_config(src):
     bad = set(src) - set(TOP_KEYS)
     if bad:
         raise ConfigError(f'unknown top-level key(s) {sorted(bad)}; known {TOP_KEYS}')
+    if not isinstance(src.get('endpoints') or {}, dict):
+        raise ConfigError('endpoints must be a mapping of name -> url or {url, model}')
     pol = src.get('policy') or {}
     if not isinstance(pol, dict):
         raise ConfigError('policy must be a mapping')

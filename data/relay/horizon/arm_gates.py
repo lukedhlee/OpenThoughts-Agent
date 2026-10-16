@@ -14,6 +14,9 @@ them. Judged once --takeover-after episodes have finished; until then "wait". 09
 0.89 on this measure (attempts 6a / 6b, 09-27/28: 703 and 948 finished episodes); 0.28 without the budget (run 3,
 done_claim only).
 
+Interventions (router --trigger-config): finished episodes with any intervention ("intervention" events: spans of k
+turns and takeovers alike), by trigger; reported next to the takeover rate, never gated.
+
 Draft acceptance = the student servers' mean acceptance length, 1 + accepted / drafts from vLLM's spec-decode counters
 (vllm:spec_decode_num_drafts_total, vllm:spec_decode_num_accepted_tokens_total on /metrics, summed over engines and
 servers), over the window since the previous call (state in <run dir>/arm_gates_state.json; needs >= 2,000 drafts, else
@@ -63,7 +66,7 @@ def new_events(path, st):
         data = f.read()
     end = data.rfind(b'\n') + 1
     for line in data[:end].splitlines():
-        if b'"takeover"' not in line and b'"deadline"' not in line:
+        if b'"takeover"' not in line and b'"deadline"' not in line and b'"intervention"' not in line:
             continue
         try:
             e = json.loads(line)
@@ -71,6 +74,8 @@ def new_events(path, st):
             continue
         if e.get('event') == 'takeover' and e.get('sid'):
             st['takeovers'].setdefault(e['sid'], e.get('trigger'))
+        elif e.get('event') == 'intervention' and e.get('sid'):
+            st.setdefault('interventions', {}).setdefault(e['sid'], []).append(e.get('trigger'))
         elif e.get('event') == 'ending' and e.get('ending') == 'deadline' and e.get('sid'):
             st.setdefault('deadline', {})[e['sid']] = 1
     st['offsets'][path] = off + end
@@ -124,6 +129,14 @@ def main():
     out['takeover'] = dict(finished=len(fin), with_takeover=len(tk), rate=rate, by_trigger=trig,
                            band=[a.takeover_min, a.takeover_max], after=a.takeover_after,
                            no_sid=sum(1 for sid, ok in st['trials'].values() if ok and not sid))
+    if st.get('interventions'):
+        iv = [st['interventions'][s] for s in fin if s in st['interventions']]
+        by = {}
+        for ts in iv:
+            for t in ts:
+                by[t] = by.get(t, 0) + 1
+        out['interventions'] = dict(with_intervention=len(iv), rate=round(len(iv) / len(fin), 4) if fin else None,
+                                    by_trigger=by)
     if a.takeover_min is not None or a.takeover_max is not None:
         if len(fin) < a.takeover_after:
             out['takeover']['state'] = 'wait'
@@ -184,7 +197,8 @@ def main():
         f.write(json.dumps(out) + '\n')
     tkv, acv = out['takeover'], out.get('acceptance') or {}
     print(f"{verdict} takeover {tkv['rate']} over {tkv['finished']} finished {tkv['by_trigger']}; "
-          f"acceptance window {acv.get('window')} cumulative {acv.get('cumulative')}" + (f"; {' | '.join(why)}" if why else ''))
+          f"acceptance window {acv.get('window')} cumulative {acv.get('cumulative')}" + (f"; {' | '.join(why)}" if why else '')
+          + (f"; interventions {out['interventions']['rate']} {out['interventions']['by_trigger']}" if 'interventions' in out else ''))
 
 
 if __name__ == '__main__':

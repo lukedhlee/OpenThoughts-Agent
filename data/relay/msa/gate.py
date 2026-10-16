@@ -10,6 +10,7 @@ Prints one JSON object:
   teacher_first_ok_rate   share of teacher agent turns whose first sample parsed (format guard outcome 'ok'),
   teacher_shapes          how Qwen wrote its calls (xml / json / server / none),
   takeovers               by trigger, takeover rate over episodes,
+  interventions           (router --trigger-config only) every intervention by trigger, episodes with one, handbacks,
   done_claim              takeovers, with the note, teacher ran a non-submit command before its submit (S5 'worked'),
   note_in_trajectories    trajectories whose text holds the note (must be 0: the note lives only in the teacher view),
   leak_turns              teacher turns naming another / the previous agent or the note (hz_pool_census LEAK),
@@ -38,7 +39,7 @@ def main():
     ap.add_argument('--arm', default='relay_repair')
     a = ap.parse_args()
     c = collections.Counter()
-    shapes, trig = collections.Counter(), collections.Counter()
+    shapes, trig, ivs = collections.Counter(), collections.Counter(), collections.Counter()
     outs = collections.Counter()
     for run in a.runs:
         name = os.path.basename(os.path.normpath(run))
@@ -78,6 +79,9 @@ def main():
                 m = (((r.get('response') or {}).get('choices') or [{}])[0].get('message')) or {}
                 c['leak_turns'] += bool(LEAK.search((m.get('content') or '') + '\n' + (m.get('reasoning_content') or '')))
         for e in rv['eps'].values():
+            for I in (e.get('interventions') or {}).values():
+                ivs[I['trigger']] += 1
+            c['episodes_with_intervention'] += bool(e.get('interventions'))
             if e['takeover']:
                 trig[e['takeover']['trigger']] += 1
                 if e['takeover']['trigger'] == 'done_claim':
@@ -93,6 +97,10 @@ def main():
                takeover_rate=round(sum(trig.values()) / max(1, c['episodes']), 4), takeovers=dict(trig),
                teacher_shapes=dict(shapes), outcomes=dict(outs),
                done_claim_worked_rate=round(c['done_claim_teacher_worked'] / max(1, c['done_claim']), 4))
+    if ivs:
+        out['interventions'] = dict(ivs)
+    else:                                 # a run without --trigger-config: the report as before
+        out.pop('episodes_with_intervention')
     print(json.dumps(out, indent=1))
 
 

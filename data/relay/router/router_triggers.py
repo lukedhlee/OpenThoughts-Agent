@@ -171,6 +171,34 @@ def shadow(specs):
     return [dataclasses.replace(s, log_only=True, owners=frozenset(iv.OWNERS)) for s in specs]
 
 
+class EndpointError(RuntimeError):
+    """A named endpoint's call (Event.extra['call_endpoint']) got no answer: status (None when unreachable) and text."""
+
+    def __init__(self, name, status, text):
+        super().__init__(f'endpoint {name!r}: HTTP {status}: {text[:300]}')
+        self.name, self.status, self.text = name, status, text
+
+
+def endpoints_of(path, default_model):
+    """The `endpoints:` of a trigger config file: {name: (urls, served model)}. A value is a url, a list of urls, or
+    {url: <url or list>, model: <served name>} (default --teacher-model). 'student' and 'teacher' are the router's own
+    and cannot be redefined."""
+    import yaml
+    with open(path) as f:
+        raw = (yaml.safe_load(f) or {}).get('endpoints') or {}
+    out = {}
+    for name, v in raw.items():
+        if name in ('student', 'teacher') or not isinstance(name, str) or not re.fullmatch(r'[\w.-]+', name):
+            raise iv.ConfigError(f"endpoints: {name!r} is not a free name ('student' and 'teacher' are the router's own)")
+        if isinstance(v, (str, list)):
+            v = dict(url=v)
+        if not isinstance(v, dict) or not v.get('url') or set(v) - {'url', 'model'}:
+            raise iv.ConfigError(f'endpoints.{name}: a url, a list of urls, or {{url, model}}')
+        urls = v['url'] if isinstance(v['url'], list) else str(v['url']).split(',')
+        out[name] = ([str(u).strip().rstrip('/') for u in urls if str(u).strip()], v.get('model') or default_model)
+    return out
+
+
 def wants_parser(specs):
     """A config that repairs parse errors needs Terminus-2's parser loaded."""
     return any(isinstance(s.trigger, iv.ParseRepair) for s in specs or ())
