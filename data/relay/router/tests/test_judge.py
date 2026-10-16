@@ -5,6 +5,7 @@ max_calls, prefetch overlap, endpoint names, the cache, the per-ask log, and the
     python -m pytest -q data/relay/router/tests/test_judge.py
 """
 import asyncio
+import dataclasses
 import json
 import sys
 import time
@@ -280,6 +281,64 @@ def test_endpoint_errors_are_no_decision(tmp_path, exc, error):
     j = jg.LlmJudge(endpoint='judge', log=str(log))
     assert run(j.observe(req(3, extra={'call_endpoint': failing}))) is None and j.stats['error'] == 1
     assert json.loads(log.read_text())['error'] == error
+
+
+class HookError(RuntimeError):
+    """EndpointError as the router raises it from call_endpoint(..., timeout_s=): status, text, timeout."""
+
+    def __init__(self, name, status, text, timeout=False):
+        super().__init__(text)
+        self.name, self.status, self.text, self.timeout = name, status, text, timeout
+
+
+def test_call_endpoint_bounded_by_the_router(tmp_path):
+    seen = []
+
+    async def bounded(name, body, *, timeout_s=None):     # the router's own bound, a little late
+        seen.append(timeout_s)
+        try:
+            await asyncio.sleep(timeout_s + 0.1)
+        except asyncio.CancelledError:
+            seen.append('cancelled')
+            raise
+        raise HookError(name, None, 'timeout', timeout=True)
+    log = tmp_path / 'calls.jsonl'
+    j = jg.LlmJudge(endpoint='judge', timeout_s=0.2, log=str(log))
+    assert run(j.observe(req(3, extra={'call_endpoint': bounded}))) is None
+    # the router's timeout fired (ours waits a grace longer), and it is a timeout, not an error
+    assert seen == [0.2] and j.stats['timeout'] == 1 and json.loads(log.read_text())['outcome'] == 'timeout'
+
+    async def hangs(name, body, *, timeout_s=None):        # takes timeout_s but never returns: ours still holds
+        await asyncio.sleep(5)
+    j = jg.LlmJudge(endpoint='judge', timeout_s=0.2)
+    t0 = time.monotonic()
+    assert run(j.observe(req(3, tag='hang', extra={'call_endpoint': hangs}))) is None
+    assert j.stats['timeout'] == 1 and time.monotonic() - t0 < 2.5
+
+
+def test_prefetched_answer_serves_the_retry():
+    with StubJudge(answering('{"score": 0.9}'), delay=0.1) as stub:
+        j = judge(stub.url)
+
+        async def go():
+            j.prefetch(Event('request', 3, messages=history(2)))       # at finish(): no result yet
+            ev = Event('request', 3, messages=history(2), last_result=ActionResult('cmd2', 0, output='out2'))
+            return await j.observe(ev), await j.observe(dataclasses.replace(ev, is_retry=True))
+        a, b = run(go())
+    assert a and b and (a.info or {})['prefetched'] and len(stub.bodies) == 1 and j.stats['repeats'] == 1
+
+
+def test_unused_prefetch_is_cancelled():
+    with StubJudge(answering('{"score": 0.1}'), delay=0.3) as stub:
+        j = judge(stub.url)
+
+        async def go():
+            j.prefetch(req(3))
+            await asyncio.sleep(0.05)
+            await j.observe(req(4))           # the router never asked turn 3 (another trigger took it)
+            return dict(j._inflight)
+        left = run(go())
+    assert left == {} and j.stats['prefetch_unused'] == 1
 
 
 def test_endpoint_names_offline():
