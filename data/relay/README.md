@@ -152,7 +152,7 @@ $HOME/snowball/envs/snowball/bin/python data/relay/pilot/pilot_tasks.py router-j
 ```
 
 - `build_tree.py` prints `"covered": 2613` and writes `TASKS.txt`, `pool.json` and `coverage.tsv`. It reads pandas and
-  pyarrow, which the snowball venv is expected to have (unverified). The task images are public on Docker Hub (`aweaiteam/calibforge`), and each task's layers come from the
+  pyarrow, which the snowball venv has (checked on a fresh build, 2026-10-16). The task images are public on Docker Hub (`aweaiteam/calibforge`), and each task's layers come from the
   public HF mirror `laion/calibforge-daytona-layers` when a sandbox starts.
 - Run only a subset with `TASK_LIST=<file>`, for example `data/relay/pilot/calibforge_remainder_pilot1000.txt`
   (a stratified 1,000). The tree must hold every task in `TASKS.txt`; the pre-flight counts its dirs.
@@ -338,6 +338,12 @@ every paired difference over the tasks both models scored. `--day` defaults to `
 tag on any day into the same reps, so always pass the day of the queue you mean.
 
 ## 4. Variants
+
+**Your own intervention rules.** When the teacher steps in, where (rewrite the student's turn or take the next one) and for how
+long are set by a trigger config: `TRIGGER_CONFIG=<yaml>` on `launch_driver.sh` replaces the intervention knobs below.
+Rules, LLM judges and learned scores plug in as small Python functions or YAML entries, and `triggers/replay.py`
+scores a config on recorded episodes before any GPU is used. The guide is `triggers/README.md`. Without
+`TRIGGER_CONFIG`, everything below behaves exactly as before.
 
 All variants run on the same scripts. The knobs live in three layers, and the layer you launch from decides the defaults:
 
