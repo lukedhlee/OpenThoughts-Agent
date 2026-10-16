@@ -15,7 +15,8 @@ re-arm after a hand-back, the retry memo, and arbitration when several triggers 
 events in order and does no I/O itself (a trigger may: Event.view_tokens, a judge call).
 
 Per main request the router calls
-    r = await ctl.begin_request(ev)   # hand-back of a finished span, a pending `next`, the retry memo; no trigger asked
+    r = await ctl.begin_request(ev)   # hand-back of a finished or released span, a pending `next`, the retry memo;
+                                      # only the teacher-turn triggers (releases) are asked here
     ... the router's endings (deadline, budgets, hard end) go here: they read ctl.sticky, as they read ep.owner today
     r = await ctl.on_request(ev)      # request-time triggers (calls begin_request itself when the router did not)
     if r.who == 'student': r = await ctl.on_reply(reply_ev)   # reply-time triggers; r.who == 'teacher' -> rewrite
@@ -56,10 +57,13 @@ Extensions for trying new intervention ideas without touching the router (all of
     Decision, reasons joined), streak {child: entry, n} (n turns in a row), after_turn / before_turn {turn},
     every {n, start}. A child entry takes use / name / params / phases.
   * releases (hand-back conditions beyond k): a Decision with kind 'release', judged on the teacher's turns of an
-    active intervention, ends it at the next main request, sticky spans included ("teacher until the error is
-    fixed"). Asked, in this order: the entry's own `release:`, then policy `release: [...]`, then main-list triggers
-    with owners [teacher] that return kind 'release'. Never on the request an intervention starts on (that result is
-    the student's); a retry drops one judged on the reply it repeats. action_ok is action_error's counterpart.
+    active intervention, ends it, sticky spans included ("teacher until the error is fixed"). Judged at request time
+    (it sees the result of the teacher's last action) it hands back on that same request, so the student answers it;
+    judged on the teacher's reply, at the next main request. Asked, in this order: the entry's own `release:`, then
+    policy `release: [...]`, then main-list triggers with owners [teacher] that return kind 'release'. Never on the
+    request an intervention starts on (that result is the student's); a retry keeps the memo (nothing is judged) and
+    drops a release judged on the reply it repeats. After a request-time hand-back the student's triggers are asked on
+    that request as on any other. action_ok is action_error's counterpart.
   * per intervention: `view:` {show_rejected_reply, failed_turn_view, student_view_after_handback} and `teacher:` (an
     endpoint name, default 'teacher'; the router maps names in stage 3), on an entry or a Decision. Resolved as
     Policy <- Decision <- entry and carried on the Intervention and the Routing.
@@ -122,7 +126,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Literal, Protocol, runtime_checkable
+from typing import Any, Awaitable, Callable, Literal, Protocol, cast, runtime_checkable
 
 PHASES = ('request', 'reply')
 WHERES = ('rewrite', 'next')
@@ -353,8 +357,8 @@ class TriggerSpec:
     plain function fn(ev, state) (wrapped in a FunctionTrigger). make: builds a fresh trigger (the loader sets it), so
     each Controller (episode) gets its own state."""
     trigger: Any
-    name: str | None = None
-    phases: frozenset | None = None
+    name: str = cast(str, None)           # resolved in __post_init__ (default: the trigger's own name)
+    phases: frozenset = cast(frozenset, None)   # resolved in __post_init__ (default: the trigger's phases)
     where: str | None = None
     span: int | None = None
     log_only: bool = False
@@ -429,7 +433,7 @@ class TriggerSpec:
 @dataclass(frozen=True)
 class DecisionRecord:
     """One fire and what became of it. outcome: acted (an intervention started, or a release ended one; its id),
-    pending (a reply-time next, or a release, waiting for the next main request), suppressed (why: cooldown | cap |
+    pending (a reply-time next or release, waiting for the next main request), suppressed (why: cooldown | cap |
     earliest | owner | lower_priority | dropped) or shadow (log_only)."""
     decision: Decision
     phase: str
@@ -494,13 +498,14 @@ class Controller:
         self.interventions = []           # every intervention of the episode, oldest first (frozen; replaced on update)
         self.records = []                 # every DecisionRecord of the episode
         self.pending = None               # (spec, Decision, fired_turn): a reply-time next for the next main request
-        self._release = None              # (spec, Decision, phase, intervention id): ends it at the next main request
+        self._release = None              # (spec, Decision, intervention id): a reply-time release, next request
         self._active_id = None
         self._memo = None                 # the routing of the last main request (a retry gets it again)
         self._cur = (Routing('teacher', 'owner', teacher='teacher') if self.initial_owner == 'teacher'
                      else Routing('student', 'student'))
         self._begun = None                # the Event begin_request ran for (on_request runs it when the router did not)
         self._recs = []                   # records of the request being routed
+        self._asked = False               # begin_request already asked this request's teacher-turn triggers
 
     def reset(self):
         """Start a new episode with the same config (fresh trigger state)."""
@@ -534,10 +539,13 @@ class Controller:
 
     # -- request phase -------------------------------------------------------------------------------------------
     async def begin_request(self, ev):
-        """Everything decided before any trigger is asked: an auxiliary request's owner, the retry memo, the hand-back
-        of a span that has had its turns or was released, the next turn of an active span, a pending next. Pass the
-        same Event object to on_request afterwards."""
-        self._begun, self._recs = ev, []
+        """Everything decided before the student's triggers are asked: an auxiliary request's owner, the retry memo,
+        the hand-back of a span that has had its turns or was released, the next turn of an active span, a pending
+        next. On an active span's next turn the teacher-turn triggers are asked here, before the turn counts: a
+        request-time release (it sees the result of the teacher's last action) hands back on this request, so the
+        student answers it and the router's endings, which come next, see the student's clock. Pass the same Event
+        object to on_request afterwards."""
+        self._begun, self._recs, self._asked = ev, [], False
         if self.initial_owner == 'teacher':
             return self._route(Routing('teacher', 'owner', teacher='teacher'))
         I = self.active
@@ -548,8 +556,7 @@ class Controller:
                 spec, d, _ = self.pending
                 self.pending = None
                 self._log(spec, DecisionRecord(d, 'request', ev.turn, 'suppressed', 'dropped'))
-            if self._release is not None and self._release[2] == 'reply':
-                self._drop_release(ev.turn)   # judged on the teacher's reply this retry repeats, which never ran
+            self._drop_release(ev.turn)   # judged on the teacher's reply this retry repeats, which never ran
             m = self._memo
             J = self.interventions[m.intervention.id - 1] if m.who == 'teacher' and m.intervention else None
             if J is not None:
@@ -558,19 +565,26 @@ class Controller:
                     return self._route(dataclasses.replace(m, why='retry', intervention=J, records=()))
                 self._end(J)              # re-decided: its span ends on this request and the student is asked again
             return self._route(Routing('student', 'student'))
-        if I is not None and self._release is not None and self._release[3] == I.id:
-            spec, d, _, _ = self._release   # a release judged on the teacher's last turn: the student resumes now
-            self._release = None
-            self._end(self._put(dataclasses.replace(I, released_by=spec.name)))
-            self._log(spec, DecisionRecord(d, 'request', ev.turn, 'acted', intervention=I.id))
+        rel = self._release
+        if I is not None and rel is not None and rel[2] == I.id:
+            self._release = None          # a release judged on the teacher's last reply: the student resumes now
+            self._end(self._put(dataclasses.replace(I, released_by=rel[0].name)))
+            self._log(rel[0], DecisionRecord(rel[1], 'request', ev.turn, 'acted', intervention=I.id))
             I = None
         elif I is not None and not I.sticky and I.turns_left == 0:
             self._end(I)                  # hand-back: the span has had its turns, the student resumes
             I = None
-        if self._release is not None:
-            self._drop_release(ev.turn)   # its intervention already ended (a retry re-asked the student)
+        self._drop_release(ev.turn)       # one left over belongs to an intervention that already ended
         if I is not None:
-            return self._route(self._teacher('span', self._turn(I, ev.turn)))
+            self._route(self._teacher('span', I))
+            fires, _, won = await self._arbitrate(ev, 'request')   # the teacher's turn: releases, owners [teacher]
+            if won is None:
+                self._asked = True
+                self._log_fires(fires, 'request', ev.turn, None, self._recs)
+                return self._route(self._teacher('span', self._turn(I, ev.turn)))
+            self._end(self._put(dataclasses.replace(I, released_by=won[0].name)))
+            self._log_fires(fires, 'request', ev.turn, None, self._recs, released=('acted', I.id))
+            return self._route(Routing('student', 'student'))   # released: the student's triggers go on in on_request
         if self.pending is not None:
             spec, d, fired = self.pending
             self.pending = None
@@ -592,15 +606,14 @@ class Controller:
         self._begun = None
         r = self._cur
         if ev.main and r.why != 'retry':
-            fires, win, rel = await self._arbitrate(ev, 'request')
-            I = None
-            if win is not None:
-                spec, d = win
-                I = self._start(spec, d, ev.turn, ev.turn)
-                r = self._route(self._teacher('start', I, d.teacher_note))
-            if rel is not None:
-                self._release = (rel[0], rel[1], 'request', self._active_id)
-            self._log_fires(fires, 'request', ev.turn, I, self._recs)
+            if not self._asked:           # (no release can win here: begin_request judged the span's teacher turn)
+                fires, win, _ = await self._arbitrate(ev, 'request')
+                I = None
+                if win is not None:
+                    spec, d = win
+                    I = self._start(spec, d, ev.turn, ev.turn)
+                    r = self._route(self._teacher('start', I, d.teacher_note))
+                self._log_fires(fires, 'request', ev.turn, I, self._recs)
             self._memo = r
         return dataclasses.replace(r, records=tuple(self._recs))
 
@@ -616,17 +629,18 @@ class Controller:
         fires, win, rel = await self._arbitrate(ev, 'reply')
         recs, I, pending = [], None, False
         if rel is not None:
-            self._release = (rel[0], rel[1], 'reply', self._active_id)
+            self._release = (rel[0], rel[1], self._active_id)
         if win is not None:
             spec, d = win
             if d.where == 'rewrite':
                 I = self._start(spec, d, ev.turn, ev.turn)
-                r = self._route(self._teacher('rewrite', I, d.teacher_note, I.view.show_rejected_reply))
+                r = self._route(self._teacher('rewrite', I, d.teacher_note, cast(View, I.view).show_rejected_reply))
                 self._memo = r
             else:
                 self.pending = (spec, d, ev.turn)   # applied (or dropped) by the next main request's begin_request
                 pending = True
-        self._log_fires(fires, 'reply', ev.turn, I, recs, pending)
+        self._log_fires(fires, 'reply', ev.turn, I, recs, pending,
+                        released=('pending', self._active_id) if rel is not None else None)
         return dataclasses.replace(r, records=tuple(recs))
 
     # -- internals -----------------------------------------------------------------------------------------------
@@ -682,9 +696,9 @@ class Controller:
         return ([own] if own is not None else []) + self.releases
 
     def _drop_release(self, turn):
-        spec, d, _, _ = self._release
-        self._release = None
-        self._log(spec, DecisionRecord(d, 'request', turn, 'suppressed', 'dropped'))
+        rel, self._release = self._release, None
+        if rel is not None:
+            self._log(rel[0], DecisionRecord(rel[1], 'request', turn, 'suppressed', 'dropped'))
 
     def _blocked(self, spec, phase, where, turn):
         """Why a decision of this trigger at this turn may not act (earliest | cap | cooldown), or None. A per-trigger
@@ -727,10 +741,12 @@ class Controller:
                              'as next')
         return d
 
-    def _log_fires(self, fires, phase, turn, I, out, pending=False):
+    def _log_fires(self, fires, phase, turn, I, out, pending=False, released=None):
+        """released: (outcome, intervention id) for a winning release (acted at request time, pending at reply time)."""
         for spec, d, why in fires:
             if why is None and d.kind == 'release':
-                rec = DecisionRecord(d, phase, turn, 'pending', intervention=self._release[3])
+                assert released is not None       # every caller that can see a winning release passes it
+                rec = DecisionRecord(d, phase, turn, released[0], intervention=released[1])
             elif why is None:
                 rec = DecisionRecord(d, phase, turn, 'pending' if pending else 'acted',
                                      intervention=None if pending else I.id)
@@ -875,7 +891,9 @@ def _build(e, at, base, keys=ENTRY_KEYS, default_name=None):
         parent = name or getattr(trig, 'name', None) or type(trig).__name__
         release = _build(e['release'], f'{at}.release', base, RELEASE_KEYS, default_name=f'{parent}.release')
     try:
-        return TriggerSpec(trig, name=name, phases=None if phases is None else frozenset(phases),
+        # None: resolved from the trigger in __post_init__
+        return TriggerSpec(trig, name=cast(str, name),
+                           phases=cast(frozenset, None if phases is None else frozenset(phases)),
                            where=e.get('where'), span=e.get('span'), log_only=bool(e.get('log_only', False)),
                            teacher_note=e.get('teacher_note'), limits={k: pol[k] for k in LIMIT_KEYS if k in pol},
                            observe=pol.get('observe', 'always'), on_retry=pol.get('on_retry', 'memo'),
@@ -915,6 +933,8 @@ def _resolve(use, base, at):
             path = mod_name if os.path.isabs(mod_name) or base is None else os.path.join(base, mod_name)
             name = 'relay_trigger_plugin_' + re.sub(r'\W', '_', os.path.splitext(os.path.basename(path))[0])
             spec = importlib.util.spec_from_file_location(name, path)
+            if spec is None or spec.loader is None:
+                raise ImportError(f'not a Python file: {path}')
             mod = importlib.util.module_from_spec(spec)
             sys.modules[name] = mod       # dataclasses in the plugin look their module up there
             sys.modules.setdefault('interventions', sys.modules[__name__])   # `from interventions import ...` works
@@ -1001,7 +1021,7 @@ def _rt():
     d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'triggers')
     if d not in sys.path:
         sys.path.insert(0, d)
-    import relay_triggers
+    import relay_triggers  # pyright: ignore[reportMissingImports] - found through the sys.path entry above
     return relay_triggers
 
 
@@ -1295,7 +1315,7 @@ class Every(_Gate):
 class _ScannerTrigger:
     """Legacy adapter: one relay_triggers detector, as the router runs it today (EpisodeScanner.current_fires on
     CALIBRATED_CONFIG with only this trigger enabled; params override that config's keys, e.g. loop_k)."""
-    name = kind = None
+    name = kind = cast(str, None)         # set per detector by _scanner_builtin
 
     def __init__(self, **params):
         rt = _rt()
@@ -1436,6 +1456,7 @@ class TimeBudget:
 
 class _Stub:
     """A built-in name reserved for a later stage: configs may name it, loading one fails with where it lands."""
+    name: str                             # each stub sets it
     stage = None
 
     def __init__(self, **params):

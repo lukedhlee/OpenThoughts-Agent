@@ -6,4 +6,4 @@ triggers:
     where: next               # the command already ran: the teacher answers this request
     span: -1                  # and keeps the episode ...
     release:
-      use: action_ok          # ... until a command it ran exits 0; the student resumes at the next request
+      use: action_ok          # ... until a command it ran exits 0: the student answers the request that shows it

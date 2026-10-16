@@ -816,14 +816,14 @@ def test_stay_until_fixed_example():
     ctl = Controller.from_config(str(EXAMPLES / 'stay_until_fixed.yaml'))
     assert not ctl.observes_teacher                  # a request-time release needs no teacher replies
     who, rs = drive(ctl, '1 2 3 4 5 6 7', results=UNTIL_FIXED)
-    # 3: the student's command failed -> teacher; 4: the teacher's first fix failed; 5: it exited 0 -> released,
-    # the teacher still answers 5 and the student resumes at 6
-    assert who == 'SSTTTSS'
+    # 3: the student's command failed -> teacher; 4: the teacher's first fix failed; 5: its fix exited 0 -> released
+    # on that request, so the student answers 5
+    assert who == 'SSTTSSS'
     I = ctl.interventions[0]
-    assert (I.released_by, I.handed_back, I.last_turn, I.sticky) == ('action_error.release', True, 5, True)
+    assert (I.released_by, I.handed_back, I.last_turn, I.sticky) == ('action_error.release', True, 4, True)
     rel = [(x.turn, x.outcome, x.decision.kind, x.intervention) for x in ctl.records if x.decision.kind == 'release']
-    assert rel == [(5, 'pending', 'release', 1), (6, 'acted', 'release', 1)]
-    assert rs[4].who == 'teacher' and not ctl.sticky
+    assert rel == [(5, 'acted', 'release', 1)]
+    assert (rs[4].who, rs[4].why) == ('student', 'student') and not ctl.sticky
     plain = Controller.from_config({'triggers': [{'use': 'action_error', 'span': -1}]})
     assert drive(plain, '1 2 3 4 5 6 7', results=UNTIL_FIXED)[0] == 'SSTTTTT'
 
@@ -831,15 +831,43 @@ def test_stay_until_fixed_example():
 def test_policy_release_and_span_k_ends_early():
     ctl = Controller.from_config({'policy': {'release': [{'use': 'action_ok'}]},
                                   'triggers': [{'use': 'action_error', 'span': 4}]})
-    assert drive(ctl, '1 2 3 4 5 6 7', results=UNTIL_FIXED)[0] == 'SSTTTSS'
-    assert ctl.interventions[0].released_by == 'action_ok' and ctl.interventions[0].turns_done == 3
+    assert drive(ctl, '1 2 3 4 5 6 7', results=UNTIL_FIXED)[0] == 'SSTTSSS'
+    assert ctl.interventions[0].released_by == 'action_ok' and ctl.interventions[0].turns_done == 2
 
 
 def test_release_not_asked_on_the_start_request():
     r = Fake('R', 'request', every=1)
     ctl = Controller(Policy(release=(r,)), [N('A', at=[2])])
-    assert play(ctl, '1 2 3 4 5 6') == 'SSTTSS'     # pending next starts at 3; the release first judges turn 4
+    assert play(ctl, '1 2 3 4 5 6') == 'SSTSSS'     # pending next starts at 3; the release first judges turn 4
     assert [t for _, t, *_ in r.seen] == [4]
+
+
+def test_request_time_release_before_endings():
+    """begin_request already hands back, so the router's endings (between begin_request and on_request) read the
+    student's clock; the student's own request triggers are then asked on that request as usual."""
+    b = Q('B')
+    ctl = Controller.from_config({'policy': {'release': [{'use': 'action_ok'}]},
+                                  'triggers': [{'use': 'action_error', 'span': -1}]})
+    ctl = Controller(ctl.policy, ctl.specs + [spec(b)])
+    drive(ctl, '1 2 3 4', results=UNTIL_FIXED)
+    assert ctl.sticky
+    ev = Event('request', 5, last_result=UNTIL_FIXED[5])
+    r0 = run(ctl.begin_request(ev))
+    assert (r0.who, ctl.sticky, ctl.owner) == ('student', False, 'student')
+    r1 = run(ctl.on_request(ev))
+    assert r1.who == 'student' and [x.outcome for x in r1.records] == ['acted']
+    assert ('request', 5, False, 'student') in b.seen and ('request', 4, False, 'teacher') not in b.seen
+
+
+def test_release_retries_keep_the_memo():
+    r = Fake('R', 'request', when=lambda ev: ev.is_retry)    # would release on any retry, were it asked
+    ctl = Controller(Policy(release=(r,)), [Q('A', at=[2])])
+    assert play(ctl, '1 2 3 3r 4') == 'STTTT'
+    assert [(t, retry) for _, t, retry, _ in r.seen] == [(3, False), (4, False)]
+    ctl = Controller.from_config(str(EXAMPLES / 'stay_until_fixed.yaml'))
+    assert drive(ctl, '1 2 3 4 4r 5 5r 6', results=UNTIL_FIXED)[0] == 'SSTTTSSS'
+    assert len(ctl.interventions) == 1 and ctl.interventions[0].handed_back
+    assert [x.turn for x in ctl.records if x.decision.kind == 'release'] == [5]
 
 
 def test_reply_time_release_and_retry():
@@ -866,10 +894,9 @@ def test_main_list_trigger_can_release_on_teacher_turns():
         if ev.owner == 'student' and ev.turn == 6:
             return Decision(reason='nothing to release', kind='release')
     ctl = Controller(Policy(), [spec(judge, owners=('student', 'teacher'))])
-    assert play(ctl, '1 2 3 4 5 6 7') == 'STTTSSS'
+    assert play(ctl, '1 2 3 4 5 6 7') == 'STTSSSS'
     assert [(x.turn, x.outcome, x.why, x.decision.kind) for x in ctl.records] == [
-        (2, 'acted', None, 'intervene'), (4, 'pending', None, 'release'), (5, 'acted', None, 'release'),
-        (6, 'suppressed', 'owner', 'release')]
+        (2, 'acted', None, 'intervene'), (4, 'acted', None, 'release'), (6, 'suppressed', 'owner', 'release')]
 
 
 def test_shadow_release_never_hands_back():
