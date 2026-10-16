@@ -1,0 +1,30 @@
+# An LLM judge reads the student's recent turns before each request; when it scores the episode as likely to fail,
+# the teacher takes the next 2 turns. Shadow-test it first (log_only): replay recorded episodes with
+#   JUDGE_URL=http://<host>:8000/v1 python data/relay/triggers/replay.py --runs <...> --config <this file> --out out/
+# then read judge_calls.jsonl (every ask: score, outcome, latency, tokens) to pick the threshold.
+triggers:
+  - use: judge:LlmJudge           # data/relay/router/judge.py (also `llm_judge` after judge.register())
+    span: 2                       # the teacher answers 2 turns, then hands back
+    log_only: true                # shadow: logged, never acted on; drop this line to let it act
+    policy: {cooldown: 3, max_interventions: 3, observe: armed}   # armed: no judge call while it could not act
+    params:
+      endpoint: ${JUDGE_URL}      # a URL; online, the router's endpoint name instead (e.g. judge)
+      model: judge                # the served model name
+      threshold: 0.7
+      every: 2                    # ask on every other turn
+      max_calls: 15               # per episode
+      timeout_s: 20               # a timeout is no decision (logged)
+      log: judge_calls.jsonl
+      prompt: |
+        You are reviewing an AI agent that works in a Linux terminal. Decide whether it is stuck or about to fail.
+
+        Task:
+        $task
+
+        Its most recent turns, oldest first:
+        $history
+
+        Result of its last action:
+        $last_result
+        $proposal
+        Reply with JSON only: {"score": <probability from 0 to 1 that it fails without help>, "rationale": "<one sentence>"}

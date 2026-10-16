@@ -18,6 +18,9 @@ Loss (per token, 1 = trained):
   * student turn: masked, except an autofixed one (label autofix=True): with autofix_loss='content' (default) its
     rewritten action/format (content + <|eot_id|>) is trained, never its reasoning; 'none' masks it;
   * router turns (budget endings), system header and user turns: masked.
+Any number of interventions (router --trigger-config): every teacher turn is trained as above, every student turn
+around them masked; a teacher turn whose intervention's student_view_after_handback (its record's `intervention.view`)
+is 'full' is never cut, 'stripped' is rendered without its reasoning (as the student saw it), 'capped' is the default.
 
     row = render_episode(trajectory, router_records, tok, template, bos)       # dict(ids, loss, turns, n_tokens)
 
@@ -74,9 +77,10 @@ def episode_turns(traj, records):
         rec = by_sha.get(sha(msg))
         if rec is None:
             raise ValueError(f'agent step {k} has no router record (content sha {sha(msg)})')
+        view = ((rec.get('intervention') or {}).get('view') or {}).get('student_view_after_handback', 'capped')
         turns.append(('assistant', msg, dict(owner=rec['owner'], reasoning=s.get('reasoning_content'),
                                              autofix=bool(rec.get('autofix')), repair=bool(rec.get('repair')),
-                                             turn=rec.get('turn'))))
+                                             turn=rec.get('turn'), view=view)))
         if k < len(agent) - 1:
             turns.append(('user', _obs_text(s), {}))
     return turns
@@ -89,8 +93,10 @@ def render_episode(traj, records, tok, template, bos, autofix_loss='content', ca
     messages, info = [], []
     for i, (role, text, m) in enumerate(turns):
         if role == 'assistant' and m['owner'] == 'teacher':
-            full, _, r_full = rcap.teacher_turn_for_student(text, m['reasoning'], tok, cut=False, cap=cap)
-            shown, at, _ = rcap.teacher_turn_for_student(text, m['reasoning'], tok, cut=(i != final_teacher), cap=cap)
+            reasoning = '' if m['view'] == 'stripped' else m['reasoning']   # as its intervention showed it
+            full, _, r_full = rcap.teacher_turn_for_student(text, reasoning, tok, cut=False, cap=cap)
+            shown, at, _ = rcap.teacher_turn_for_student(text, reasoning, tok, cap=cap,
+                                                         cut=(i != final_teacher and m['view'] == 'capped'))
             messages.append(dict(role='assistant', content=shown))
             n_think = len(tok.encode(r_full, add_special_tokens=False).ids) if r_full else 0
             info.append(dict(i=i, owner='teacher', repair=m['repair'], cut_at=at, reasoning_chars=len(r_full),

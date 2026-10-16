@@ -24,10 +24,12 @@ import readout  # noqa: E402
 
 
 def teacher_worked(e):
-    """Did the teacher run at least one command between its done_claim takeover and the episode's end?"""
+    """Did the teacher run at least one command between its done_claim takeover and the episode's end (or, under
+    router --trigger-config, the takeover's hand-back: its own turns only)?"""
     t0 = e['takeover']['turn']
-    for r in sorted((r for r in e['main'] if r.get('owner') == 'teacher' and (r.get('turn') or 0) >= t0),
-                    key=lambda r: r['turn']):
+    own = ((e['takeover'].get('first_teacher_record') or {}).get('intervention') or {}).get('id')
+    for r in sorted((r for r in e['main'] if r.get('owner') == 'teacher' and (r.get('turn') or 0) >= t0
+                     and (own is None or (r.get('intervention') or {}).get('id') == own)), key=lambda r: r['turn']):
         pr = readout.reply_of(r)
         # mini-swe-agent: the submit itself is a command; it has to be some other one
         if [k for k, _ in pr['cmds'] if not (pr.get('harness') == 'tools' and readout.rt.MINI_DONE_RE.search(k))]:
@@ -45,6 +47,10 @@ def stalled(e, t):
     if (e['takeover'] or {}).get('trigger') in STALL_TRIGGERS:
         return 'trigger'
     if any(f.get('trigger') in STALL_TRIGGERS for r in e['main'] for f in (r.get('would_fire') or [])):
+        return 'trigger'
+    # router --trigger-config: any intervention, or any fire it logged (acted, suppressed or shadow), of a stall trigger
+    if any(I['trigger'] in STALL_TRIGGERS for I in (e.get('interventions') or {}).values()) or any(
+            d.get('trigger') in STALL_TRIGGERS and d.get('kind') != 'release' for r in e['main'] for d in (r.get('decisions') or [])):
         return 'trigger'
     if not t.get('traj_path'):
         return None
@@ -98,6 +104,8 @@ def arm_rows(run_dir, name, arm, timeouts='all'):
                         takeover=(e['takeover'] or {}).get('trigger'),
                         teacher_cut_turns=sum(1 for r in e['main'] if r.get('teacher_cut_at_cap'))))
         x = out[-1]
+        if e.get('interventions'):        # router --trigger-config: every intervention, by trigger
+            x['interventions'] = dict(collections.Counter(I['trigger'] for I in e['interventions'].values()))
         if x['cause'] == 'timeout':
             x['stalled'] = stalled(e, t)
             if timeouts == 'stalled' and not x['stalled']:
