@@ -89,6 +89,26 @@ def test_control_and_student_only_log_every_fire(tmp_path):
         specs = rr.Router(a).trigger_specs
         assert [s.name for s in specs] == ['loop', 'no_progress_wait', 'done_claim']
         assert all(s.log_only and s.owners == {'student', 'teacher'} for s in specs)
+        assert isinstance(specs[-1].trigger, rtg.FirstClaim)
+
+
+def test_shadow_done_claim_fires_on_the_first_claim_only():
+    """would_fire's done_claim is the scanner's: the episode's first claim only (interventions' DoneClaim, the relay
+    rule, judges every claim); a reply is judged as the router judged it in --mode student, its parse as the action."""
+    import asyncio
+    import relay_triggers as rt
+    claim = json.dumps(dict(analysis='a', plan='p', commands=[], task_complete=True))
+    work = json.dumps(dict(analysis='a', plan='p', commands=[dict(keystrokes='ls\n', duration=1.0)]))
+    sc = rt.EpisodeScanner('terminus2')
+    sc.add_message({'role': 'user', 'content': 'Task Description:\nfix it\n\nCurrent terminal state:\nroot@h:/app# '})
+    first, every = rtg.FirstClaim(), iv.DoneClaim()
+    got = []
+    for reply in (work, claim, work, claim):
+        ev = iv.Event('reply', sc.turn + 1, scanner=sc, reply=iv.Reply(reply, rt.parse_reply(reply, 'terminus2')))
+        got.append((bool(asyncio.run(first.observe(ev))), bool(asyncio.run(every.observe(ev)))))
+        sc.add_message({'role': 'assistant', 'content': reply})
+        sc.add_message({'role': 'user', 'content': 'New Terminal Output:\nroot@h:/app# '})
+    assert got == [(False, False), (True, True), (False, False), (False, True)]
 
 
 def test_trigger_config_replaces_the_intervention_flags(tmp_path, capsys):

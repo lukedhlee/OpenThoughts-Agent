@@ -14,6 +14,8 @@ loads; register() installs them for good, for a tool outside the router):
   assist   msa --assist (was Router.assist_trigger): a one-turn teacher intervention before the student answers, on a
            command timeout, a failing-command streak, a repeated output, or a context milestone (each milestone once,
            used up only when the assist acts).
+  done_claim_first
+           done_claim as would_fire logs it (--mode teacher / student): the episode's first claim only.
 
     python router_triggers.py <relay_router.py flags>    # the config those flags stand for, as YAML
 """
@@ -113,18 +115,37 @@ class Assist:
         self._offered = None
 
 
-ROUTER_BUILTINS = (Assist,)
+class FirstClaim:
+    """done_claim as the router's would_fire reports it (--mode teacher / student): relay_triggers' scanner fires it on
+    the episode's first claim only, while interventions' DoneClaim (relay semantics) judges every claim. The reply as
+    the router judged it: its parsed action, else its text; none when the harness rejected it (msa: would_fire is not
+    computed then). Name done_claim, so records and --takeover read as today."""
+    name = 'done_claim'
+    phases = frozenset({'reply'})
+
+    async def observe(self, ev):
+        r = ev.reply
+        if ev.scanner is None or r is None:
+            return None
+        view = r.action if r.action is not None else (None if r.parse_error else r.text)
+        if view is None:
+            return None
+        cfg = dict(rt.CALIBRATED_CONFIG, enabled=['done_claim'])
+        f = next((f for f in ev.scanner.current_fires(view, cfg) if f['trigger'] == 'done_claim'), None)
+        return iv.Decision(self.name, f.get('reason') or self.name) if f else None
+
+
+ROUTER_BUILTINS = {'assist': Assist, 'done_claim_first': FirstClaim}
 
 
 def register():
     """Add the router's triggers to interventions' built-ins for good (replacing stage 0's placeholders)."""
-    for cls in ROUTER_BUILTINS:
-        iv.BUILTINS[cls.name] = cls
+    iv.BUILTINS.update(ROUTER_BUILTINS)
 
 
 @contextlib.contextmanager
 def _router_builtins():
-    saved = {c.name: iv.BUILTINS.get(c.name) for c in ROUTER_BUILTINS}
+    saved = {name: iv.BUILTINS.get(name) for name in ROUTER_BUILTINS}
     register()
     try:
         yield
@@ -153,8 +174,9 @@ def legacy_config(a, parser_loaded, note_text):
     done = 'done_claim' in enabled
     claim = dict(use='done_claim', params=dict(harness='msa') if msa else dict(confirm_kind='confirm'))
     if a.mode != 'relay':
-        # would-fire only (shadow() makes every entry log_only on both owners' turns): the takeover triggers
-        return dict(triggers=[dict(use=n) for n in env + dec] + ([claim] if done else []))
+        # would-fire only (shadow() makes every entry log_only on both owners' turns): the takeover triggers, the done
+        # claim on the episode's first claim as the scanner fires it
+        return dict(triggers=[dict(use=n) for n in env + dec] + ([dict(use='done_claim_first')] if done else []))
     T = []
     if parser_loaded and not msa:
         T.append(dict(use='repair_confirm', span=1, policy=dict(earliest_turn=1, on_retry='observe')))
