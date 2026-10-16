@@ -23,10 +23,15 @@ run   For each sampled episode, rebuild harbor's requests in order from the logs
       --trigger-config-from-flags uses the YAML the run's own flags stand for.
 diff  Two replays, request by request: who answered, the legacy decision fields, the whole turns.jsonl line, and the
       events, upstream calls and responses. --ignore drops record keys (the additive --trigger-config fields).
+check A --trigger-config replay's records against themselves: every teacher turn carries its intervention and every
+      student turn none; an intervention's turns count 1, 2, ... in a row and stop at its span; it starts with an
+      acted decision and an intervention event; it ends with a handback event (span done, or released) before the
+      student answers again; a sticky one hands back only on a release.
 
     python router_replay.py run --router <relay_router.py> --sample <dir> --out <dir> [--inject-retries N]
         [--trigger-config <yaml> | --trigger-config-from-flags] [--all-modes]
     python router_replay.py diff <replay A> <replay B> [--ignore decisions,intervention]
+    python router_replay.py check <replay>
 """
 import argparse
 import asyncio
@@ -288,7 +293,7 @@ class Stub:
             st, _, txt = e.partition(': ')
             return int(st.split()[1]), txt.encode('utf-8', 'surrogatepass')
         q = self.student if who == 'student' else self.teacher
-        self.clock.T += self.lat[who]
+        self.clock.T += self.lat['student' if who == 'student' else 'teacher']   # a named endpoint is a teacher
         if q:
             return q.pop(0)
         self.misses += 1                  # the recording never asked this server here: give back what harbor got
@@ -501,6 +506,90 @@ def cmd_diff(args):
     return 1 if bad else 0
 
 
+def check_group(d):
+    """(counts, violations) of one replayed run (see `check`)."""
+    recs, events = _lines(os.path.join(d, 'turns.jsonl')), _lines(os.path.join(d, 'events.jsonl'))
+    c, bad = collections.Counter(), []
+    hb = collections.defaultdict(dict)                   # sid -> intervention id -> its handback event
+    started = collections.defaultdict(set)
+    for e in events:
+        if e.get('event') == 'handback':
+            hb[e['sid']][e['id']] = e
+        elif e.get('event') == 'intervention':
+            started[e['sid']].add(e['id'])
+    by_sid = collections.defaultdict(list)
+    for r in recs:
+        by_sid[r['sid']].append(r)
+    for sid, rows in by_sid.items():
+        rows.sort(key=lambda r: r['seq'])
+        c['episodes'] += 1
+        main = [r for r in rows if r.get('turn') is not None and r.get('owner') != 'router'
+                and r.get('upstream_status') in (None, 200)]
+        ivs = collections.OrderedDict()
+        for r in main:
+            c['requests'] += 1
+            I = r.get('intervention')
+            if (r['owner'] == 'teacher') != bool(I):
+                bad.append((sid, r['seq'], f"owner {r['owner']} with intervention {I}"))
+                continue
+            if I is not None:
+                c['teacher_turns'] += 1
+                ivs.setdefault(I['id'], []).append(r)
+        for k, (iid, its) in enumerate(ivs.items()):
+            I0 = its[0]['intervention']
+            c['interventions'] += 1
+            c[f"span_{I0['span']}"] += 1
+            want = [(x['intervention']['i'], x['retry']) for x in its]
+            seq_i = [i for i, retry in want if not retry]
+            if seq_i != list(range(1, len(seq_i) + 1)):
+                bad.append((sid, its[0]['seq'], f'intervention {iid}: turns counted {seq_i}'))
+            if I0['span'] != -1 and len(seq_i) > I0['span']:
+                bad.append((sid, its[0]['seq'], f"intervention {iid}: {len(seq_i)} turns > span {I0['span']}"))
+            pos = [main.index(x) for x in its]
+            if any((main[j].get('intervention') or {}).get('id') != iid for j in range(pos[0], pos[-1] + 1)):
+                bad.append((sid, its[0]['seq'], f'intervention {iid}: another turn inside it'))
+            first = its[0]
+            if not any(x.get('outcome') == 'acted' and x.get('intervention') == iid and x.get('kind') != 'release'
+                       for x in first.get('decisions') or []):
+                bad.append((sid, first['seq'], f'intervention {iid}: no acted decision on its first turn'))
+            if iid not in started[sid]:
+                bad.append((sid, first['seq'], f'intervention {iid}: no intervention event'))
+            later = [r for r in main if r['seq'] > its[-1]['seq']]
+            if later:                                     # the episode went on: it was handed back
+                h = hb[sid].get(iid)
+                if h is None:
+                    bad.append((sid, its[-1]['seq'], f'intervention {iid}: the episode went on, no handback event'))
+                else:
+                    c['handbacks'] += 1
+                    c['released'] += bool(h.get('released_by'))
+                    if I0['span'] == -1 and not h.get('released_by'):
+                        bad.append((sid, its[-1]['seq'], f'intervention {iid}: sticky, handed back without a release'))
+                    if I0['span'] != -1 and not h.get('released_by') and len(seq_i) != I0['span']:
+                        bad.append((sid, its[-1]['seq'], f"intervention {iid}: handed back after {len(seq_i)} of "
+                                                          f"{I0['span']} turns without a release"))
+        for r in rows:
+            for x in r.get('decisions') or []:
+                c[f"decisions_{x['outcome']}"] += 1
+    return c, bad
+
+
+def cmd_check(args):
+    tot, bad = collections.Counter(), []
+    for g in sorted(os.listdir(args.replay)):
+        d = os.path.join(args.replay, g)
+        if not os.path.isfile(os.path.join(d, 'turns.jsonl')):
+            continue
+        c, b = check_group(d)
+        tot.update(c)
+        bad += [(g,) + x for x in b]
+        print(g, dict(c))
+    print('TOTAL', json.dumps(dict(tot)))
+    for b in bad[:args.show]:
+        print('VIOLATION', *b)
+    print(f'{len(bad)} violations')
+    return 1 if bad else 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='cmd', required=True)
@@ -522,11 +611,14 @@ def main(argv=None):
     d.add_argument('b')
     d.add_argument('--ignore', default='')
     d.add_argument('--show', type=int, default=50)
+    k = sub.add_parser('check')
+    k.add_argument('replay')
+    k.add_argument('--show', type=int, default=50)
     args = p.parse_args(argv)
     if args.cmd == 'run':
         cmd_run(args)
     else:
-        sys.exit(cmd_diff(args))
+        sys.exit(cmd_diff(args) if args.cmd == 'diff' else cmd_check(args))
 
 
 if __name__ == '__main__':
