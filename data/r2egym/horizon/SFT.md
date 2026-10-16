@@ -29,8 +29,8 @@ here (`sft/horizon_sft_chain.sh`) is the Jupiter one with Horizon paths. Port-ga
 ## How to run (the Kimi SWE-smith reference, or your own stage)
 
 1. **Code:** `git clone -b lukedhlee/horizon-snowball-sft https://github.com/lukedhlee/marin.git ~/snowball/marin-sft`
-   for this Kimi reference run. **Relay SFT needs `-b lukedhlee/horizon-snowball-sft-0921` instead:** only that branch has
-   the 09-21 recipe and the `relay_*` stages (§ Relay SFT arms).
+   for this Kimi reference run. **Relay SFT needs `-b relay-v1` instead** (the tag on branch `lukedhlee/horizon-snowball-sft-0921`):
+   only that branch has the 09-21 recipe and the `relay_*` stages (§ Relay SFT arms).
    (use `--filter=blob:none`); OT-Agent job checkout `~/snowball/ota-train` (this branch).
 2. **Env (once):** from `$SCRATCH/snowball-sft/logs`:
    `J=$(sbatch --parsable --export=ALL,MARIN_ROOT=$HOME/snowball/marin-sft,SNOWBALL_ENV=$HOME/snowball/envs/marin-grug-sft,SNOWBALL_UV_CACHE=$SCRATCH/cache/uv-grug $HOME/snowball/marin-sft/experiments/june_tpu_67b_a2b/moe/horizon_snowball_env.sbatch | tail -1)`

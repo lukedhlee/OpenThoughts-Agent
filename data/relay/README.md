@@ -249,10 +249,12 @@ Expect 4,398 train rows (66,269,429 tokens) and 628 held-out rows.
 ### 3.5 SFT and export
 
 One-time setup: the marin branch with the relay stages, its env, and the 09-21 init. `data/r2egym/horizon/SFT.md` has
-the env build; the relay recipe needs the `-0921` branch, not the plain one:
+the env build; the relay recipe needs the `-0921` branch, not the plain one. Clone the tag `relay-v1` on Luke's marin
+fork, the commit this runbook was checked against (branch `lukedhlee/horizon-snowball-sft-0921` @ `ec484450`); the
+branch itself keeps moving:
 
 ```bash
-git clone --filter=blob:none -b lukedhlee/horizon-snowball-sft-0921 https://github.com/lukedhlee/marin.git ~/snowball/marin-sft
+git clone --filter=blob:none -b relay-v1 https://github.com/lukedhlee/marin.git ~/snowball/marin-sft
 ```
 
 Import 09-21 into the native init the stages start from (4 CPU nodes, 45-minute limit). It is done when
