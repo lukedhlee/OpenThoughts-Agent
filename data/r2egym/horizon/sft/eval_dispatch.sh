@@ -8,6 +8,8 @@
 #
 #   ARMS="tag:stage:epochs ..." [REPS="1 2 3"] [MAXUNITS=10] [DAYTONA_CAP=850] bash eval_dispatch.sh   (login node, tmux)
 #   e.g. ARMS="e5B245:relay_qwen:5 h2think:relay_athink:3"
+# A stage given as an absolute model dir (e.g. base0921:/scratch/.../grug-datakit-sft-20260921:0) is a fixed checkpoint
+# with no training arm: always ready, evaluated as is.
 # Each unit runs in tmux evq_<tag>_r<rep>; the dispatcher log is $S/experiments/sft_eval/dispatch.log.
 set -uo pipefail
 ARMS=${ARMS:?"tag:stage:epochs ..."}; REPS=${REPS:-1 2 3}; MAXUNITS=${MAXUNITS:-10}; DAYTONA_CAP=${DAYTONA_CAP:-850}
@@ -28,12 +30,14 @@ while :; do
     IFS=: read -r tag stage ep rep <<<"$u"
     [ -n "${started[$tag:$rep]:-}" ] && continue
     pending=$((pending + 1))
-    out=$EXP/$stage/lr3e-4-sched$ep
-    grep -q "ARM_DONE exports: .*$out/" "$SS/logs/$stage/arm.log" 2>/dev/null || continue
+    if [ "${stage:0:1}" != / ]; then
+      out=$EXP/$stage/lr3e-4-sched$ep
+      grep -q "ARM_DONE exports: .*$out/" "$SS/logs/$stage/arm.log" 2>/dev/null || continue
+    fi
     [ "$active" -lt "$MAXUNITS" ] || break
     [ -n "$ds" ] || ds=$(python3 "$HERE/daytona_started.py")
     [ $((ds + 80)) -le "$DAYTONA_CAP" ] || { say "$tag r$rep: ready, waiting for Daytona room ($ds started)"; break; }
-    model=$(ls -d "$out"/export-step*-hf-bf16 | sort -V | tail -1)
+    if [ "${stage:0:1}" = / ]; then model=$stage; else model=$(ls -d "$out"/export-step*-hf-bf16 | sort -V | tail -1); fi
     [ -f "$model/config.json" ] || { say "$tag: no final export under $out"; started[$tag:$rep]=failed; continue; }
     tmux new -d -s "evq_${tag}_r$rep" "$ENVPASS MODELS='$tag=$model' REPS=$rep GROUPED=1 DAY=$DAY bash $HERE/eval_sft.sh; sleep 300"
     started[$tag:$rep]=1; active=$((active + 1)); pending=$((pending - 1)); ds=$((ds + 80))
