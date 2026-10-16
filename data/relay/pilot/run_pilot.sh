@@ -323,7 +323,8 @@ while :; do
     log "harbor still running $VERIFY_WAIT s after the servers were released; stopping it"; stop_harbor; break
   fi
   if [ $GATE_MIN -gt 0 ] && [ $((NOW - T0)) -ge $((GATE_MIN*60)) ]; then
-    # auto-cancel: median teacher reply latency over the last 5 min > GATE_LAT s, or an engine with KV > GATE_KV and
+    # auto-cancel: median teacher reply latency over the last 5 min > GATE_LAT s (on at least 10 replies: a small run's
+    # few long replies, e.g. one sticky teacher span, are not a slow server), or an engine with KV > GATE_KV and
     # waiting requests in every sample of the last 5 min
     G=$($PY - $R $GATE_LAT $GATE_KV <<'PY'
 import glob, json, sys, time, collections
@@ -345,7 +346,7 @@ print('%.1f %d %s' % (p50, len(lat), ','.join(bad) or '-'))
 PY
 )
     set -- $G; log "gate: teacher p50 $1 s over the last 5 min ($2 replies); saturated engines: $3"
-    awk -v a=$1 -v b=$GATE_LAT 'BEGIN{exit !(a>b)}' && abort "gate: median teacher latency $1 s > $GATE_LAT s over the last 5 min"
+    [ $2 -ge 10 ] && awk -v a=$1 -v b=$GATE_LAT 'BEGIN{exit !(a>b)}' && abort "gate: median teacher latency $1 s > $GATE_LAT s over the last 5 min ($2 replies)"
     [ "$3" != - ] && abort "gate: engines at KV > $GATE_KV with waiting requests for 5 min: $3"
   fi
   if [ $OVF_AFTER -gt 0 ] && [ $OVF_DONE = 0 ]; then

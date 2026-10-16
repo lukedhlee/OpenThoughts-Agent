@@ -99,7 +99,9 @@ ARMS="control relay_repair" NODES=2 CAP_NODE_H=4 GATE_LAT=120 TREE=$SCRATCH/rela
 - `serve_submit.sh NODES N_STUDENT TIME NAME` prints the serve job id. Here 2 nodes, the first serving the student.
 - `launch_driver.sh <serve job> <run name> smoke` submits the 1-node driver job and starts two login-side tunnels.
   `smoke` means 4 tasks per arm, 4 concurrent, early gate at 10 minutes.
-- `GATE_LAT=120` is the small-pilot latency gate of `horizon/rlvr1_pilot.sh`; the default 30 s is the full runs'.
+- `GATE_LAT=120` is the small-pilot latency gate of `horizon/rlvr1_pilot.sh`; the default 30 s is the full runs'. The
+  latency gate acts only when its 5-minute window holds at least 10 teacher replies. Small runs should still set
+  `GATE_MIN=0` (gate off): a few long teacher replies there say nothing about the servers.
 
 Watch `$SCRATCH/experiments/relay/pilot/runs/$N/driver.log`. The run passed when that log ends with `RUN_DONE`, the run
 dir has no `ABORT` file, and every `H` line in `readout.txt` there says `PASS`. The `S` lines judge pass and takeover
