@@ -604,3 +604,328 @@ def test_scanner_adapter_loop():
     assert run(at(2)) is None
     d = run(at(3))
     assert d.trigger == 'loop' and d.reason.startswith('exact repeat x3')
+
+
+# ==== stage 0b: function triggers, combinators, releases, per-intervention view / teacher, info ===============
+from interventions import View, trigger  # noqa: E402
+
+EXAMPLES = HERE.parent.parent / 'triggers' / 'examples'
+
+
+async def _drive(ctl, script, results=None, replies=None, teacher_replies=None):
+    """Like _play, plus ActionResults per request turn, the student's reply text per token, and (teacher_replies) the
+    teacher's reply per token sent to on_reply after the teacher answers, as the router does when observes_teacher."""
+    out, routings, turn = [], [], 0
+    for tok in script.split():
+        retry, turn = tok.endswith('r'), int(tok.rstrip('r'))
+        r = await ctl.on_request(Event('request', turn, is_retry=retry, last_result=(results or {}).get(turn)))
+        if r.who == 'student':
+            r = await ctl.on_reply(Event('reply', turn, is_retry=retry, reply=Reply((replies or {}).get(tok, 'x'))))
+        if r.who == 'teacher' and teacher_replies is not None:
+            await ctl.on_reply(Event('reply', turn, is_retry=retry, reply=Reply(teacher_replies.get(tok, 'x'))))
+        out.append('T' if r.who == 'teacher' else 'S')
+        routings.append(r)
+    return ''.join(out), routings
+
+
+def drive(ctl, script, **kw):
+    return run(_drive(ctl, script, **kw))
+
+
+# ---- function triggers ----------------------------------------------------------------------------------------
+def test_function_trigger_state_is_per_episode():
+    async def third_request(ev, state):
+        state['n'] = state.get('n', 0) + 1
+        if state['n'] == 3:
+            return Decision(reason='third request', span=1)     # no trigger name: the function's is used
+    for _ in range(2):                                           # a second episode starts from an empty state
+        ctl = Controller(Policy(), [third_request])
+        assert play(ctl, '1 2 3 4') == 'SSTS'
+        assert ctl.interventions[0].trigger == 'third_request' and ctl.records[0].decision.reason == 'third request'
+    s = spec(third_request)
+    a, b = Controller(Policy(), [s]), Controller(Policy(), [s])
+    assert a.specs[0].trigger is not b.specs[0].trigger           # concurrent episodes never share a state dict
+    play(a, '1 2')
+    assert play(b, '1 2 3') == 'SST'
+
+
+def test_function_trigger_forms():
+    @trigger(phases='reply', name='claims')
+    def claims(ev, state):
+        return 'claims done' if 'done' in ev.reply.text else None
+
+    def as_dict(ev, state):
+        return {'reason': 'every third', 'span': 1} if ev.turn % 3 == 0 else None
+    assert claims(Event('reply', 1, reply=Reply('done')), {}) == 'claims done'      # still a plain function
+    ctl = Controller(Policy(), [spec(claims, where='rewrite', span=1)])
+    assert ctl.specs[0].phases == frozenset({'reply'}) and ctl.specs[0].name == 'claims'
+    assert play(ctl, '1 2 3', reply=Reply('done')) == 'STT'
+    ctl = Controller(Policy(), [as_dict])
+    assert play(ctl, '1 2 3 4') == 'SSTS' and ctl.interventions[0].reason == 'every third'
+
+    def bad(ev, state):
+        return 42
+    with pytest.raises(TypeError, match='function trigger returns'):
+        play(Controller(Policy(), [bad]), '1')
+
+
+FUNC_PLUGIN = '''
+from interventions import Decision, Scripted, trigger
+
+
+def at_turn(ev, state, turn=3):
+    if ev.turn == turn:
+        return Decision(reason=f'turn {turn}', span=1)
+
+
+@trigger(phases=('request', 'reply'), name='tagged')
+async def tagged(ev, state):
+    return None
+
+
+def make_scripted(turns=(2,)):          # fewer than two required parameters: a factory, as before
+    return Scripted(turns=turns)
+'''
+
+
+def test_load_function_triggers(tmp_path, monkeypatch):
+    (tmp_path / 'my_func_plugin.py').write_text(FUNC_PLUGIN)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    ctl = Controller.from_config({'triggers': [{'use': 'my_func_plugin:at_turn', 'params': {'turn': 4}}]})
+    assert play(ctl, '1 2 3 4 5') == 'SSSTS'
+    ctl = Controller.from_config({'triggers': [{'use': 'my_func_plugin:make_scripted', 'params': {'turns': [3]},
+                                                'span': 1}]})
+    assert play(ctl, '1 2 3 4 5') == 'SSTSS' and isinstance(ctl.specs[0].trigger, iv.Scripted)
+    _, specs = iv.load_config({'triggers': [{'use': 'my_func_plugin:tagged'}]})
+    assert specs[0].name == 'tagged' and specs[0].phases == frozenset(iv.PHASES)
+    with pytest.raises(ConfigError, match='bad params'):
+        iv.load_config({'triggers': [{'use': 'my_func_plugin:at_turn', 'params': {'nope': 1}}]})
+    (tmp_path / 'sub').mkdir()
+    (tmp_path / 'sub' / 'funcs.py').write_text(FUNC_PLUGIN)
+    (tmp_path / 'sub' / 'cfg.yaml').write_text('triggers:\n  - use: funcs.py:at_turn\n')
+    assert play(Controller.from_config(str(tmp_path / 'sub' / 'cfg.yaml')), '1 2 3 4') == 'SSTS'
+
+
+# ---- combinators ----------------------------------------------------------------------------------------------
+FAIL2 = ActionResult('make', 2)
+
+
+def test_all_of_action_error_after_turn():
+    cfg = {'triggers': [{'use': 'all_of', 'span': 1, 'params': {'of': [
+        {'use': 'action_error', 'params': {'streak': 2}}, {'use': 'after_turn', 'params': {'turn': 5}}]}}]}
+    ctl = Controller.from_config(cfg)
+    who, _ = drive(ctl, '1 2 3 4 5 6 7', results={3: FAIL2, 4: FAIL2, 5: FAIL2, 6: FAIL2, 7: OK})
+    assert who == 'SSSSSTS'                      # the streak reached 2 at turn 4 but only turn 6 is after turn 5
+    d = ctl.records[0].decision
+    assert d.trigger == 'all_of' and d.reason == '4 failed actions in a row, last: exit code 2; after turn 5'
+    assert [c['trigger'] for c in d.info['of']] == ['action_error', 'after_turn']
+
+
+def test_any_of_first_firing_child_and_phases():
+    cfg = {'triggers': [{'use': 'any_of', 'where': 'rewrite', 'span': 1, 'params': {'of': [
+        {'use': 'scripted', 'params': {'turns': [2]}},
+        {'use': 'scripted', 'name': 'late', 'params': {'turns': [2, 4]}, 'phases': ['reply']}]}}]}
+    ctl = Controller.from_config(cfg)
+    assert ctl.specs[0].phases == frozenset(iv.PHASES)
+    assert play(ctl, '1 2 3 4 5') == 'STSTS'     # 2: the request-time child (next); 4: the reply-time one (rewrite)
+    first, second = ctl.records
+    assert (first.phase, first.decision.info['of'][0]['trigger']) == ('request', 'scripted')
+    assert (second.phase, second.decision.info['of'][0]['trigger'], ctl.interventions[1].where) == (
+        'reply', 'late', 'rewrite')
+
+
+def test_streak_counts_turns():
+    def fires(st, turns):
+        async def go():
+            return [bool(await st.observe(Event('request', t))) for t in turns]
+        return run(go())
+    st = iv.Streak(child=iv.Scripted(turns=[2, 3, 4, 6, 7, 9]), n=2)
+    # 3r: a retry re-judges turn 3; 5 breaks the run; 9 follows an unseen turn 8, so it restarts
+    assert fires(st, [1, 2, 3, 3, 4, 5, 6, 7, 9]) == [False, False, True, True, True, False, False, True, False]
+    assert fires(iv.Streak(child=iv.Scripted(turns=[2, 3, 5]), n=3), [2, 3, 5]) == [False, False, False]
+    assert fires(iv.Streak(child=iv.Scripted(turns=[2, 3, 5]), n=3, contiguous=False), [2, 3, 5]) == [
+        False, False, True]
+    d = run(iv.Streak(child=iv.Scripted(turns=[1, 2]), n=2).observe(Event('request', 1)))
+    assert d is None
+
+
+def test_turn_gates():
+    def at(t, turns):
+        async def go():
+            return [bool(await t.observe(Event('request', x))) for x in turns]
+        return run(go())
+    assert at(iv.AfterTurn(turn=5), [5, 6]) == [False, True]
+    assert at(iv.BeforeTurn(turn=3), [2, 3]) == [True, False]
+    assert at(iv.Every(n=3), [2, 3, 4, 6]) == [False, True, False, True]
+    assert at(iv.Every(n=2, start=5), [3, 5, 6, 7]) == [False, True, False, True]
+
+
+def test_nested_combinators_with_relative_function_child(tmp_path):
+    (tmp_path / 'funcs.py').write_text(FUNC_PLUGIN)
+    (tmp_path / 'cfg.yaml').write_text('''triggers:
+  - use: all_of
+    span: 1
+    params:
+      of:
+        - use: any_of
+          params: {of: [{use: funcs.py:at_turn, params: {turn: 4}}, {use: scripted, params: {turns: [6]}}]}
+        - use: after_turn
+          params: {turn: 3}
+''')
+    policy, specs = iv.load_config(str(tmp_path / 'cfg.yaml'))
+    a, b = Controller(policy, specs), Controller(policy, specs)
+    assert play(a, '1 2 3 4 5 6 7') == 'SSSTSTS'
+    inner = lambda c: c.specs[0].trigger.children[0].trigger.children[0].trigger   # noqa: E731
+    assert inner(a) is not inner(b)                  # nested children are rebuilt per episode
+
+
+COMBINATOR_ERRORS = [
+    ('child_key', {'use': 'any_of', 'params': {'of': [{'use': 'scripted', 'span': 1}]}}, r'of\[0\]: unknown key'),
+    ('child_use', {'use': 'any_of', 'params': {'of': [{'use': 'nope'}]}}, r'of\[0\] \(nope\): no built-in'),
+    ('empty_of', {'use': 'all_of', 'params': {'of': []}}, 'non-empty list'),
+    ('no_shared_phase', {'use': 'all_of', 'params': {'of': [{'use': 'action_error'},
+                                                             {'use': 'scripted', 'phases': ['reply']}]}},
+     'share no phase'),
+    ('streak_n', {'use': 'streak', 'params': {'child': {'use': 'scripted'}, 'n': 0}}, 'n must be an int'),
+    ('gate_turn', {'use': 'after_turn', 'params': {'turn': 'five'}}, 'turn must be an int'),
+    ('release_key', {'use': 'action_error', 'release': {'use': 'action_ok', 'span': 1}}, r'\.release: unknown key'),
+    ('view_key', {'use': 'scripted', 'view': {'colour': 'red'}}, 'unknown view key'),
+    ('view_value', {'use': 'scripted', 'view': {'failed_turn_view': 'blur'}}, 'failed_turn_view must be'),
+    ('teacher_empty', {'use': 'scripted', 'teacher': ''}, 'teacher names an endpoint'),
+]
+
+
+@pytest.mark.parametrize('name,entry,match', COMBINATOR_ERRORS, ids=[c[0] for c in COMBINATOR_ERRORS])
+def test_new_config_errors(name, entry, match):
+    with pytest.raises(ConfigError, match=match):
+        iv.load_config({'triggers': [entry]})
+
+
+def test_policy_release_config_errors():
+    with pytest.raises(ConfigError, match='release is a list'):
+        iv.load_config({'policy': {'release': {'use': 'action_ok'}}})
+    with pytest.raises(ConfigError, match=r'policy\.release\[0\] \(action_ok\): bad params'):
+        iv.load_config({'policy': {'release': [{'use': 'action_ok', 'params': {'nope': 1}}]}})
+
+
+# ---- releases -------------------------------------------------------------------------------------------------
+UNTIL_FIXED = {2: OK, 3: FAIL2, 4: ActionResult('fix', 1), 5: OK, 6: OK}
+
+
+def test_stay_until_fixed_example():
+    ctl = Controller.from_config(str(EXAMPLES / 'stay_until_fixed.yaml'))
+    assert not ctl.observes_teacher                  # a request-time release needs no teacher replies
+    who, rs = drive(ctl, '1 2 3 4 5 6 7', results=UNTIL_FIXED)
+    # 3: the student's command failed -> teacher; 4: the teacher's first fix failed; 5: it exited 0 -> released,
+    # the teacher still answers 5 and the student resumes at 6
+    assert who == 'SSTTTSS'
+    I = ctl.interventions[0]
+    assert (I.released_by, I.handed_back, I.last_turn, I.sticky) == ('action_error.release', True, 5, True)
+    rel = [(x.turn, x.outcome, x.decision.kind, x.intervention) for x in ctl.records if x.decision.kind == 'release']
+    assert rel == [(5, 'pending', 'release', 1), (6, 'acted', 'release', 1)]
+    assert rs[4].who == 'teacher' and not ctl.sticky
+    plain = Controller.from_config({'triggers': [{'use': 'action_error', 'span': -1}]})
+    assert drive(plain, '1 2 3 4 5 6 7', results=UNTIL_FIXED)[0] == 'SSTTTTT'
+
+
+def test_policy_release_and_span_k_ends_early():
+    ctl = Controller.from_config({'policy': {'release': [{'use': 'action_ok'}]},
+                                  'triggers': [{'use': 'action_error', 'span': 4}]})
+    assert drive(ctl, '1 2 3 4 5 6 7', results=UNTIL_FIXED)[0] == 'SSTTTSS'
+    assert ctl.interventions[0].released_by == 'action_ok' and ctl.interventions[0].turns_done == 3
+
+
+def test_release_not_asked_on_the_start_request():
+    r = Fake('R', 'request', every=1)
+    ctl = Controller(Policy(release=(r,)), [N('A', at=[2])])
+    assert play(ctl, '1 2 3 4 5 6') == 'SSTTSS'     # pending next starts at 3; the release first judges turn 4
+    assert [t for _, t, *_ in r.seen] == [4]
+
+
+def test_reply_time_release_and_retry():
+    @trigger(phases='reply')
+    def fixed(ev, state):
+        return Decision(reason='says fixed', kind='release') if 'FIXED' in ev.reply.text else None
+    ctl = Controller(Policy(release=(fixed,)), [Q('A', at=[2])])
+    assert ctl.observes_teacher
+    assert drive(ctl, '1 2 3 4 5', teacher_replies={'2': 'working', '3': 'FIXED'})[0] == 'STTSS'
+    ctl = Controller(Policy(release=(fixed,)), [Q('A', at=[2])])
+    who, _ = drive(ctl, '1 2 3 3r 4 5', teacher_replies={'3': 'FIXED', '3r': 'still broken'})
+    assert who == 'STTTTT'                           # the retry's reply replaced the one that said FIXED
+    assert [(x.turn, x.outcome, x.why) for x in ctl.records if x.decision.kind == 'release'] == [
+        (3, 'pending', None), (3, 'suppressed', 'dropped')]
+
+
+def test_main_list_trigger_can_release_on_teacher_turns():
+    @trigger(phases='request')
+    def judge(ev, state):
+        if ev.owner == 'student' and ev.turn == 2:
+            return Decision(reason='stuck')
+        if ev.owner == 'teacher' and ev.turn == 4:
+            return Decision(reason='unstuck', kind='release')
+        if ev.owner == 'student' and ev.turn == 6:
+            return Decision(reason='nothing to release', kind='release')
+    ctl = Controller(Policy(), [spec(judge, owners=('student', 'teacher'))])
+    assert play(ctl, '1 2 3 4 5 6 7') == 'STTTSSS'
+    assert [(x.turn, x.outcome, x.why, x.decision.kind) for x in ctl.records] == [
+        (2, 'acted', None, 'intervene'), (4, 'pending', None, 'release'), (5, 'acted', None, 'release'),
+        (6, 'suppressed', 'owner', 'release')]
+
+
+def test_shadow_release_never_hands_back():
+    r = spec(Fake('R', 'request', every=1), log_only=True)
+    ctl = Controller(Policy(release=(r,)), [Q('A', at=[2])])
+    assert play(ctl, '1 2 3 4') == 'STTT'
+    assert [(x.decision.trigger, x.turn, x.outcome) for x in ctl.records[1:]] == [('R', 3, 'shadow'),
+                                                                                ('R', 4, 'shadow')]
+
+
+# ---- per-intervention view and teacher, info ------------------------------------------------------------------
+def test_view_and_teacher_resolution():
+    def b(ev, state):
+        if ev.turn == 4:
+            return Decision(reason='b', span=1, view={'show_rejected_reply': True}, teacher='alt')
+
+    def c(ev, state):
+        if ev.turn == 6:
+            return Decision(reason='c', span=1, view={'failed_turn_view': 'hide'}, teacher='x')
+    a = spec(R('A', at=[2], span=1), view={'failed_turn_view': 'hide', 'show_rejected_reply': True}, teacher='big')
+    ctl = Controller(Policy(student_view_after_handback='stripped'),
+                     [a, b, spec(c, view={'failed_turn_view': 'keep'}, teacher='y')])
+    who, rs = drive(ctl, '1 2 3 4 5 6 7')
+    assert who == 'STSTSTS'
+    assert (rs[1].why, rs[1].teacher, rs[1].show_rejected_reply, rs[1].view) == (
+        'rewrite', 'big', True, View(True, 'hide', 'stripped'))
+    assert (rs[3].teacher, rs[3].show_rejected_reply, rs[3].view) == ('alt', False, View(True, 'keep', 'stripped'))
+    assert (rs[5].teacher, rs[5].view.failed_turn_view) == ('y', 'keep')     # the entry beats the decision
+    assert (rs[0].view, rs[0].teacher) == (None, None)
+    assert [I.teacher for I in ctl.interventions] == ['big', 'alt', 'y']
+    assert ctl.interventions[0].as_dict()['view'] == dict(show_rejected_reply=True, failed_turn_view='hide',
+                                                          student_view_after_handback='stripped')
+    hash(ctl.interventions[0])                       # interventions stay hashable
+    r = run(Controller(Policy(), [], initial_owner='teacher').on_request(Event('request', 1)))
+    assert (r.who, r.teacher, r.view) == ('teacher', 'teacher', None)
+
+
+def test_decision_info_and_kind_in_records():
+    def f(ev, state):
+        if ev.turn == 2:
+            return Decision(reason='p high', info={'p_fail': 0.9, 'features': ['loop']})
+    ctl = Controller(Policy(), [f])
+    play(ctl, '1 2')
+    d = ctl.records[0].as_dict()
+    assert (d['info'], d['kind'], d['trigger']) == ({'p_fail': 0.9, 'features': ['loop']}, 'intervene', 'f')
+    hash(Decision('A', 'x'))                         # decisions without dict fields stay hashable
+    for bad in (dict(info='x'), dict(kind='stop'), dict(view={'failed_turn_view': 'blur'}), dict(teacher='')):
+        with pytest.raises(ValueError):
+            Decision('A', 'x', **bad)
+
+
+# ---- examples -------------------------------------------------------------------------------------------------
+def test_two_errors_example():
+    cfg = {'triggers': [{'use': f'{EXAMPLES / "two_errors.py"}:two_errors', 'span': 1}]}
+    ctl = Controller.from_config(cfg)
+    assert ctl.specs[0].name == 'two_errors' and ctl.specs[0].phases == frozenset({'request'})
+    who, _ = drive(ctl, '1 2 3 4 5', results={2: FAIL2, 3: FAIL2, 4: FAIL2, 5: OK})
+    assert who == 'SSSTS'                            # two failures in a row at 3, but only after turn 3 counts
+    assert ctl.records[0].decision.reason == '3 failed actions in a row, last: exit code 2'
