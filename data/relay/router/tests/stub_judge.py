@@ -1,6 +1,7 @@
 """A local OpenAI-compatible judge for tests: aiohttp on 127.0.0.1 in its own thread and event loop (so the code under
 test can run its own loops, as replay does per episode). answer(body) -> (status, json) decides each reply; every body
-received is kept in `bodies`."""
+received is kept in `bodies`. It lists `model` on /v1/models, so the relay router's health check accepts it as a named
+endpoint."""
 import asyncio
 import threading
 
@@ -20,8 +21,8 @@ def prompt_of(body):
 
 
 class StubJudge:
-    def __init__(self, answer, delay=0.0):
-        self.answer, self.delay = answer, delay
+    def __init__(self, answer, delay=0.0, model='judge'):
+        self.answer, self.delay, self.model = answer, delay, model
         self.bodies = []
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
@@ -40,10 +41,15 @@ class StubJudge:
     async def _start(self):
         app = web.Application()
         app.router.add_post('/v1/chat/completions', self._chat)
+        app.router.add_get('/v1/models', self._models)
         self.runner = web.AppRunner(app, access_log=None)
         await self.runner.setup()
         await web.TCPSite(self.runner, '127.0.0.1', 0).start()
         self.url = 'http://127.0.0.1:%d/v1' % self.runner.addresses[0][1]
+
+    async def _models(self, request):
+        return web.json_response({'object': 'list', 'data': [{'id': self.model, 'object': 'model',
+                                                               'max_model_len': 32768}]})
 
     async def _chat(self, request):
         body = await request.json()

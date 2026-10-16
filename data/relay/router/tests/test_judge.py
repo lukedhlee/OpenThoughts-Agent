@@ -18,6 +18,7 @@ sys.path.insert(0, str(HERE.parent))
 import interventions as iv  # noqa: E402
 import judge as jg  # noqa: E402
 import relay_router as rr  # noqa: E402
+import router_triggers as rtg  # noqa: E402
 from interventions import ActionResult, Controller, Event, Reply  # noqa: E402
 from stub_judge import StubJudge, chat, prompt_of  # noqa: E402
 
@@ -140,12 +141,12 @@ def test_timeout_is_no_decision_and_never_cached(tmp_path):
     line = json.loads(log.read_text())
     assert line['outcome'] == 'timeout' and 0.15 < line['latency_s'] < 0.9
 
-    async def slow_post(name, path, body):      # the router's own post() has far longer timeouts than a judge's
+    async def slow_call(name, body):            # the router's retries have far longer timeouts than a judge's
         await asyncio.sleep(1.0)
-        return 200, chat('{"score": 0.9}')
+        return chat('{"score": 0.9}')
     j = judge('judge', timeout_s=0.2)
     t0 = time.monotonic()
-    assert run(j.observe(req(3, extra={'post': slow_post}))) is None
+    assert run(j.observe(req(3, extra={'call_endpoint': slow_call}))) is None
     assert time.monotonic() - t0 < 0.9 and j.stats['timeout'] == 1
 
 
@@ -251,21 +252,43 @@ def test_prefetch_overlaps_tool_time():
 
 
 # ---- endpoint names --------------------------------------------------------------------------------------------
-def test_endpoint_names():
+def test_named_endpoint_through_call_endpoint(tmp_path):
+    calls = []
+
+    async def call_endpoint(name, body):         # the router's: it sets its endpoint's served model name
+        calls.append((name, body.get('model'), body['messages'][-1]['role']))
+        return dict(chat('{"score": 0.95, "rationale": "r"}'), model='served-judge')
+    log = tmp_path / 'calls.jsonl'
+    j = jg.LlmJudge(endpoint='judge', log=str(log))                 # no model: the router's
+    d = run(j.observe(req(3, extra={'call_endpoint': call_endpoint})))
+    assert d and d.score == 0.95 and calls == [('judge', None, 'user')]
+    assert (d.info or {})['model'] == 'served-judge' and json.loads(log.read_text())['model'] == 'served-judge'
+    with StubJudge(answering('{"score": 0.9}')) as stub:      # a URL is posted to directly, even online
+        assert run(judge(stub.url).observe(req(3, tag='url', extra={'call_endpoint': call_endpoint})))
+        assert len(stub.bodies) == 1 and len(calls) == 1
+
+
+@pytest.mark.parametrize('exc,error', [
+    (rtg.EndpointError('judge', 503, 'overloaded'), 'HTTP 503: overloaded'),
+    (rtg.EndpointError('judge', None, 'no endpoint'), 'HTTP unreachable: no endpoint'),
+    (ValueError('bad body'), "ValueError('bad body')"),
+])
+def test_endpoint_errors_are_no_decision(tmp_path, exc, error):
+    async def failing(name, body):
+        raise exc
+    log = tmp_path / 'calls.jsonl'
+    j = jg.LlmJudge(endpoint='judge', log=str(log))
+    assert run(j.observe(req(3, extra={'call_endpoint': failing}))) is None and j.stats['error'] == 1
+    assert json.loads(log.read_text())['error'] == error
+
+
+def test_endpoint_names_offline():
     with StubJudge(answering('{"score": 0.9}')) as stub:
-        assert run(judge('judge').observe(req(3, extra={'endpoints': {'judge': [stub.url]}})))
         jg.set_resolver(lambda name: stub.url if name == 'judge' else None)
         assert run(judge('judge').observe(req(3, tag='resolver')))
         jg.set_resolver(None)
-        assert len(stub.bodies) == 2
-    calls = []
-
-    async def post(name, path, body):
-        calls.append((name, path, body['model']))
-        return 200, json.dumps(chat('{"score": 0.95}')).encode()
-    d = run(judge('judge').observe(req(3, tag='post', extra={'post': post})))
-    assert d and d.score == 0.95 and calls == [('judge', '/chat/completions', 'judge')]
-    j = judge('nowhere')
+        assert len(stub.bodies) == 1
+    j = jg.LlmJudge(endpoint='nowhere')                        # replay has no call_endpoint
     assert run(j.observe(req(3, tag='none'))) is None and j.stats['unresolved'] == 1 and j.stats['calls'] == 0
 
 
@@ -310,8 +333,9 @@ def test_config_errors(registered):
         with pytest.raises(iv.ConfigError, match=match):
             iv.load_config({'triggers': [{'use': 'judge:LlmJudge', 'params': params}]})
     _, specs = iv.load_config({'triggers': [{'use': 'llm_judge', 'phases': ['request', 'reply'],
-                                             'params': {'endpoint': 'judge', 'model': 'm'}}]})
+                                             'params': {'endpoint': 'judge'}}]})      # a name: no model needed
     assert isinstance(specs[0].trigger, jg.LlmJudge) and specs[0].phases == frozenset(iv.PHASES)
+    assert 'model' not in specs[0].trigger.body('p')
 
 
 def test_registration_is_explicit():

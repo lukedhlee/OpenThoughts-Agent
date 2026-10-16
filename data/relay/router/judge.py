@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """LLM judge trigger: a model reads the student's recent turns and scores whether the teacher should step in.
 
-Stage 4 of notes/ot-agent/relay-triggers (stage4_judge_scope.md), the offline half: the trigger, its view hygiene, its
-cost bounds and latency accounting, usable in replay now and by the router once stage 3 wires the hooks below.
+Stage 4 of notes/ot-agent/relay-triggers (stage4_judge_scope.md): the trigger, its view hygiene, its cost bounds and
+latency accounting. Offline (replay) it posts to a URL itself; online it calls the router's named endpoints.
 
     triggers:
       - use: judge:LlmJudge          # this file (router/ is on sys.path in the router and in replay); after
@@ -11,8 +11,8 @@ cost bounds and latency accounting, usable in replay now and by the router once 
                                      # proposed action before the harness sees it (where: rewrite discards it)
         span: 2
         params:
-          endpoint: ${JUDGE_URL}     # a URL (http://host:8000/v1), or an endpoint name the router resolves
-          model: judge
+          endpoint: ${JUDGE_URL}     # a URL (http://host:8000/v1), or a name from the config's `endpoints:`
+          model: judge               # the served name: needed for a URL; for a name the router sets its own
           prompt: |                  # string.Template: $task $history $last_result $reply $proposal $turn $phase
             ...                      # (or prompt_file: path; default DEFAULT_PROMPT)
           output: score              # score: JSON {"score": x, "rationale": ...}, fires at score >= threshold
@@ -33,16 +33,22 @@ Cost and latency: every ask is counted in `stats` and, with `log`, written as on
 timeout / malformed / error / unresolved, score, latency_s = the call's wall time, waited_s = how long observe()
 blocked on it, prompt and completion tokens, cached, prefetched). Identical prompts reuse one answer process-wide
 (cache: true), so replay's live and shadow controllers, which see the same events, call the judge once; a timeout or
-an error is never cached. A decision's info carries rationale, score or verdict, latency, tokens and the model.
+an error is never cached. A decision's info carries rationale, score or verdict, latency, tokens and the model the
+endpoint served.
 
-Router hooks (stage 3; offline nothing is needed when endpoint is a URL):
-  * endpoint names: Event.extra['post'] = async post(name, path, body) -> (status, body bytes | dict), the router's
-    own post() with its pinning and failover (preferred); or Event.extra['endpoints'] = {name: url}; or
-    set_resolver(fn(name) -> url) once at start.
+Endpoints: a URL is posted to directly (offline replay; also online, outside the router's endpoint pool). A name goes
+through the router (stage 3): Event.extra['call_endpoint'](name, body) -> the parsed response, which fills the
+endpoint's served model name, pins and fails over per episode, pauses the agent clock while it runs and logs the call
+on the request's record (endpoint_calls); an answer other than 200 raises router_triggers.EndpointError (status,
+text), read here by its attributes. timeout_s bounds the whole call, the router's retries included. Without the
+router (replay) a name resolves through set_resolver(fn(name) -> url), else it is no decision ('unresolved').
+
+Router hooks still open:
   * overlap: prefetch(ev) starts the ask in the background; observe() at the same (phase, turn) awaits it instead of
     asking again. A request-time judge prefetched at finish() of turn t, with the history up to the reply just
     returned, runs alongside the tool call and is awaited at request t + 1 (it then judges the view of the prefetch,
-    without that request's result). Judge time should pause the agent clock as model calls do.
+    without that request's result). The router does not call prefetch yet; when it does, a call overlapping the
+    tool must not pause the agent clock.
   * teacher-only text: Event.extra['teacher_only'] = [the verify note text, the teacher hint text, ...].
   * `use: llm_judge` resolves here once register() has run (interventions.py keeps a stage-4 stub under that name,
     and importing this module changes nothing): the router (and replay) can call judge.register() at start, or
@@ -51,7 +57,6 @@ Router hooks (stage 3; offline nothing is needed when endpoint is a URL):
 import asyncio
 import collections
 import hashlib
-import inspect
 import json
 import os
 import re
@@ -266,15 +271,18 @@ class LlmJudge:
     phases = frozenset({'request'})
     allowed_phases = frozenset(iv.PHASES)
 
-    def __init__(self, endpoint, model, prompt=None, prompt_file=None, system=None, window=6, think='strip',
+    def __init__(self, endpoint, model=None, prompt=None, prompt_file=None, system=None, window=6, think='strip',
                  max_chars=4000, task_chars=4000, output='score', threshold=0.5,
                  fire_on=('intervene', 'yes', 'true', 'stuck', 'fail'), score_key='score', verdict_key='verdict',
                  rationale_key='rationale', timeout_s=30.0, every=1, max_calls=None, max_tokens=512,
                  temperature=0.0, extra_body=None, api_key_env=None, scrub=(), log=None, cache=True):
         if not isinstance(endpoint, str) or not endpoint.strip():
             raise iv.ConfigError('endpoint: a URL or an endpoint name')
-        if not isinstance(model, str) or not model:
-            raise iv.ConfigError('model: the served model name')
+        endpoint = os.path.expandvars(endpoint.strip())
+        if model is not None and (not isinstance(model, str) or not model):
+            raise iv.ConfigError(f'model: the served model name, not {model!r}')
+        if model is None and endpoint.startswith(('http://', 'https://')):
+            raise iv.ConfigError('model: the served model name (needed for a URL endpoint; a name has the router\'s)')
         if prompt is not None and prompt_file is not None:
             raise iv.ConfigError('give prompt or prompt_file, not both')
         if prompt_file is not None:
@@ -293,7 +301,7 @@ class LlmJudge:
             raise iv.ConfigError(f'max_calls must be an int >= 0 or null, not {max_calls!r}')
         if not isinstance(timeout_s, (int, float)) or timeout_s <= 0:
             raise iv.ConfigError(f'timeout_s must be a positive number, not {timeout_s!r}')
-        self.endpoint, self.model = os.path.expandvars(endpoint.strip()), model
+        self.endpoint, self.model = endpoint, model
         self.prompt = string.Template(prompt if prompt is not None else DEFAULT_PROMPT)
         self.system, self.window, self.think = system, window, think
         self.max_chars, self.task_chars = max_chars, task_chars
@@ -322,7 +330,7 @@ class LlmJudge:
     def body(self, prompt):
         msgs = ([{'role': 'system', 'content': self.system}] if self.system else []) + \
             [{'role': 'user', 'content': prompt}]
-        return dict(self.sampling, model=self.model, messages=msgs)
+        return dict(self.sampling, messages=msgs, **({'model': self.model} if self.model else {}))
 
     def _key(self, body):
         return hashlib.sha1(json.dumps([self.endpoint, body], sort_keys=True).encode()).hexdigest()
@@ -384,8 +392,8 @@ class LlmJudge:
         v = ans['value']
         info = {k: ans.get(k) for k in ('rationale', 'latency_s', 'waited_s', 'prompt_tokens', 'completion_tokens',
                                         'cached', 'prefetched')}
-        info.update(model=self.model, raw=ans.get('raw', '')[:500], **({'score': v} if self.output == 'score'
-                                                                      else {'verdict': v}))
+        info.update(model=ans.get('served_model') or self.model, raw=ans.get('raw', '')[:500],
+                    **({'score': v} if self.output == 'score' else {'verdict': v}))
         what = f'{v:.2f} >= {self.threshold:g}' if self.output == 'score' else repr(v)
         return iv.Decision(self.name, f"judge {what}: {ans.get('rationale') or 'no rationale'}"[:300],
                            score=float(v) if self.output == 'score' else None, info=info)
@@ -418,7 +426,7 @@ class LlmJudge:
         value, rationale, err = parse_answer(raw, self.output, **self.keys)
         ans = self._done(dict(outcome='malformed' if err else 'ok', value=value, rationale=rationale, raw=raw,
                               error=err, prompt_tokens=usage.get('prompt_tokens'),
-                              completion_tokens=usage.get('completion_tokens')), t0)
+                              completion_tokens=usage.get('completion_tokens'), served_model=data.get('model')), t0)
         if self.cache:
             _CACHE[key] = ans
             while len(_CACHE) > CACHE_MAX:
@@ -432,21 +440,24 @@ class LlmJudge:
             self.latencies.append(ans['latency_s'])
         return ans
 
-    async def _post(self, ev, body):
-        """(status, parsed JSON) from the endpoint: a URL directly; a name through the router's post hook, its
-        endpoint map, or the resolver. LookupError when a name resolves nowhere."""
+    async def _post(self, ev, body) -> tuple[Any, Any]:
+        """(status, parsed JSON) from the endpoint: a URL directly; a name through the router's call_endpoint, else
+        the resolver. LookupError when a name resolves nowhere."""
         url = self.endpoint
         if not url.startswith(('http://', 'https://')):
-            post = ev.extra.get('post')
-            if callable(post):
-                res: Any = post(url, '/chat/completions', body)
-                status, data = await res if inspect.isawaitable(res) else res
-                return status, json.loads(data) if isinstance(data, (bytes, str)) else data
-            target = (ev.extra.get('endpoints') or {}).get(url) or (_RESOLVER(url) if _RESOLVER else None)
-            if isinstance(target, (list, tuple)):
-                target = target[0] if target else None
+            call: Any = ev.extra.get('call_endpoint')
+            if callable(call):
+                try:
+                    res: Any = call(url, body)
+                    return 200, await res
+                except Exception as err:  # noqa: BLE001 - router_triggers.EndpointError, read by its attributes
+                    if not hasattr(err, 'status'):
+                        raise
+                    status = getattr(err, 'status', None)
+                    return status if status is not None else 'unreachable', getattr(err, 'text', str(err))
+            target = _RESOLVER(url) if _RESOLVER else None
             if not target:
-                raise LookupError(f'endpoint name {url!r} resolves nowhere (no post hook, endpoint map or resolver)')
+                raise LookupError(f'endpoint name {url!r} resolves nowhere (no call_endpoint, no resolver)')
             url = target
         import aiohttp
         url = url.rstrip('/')
@@ -467,7 +478,8 @@ class LlmJudge:
                                    rationale=(ans.get('rationale') or '')[:300], error=ans.get('error'),
                                    **{k: ans.get(k) for k in ('latency_s', 'waited_s', 'prompt_tokens',
                                                               'completion_tokens', 'cached')},
-                                   prefetched=bool(ans.get('prefetched')), model=self.model,
+                                   prefetched=bool(ans.get('prefetched')),
+                                   model=ans.get('served_model') or self.model,
                                    task_id=ev.extra.get('task_id'), sid=ev.extra.get('sid'), seq=ev.extra.get('seq'))
         fd = os.open(self.log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
         try:
