@@ -40,6 +40,9 @@ class Event:                      # what a trigger sees; built only from the pas
     is_retry: bool
     owner: str                           # who answers this turn under the current policy
     messages: list[dict]                 # the harness's history, as the student sees it
+    last_result: ActionResult | None     # request phase: the previous action and its output, parsed per harness
+                                         # (command, exit code, timed_out, output text, truncated); Terminus-2 and
+                                         # MSA observations normalized to one shape so a rule is harness-agnostic
     reply: Reply | None                  # reply phase: raw text, parsed action, parse_error
     scanner: EpisodeScanner              # relay_triggers.py features (loops, waits, error streaks, ...)
     clock: Clock                         # agent time used / budget
@@ -59,6 +62,18 @@ class Trigger(Protocol):
     phases: frozenset[str]               # {"request"}, {"reply"} or both
     async def observe(self, ev: Event) -> Decision | None: ...
 ```
+
+**Trigger families the interface has to make easy** (each is a small class or a YAML entry):
+
+| family | phase | example | built-in |
+|---|---|---|---|
+| action output | request | the last command exited non-zero, timed out, or its output matches a pattern (`Traceback`, `command not found`, `No such file`), n times in a row | `action_error` (new: exit code / timeout / regex / streak params), plus today's `error_streak`, `cmd_timeout`, `same_output` |
+| behavior pattern | request | loops, passive waits, edits that don't apply | `loop`, `no_progress_wait`, `edit_failed` |
+| proposed action | reply | a destructive command, giving up, claiming done, a parse error | `destructive`, `gave_up`, `done_claim`, `parse_repair` |
+| budget | request | context or time used past a fraction | `context_budget`, `time_budget` |
+| judge | either | an LLM reads the recent turns and scores "stuck / about to fail" | `llm_judge` (stage 4) |
+| score | either | student log-probs or a learned failure classifier over the turn | (coworkers' own; the router can ask the student for logprobs) |
+| scripted | either | fire at turn t, or from a per-task plan (controlled experiments) | `scripted` (stage 4) |
 
 A per-episode **Controller** owns the policy, so triggers stay pure detectors. It holds who owns the episode (student,
 teacher with `k` turns left, or teacher to the end), cooldown, the per-episode cap, the earliest turn, the re-arm rule
@@ -94,6 +109,7 @@ triggers:
 | max_interventions | per episode | assist: 6, takeover: 1 |
 | earliest_turn | first turn a trigger may act | 2 |
 | teacher sees the rejected reply (rewrite only) | no / yes | no |
+| teacher's view of the failed turn (next only) | keep / hide the failed action and its output (the sandbox keeps its effects either way) | keep |
 | student's view after a hand-back | teacher reasoning full / capped / stripped | latest full, older capped at 1,000 tokens |
 | teacher_note | text in the teacher's view only | verify note on done-claim |
 | log_only | shadow mode | off |
