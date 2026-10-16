@@ -11,21 +11,23 @@
 #   launch_driver.sh <serve job> <run name>          (login node: submits this job with the run's settings + the tunnels)
 #
 # Every run_pilot.sh knob passes through the environment (sbatch --export=ALL); this file only sets Horizon's paths and
-# DRIVER_JOB / DRIVER_NODES, so the node-hour cap and run.meta count this node too.
+# DRIVER_JOB / DRIVER_NODES, so the node-hour cap and run.meta count this node too. launch_driver.sh passes -o ($E/logs).
+# The venv: data/r2egym/horizon/build_env.sbatch; python-socks (the bridge) and envs/msa-2.4.6: build_relay_env.sh.
 #SBATCH -J relay_drv
 #SBATCH -p debug
 #SBATCH -A CCR24067
 #SBATCH -N 1
 #SBATCH --exclusive
 #SBATCH -t 08:00:00
-#SBATCH -o /scratch/11584/lukedhlee/experiments/relay/pilot/logs/%x_%j.out
+#SBATCH -o %x_%j.out
 set -uo pipefail
 SERVE_JOB=${SERVE_JOB:?SERVE_JOB}; RUN_NAME=${RUN_NAME:?RUN_NAME}; RUN_MODE=${RUN_MODE:-full}
-SB=${SNOWBALL_ROOT:-$HOME/snowball}; S=${SCRATCH_DIR:-/scratch/11584/$USER}
+SB=${SNOWBALL_ROOT:-$HOME/snowball}; S=${SCRATCH_DIR:-${SCRATCH:?SCRATCH is not set}}
 OTA=${OTA:-$SB/ota}; HZ=$OTA/data/relay/horizon
 TUNNEL_PORTS=${TUNNEL_PORTS:-18080,18081}; BRIDGE_PORT=${BRIDGE_PORT:-18946}
 export PY=${PY:-$SB/envs/snowball/bin/python} HARBOR=${HARBOR:-$SB/envs/snowball/bin/harbor}
 export HARBOR_SRC=${HARBOR_SRC:-$SB/harbor-relay/src}
+export MSA_DIR=${MSA_DIR:-$SB/envs/msa-2.4.6}   # AGENT=msa only (run_pilot.sh clears it for terminus2)
 export TREE=${TREE:-$S/relay/calibforge_tree}
 export KEYF=${KEYF:-$HOME/.config/otagent/daytona_eval.env}   # the eval org that owns the CalibForge snapshots
 export E=${E:-${RELAY_EXP_DIR:-$S/experiments/relay/pilot}}
@@ -52,6 +54,7 @@ done
 PORTS=$(echo $up | tr ' ' ','); log "tunnels up on $PORTS"
 
 # ---- 2. the CONNECT bridge, restarted if it dies
+$PY -c 'import python_socks' 2>/dev/null || { log "python_socks missing in $PY: the bridge cannot start (build_relay_env.sh socks)"; scancel $SERVE_JOB; exit 1; }
 ( while :; do $PY $HZ/socks_connect_bridge.py --port $BRIDGE_PORT --socks-port $PORTS --stats-every 60 >> $LOGD/bridge.log 2>&1
     echo "[$(date -Is)] bridge exited $?, restarting" >> $LOGD/bridge.log; sleep 2; done ) &
 BRIDGE_LOOP=$!

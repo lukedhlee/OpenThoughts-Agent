@@ -149,7 +149,10 @@ else
 fi
 $PY -c "import aiohttp, yaml" || { log "aiohttp/yaml missing in $PY"; scancel $JOB; exit 1; }
 set -a; source $KEYF; set +a
-curl -sf --max-time 20 -H "Authorization: Bearer $DAYTONA_API_KEY" https://app.daytona.io/api/api-keys/current >/dev/null || { log "Daytona key rejected"; scancel $JOB; exit 1; }
+DC=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -H "Authorization: Bearer $DAYTONA_API_KEY" https://app.daytona.io/api/api-keys/current)
+case $DC in 2??|3??) ;;   # 000 = no answer at all: on Horizon the driver's CONNECT bridge (HTTPS_PROXY) is down, not the key
+  000) log "Daytona unreachable${HTTPS_PROXY:+ through HTTPS_PROXY=$HTTPS_PROXY (the driver bridge, logs/driver_<job>/bridge.log)}"; scancel $JOB; exit 1;;
+  *) log "Daytona key rejected (HTTP $DC)"; scancel $JOB; exit 1;; esac
 PYTHONPATH=$HARBOR_SRC $PY $HERE/../../calibforge/daytona/snapshot_census.py --key-file $KEYF --tree $TREE > $R/snapshot_census.txt 2>&1
 $PY - $R/snapshot_census.txt <<'PY' || { log "CalibForge snapshots not all ACTIVE (see snapshot_census.txt; run the RECOVERY.md restore first)"; scancel $JOB; exit 1; }
 import re, sys
