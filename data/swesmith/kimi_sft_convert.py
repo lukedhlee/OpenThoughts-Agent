@@ -4,7 +4,7 @@
 Input: the seven public shards of
 ``open-athena/Kimi-2.5-swesmith-sandboxes-with_tests-oracle_verified_120s-maxeps-32k`` (9,356 rows,
 column ``task`` = ``swesmith-NNNNN``), the ``task`` -> SWE-smith instance-id map and the train / held-out
-instance lists chosen in ``ai_memory/active/snowball-sft/data/kimi_swesmith_set.md`` (Stage-3 overlap,
+instance lists chosen in ``data/swesmith/kimi_ids/`` (README there) (Stage-3 overlap,
 pygments, verifier errors removed; three repos held out whole; repo cap).
 
 Output: ``train-00000-of-00001.parquet`` and ``heldout-00000-of-00001.parquet`` in the column layout the
