@@ -1,0 +1,18 @@
+# replay.py example config (interventions.load_config format): the new action_error built-in next to today's
+# calibrated detectors. List order is priority; every fire is logged by the replay whatever the policy.
+#   python data/relay/triggers/replay.py --runs <manifest.json | run dirs> \
+#       --config data/relay/triggers/replay_example.yaml --out out/
+policy: {earliest_turn: 2}
+triggers:
+  - use: action_error              # request phase: 3 failed actions in a row (non-zero exit, timeout, or an error line)
+    params:
+      exit_codes: nonzero
+      timeouts: true
+      patterns: ['Traceback', 'command not found', 'No such file or directory']
+      streak: 3
+      ignore_commands: ['^\s*(cd\s+\S+\s*&&\s*)?(grep|egrep|rg|find|diff|cmp|test|\[)\b']   # exit 1 = no match
+  - use: loop                      # request phase: 3 identical keystroke turns of the last 6
+  - use: no_progress_wait          # request phase: 3 passive waits in a row with no new output
+  - use: done_claim                # reply phase: the student claims the task is done
+    where: rewrite
+    span: 1
