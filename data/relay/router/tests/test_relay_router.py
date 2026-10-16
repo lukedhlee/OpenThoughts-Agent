@@ -193,6 +193,11 @@ def run_agent(stack, scenario, tmp, interleaved=True, tag='', max_turns=40, **ag
 
     exc = asyncio.run(go())
     tp = logs / 'trajectory.json'
+    try:                          # the writer truncates, then writes: wait for its pending writes, not for the file
+        from harbor.utils.artifact_writer import get_artifact_writer
+        get_artifact_writer().flush(str(logs), timeout=10)
+    except ImportError:           # an older harbor writes it inline
+        pass
     import time
     for _ in range(100):          # harbor writes the final trajectory from a background writer (slow on GPFS)
         if tp.exists():
