@@ -956,3 +956,46 @@ def test_two_errors_example():
     who, _ = drive(ctl, '1 2 3 4 5', results={2: FAIL2, 3: FAIL2, 4: FAIL2, 5: OK})
     assert who == 'SSSTS'                            # two failures in a row at 3, but only after turn 3 counts
     assert ctl.records[0].decision.reason == '3 failed actions in a row, last: exit code 2'
+
+
+# ---- stage 1 asks: done_claim first_only (the shadow config reproduces would_fire), public ScannerTrigger / judged
+def _claim_scanner(prior_done):
+    """The scanner after one Terminus-2 turn that did, or did not, claim the task done."""
+    msgs = [dict(role='user', content='Task Description:\nfix it\n\nCurrent terminal state:\nroot@h:/app# '),
+            dict(role='assistant', content=T2(cmds=['ls\n'], done=prior_done)),
+            dict(role='user', content='New Terminal Output:\nroot@h:/app# ls\nrun.py\nroot@h:/app# ')]
+    return iv._rt().scan_messages(msgs)
+
+
+@pytest.mark.parametrize('first_only,prior,expect', [
+    (False, False, 'task_complete: true'), (True, False, 'task_complete: true'),     # the episode's first claim
+    (False, True, 'task_complete: true (student)'), (True, True, None),            # a later claim
+])
+def test_done_claim_first_only_with_scanner(first_only, prior, expect):
+    sc = _claim_scanner(prior)
+    d = run(iv.DoneClaim(first_only=first_only).observe(
+        Event('reply', sc.turn + 1, scanner=sc, reply=Reply(T2(done=True)))))
+    assert (d.reason if d else None) == expect
+
+
+def test_done_claim_first_only_without_scanner_per_episode():
+    shadow = {'triggers': [{'use': 'done_claim', 'params': {'first_only': True}, 'log_only': True,
+                            'policy': {'earliest_turn': 1, 'owners': ['student', 'teacher']}}]}
+    for _ in range(2):                                # the first claim is per episode
+        ctl = Controller.from_config(shadow)
+        play(ctl, '1 2 3 4', reply=Reply(T2(done=True)))
+        assert [(x.turn, x.outcome) for x in ctl.records] == [(1, 'shadow')]
+    every = Controller.from_config({'triggers': [{'use': 'done_claim', 'log_only': True,
+                                                  'policy': {'earliest_turn': 1}}]})
+    play(every, '1 2 3', reply=Reply(T2(done=True)))
+    assert [x.turn for x in every.records] == [1, 2, 3]
+
+
+def test_scanner_trigger_and_judged_are_public():
+    assert iv.ScannerTrigger is iv._ScannerTrigger and iv.judged is iv._judged
+    assert issubclass(iv.BUILTINS['loop'], iv.ScannerTrigger) and iv.BUILTINS['gave_up'].kind == 'decision'
+    act = {'cmds': [], 'done': True}
+    assert iv.judged(Event('reply', 1)) is None
+    assert iv.judged(Event('reply', 1, reply=Reply('raw', action=act))) is act
+    assert iv.judged(Event('reply', 1, reply=Reply('raw'))) == 'raw'
+    assert iv.judged(Event('reply', 1, reply=Reply('raw', parse_error='no JSON'))) is None

@@ -112,8 +112,9 @@ earliest_turn 2; entries in config order, which is today's evaluation order):
   take_over         sticky, at most once: any span -1 decision (a sticky span never hands back); ctl.sticky is today's
                     ep.owner == 'teacher'.
   --mode teacher / student
-                    Controller(initial_owner=...), every trigger log_only with owners [student, teacher]; the shadow
-                    records are would_fire.
+                    Controller(initial_owner=...), every trigger log_only with owners [student, teacher], and
+                    done_claim with first_only: true (the scanner fires it on the episode's first claim only); the
+                    shadow records are would_fire.
 Not routing, so they stay in the router: endings (deadline, budgets, context hard end), autofix, the teacher format
 guard, LOGGED signals (rec['logged']), and --mode teacher's verify note on the first confirmation.
 """
@@ -1025,7 +1026,7 @@ def _rt():
     return relay_triggers
 
 
-def _judged(ev):
+def judged(ev):
     """The reply as the scanner judges it: the parsed action, else the raw text; None when the harness rejects it
     (parse_repair's case: today the router never judges such a reply)."""
     r = ev.reply
@@ -1034,6 +1035,9 @@ def _judged(ev):
     if r.action is not None:
         return r.action
     return None if r.parse_error else r.text
+
+
+_judged = judged                          # the name before stage 1 made it public
 
 
 @builtin
@@ -1312,9 +1316,10 @@ class Every(_Gate):
         return None
 
 
-class _ScannerTrigger:
+class ScannerTrigger:
     """Legacy adapter: one relay_triggers detector, as the router runs it today (EpisodeScanner.current_fires on
-    CALIBRATED_CONFIG with only this trigger enabled; params override that config's keys, e.g. loop_k)."""
+    CALIBRATED_CONFIG with only this trigger enabled; params override that config's keys, e.g. loop_k). Subclassed per
+    detector in BUILTINS (name, kind 'environment' at request time or 'decision' at reply time, phases)."""
     name = kind = cast(str, None)         # set per detector by _scanner_builtin
 
     def __init__(self, **params):
@@ -1329,7 +1334,7 @@ class _ScannerTrigger:
             return None
         view = None
         if ev.phase == 'reply':
-            view = _judged(ev)
+            view = judged(ev)
             if view is None:
                 return None
         for f in ev.scanner.current_fires(view, self.cfg):
@@ -1338,9 +1343,12 @@ class _ScannerTrigger:
         return None
 
 
+_ScannerTrigger = ScannerTrigger          # the name before stage 1 made it public
+
+
 def _scanner_builtin(name, phase):
     kind = 'environment' if phase == 'request' else 'decision'
-    BUILTINS[name] = type(name, (_ScannerTrigger,), dict(
+    BUILTINS[name] = type(name, (ScannerTrigger,), dict(
         name=name, kind=kind, phases=frozenset({phase}),
         __doc__=f'relay_triggers {kind} trigger {name!r} ({phase} phase), as the router runs it today.'))
 
@@ -1358,17 +1366,23 @@ class DoneClaim:
     command). The scanner fires it on the episode's first claim only, so as the router does today a later claim is
     judged on the reply itself (a teacher repair turn may have claimed first). Terminus-2 runs it as next with
     confirm_kind 'confirm': the claim goes through and the teacher answers Terminus-2's "Are you sure?" request; any
-    other next request (Terminus-2 rejected the claim) drops it. MSA runs it as rewrite (the submit never runs)."""
+    other next request (Terminus-2 rejected the claim) drops it. MSA runs it as rewrite (the submit never runs).
+    first_only: fire on the episode's first claim only, as the scanner (and so the router's would_fire) does; without
+    a scanner, on the first claim this trigger saw."""
     name = 'done_claim'
     phases = frozenset({'reply'})
 
-    def __init__(self, harness='terminus2', confirm_kind=None):
+    def __init__(self, harness='terminus2', confirm_kind=None, first_only=False):
         if harness not in ('terminus2', 'msa'):
             raise ConfigError(f'harness must be terminus2 or msa, not {harness!r}')
-        self.harness, self.confirm_kind = harness, confirm_kind
+        self.harness, self.confirm_kind, self.first_only = harness, confirm_kind, bool(first_only)
+        self.reset()
+
+    def reset(self):
+        self._claimed = False
 
     async def observe(self, ev):
-        view = _judged(ev)
+        view = judged(ev)
         if view is None or (self.harness == 'msa' and not isinstance(view, dict)):
             return None
         rt = _rt()
@@ -1377,7 +1391,12 @@ class DoneClaim:
             f = next((f for f in ev.scanner.current_fires(view, cfg) if f['trigger'] == 'done_claim'), None)
             if f is not None:
                 return Decision(self.name, f['reason'])
+            if self.first_only:
+                return None               # the scanner judged it: not the episode's first claim
+        elif self.first_only and self._claimed:
+            return None
         if rt.parse_reply(view, 'terminus2' if self.harness == 'terminus2' else None)['done']:
+            self._claimed = True
             return Decision(self.name, 'task_complete: true (student)' if self.harness == 'terminus2'
                             else 'submit command (student)')
         return None
