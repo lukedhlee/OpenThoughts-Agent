@@ -1,0 +1,9 @@
+# The teacher steps in after a failed command and keeps the episode until one of its own commands succeeds.
+# MSA results carry exit codes; on Terminus-2 (no exit codes) give action_error `patterns` and action_ok
+# `exit_code: null` with the same patterns, so "fixed" means "no error in the output".
+triggers:
+  - use: action_error         # request time: the previous command exited non-zero or timed out
+    where: next               # the command already ran: the teacher answers this request
+    span: -1                  # and keeps the episode ...
+    release:
+      use: action_ok          # ... until a command it ran exits 0: the student answers the request that shows it

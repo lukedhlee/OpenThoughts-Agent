@@ -105,7 +105,7 @@ triggers:
 |---|---|---|
 | where | `rewrite` / `next` | per built-in, as today |
 | span | `k >= 1` / `-1` | per built-in, as today |
-| cooldown | student turns between interventions | assist: 3, others: n/a |
+| cooldown | student turns between interventions | assist: 2 (= --assist-gap 3 minus 1), others: n/a |
 | max_interventions | per episode | assist: 6, takeover: 1 |
 | earliest_turn | first turn a trigger may act | 2 |
 | teacher sees the rejected reply (rewrite only) | no / yes | no |
@@ -114,6 +114,12 @@ triggers:
 | teacher_note | text in the teacher's view only | verify note on done-claim |
 | log_only | shadow mode | off |
 | judge timeout and clock | judge time paused or charged to the agent | paused |
+| release (hand-back condition) | a trigger judged on the teacher's turns (an entry's `release:`, or a policy-level `release:` list); when it fires, the intervention ends at the next main request, sticky spans included | none: spans end after k turns or never |
+| per-intervention view | `view:` on an entry or a decision overrides the three view knobs above for that intervention | the policy's |
+| teacher | `teacher:` endpoint name on an entry or a decision | `teacher` (the only endpoint today) |
+| combinators | `any_of`, `all_of`, `streak` (n turns in a row), `after_turn`, `before_turn`, `every`, nestable around any triggers | n/a |
+| function triggers | any `f(ev, state)` (`state` per episode), in Python or as `use: module:func` / `use: path/file.py:func` | n/a |
+| decision info | free-form diagnostics on a decision (features, a judge's rationale), kept in the decision log | none |
 
 ## Stage map
 
