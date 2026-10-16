@@ -241,31 +241,50 @@ def conflicts(a, default):
 def stage_config(src, dest):
     """A run's own copy of a trigger config (run_pilot.sh TRIGGER_CONFIG): the YAML and the `path/file.py` triggers it
     names relative to itself go into dest (same relative paths), the copy must load, and dest/SHA256SUMS lists every
-    file the config uses (an absolute path is recorded, not copied). Returns the copy's path."""
+    file the config uses (an absolute path is recorded, not copied). A relative trigger file must resolve (after `..`
+    and symlinks) inside the config's directory, and every write must land inside dest: otherwise ConfigError, checked
+    before anything is written. Returns the copy's path."""
     import hashlib
     import shutil
     import yaml
-    src = os.path.abspath(src)
+    src, dest = os.path.abspath(src), os.path.abspath(dest)
     with open(src) as f:
         raw = yaml.safe_load(f) or {}
-    files, todo = {os.path.basename(src): src}, [raw]
+    files: dict[str, tuple[str | None, str]] = {os.path.basename(src): (None, src)}   # rel: (the entry's `use`, file)
+    todo = [raw]
     while todo:                           # every `use:` (entries, releases, combinators' children)
         x = todo.pop()
         if isinstance(x, dict):
             u = x.get('use')
             if isinstance(u, str) and u.rpartition(':')[0].endswith('.py'):
                 p = u.rpartition(':')[0]
-                files[p] = p if os.path.isabs(p) else os.path.join(os.path.dirname(src), p)
+                files[p] = (u, p if os.path.isabs(p) else os.path.join(os.path.dirname(src), p))
             todo += list(x.values())
         elif isinstance(x, list):
             todo += x
-    os.makedirs(dest, exist_ok=True)
-    sums = []
-    for rel, path in files.items():
+    root, droot = os.path.realpath(os.path.dirname(src)), os.path.realpath(dest)
+
+    def inside(p, r):
+        return os.path.commonpath([p, r]) == r
+
+    for rel, (u, path) in files.items():
         if not os.path.isfile(path):
             raise iv.ConfigError(f'{src}: {rel} does not exist')
+        if os.path.isabs(rel):
+            continue
+        if u is not None and not inside(os.path.realpath(path), root):
+            raise iv.ConfigError(f"{src}: use: {u} resolves to {os.path.realpath(path)}, outside the config's directory "
+                                 f'{root}; move the file under it, or name it by an absolute path (recorded, not copied)')
+        if not inside(os.path.realpath(os.path.join(dest, rel)), droot):
+            raise iv.ConfigError(f'{src}: use: {u or rel} would be copied to {os.path.realpath(os.path.join(dest, rel))},'
+                                 f' outside {droot}')
+    if not inside(os.path.realpath(os.path.join(dest, 'SHA256SUMS')), droot):
+        raise iv.ConfigError(f'{dest}/SHA256SUMS resolves outside {droot}')
+    os.makedirs(dest, exist_ok=True)
+    sums = []
+    for rel, (u, path) in files.items():
         if not os.path.isabs(rel):
-            os.makedirs(os.path.dirname(os.path.join(dest, rel)) or dest, exist_ok=True)
+            os.makedirs(os.path.dirname(os.path.join(dest, rel)), exist_ok=True)
             shutil.copyfile(path, os.path.join(dest, rel))
         sums.append(f"{hashlib.sha256(open(path, 'rb').read()).hexdigest()}  {rel}\n")
     with open(os.path.join(dest, 'SHA256SUMS'), 'w') as f:
