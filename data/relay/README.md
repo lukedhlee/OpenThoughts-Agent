@@ -19,7 +19,7 @@ it is a job.
 | | what | how |
 |---|---|---|
 | 1 | Horizon onboarding: login, tmux, `hf`, `tunnel.sh`, storage rules | `docs/horizon/ONBOARDING.md`. It ends with this repo cloned at `~/snowball/ota` (tag `relay-v1`). The scripts expect that path. |
-| 2 | The snowball venv (`~/snowball/envs/snowball`, vLLM for GB200) | the commands below; about 5 min on the login node, then about 35 min in one job |
+| 2 | The snowball venv (`~/snowball/envs/snowball`, vLLM for GB200) | the commands below; about 5 min on the login node, then about 35 min in one job (Luke's 09-29 times) |
 | 3 | The relay additions: python-socks for the driver's bridge, `envs/relay-extra` (torchvision for the teacher), `envs/msa-2.4.6` (mini-swe-agent), and the teacher, EAGLE-3 draft and Stage-3 models in `$SCRATCH/hf_hub` (about 150 GB) | `bash ~/snowball/ota/data/relay/horizon/build_relay_env.sh` on the login node, after step 2 |
 | 4 | The 09-21 base, used as the student and as the SFT base | the `hf download` below. Step 3 does not fetch it. |
 | 5 | Three harbor clones, each at a pinned commit | the `git clone` loop below |
@@ -27,7 +27,8 @@ it is a job.
 | 7 | A staged task tree with `TASKS.txt` and `router_tasks.json` | section 2 (smoke tree) and section 3.1 (full tree) |
 
 Step 2, the venv. The two SHAs must match `build_env.sbatch`'s values, and `SNOWBALL_RUSTUP=1` installs the cargo the
-vLLM build needs:
+vLLM build needs. This sequence is reconstructed from Luke's 09-29 build logs and has not yet been run end to end by a
+fresh user (unverified):
 
 ```bash
 ROOT=$HOME/snowball SNOWBALL_RUSTUP=1 MSRL_SHA=a03b2773 HARBOR_SHA=dcf609bc \
@@ -68,7 +69,8 @@ done
 ## 2. Smoke run first (4 tasks per arm, at most 4 node-hours)
 
 The smoke runs both arms on the 4 shortest tasks of a 100-task tree, with 1 student node, 1 teacher node and a 1-node
-driver job. It proves serving, the tunnels, Daytona, the routers, harbor and the readout before anything large.
+driver job. It proves serving, the tunnels, Daytona, the routers, harbor and the readout before anything large. These
+exact smoke settings have not been run yet (unverified); each piece matches the scripts.
 
 Stage the smoke tree from the public CalibForge bundle (2,457 tasks, checked by sha256), keeping the 100 tasks in
 `pilot/relay100_tasks.txt`:
@@ -150,7 +152,7 @@ $HOME/snowball/envs/snowball/bin/python data/relay/pilot/pilot_tasks.py router-j
 ```
 
 - `build_tree.py` prints `"covered": 2613` and writes `TASKS.txt`, `pool.json` and `coverage.tsv`. It reads pandas and
-  pyarrow. The task images are public on Docker Hub (`aweaiteam/calibforge`), and each task's layers come from the
+  pyarrow, which the snowball venv is expected to have (unverified). The task images are public on Docker Hub (`aweaiteam/calibforge`), and each task's layers come from the
   public HF mirror `laion/calibforge-daytona-layers` when a sandbox starts.
 - Run only a subset with `TASK_LIST=<file>`, for example `data/relay/pilot/calibforge_remainder_pilot1000.txt`
   (a stratified 1,000). The tree must hold every task in `TASKS.txt`; the pre-flight counts its dirs.
@@ -306,7 +308,9 @@ for d in terminal_bench_2_1 swebench_verified_random100 openthoughts_tblite_2_0;
 ```
 
 TB2.1 is terminal-bench-2 at `53ff2b8` ("Various task fixes for TB2.1"; the repo used to be
-`laude-institute/terminal-bench-2`), with `train-fasttext` excluded at run time. `$SCRATCH` deletes files unread for
+`laude-institute/terminal-bench-2`), with `train-fasttext` excluded at run time. TB2.1 and TB-lite match the provenance
+files of Luke's Horizon trees; the SWE-bench revision is the documented pinned snapshot, not checked against his
+Horizon copy (unverified). `$SCRATCH` deletes files unread for
 10 days, so re-stage a tree that is gone.
 
 Evaluate every model you will compare in one queue, base included:
@@ -391,7 +395,8 @@ trained when it is within `--think-limit`. Uncut rows are longer, so more of the
 `build_matched_arms.py` drops those.
 
 MSA evals use the same `eval_sft.sh` with the no-refeed tool-mode policy and the harbor that policy names
-(`lukedhlee/mini-swe-host-exec-isolation` @ `6feb3759`), cloned like the others:
+(`lukedhlee/mini-swe-host-exec-isolation` @ `6feb3759`), cloned like the others. Which clone Luke's Horizon MSA evals
+used is unverified; `harbor-msa-relay` @ `96fd911b` contains `6feb3759`.
 
 ```bash
 git clone -q --filter=blob:none https://github.com/marin-community/harbor.git ~/snowball/harbor-msa-eval && git -C ~/snowball/harbor-msa-eval checkout -q 6feb3759
