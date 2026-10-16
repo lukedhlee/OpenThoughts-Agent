@@ -594,7 +594,9 @@ def repair_view(rv, rows):
             own[kind] += 1
             if r.get('repair_kind') == 'parse_error' and i + 1 < len(main):
                 nxt = main[i + 1]
-                if nxt['owner'] == 'student' or nxt.get('repair') or nxt.get('takeover') or nxt['owner'] == 'router':
+                # Guided relay can schedule a one-turn assist immediately after a
+                # parse repair without transferring episode ownership.
+                if nxt['owner'] == 'student' or nxt.get('repair') or nxt.get('assist') or nxt.get('takeover') or nxt['owner'] == 'router':
                     back_to_student += 1
                 else:
                     not_back += 1
@@ -782,7 +784,7 @@ def main():
     if 'relay_repair' in out:
         rp = out['relay_repair']['repair']
         if rp['repairs']:
-            check('H4 relay_repair: after a repair the student resumes (or a trigger / ending takes over), 100 %',
+            check('H4 relay_repair: after a repair the student resumes (or an assist / trigger / ending follows), 100 %',
                   rp['repair_kept_by_teacher'] == 0, rp)
     if a.gate == 'final' and not ('control' in arms and any(x in arms for x in RELAY_ARMS)):
         for arm in arm_names:
