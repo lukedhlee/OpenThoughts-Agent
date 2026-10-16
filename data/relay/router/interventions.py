@@ -1497,7 +1497,7 @@ class _Stub:
 @builtin
 class LlmJudge(_Stub):
     """An LLM reads the recent turns and scores "stuck / about to fail" (stage 4): judge.LlmJudge, once judge.register()
-    has run (the router registers it while it loads a --trigger-config)."""
+    has run (the router and replay.py register it while they load a config)."""
     name, phases, stage = 'llm_judge', frozenset(PHASES), 4
 
 

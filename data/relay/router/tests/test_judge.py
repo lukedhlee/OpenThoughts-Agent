@@ -407,7 +407,7 @@ def test_registration_is_explicit():
         iv.BUILTINS['llm_judge'] = old
 
 
-def test_example_config_loads(monkeypatch):
+def test_example_config_loads(monkeypatch, registered):   # the example says `use: llm_judge`
     monkeypatch.setenv('JUDGE_URL', 'http://localhost:8000/v1')
     examples = HERE.parent.parent / 'triggers' / 'examples'
     policy, specs = iv.load_config(str(examples / 'judge.yaml'))

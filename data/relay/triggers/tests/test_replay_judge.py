@@ -72,6 +72,28 @@ def test_judge_replay_t2(tmp_path):
     assert {x['outcome'] for x in lines} == {'quiet', 'fired'} and stats['request_events'] == 11
 
 
+def test_llm_judge_by_its_builtin_name(tmp_path):
+    """`use: llm_judge` replays as `judge:LlmJudge` does: replay registers the judge while it loads a config, as the
+    router does, so one YAML works offline and online; the registry holds interventions' stub again afterwards."""
+    stub_cls = rp.iv.BUILTINS['llm_judge']
+    assert stub_cls is not jg.LlmJudge
+    log = tr.Log(tmp_path, 'r4', 'student_only', 'student')
+    tr.t2_episode(log, 1, 's-loop', tr.LOOP_STEPS, 'fail')
+    loop, = tr.episodes(tr.write_manifest(tmp_path, log))
+    got = {}
+    with StubJudge(failing_last_result) as stub:
+        for use in ('judge:LlmJudge', 'llm_judge'):
+            jg.clear_cache()
+            cfg = {'triggers': [{'use': use, 'span': -1, 'params': {
+                'endpoint': stub.url, 'model': 'judge', 'threshold': 0.5, 'prompt': PROMPT}}]}
+            got[use] = [(f['trigger'], f['turn'], f['phase'], f['valid'], f['score'])
+                        for f in rp.replay_episode(loop, cfg)[:-1]]
+    assert got['llm_judge'] == got['judge:LlmJudge'] == [
+        ('llm_judge', 4, 'request', True, 0.9), ('llm_judge', 5, 'request', False, 0.9),
+        ('llm_judge', 6, 'request', False, 0.9)]
+    assert rp.iv.BUILTINS['llm_judge'] is stub_cls
+
+
 def test_judge_replay_msa_reply_phase(tmp_path):
     log = tr.Log(tmp_path, 'r2', 'student_only', 'student', harness='msa')
     tr.msa_episode(log, 1, 's-msa', 'fail')

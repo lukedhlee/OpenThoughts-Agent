@@ -623,10 +623,17 @@ def iter_events(ep, reply_parse='harness', stats=None, info=None):
 
 # ==== running a config over an episode ========================================================================
 def load_trigger_config(config):
-    """(Policy, [TriggerSpec]) from a YAML path, a dict (interventions.load_config) or an already-built pair."""
+    """(Policy, [TriggerSpec]) from a YAML path, a dict (interventions.load_config) or an already-built pair. As in the
+    router (router_triggers.load_trigger_config), `use: llm_judge` is the judge (judge.py) while it loads, and
+    interventions' stage-4 stub again afterwards (nothing leaks into the shared registry)."""
     if isinstance(config, tuple):
         return config
-    return iv.load_config(config)
+    import judge  # pyright: ignore[reportMissingImports] - on sys.path above
+    old = judge.register()
+    try:
+        return iv.load_config(config)
+    finally:
+        iv.BUILTINS['llm_judge'] = old
 
 
 def _own(spec):

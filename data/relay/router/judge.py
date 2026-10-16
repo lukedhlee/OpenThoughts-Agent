@@ -5,8 +5,8 @@ Stage 4 of notes/ot-agent/relay-triggers (stage4_judge_scope.md): the trigger, i
 latency accounting. Offline (replay) it posts to a URL itself; online it calls the router's named endpoints.
 
     triggers:
-      - use: judge:LlmJudge          # this file (router/ is on sys.path in the router and in replay); in the router
-                                     # also `use: llm_judge` (registered while it loads --trigger-config)
+      - use: llm_judge               # this file: the router and replay.py register it while they load a config
+                                     # (`judge:LlmJudge` is the same class)
         phases: [request]            # request (default): judge the result of the last action; reply: judge the
                                      # proposed action before the harness sees it (where: rewrite discards it)
         span: 2
@@ -55,9 +55,9 @@ In the router (--trigger-config):
     only the time observe() waits on it does. A prefetch for a turn the router never asks is cancelled at the next
     ask (the one after the episode's last turn just finishes, unlogged).
   * teacher-only text: Event.extra['teacher_only'] = [the verify note text, the teacher hint text, ...].
-  * `use: llm_judge` is this class: the router calls register() while it loads the config (interventions.py keeps a
-    stage-4 stub under that name otherwise, and importing this module changes nothing). replay.py does not register
-    it, so there use `judge:LlmJudge`.
+  * `use: llm_judge` is this class: the router and replay.py call register() while they load a config, and put
+    interventions.py's stage-4 stub back afterwards (importing this module changes nothing), so one YAML works offline
+    and online.
 """
 import asyncio
 import collections
