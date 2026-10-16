@@ -263,3 +263,93 @@ def test_t2_summarization_and_tokenize_route_by_the_current_owner(tmp_path):
     assert status == 200 and who == 'teacher'
     assert [r['owner'] for r in rows] == ['student', 'teacher', 'teacher']
     assert rows[2]['turn'] is None and rows[2]['intervention']['id'] == 1
+
+
+# ---- the LLM judge online (router/judge.py through the router's endpoint hooks) -----------------------------------
+def judge_cfg(url, phase, tmp, **entry):
+    return {'endpoints': {'judge': url}, 'triggers': [dict(
+        {'use': 'llm_judge', 'phases': [phase], 'span': 1,
+         'params': {'endpoint': 'judge', 'model': 'judge', 'threshold': 0.5, 'timeout_s': 10,
+                    'log': str(Path(tmp) / 'judge.jsonl')}}, **entry)]}
+
+
+def proposes(body, cmd):
+    """The judge's prompt has `cmd` in the proposed action (reply phase) or in the history's last turn (request)."""
+    from stub_judge import prompt_of
+    p = prompt_of(body)
+    return cmd in (p.split('proposes this action')[1] if 'proposes this action' in p else p.rsplit('[assistant]', 1)[-1])
+
+
+def test_reply_phase_judge_rewrites_and_its_wait_is_paused(tmp_path):
+    """The judge reads each proposed action before harbor sees it; the one with `echo step-2` is discarded and the
+    teacher answers that request. The request waits on the judge (0.2 s): that time is off the agent's clock and on the
+    record (trigger_wait_sec, endpoint_calls), and in the decision's info."""
+    import judge
+    from stub_judge import StubJudge, chat
+    judge.clear_cache()
+    with StubJudge(lambda b: (200, chat(json.dumps({'score': 0.9 if proposes(b, 'echo step-2') else 0.1,
+                                                    'rationale': 'r'}))), delay=0.2) as sj:
+        rows, _, _, _ = episode(tmp_path, judge_cfg(sj.url, 'reply', tmp_path, where='rewrite'), n=5)
+    assert owners(rows) == 'SSTSS' and rows[2]['intervention']['trigger'] == 'llm_judge'
+    assert rows[2]['discarded_student_reply'] and rows[2]['intervention']['where'] == 'rewrite'
+    acted = [d for d in rows[2]['decisions'] if d['outcome'] == 'acted']
+    assert acted[0]['info']['waited_s'] >= 0.15 and acted[0]['score'] == 0.9
+    for r in (rows[0], rows[1], rows[3]):                     # the student's turns: one judge call each, waited for
+        assert [c['name'] for c in r['endpoint_calls']] == ['judge'] and r['trigger_wait_sec'] >= 0.15
+    assert rows[3]['paused_sec'] - rows[1]['paused_sec'] >= 0.3   # two waits, both paused
+    assert len(sj.bodies) == 5 and all(b['model'] == 'qwen38' for b in sj.bodies)   # the endpoint's served name
+    log = [json.loads(x) for x in (tmp_path / 'judge.jsonl').read_text().splitlines()]
+    assert [x['outcome'] for x in log] == ['quiet', 'quiet', 'fired', 'quiet', 'quiet']
+
+
+def test_request_phase_judge_prefetched_alongside_the_tool(tmp_path):
+    """A request-time judge is asked at the end of each turn (prefetch) and awaited at the next request: with 0.3 s of
+    tool time the judge's 0.3 s are hidden, so the request barely waits. The prefetched view ends at the reply: the
+    judge saw no result for the action it reads (last_result none)."""
+    import judge
+    from stub_judge import StubJudge, chat, prompt_of
+    judge.clear_cache()
+    with StubJudge(lambda b: (200, chat(json.dumps({'score': 0.9 if proposes(b, 'echo step-2') else 0.1}))),
+                   delay=0.3) as sj:
+        with Stack(tmp_path, router_args=config(tmp_path, judge_cfg(sj.url, 'request', tmp_path))) as st:
+            st.teacher.script = list(LOOK)
+            d = Driver(st, 'work')
+            for _ in range(5):
+                d.step()
+                time.sleep(0.35)                              # the tool running
+            rows = st.turns('sid-work')
+        prompts = [prompt_of(b) for b in sj.bodies]
+    assert owners(rows) == 'SSSTS' and rows[3]['intervention']['trigger'] == 'llm_judge'
+    acted = [d for d in rows[3]['decisions'] if d['outcome'] == 'acted'][0]
+    assert acted['info']['prefetched'] and acted['info']['waited_s'] < 0.15
+    assert rows[3]['trigger_wait_sec'] < 0.15 and rows[3]['endpoint_calls'][0]['latency_sec'] >= 0.25
+    fired = next(p for p in prompts if 'echo step-2' in p)
+    assert 'Result of its last action:\n(none)' in fired     # the prefetched view: no result yet
+
+
+def test_judge_endpoint_hook_timeout_and_teacher_only(tmp_path):
+    """call_endpoint's timeout bounds the call (EndpointError with timeout, the call logged); teacher-only texts reach
+    the trigger's Event (the verify note, the teacher hint, the rejected-reply header)."""
+    plugin = '''
+import interventions as iv
+
+
+class Probe:
+    name, phases = 'probe', frozenset({'request'})
+
+    async def observe(self, ev):
+        if ev.turn != 2:
+            return None
+        try:
+            await ev.extra['call_endpoint']('judge', {'messages': [{'role': 'user', 'content': 'x'}]}, timeout_s=0.1)
+        except iv.EndpointError as e:
+            return iv.Decision('', f'timeout {e.timeout}; notes {len(ev.extra["teacher_only"])}', span=1)
+        return None
+'''
+    from stub_judge import StubJudge, chat
+    (tmp_path / 'probe.py').write_text(plugin)
+    with StubJudge(lambda b: (200, chat('{}')), delay=1.0) as sj:
+        rows, _, _, _ = episode(tmp_path, {'endpoints': {'judge': sj.url}, 'triggers': [{'use': 'probe.py:Probe'}]},
+                                n=3, args=['--teacher-hint-text', 'Be brief.'])
+    assert owners(rows) == 'STS' and rows[1]['decisions'][0]['reason'] == 'timeout True; notes 3'
+    assert [(c['name'], c['status']) for c in rows[1]['endpoint_calls']] == [('judge', 'timeout')]

@@ -171,12 +171,7 @@ def shadow(specs):
     return [dataclasses.replace(s, log_only=True, owners=frozenset(iv.OWNERS)) for s in specs]
 
 
-class EndpointError(RuntimeError):
-    """A named endpoint's call (Event.extra['call_endpoint']) got no answer: status (None when unreachable) and text."""
-
-    def __init__(self, name, status, text):
-        super().__init__(f'endpoint {name!r}: HTTP {status}: {text[:300]}')
-        self.name, self.status, self.text = name, status, text
+EndpointError = iv.EndpointError          # where triggers catch it: interventions.EndpointError
 
 
 def endpoints_of(path, default_model):
@@ -197,6 +192,17 @@ def endpoints_of(path, default_model):
         urls = v['url'] if isinstance(v['url'], list) else str(v['url']).split(',')
         out[name] = ([str(u).strip().rstrip('/') for u in urls if str(u).strip()], v.get('model') or default_model)
     return out
+
+
+def load_trigger_config(path):
+    """A --trigger-config file as the router loads it: `use: llm_judge` is the judge (judge.py) while it loads, and
+    stage 0's placeholder again afterwards (nothing leaks into the shared registry)."""
+    import judge  # pyright: ignore[reportMissingImports] - next to this file
+    old = judge.register()
+    try:
+        return iv.load_config(path)
+    finally:
+        iv.BUILTINS['llm_judge'] = old
 
 
 def wants_parser(specs):
