@@ -130,14 +130,22 @@ calls; `on_retry`; `owners`, to ask it on the teacher's turns too). Unknown keys
 
 ## 4. Run it online
 
-Point the relay launcher at your YAML with `TRIGGER_CONFIG`. It replaces the legacy intervention knobs (`ASSIST`,
-`TIME_TAKEOVER`, the context budget and takeover-trigger knobs, and the repair arm's flags), and the run dir keeps a
-copy of the config and its sha256.
+Point the relay launcher at your YAML with `TRIGGER_CONFIG`. In the arms that run it, it replaces the legacy
+intervention knobs: `ASSIST`, `TIME_TAKEOVER`, the context budget, the takeover-trigger knobs, the repair arm's
+`--repair-on-parse-error` (add a `parse_repair` entry if you want repairs) and, in relay arms, `VERIFY_NOTE` (give a
+`done_claim` entry a `teacher_note` instead). The run dir keeps a checked copy of the config and the `path/file.py`
+triggers it names in `trigger_config/`, with `SHA256SUMS`, and `run.meta` records the sha. A judge's `prompt_file` is
+read where it is, so give it an absolute path.
 
 ```bash
-TRIGGER_CONFIG=$PWD/my.yaml ARMS="student_only" ... bash data/relay/horizon/launch_driver.sh $S my_shadow_run   # shadow
-TRIGGER_CONFIG=$PWD/my.yaml ARMS="relay_repair" ... bash data/relay/horizon/launch_driver.sh $S my_relay_run    # acting
+# $S = the serve job from serve_submit.sh (data/relay/README.md, section 3)
+TRIGGER_CONFIG=$PWD/my.yaml ARMS="student_only" NODES=4 CAP_NODE_H=40 \
+  bash data/relay/horizon/launch_driver.sh $S my_shadow_run     # shadow: the student plays, your triggers only log
+TRIGGER_CONFIG=$PWD/my.yaml ARMS="student_only relay_repair" NODES=4 CAP_NODE_H=40 \
+  bash data/relay/horizon/launch_driver.sh $S my_relay_run      # shadow and acting arms on the same tasks
 ```
+
+The `control` arm (the teacher alone) ignores `TRIGGER_CONFIG`, so it stays the same baseline in every run.
 
 - **Shadow first.** In the `student_only` arm the student plays every turn and your triggers only log (`decisions` in
   `turns.jsonl`). That gives live fire rates and labels, which replay can then score.
