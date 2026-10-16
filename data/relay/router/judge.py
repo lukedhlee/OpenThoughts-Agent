@@ -39,9 +39,11 @@ endpoint served.
 Endpoints: a URL is posted to directly (offline replay; also online, outside the router's endpoint pool). A name goes
 through the router (stage 3): Event.extra['call_endpoint'](name, body) -> the parsed response, which fills the
 endpoint's served model name, pins and fails over per episode, pauses the agent clock while it runs and logs the call
-on the request's record (endpoint_calls); an answer other than 200 raises router_triggers.EndpointError (status,
-text), read here by its attributes. timeout_s bounds the whole call, the router's retries included. Without the
-router (replay) a name resolves through set_resolver(fn(name) -> url), else it is no decision ('unresolved').
+on the request's record (endpoint_calls); an answer other than 200 raises EndpointError (status, text, and
+timeout when the router's own bound expired), read here by its attributes. timeout_s bounds the whole call, the
+router's retries included: passed to call_endpoint when it takes it (the router then times out first and logs it),
+and enforced here too. Without the router (replay) a name resolves through set_resolver(fn(name) -> url), else it is
+no decision ('unresolved').
 
 Router hooks still open:
   * overlap: prefetch(ev) starts the ask in the background; observe() at the same (phase, turn) awaits it instead of
@@ -57,6 +59,7 @@ Router hooks still open:
 import asyncio
 import collections
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -92,6 +95,7 @@ ROLES = ('system', 'user', 'assistant', 'tool')
 OUTPUTS = ('score', 'verdict')
 _CACHE: 'collections.OrderedDict[str, dict]' = collections.OrderedDict()
 CACHE_MAX = 4096
+TIMEOUT_GRACE = 1.0      # when the router bounds a call itself, its timeout (logged as such) fires before ours
 _RESOLVER = None
 
 
@@ -103,6 +107,14 @@ def set_resolver(fn):
 
 def clear_cache():
     _CACHE.clear()
+
+
+def _takes_timeout(call):
+    """The router's call_endpoint takes timeout_s (bounding its retries; EndpointError(timeout=True) on expiry)."""
+    try:
+        return callable(call) and 'timeout_s' in inspect.signature(call).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _router_notes():
@@ -355,20 +367,23 @@ class LlmJudge:
 
     # -- the trigger --
     async def observe(self, ev):
+        for k in [k for k in self._inflight if k[1] < ev.turn]:   # prefetched for a turn the router never asked
+            self._inflight.pop(k)[0].cancel()
+            self.stats['prefetch_unused'] += 1
         if not self._due(ev):
             self.stats['skipped_every'] += 1
             return None
         pre = self._inflight.pop((ev.phase, ev.turn), None)
+        body = self.body(self.render(ev))
+        key = (ev.phase, ev.turn, self._key(body))
         ans: dict[str, Any]
         if pre is not None:
-            task, _, key = pre
+            task, _, pkey = pre
             t0 = time.monotonic()
             ans = dict(await task, prefetched=True)
             ans['waited_s'] = round(time.monotonic() - t0, 4)
-            self._seen[key] = ans
+            self._seen[pkey] = self._seen[key] = ans   # a retry of this request gets the prefetched answer
         else:
-            body = self.body(self.render(ev))
-            key = (ev.phase, ev.turn, self._key(body))
             if key in self._seen:
                 ans = dict(self._seen[key], repeat=True, waited_s=0.0)   # a retry: the same request, the same answer
                 self.stats['repeats'] += 1
@@ -408,7 +423,9 @@ class LlmJudge:
             return dict(_CACHE[key], cached=True, latency_s=0.0)
         t0 = time.monotonic()
         try:
-            status, data = await asyncio.wait_for(self._post(ev, body), self.timeout_s)
+            named = not self.endpoint.startswith(('http://', 'https://'))
+            grace = TIMEOUT_GRACE if named and _takes_timeout(ev.extra.get('call_endpoint')) else 0.0
+            status, data = await asyncio.wait_for(self._post(ev, body), self.timeout_s + grace)
         except asyncio.TimeoutError:
             return self._done(dict(outcome='timeout'), t0)
         except LookupError as err:
@@ -448,11 +465,14 @@ class LlmJudge:
             call: Any = ev.extra.get('call_endpoint')
             if callable(call):
                 try:
-                    res: Any = call(url, body)
+                    res: Any = call(url, body, timeout_s=self.timeout_s) if _takes_timeout(call) else \
+                        call(url, body)
                     return 200, await res
                 except Exception as err:  # noqa: BLE001 - router_triggers.EndpointError, read by its attributes
                     if not hasattr(err, 'status'):
                         raise
+                    if getattr(err, 'timeout', False):
+                        raise asyncio.TimeoutError from None      # the router's own bound expired
                     status = getattr(err, 'status', None)
                     return status if status is not None else 'unreachable', getattr(err, 'text', str(err))
             target = _RESOLVER(url) if _RESOLVER else None
