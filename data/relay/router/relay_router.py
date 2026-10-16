@@ -326,6 +326,10 @@ class Router:
         for name, (urls, model) in self.endpoints.items():
             self.urls[name], self.models[name] = urls, model
         self.need = self.need + tuple(self.endpoints)
+        missing = [(n, e) for n, e in rtg.endpoint_names(self.trigger_policy, self.trigger_specs) if e not in self.urls]
+        if missing:                       # fail at start, not at the first ask
+            raise iv.ConfigError('; '.join(f'trigger {n}: endpoint {e!r} is not one of the config\'s endpoints '
+                                           f'{sorted(self.urls)}' for n, e in missing))
         # texts only the teacher sees: a judge scrubs them from its view (Event.extra['teacher_only'])
         self.teacher_only = [t for t in [self.note_text, a.teacher_hint_text, REJECTED_NOTE] +
                              [s.teacher_note for s in self.trigger_specs] if t]
@@ -1106,7 +1110,8 @@ class Router:
         endpoint's served model name always filled in, the body otherwise as given. call_endpoint(name, body, *,
         timeout_s=None) -> the parsed chat.completions response, or interventions.EndpointError. timeout_s bounds the
         whole call, failover retries included (EndpointError with timeout). Every call, cancelled ones included, is
-        logged (endpoint_calls) on the record of the request that awaited it. The agent clock is paused around the
+        logged (endpoint_calls) on the record of the request that awaited it; a prefetch nobody used goes on the next
+        request's record, and the one after the episode's last turn on none. The agent clock is paused around the
         Controller's calls (ask()), not here: a call prefetched while the tool runs costs the agent nothing."""
         async def post(name, path, body, *, timeout_s=None):
             if name not in self.urls:

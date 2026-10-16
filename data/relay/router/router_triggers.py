@@ -206,6 +206,20 @@ def load_trigger_config(path):
         iv.BUILTINS['llm_judge'] = old
 
 
+def endpoint_names(policy, specs):
+    """(trigger name, endpoint) for every trigger of a config that names a model endpoint (an `endpoint` that is not a
+    URL): main-list entries, their releases, the policy's releases, and combinators' children."""
+    todo = [(s.name, s) for s in specs] + [(s.name, s) for s in policy.release]
+    todo += [(f'{s.name}.release', s.release) for s in specs if s.release is not None]
+    while todo:
+        name, s = todo.pop(0)
+        t = s.trigger
+        e = getattr(t, 'endpoint', None)
+        if isinstance(e, str) and e and not e.startswith(('http://', 'https://')):
+            yield name, e
+        todo += [(f'{name}.{c.name}', c) for c in getattr(t, 'children', None) or ()]
+
+
 def wants_parser(specs):
     """A config that repairs parse errors needs Terminus-2's parser loaded."""
     return any(isinstance(s.trigger, iv.ParseRepair) for s in specs or ())

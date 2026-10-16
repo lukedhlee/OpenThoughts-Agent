@@ -353,3 +353,80 @@ class Probe:
                                 n=3, args=['--teacher-hint-text', 'Be brief.'])
     assert owners(rows) == 'STS' and rows[1]['decisions'][0]['reason'] == 'timeout True; notes 3'
     assert [(c['name'], c['status']) for c in rows[1]['endpoint_calls']] == [('judge', 'timeout')]
+
+
+def test_waited_judge_time_is_paused_overlapping_time_is_not(tmp_path):
+    """The same prefetched request-time judge (0.3 s a call) with a fast tool (0.05 s): each request now waits about
+    0.25 s on it, and that wait is off the agent's clock; with a slow tool (0.4 s) the call hides under it and nothing
+    is paused. Each call is logged on the record of the request that awaited it."""
+    import judge
+    from stub_judge import StubJudge, chat
+    paused = {}
+    for tool in (0.05, 0.4):
+        judge.clear_cache()
+        with StubJudge(lambda b: (200, chat(json.dumps({'score': 0.1}))), delay=0.3) as sj:
+            d_ = tmp_path / str(tool)
+            with Stack(d_, router_args=config(d_, judge_cfg(sj.url, 'request', d_))) as st:
+                d = Driver(st, 'work')
+                for _ in range(4):
+                    d.step()
+                    time.sleep(tool)
+                rows = st.turns('sid-work')
+        assert owners(rows) == 'SSSS'
+        waits = [r['trigger_wait_sec'] for r in rows[1:]]
+        paused[tool] = rows[-1]['paused_sec'] - rows[1]['paused_sec']
+        assert all(len(r['endpoint_calls']) == 1 for r in rows)          # one awaited call per request
+        if tool == 0.05:
+            assert min(waits) >= 0.15 and paused[tool] >= 0.3
+        else:
+            assert max(waits) < 0.15 and paused[tool] < 0.2
+
+
+def test_judge_timeout_is_the_routers_timeout_a_triggers_own_bound_cancels(tmp_path):
+    """The judge passes its timeout (0.2 s) to call_endpoint, so the router's bound fires first: no decision, and the
+    call is on the record as 'timeout'. A trigger that bounds the call itself instead cancels it: 'cancelled'."""
+    import judge
+    from stub_judge import StubJudge, chat
+    judge.clear_cache()
+    with StubJudge(lambda b: (200, chat(json.dumps({'score': 0.9}))), delay=1.0) as sj:
+        cfg = judge_cfg(sj.url, 'reply', tmp_path, where='rewrite')
+        cfg['triggers'][0]['params']['timeout_s'] = 0.2
+        rows, _, _, _ = episode(tmp_path / 'judge', cfg, n=3)
+    assert owners(rows) == 'SSS'
+    assert all([c['status'] for c in r['endpoint_calls']] == ['timeout'] for r in rows)
+    log = [json.loads(x) for x in (tmp_path / 'judge.jsonl').read_text().splitlines()]
+    assert {x['outcome'] for x in log} == {'timeout'}
+    (tmp_path / 'impatient.py').write_text('''
+import asyncio
+
+
+class Impatient:
+    name, phases = 'impatient', frozenset({'request'})
+
+    async def observe(self, ev):
+        try:
+            await asyncio.wait_for(ev.extra['call_endpoint']('judge', {'messages': []}), 0.1)
+        except asyncio.TimeoutError:
+            return None
+''')
+    with StubJudge(lambda b: (200, chat('{}')), delay=1.0) as sj:
+        cfg = {'endpoints': {'judge': sj.url}, 'triggers': [{'use': 'impatient.py:Impatient'}]}
+        rows, _, _, _ = episode(tmp_path, cfg, n=2)
+    assert owners(rows) == 'SS' and all([c['status'] for c in r['endpoint_calls']] == ['cancelled'] for r in rows)
+
+
+def test_unknown_endpoint_name_fails_at_start(tmp_path):
+    import interventions as iv
+    import pytest
+    cfg = {'endpoints': {'judge': 'http://127.0.0.1:9/v1'},
+           'policy': {'release': [{'use': 'llm_judge', 'params': {'endpoint': 'nojudge'}}]},
+           'triggers': [{'use': 'llm_judge', 'params': {'endpoint': 'judge'}},
+                        {'use': 'any_of', 'name': 'either', 'params': {'of': [
+                            {'use': 'llm_judge', 'params': {'endpoint': 'other'}}, {'use': 'loop'}]}}]}
+    a = rr.parse_args(['--mode', 'relay', '--harness', 'msa', '--port', '0', '--log-dir', str(tmp_path / 'r'),
+                       '--student-url', 'u', '--student-model', 's', '--teacher-url', 'u', '--teacher-model', 't']
+                      + config(tmp_path, cfg))
+    with pytest.raises(iv.ConfigError) as e:
+        rr.Router(a)
+    msg = str(e.value)
+    assert "'nojudge'" in msg and "'other'" in msg and "endpoint 'judge'" not in msg
