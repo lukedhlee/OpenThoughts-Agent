@@ -30,7 +30,7 @@ import os
 import random
 
 os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
-TOKDIR = '/scratch/11584/lukedhlee/models/grug-datakit-sft-20260921'
+TOKDIR = os.environ['SCRATCH'] + '/models/grug-datakit-sft-20260921'
 CAP_TOKENS = 1000    # reasoning_cap.CAP_TOKENS: the renderers cut a turn's reasoning to at most this many tokens
 
 

@@ -2,7 +2,7 @@
 # arm_alerts.sh <run ...> — one line per event worth acting on, for a Monitor: job state change, new tracebacks,
 # a stop-rule trip at any step (q = reward_given_done < .60, tis log-ratio > 0.0736 = 2x gate 5, masked
 # trajectories > 0), and a heartbeat every 6th step. Polls every 60 s. Read-only.
-E=/scratch/11584/lukedhlee/experiments/rl
+E=${SCRATCH:?set SCRATCH (TACC sets it at login)}/experiments/rl
 declare -A ST TB STEP
 while true; do
   for r in "$@"; do

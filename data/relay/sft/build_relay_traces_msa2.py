@@ -36,9 +36,9 @@ import select_kept  # noqa: E402
 import pyarrow as pa  # noqa: E402
 import pyarrow.parquet as pq  # noqa: E402
 
-E = '/scratch/11584/lukedhlee/experiments/relay_msa'
-O = '/scratch/11584/lukedhlee/experiments/sft_data/msa_20261003'
-TOKDIR = '/scratch/11584/lukedhlee/models/grug-datakit-sft-20260921'
+E = os.environ['SCRATCH'] + '/experiments/relay_msa'
+O = os.environ['SCRATCH'] + '/experiments/sft_data/msa_20261003'
+TOKDIR = os.environ['SCRATCH'] + '/models/grug-datakit-sft-20260921'
 SUBMIT = 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'
 STUDENT, TEACHER = 'Grug Datakit 09-21', 'Qwen3.8-27B'
 

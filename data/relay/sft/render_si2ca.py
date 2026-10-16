@@ -74,7 +74,7 @@ from hz_pool_census import CANARY  # noqa: E402
 REPO = 'Self-Improving-Coding-Agents/SI2CA-Training-Trajectories'
 SETTINGS = ('standard', 'full_self_judgement', 'discovered_strategy')
 ARM = 'si2ca'
-RAW = '/scratch/11584/lukedhlee/experiments/sft_data/si2ca_raw'
+RAW = os.environ['SCRATCH'] + '/experiments/sft_data/si2ca_raw'
 MSA_CONFIG = os.path.expanduser('~/snowball/envs/msa-2.4.6/minisweagent/config')
 COLUMNS = ['instance_id', 'curation_strategy', 'source_dataset', 'repo', 'messages', 'resolved', 'reward',
            'n_harness_error_msgs']

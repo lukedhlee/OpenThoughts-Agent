@@ -1,7 +1,7 @@
 #!/bin/bash
 # relay_sft_arm.sh — Horizon port of data/relay/sft/relay_sft_arm.sh: one arm of the 2026-09-28 relay SFT comparison on
 # Grug Datakit 09-21, on the same rows Jupiter trained (private HF lukeleeai/relay-calibforge-jupiter-0928, copied to
-# /scratch/11584/$USER/relay/jupiter_0928/). ARM=relay is arm A (09-21's episodes with Qwen3.8 taking over, every 09-21
+# $SCRATCH/relay/jupiter_0928/). ARM=relay is arm A (09-21's episodes with Qwen3.8 taking over, every 09-21
 # turn masked), ARM=qwen is arm B (Qwen3.8 alone).
 #
 # The recipe is Jupiter's, unchanged: marin stage relay_<ARM> (rows in as ids + loss, no template), the 09-21 import
@@ -26,20 +26,20 @@
 set -uo pipefail
 ARM=${ARM:?relay | qwen}
 case $ARM in
-  relay) ROWS=${ROWS:-/scratch/11584/$USER/relay/jupiter_0928/relay_full_relaym6_20260928/final_v2A_rendered_think16k_clean_afnone.jsonl}
+  relay) ROWS=${ROWS:-$SCRATCH/relay/jupiter_0928/relay_full_relaym6_20260928/final_v2A_rendered_think16k_clean_afnone.jsonl}
          EXPECT=${EXPECT_EPOCH_STEPS:-82};;
-  qwen)  ROWS=${ROWS:-/scratch/11584/$USER/relay/jupiter_0928/relay_full_baseline6m_20260926/final_v2_rendered_think16k_clean.jsonl}
+  qwen)  ROWS=${ROWS:-$SCRATCH/relay/jupiter_0928/relay_full_baseline6m_20260926/final_v2_rendered_think16k_clean.jsonl}
          EXPECT=${EXPECT_EPOCH_STEPS:-49};;
   *) : "${ROWS:?ARM=$ARM needs ROWS=<rendered jsonl> and a marin stage relay_$ARM}"   # a new arm (e.g. the 09-30 experiments)
      EXPECT=${EXPECT_EPOCH_STEPS:-any};;
 esac
 STAGE=relay_$ARM
 OTA=$(cd "$(dirname "$0")/../../../.." && pwd)
-S=${SNOWBALL_SCRATCH:-/scratch/11584/$USER/snowball-sft}
+S=${SNOWBALL_SCRATCH:-$SCRATCH/snowball-sft}
 MARIN=${MARIN_ROOT:-$HOME/snowball/marin-sft}
 MOE=$MARIN/experiments/june_tpu_67b_a2b/moe
 PYM=${MARIN_PYTHON:-$HOME/snowball/envs/marin-grug-sft/bin/python}
-BASE=${BASE_0921:-/scratch/11584/$USER/models/grug-datakit-sft-20260921}
+BASE=${BASE_0921:-$SCRATCH/models/grug-datakit-sft-20260921}
 INIT=${SNOWBALL_INIT:-$S/experiments/snowball-base-inits/init-dk0921-step0}
 WANDB=${WANDB_CLI:-$HOME/snowball/envs/snowball/bin/wandb}
 KEYS=${KEYS:-$HOME/.config/otagent/secrets.env}

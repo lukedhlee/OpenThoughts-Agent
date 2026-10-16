@@ -16,7 +16,7 @@ import os
 import re
 
 os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
-TOKDIR = '/scratch/11584/lukedhlee/models/grug-datakit-sft-20260921'
+TOKDIR = os.environ['SCRATCH'] + '/models/grug-datakit-sft-20260921'
 TC = re.compile(r'<tool_call>\n(.*?)\n</tool_call>', re.S)
 
 

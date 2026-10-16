@@ -2,7 +2,7 @@
 # rl_watch.sh [run name ...] — one status block per Horizon RL run/probe (default: every run dir with a jobs.txt):
 # job state, log age, engine DP placement, train/eval steps logged, trial results written, tracebacks, and the last
 # step's key metrics (tis log_ratio_abs_mean, reward, entropy) from the WANDB_MIRROR lines. Read-only.
-E=/scratch/11584/lukedhlee/experiments/rl
+E=${SCRATCH:?set SCRATCH (TACC sets it at login)}/experiments/rl
 runs=("$@"); [ ${#runs[@]} = 0 ] && runs=($(cd $E && ls -d */jobs.txt 2>/dev/null | cut -d/ -f1))
 for r in "${runs[@]}"; do
   J=$(tail -n 1 $E/$r/jobs.txt 2>/dev/null); L=$E/$r/logs/${r}_$J.out

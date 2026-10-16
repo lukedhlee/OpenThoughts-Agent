@@ -10,12 +10,12 @@
 # Markers in experiments/rl/<arm>/chain/ let a re-run resume. Read-only towards everything it did not start.
 set -uo pipefail
 ARM=${1:?arm}; START_TAG=${2:?start tag}; START=${3:?start export}; STEP=${STEP:-30}
-E=/scratch/11584/lukedhlee/experiments/rl; OTA=$HOME/snowball/ota-rl; RL=$OTA/data/r2egym/horizon/rl
-PY=$HOME/snowball/envs/snowball/bin/python; P=/scratch/11584/lukedhlee/rl_pool
-C=$E/$ARM/chain; mkdir -p $C; LOG=$E/$ARM/chain.log
+E=$SCRATCH/experiments/rl; OTA=$HOME/snowball/ota-rl; RL=$OTA/data/r2egym/horizon/rl
+PY=$HOME/snowball/envs/snowball/bin/python; P=$SCRATCH/rl_pool
+C=$E/$ARM/chain; mkdir -p $C $E/exports/logs; LOG=$E/$ARM/chain.log
 log() { echo "[$(TZ=America/Los_Angeles date '+%F %T PT')] $*" | tee -a $LOG; }
 J=$(tail -n 1 $E/$ARM/jobs.txt); TAG=${ARM//_/}s$STEP; EXP=$E/exports/${ARM}_step$STEP/model
-DRAFT=$(ls -d /scratch/11584/lukedhlee/hf_hub/models--laion--snowball-64k-eagle3-draft-r2egym/snapshots/*)
+DRAFT=$(ls -d $SCRATCH/hf_hub/models--laion--snowball-64k-eagle3-draft-r2egym/snapshots/*)
 log "chain start: arm $ARM job $J, start $START_TAG, tag $TAG"
 
 # 1. arm done
@@ -27,7 +27,7 @@ log "arm ended; checkpoint $STEP present"
 # 2. export
 if [ ! -f $C/exported ]; then
   for try in 1 2; do
-    X=$(cd $OTA && sbatch --parsable --export=ALL,RUN=$ARM,STEP=$STEP,BASE=$START -J rl_export $RL/export_hf.sbatch | tail -n 1 | grep -oE '^[0-9]+')
+    X=$(cd $OTA && sbatch --parsable --export=ALL,RUN=$ARM,STEP=$STEP,BASE=$START -J rl_export -o $E/exports/logs/%x_%j.out $RL/export_hf.sbatch | tail -n 1 | grep -oE '^[0-9]+')
     log "export job $X (try $try)"
     while squeue -h -j "$X" -o %i 2>/dev/null | grep -q .; do sleep 30; done
     grep -q "missing files: \[\]" $E/exports/logs/rl_export_$X.out && grep -q "tensor-name set equal to base: True" $E/exports/logs/rl_export_$X.out && { touch $C/exported; break; }

@@ -1,7 +1,7 @@
 # serve_env.sh — Horizon (TACC, 4x GB200 per node) values for the relay serve knobs of data/relay/pilot/serve_relay.sbatch
 # and serve_node.sh, whose defaults are Jupiter's. Source it on the Horizon login node before sbatch (sbatch exports the
 # environment to the job; srun passes it on to serve_node.sh). Anything already set in the caller's env wins.
-R=${SNOWBALL_ROOT:-$HOME/snowball}; S=${SCRATCH_DIR:-/scratch/11584/$USER}
+R=${SNOWBALL_ROOT:-$HOME/snowball}; S=${SCRATCH_DIR:-${SCRATCH:?set SCRATCH (TACC sets it at login)}}
 _snap() { ls -d $S/hf_hub/models--$1/snapshots/${2:-}* 2>/dev/null | head -1; }
 export SERVE_CODE=$R SERVE_VENV=$R/envs/snowball SERVE_OVERLAY=$R/src/marin_vllm_eagle3 RELAY_EXTRA=$R/envs/relay-extra
 export SERVE_MODULES=""                 # the login env (nvidia/26.9, cuda/13.x) rides along; nothing to load

@@ -12,8 +12,8 @@
 set -uo pipefail
 ARMS=${ARMS:?"tag:stage:epochs ..."}; REPS=${REPS:-1 2 3}; MAXUNITS=${MAXUNITS:-10}; DAYTONA_CAP=${DAYTONA_CAP:-850}
 HERE=$(cd "$(dirname "$0")" && pwd)
-SS=/scratch/11584/$USER/snowball-sft; EXP=$SS/experiments/snowball-relay-sft
-EV=/scratch/11584/$USER/experiments/sft_eval; mkdir -p "$EV"; LOG=$EV/dispatch.log
+SS=$SCRATCH/snowball-sft; EXP=$SS/experiments/snowball-relay-sft
+EV=$SCRATCH/experiments/sft_eval; mkdir -p "$EV"; LOG=$EV/dispatch.log
 DAY=${DAY:-$(date +%Y%m%d)}
 say() { echo "[$(date -u +%FT%TZ)] $*" | tee -a "$LOG"; }
 # a tmux session gets the tmux server's environment, not this shell's: pass the harness settings explicitly

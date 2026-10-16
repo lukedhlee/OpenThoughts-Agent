@@ -3,7 +3,7 @@
 # init, marin commit, lr 5e-5, 3 epochs = 96 steps on 64 ranks. The port gate compares its train loss with Jupiter's
 # (SFT.md). Data: build it first with data/swesmith/kimi_sft_convert.py (SFT.md step 1).
 #   tmux new -d -s sft_kimi "bash data/r2egym/horizon/sft/kimi_ref_lr5e-5.sh"
-S=${SNOWBALL_SCRATCH:-/scratch/11584/$USER/snowball-sft}
+S=${SNOWBALL_SCRATCH:-${SCRATCH:?set SCRATCH (TACC sets it at login)}/snowball-sft}
 export SNOWBALL_STAGE=kimi_swesmith
 export SNOWBALL_PARQUET_LIST=$S/data/kimi_swesmith_v1/parquet.list
 export SNOWBALL_DATASET_ID=open-athena/Kimi-2.5-swesmith-sandboxes-with_tests-oracle_verified_120s-maxeps-32k

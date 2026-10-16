@@ -8,7 +8,7 @@
 set -uo pipefail
 [ $# -ge 1 ] || { echo "usage: push_rollouts.sh <run name> ..."; exit 2; }
 HERE=$(cd "$(dirname "$0")" && pwd)
-S=${SCRATCH_DIR:-/scratch/11584/$USER}
+S=${SCRATCH_DIR:-$SCRATCH}
 PY=${PY:-$HOME/snowball/envs/snowball/bin/python}
 E=${E:-${RELAY_EXP_DIR:-$S/experiments/relay/pilot}}; JOBS_ROOT=${JOBS_ROOT:-$S/experiments/relay/jobs}
 REPO=${REPO:-lukeleeai/relay-rollouts-horizon}; CHUNK=${CHUNK:-500}; STAGE=${STAGE:-$S/relay/push_stage}

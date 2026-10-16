@@ -5,15 +5,15 @@
 # --gpu-memory-utilization 0.80 (headroom for the 8192 x 128k fp32 prompt-logprob tensors; KV size only, numerics
 # unchanged). Both deltas are identical in gate2_jupiter.sbatch. ~0.35 node-hours; exits when the scores are written.
 #
-#   sbatch data/r2egym/horizon/gate2_horizon.sbatch        (from ~/snowball/ota; set at $S/horizon_gates/gate2_set.jsonl)
+#   sbatch -o $SCRATCH/horizon_gates/logs/%x.%j.out data/r2egym/horizon/gate2_horizon.sbatch   (from ~/snowball/ota; set at $S/horizon_gates/gate2_set.jsonl)
 #SBATCH -J sb_gate2
 #SBATCH -A CCR24067
 #SBATCH -p debug
 #SBATCH -N 1
 #SBATCH -t 00:45:00
-#SBATCH -o /scratch/11584/lukedhlee/horizon_gates/logs/%x.%j.out
+#SBATCH -o %x.%j.out
 set -uo pipefail
-ROOT=${ROOT:-$HOME/snowball}; S=/scratch/11584/$USER
+ROOT=${ROOT:-$HOME/snowball}; S=$SCRATCH
 OTA=${SLURM_SUBMIT_DIR:-$ROOT/ota}
 PY=$ROOT/envs/snowball/bin/python
 export PYTHONPATH=$ROOT/src/marin_vllm_eagle3${PYTHONPATH:+:$PYTHONPATH}   # the EAGLE-3 overlay shadows the venv's vllm

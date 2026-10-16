@@ -11,13 +11,12 @@
 # Cost for the Kimi reference (96 steps): prep 1 node ~15 min, gate 2 nodes ~5 min, import 4 nodes ~15 min,
 # run 16 nodes ~25 min, export 4 nodes ~10 min -> about 9 node-hours.
 set -uo pipefail
-U=${USER}
-S=${SNOWBALL_SCRATCH:-/scratch/11584/$U/snowball-sft}
+S=${SNOWBALL_SCRATCH:-$SCRATCH/snowball-sft}
 C=${CODE_ROOT:-$HOME/snowball}
 export MARIN_ROOT=${MARIN_ROOT:-$C/marin-sft}
 export MARIN_PYTHON=${MARIN_PYTHON:-$C/envs/marin-grug-sft/bin/python}
 export SNOWBALL_SCRATCH=$S
-TOK=${SNOWBALL_TOKENIZER:-$(ls -d /scratch/11584/$U/hf_hub/models--laion--snowball-67b-a2b-sft-s3-nemotron-terminal-step1888/snapshots/* | head -1)}
+TOK=${SNOWBALL_TOKENIZER:-$(ls -d $SCRATCH/hf_hub/models--laion--snowball-67b-a2b-sft-s3-nemotron-terminal-step1888/snapshots/* | head -1)}
 EPOCHS=${EPOCHS:-3}
 # The stage selects the marin STAGES entry (dataset pin, step ceiling). r2egym keeps its original paths;
 # any other stage (e.g. kimi_swesmith) gets its own experiment dir and must name its parquet list and the

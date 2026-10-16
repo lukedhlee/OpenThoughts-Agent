@@ -4,11 +4,12 @@ in the run dir's jobs.txt, later jobs win on a repeated step). Columns are the i
 raw reward, q = reward given done, mixed-group fraction, mean tokens per trajectory, masked trajectories, step seconds.
 Stop rules (STATUS): q < .60 at two consecutive steps with a flat finish rate = collapse; tis > 2x gate 5's 0.0368."""
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
-E = Path('/scratch/11584/lukedhlee/experiments/rl')
+E = Path(os.environ['SCRATCH'], 'experiments/rl')
 COLS = [('tis', 'policy/tis/log_ratio_abs_mean', '{:.4f}'), ('entropy', 'policy/policy_entropy', '{:.3f}'),
         ('reward', 'reward/avg_raw_reward', '{:.3f}'), ('q', 'diag/reward_given_done', '{:.3f}'),
         ('mixed', 'diag/frac_groups_mixed', '{:.2f}'), ('tokens', 'generate/avg_num_tokens', '{:.0f}'),

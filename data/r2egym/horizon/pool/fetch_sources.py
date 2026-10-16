@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fetch_sources.py: pull only the columns the clean-pool build needs from the public HF datasets (login node, CPU only).
 
-Writes into --out (default /scratch/11584/lukedhlee/rl_pool/src):
+Writes into --out (default $SCRATCH/rl_pool/src):
   coderforge_images.tsv   split, image, reward  (every row of every CoderForge-Preview `trajectories/` split; image column only
                           plus reward, read by parquet column projection over HfFileSystem)
   r2egym_v1.parquet       repo_name, docker_image, commit_hash, problem_statement  (R2E-Gym/R2E-Gym-V1)
@@ -15,7 +15,7 @@ import pyarrow as pa, pyarrow.parquet as pq
 from huggingface_hub import HfFileSystem
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--out", default="/scratch/11584/lukedhlee/rl_pool/src")
+ap.add_argument("--out", default=f"{os.environ['SCRATCH']}/rl_pool/src")
 ap.add_argument("--workers", type=int, default=6)
 a = ap.parse_args()
 os.makedirs(a.out, exist_ok=True)

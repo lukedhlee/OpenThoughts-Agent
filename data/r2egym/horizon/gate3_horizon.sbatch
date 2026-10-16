@@ -6,15 +6,15 @@
 # (laion/snowball-64k-eagle3-draft-r2egym == the reference's release dir, sha256 538e6800), so one job gives two
 # independent acceptance readings. ~0.5 node-hours with the think probe; exits when done.
 #
-#   sbatch data/r2egym/horizon/gate3_horizon.sbatch        (from ~/snowball/ota; replay at $S/horizon_gates/replay_b28k.jsonl)
+#   sbatch -o $SCRATCH/horizon_gates/logs/%x.%j.out data/r2egym/horizon/gate3_horizon.sbatch   (from ~/snowball/ota; replay at $S/horizon_gates/replay_b28k.jsonl)
 #SBATCH -J sb_gate3
 #SBATCH -A CCR24067
 #SBATCH -p debug
 #SBATCH -N 1
 #SBATCH -t 00:50:00
-#SBATCH -o /scratch/11584/lukedhlee/horizon_gates/logs/%x.%j.out
+#SBATCH -o %x.%j.out
 set -uo pipefail
-ROOT=${ROOT:-$HOME/snowball}; S=/scratch/11584/$USER
+ROOT=${ROOT:-$HOME/snowball}; S=$SCRATCH
 OTA=${OTA:-$ROOT/ota}
 TK=${TOOLKIT:-$ROOT/grugmoe-eagle3}   # github.com/lukedhlee/grugmoe-eagle3 @ 8b1558ba (tools/spec_decode is untracked in OTA)
 PY=$ROOT/envs/snowball/bin/python

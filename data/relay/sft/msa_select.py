@@ -31,7 +31,7 @@ PER_TASK = 2
 OUTCOME = 'any'
 SUBMIT = 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'
 TOKENIZER = None    # set by --ends-submit
-TOKDIR = '/scratch/11584/lukedhlee/models/grug-datakit-sft-20260921'
+TOKDIR = os.environ['SCRATCH'] + '/models/grug-datakit-sft-20260921'
 
 
 def ends_submit(r):

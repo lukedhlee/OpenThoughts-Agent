@@ -22,7 +22,7 @@ Held-out: ~10 % of clean (>= --min-heldout), largest-remainder per repo, clean v
 import argparse, collections, csv, json, os, random, re
 import pyarrow.parquet as pq
 
-R = "/scratch/11584/lukedhlee/rl_pool"
+R = f"{os.environ['SCRATCH']}/rl_pool"
 ap = argparse.ArgumentParser()
 ap.add_argument("--root", default=R)
 ap.add_argument("--map", default=os.path.expanduser("~/OpenThoughts-Agent-rl/data/r2egym/overlap/tasktrove_v3_upstream_map.tsv"))

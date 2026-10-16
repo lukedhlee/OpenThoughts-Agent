@@ -69,8 +69,8 @@ def summarize(ts):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--tags', nargs='+', required=True, help='tag@day')
-    ap.add_argument('--jobs', default=f"/scratch/11584/{os.environ.get('USER')}/experiments/sft_eval/tb2_jobs")
-    ap.add_argument('--tokenizer-dir', default='/scratch/11584/lukedhlee/models/grug-datakit-sft-20260921')
+    ap.add_argument('--jobs', default=f"{os.environ['SCRATCH']}/experiments/sft_eval/tb2_jobs")
+    ap.add_argument('--tokenizer-dir', default=f"{os.environ['SCRATCH']}/models/grug-datakit-sft-20260921")
     ap.add_argument('--out')
     a = ap.parse_args()
     from tokenizers import Tokenizer
