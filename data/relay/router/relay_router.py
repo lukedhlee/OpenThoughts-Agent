@@ -267,6 +267,9 @@ class Episode:
         self.prev_owner = None            # who answered the previous request
         self.rejected = {}                # turn -> the student's discarded reply (show_rejected_reply)
         self.ended = set()                # interventions whose hand-back the router has applied
+        self.hooks = {}                   # --trigger-config: a trigger's endpoint calls (Event.extra post / call_endpoint)
+        self.pending_calls = []           # endpoint calls done, to log on the record of the request that awaited them
+        self.last_ev = None               # the latest main request's Event (a prefetch builds the next one from it)
 
     def summary(self):
         return dict(episode=self.idx, sid=self.sid, task_id=(self.task or {}).get('task_id'), owner=self.owner,
@@ -302,7 +305,7 @@ class Router:
         self.msa = a.harness == 'msa'
         self.note_text = a.verify_note_text or (VERIFY_NOTE_MSA if self.msa else VERIFY_NOTE if a.mode == 'relay'
                                                 else VERIFY_NOTE_OWN)
-        cfg = iv.load_config(a.trigger_config) if a.trigger_config else None
+        cfg = rtg.load_trigger_config(a.trigger_config) if a.trigger_config else None
         self.parser = self.parser_path = self.parser_sha = None
         if (a.repair_on_parse_error or a.teacher_format_guard or rtg.wants_parser(cfg and cfg[1])) and not self.msa:
             # msa: msa_tool.py's checks
@@ -323,6 +326,9 @@ class Router:
         for name, (urls, model) in self.endpoints.items():
             self.urls[name], self.models[name] = urls, model
         self.need = self.need + tuple(self.endpoints)
+        # texts only the teacher sees: a judge scrubs them from its view (Event.extra['teacher_only'])
+        self.teacher_only = [t for t in [self.note_text, a.teacher_hint_text, REJECTED_NOTE] +
+                             [s.teacher_note for s in self.trigger_specs] if t]
         self.episodes = {}
         self.by_first = {}
         self.n_episodes = 0
@@ -458,6 +464,8 @@ class Router:
             self.n_episodes += 1
             ep = Episode(sid, self.n_episodes, first, task, 'teacher' if self.mode == 'teacher' else 'student')
             ep.ctl = iv.Controller(self.trigger_policy, self.trigger_specs, initial_owner=ep.owner)
+            if self.a.trigger_config:
+                ep.hooks = self.endpoint_hooks(ep)
             if self.msa:
                 ep.sc = rt.EpisodeScanner(None)   # its tool-calling turns parse as harness 'tools'
             ep.student_think = self.a.student_think
@@ -925,7 +933,7 @@ class Router:
         if held:
             ep.ctl.pending = None
         n0 = len(ep.ctl.records)
-        r0 = await ep.ctl.begin_request(ev)
+        r0 = await self.ask(ep, rec, ep.ctl.begin_request(ev))
         if held:
             ep.ctl.pending = held
         rb = ep.ctl.records[n0:]          # begin_request's fires (its routing carries none)
@@ -939,7 +947,7 @@ class Router:
         # request-time triggers, before the student is asked: the teacher claimed done in a repair turn, so it answers
         # Terminus-2's confirmation (repair_confirm, then the student resumes); environment triggers; context_budget
         # (the student's own view of this request, counted)
-        r = await ep.ctl.on_request(ev)
+        r = await self.ask(ep, rec, ep.ctl.on_request(ev))
         rt_ = self.routed(ep, r, r0, len(rb), rec, t, now)
         if rt_ is not None:
             return await self.answer(ep, 'teacher', body, messages, rec, main=True, ev=ev,
@@ -1007,7 +1015,7 @@ class Router:
             return self.synthetic(ep, rec)
         ev = self.request_event(ep, body, messages, rec, t, now, kind, retry)
         n0 = len(ep.ctl.records)
-        r0 = await ep.ctl.begin_request(ev)
+        r0 = await self.ask(ep, rec, ep.ctl.begin_request(ev))
         rb = ep.ctl.records[n0:]          # begin_request's fires (its routing carries none)
         self.begun(ep, r0, rb, rec, t, now, kind)
         if self.a.budget_mode == 'on' and ep.task and ep.task.get('budget_sec'):
@@ -1018,7 +1026,7 @@ class Router:
         # request-time triggers, before the student is asked: environment triggers, context_budget, time_budget (sticky:
         # the student would otherwise spend the task's clock without submitting; guided relay 10-07: 13 % of episodes
         # ended on the agent timeout with the student still in control, pass 14 %), assist (one teacher turn)
-        r = await ep.ctl.on_request(ev)
+        r = await self.ask(ep, rec, ep.ctl.on_request(ev))
         rt_ = self.routed(ep, r, r0, len(rb), rec, t, now)
         if rt_ is not None:
             return await self.answer(ep, 'teacher', body, messages, rec, main=True, ev=ev,
@@ -1086,27 +1094,79 @@ class Router:
         task = ep.task or {}
         extra = dict(request_kind=kind, task_id=task.get('task_id'), harness=self.a.harness)
         if self.a.trigger_config:
-            extra['call_endpoint'] = self.endpoint_caller(ep, rec)
-        return iv.Event('request', t, is_retry=retry, messages=messages, last_result=ep.last_result, scanner=ep.sc,
-                        clock=iv.Clock(self.clock(ep, now), task.get('budget_sec') or None),
-                        view_tokens=view_tokens, extra=extra)
+            extra.update(ep.hooks, teacher_only=self.teacher_only, sid=ep.sid, seq=ep.n_requests)
+        ep.last_ev = iv.Event('request', t, is_retry=retry, messages=messages, last_result=ep.last_result, scanner=ep.sc,
+                              clock=iv.Clock(self.clock(ep, now), task.get('budget_sec') or None),
+                              view_tokens=view_tokens, extra=extra)
+        return ep.last_ev
 
-    def endpoint_caller(self, ep, rec):
-        """Event.extra['call_endpoint'](name, body) -> the parsed chat.completions response from a named endpoint (an
-        LLM judge's call): the router fills the served model name, pins and fails over as for the teacher, pauses the
-        agent clock while the call is in flight, and logs it (rec endpoint_calls). rtg.EndpointError on no answer."""
-        async def call(name, body):
+    def endpoint_hooks(self, ep):
+        """--trigger-config: a trigger's calls to named model endpoints (Event.extra). post(name, path, body, *,
+        timeout_s=None) -> (status, body bytes): the router's own post() with the episode's pinning and failover, the
+        endpoint's served model name always filled in, the body otherwise as given. call_endpoint(name, body, *,
+        timeout_s=None) -> the parsed chat.completions response, or interventions.EndpointError. timeout_s bounds the
+        whole call, failover retries included (EndpointError with timeout). Every call, cancelled ones included, is
+        logged (endpoint_calls) on the record of the request that awaited it. The agent clock is paused around the
+        Controller's calls (ask()), not here: a call prefetched while the tool runs costs the agent nothing."""
+        async def post(name, path, body, *, timeout_s=None):
             if name not in self.urls:
-                raise rtg.EndpointError(name, None, f'no endpoint {name!r}; known {sorted(self.urls)}')
-            t1 = time.time()
-            status, data = await self.post(name, '/chat/completions', dict(body, model=self.models[name]), ep)
+                raise iv.EndpointError(name, None, f'no endpoint {name!r}; known {sorted(self.urls)}')
+            t1, out = time.time(), 'cancelled'
+            try:
+                co = self.post(name, path, dict(body, model=self.models[name]), ep)
+                status, data = await (asyncio.wait_for(co, timeout_s) if timeout_s else co)
+                out = status
+                return status, data
+            except asyncio.TimeoutError:
+                out = 'timeout'
+                raise iv.EndpointError(name, None, f'no answer in {timeout_s} s', timeout=True) from None
+            finally:
+                ep.pending_calls.append(dict(name=name, path=path, status=out, latency_sec=round(time.time() - t1, 3)))
+
+        async def call_endpoint(name, body, *, timeout_s=None):
+            status, data = await post(name, '/chat/completions', body, timeout_s=timeout_s)
+            if status != 200:
+                raise iv.EndpointError(name, status, data[:2000].decode('utf-8', 'replace'))
+            return json.loads(data)
+        return dict(post=post, call_endpoint=call_endpoint)
+
+    async def ask(self, ep, rec, aw):
+        """A Controller call (its triggers may wait on a judge). Under --trigger-config the agent clock is paused while
+        the request waits on it (rec trigger_wait_sec), and the endpoint calls it awaited go on this record."""
+        if not self.a.trigger_config:
+            return await aw
+        t1 = time.time()
+        try:
+            return await aw
+        finally:
             dt = time.time() - t1
             ep.paused_sec += dt
-            rec.setdefault('endpoint_calls', []).append(dict(name=name, status=status, latency_sec=round(dt, 3)))
-            if status != 200:
-                raise rtg.EndpointError(name, status, data[:2000].decode('utf-8', 'replace'))
-            return json.loads(data)
-        return call
+            rec['trigger_wait_sec'] = round(rec.get('trigger_wait_sec', 0.0) + dt, 3)
+            if ep.pending_calls:
+                rec.setdefault('endpoint_calls', []).extend(ep.pending_calls)
+                ep.pending_calls = []
+
+    def prefetch(self, ep, msg, t):
+        """--trigger-config, after a main request is answered: request-time triggers that can prefetch (an LLM judge)
+        start the next request's ask now, so it runs alongside the tool, and observe() at turn t + 1 awaits it. The
+        prefetched view ends at the reply just returned: the next request's result is not in it (last_result None).
+        Only when the student answers next (no span or pending intervention)."""
+        ev = ep.last_ev
+        if ev is None or ep.ctl.owner != 'student' or ep.ctl.pending is not None:
+            return
+        specs = [x for x in ep.ctl.specs if 'request' in x.phases and 'student' in x.owners
+                 and callable(getattr(x.trigger, 'prefetch', None))]
+        if not specs:
+            return
+
+        async def no_count():
+            return None
+        nxt = dataclasses.replace(ev, phase='request', turn=t + 1, is_retry=False, owner='student',
+                                  messages=list(ev.messages) + [dict(msg)], last_result=None, reply=None,
+                                  view_tokens=no_count, interventions=tuple(ep.ctl.interventions),
+                                  extra=dict(ev.extra, request_kind='main', seq=ep.n_requests + 1))
+        for x in specs:
+            x.trigger.prefetch(nxt)
 
     @staticmethod
     def trigger_of(ep, name):
@@ -1256,8 +1316,8 @@ class Router:
                 rec['would_fire'] = [dict(trigger=f['trigger'], reason=f.get('reason'))
                                      for f in ep.sc.current_fires(view, self.cfg)]
         # reply-time triggers: parse_repair (--repair-on-parse-error), done_claim (the submit), the decision triggers
-        r = await ep.ctl.on_reply(dataclasses.replace(ev, phase='reply', reply=iv.Reply(
-            text_of(served.get('content')), view, err or None)))
+        r = await self.ask(ep, rec, ep.ctl.on_reply(dataclasses.replace(ev, phase='reply', reply=iv.Reply(
+            text_of(served.get('content')), view, err or None))))
         self.log_routing(rec, r.records)
         if r.who == 'teacher':
             self.started(ep, r.intervention, t)
@@ -1398,8 +1458,8 @@ class Router:
                 rec['would_fire'] = [dict(trigger=f['trigger'], reason=f.get('reason'))
                                      for f in ep.sc.current_fires(content, self.cfg)]
         # reply-time triggers: parse_repair (Terminus-2's parser rejects the reply), the decision triggers, done_claim
-        r = await ep.ctl.on_reply(dataclasses.replace(ev, phase='reply', reply=iv.Reply(
-            content, None if perr else rt.parse_reply(content, 'terminus2'), perr)))
+        r = await self.ask(ep, rec, ep.ctl.on_reply(dataclasses.replace(ev, phase='reply', reply=iv.Reply(
+            content, None if perr else rt.parse_reply(content, 'terminus2'), perr))))
         self.log_routing(rec, r.records)
         if r.who == 'teacher':
             self.started(ep, r.intervention, t)
@@ -1553,7 +1613,8 @@ class Router:
             content = text_of(msg.get('content'))
             action = (rt.tool_reply(msg) if msg.get('tool_calls') else None) if self.msa else \
                 rt.parse_reply(content, 'terminus2')
-            r = await ep.ctl.on_reply(dataclasses.replace(ev, phase='reply', reply=iv.Reply(content, action)))
+            r = await self.ask(ep, rec, ep.ctl.on_reply(dataclasses.replace(ev, phase='reply',
+                                                                            reply=iv.Reply(content, action))))
             self.log_routing(rec, r.records)
         return self.finish(ep, who, resp, rec, t, main=main)
 
@@ -1677,6 +1738,8 @@ class Router:
         if main:
             ep.pending_reply = content
             ep.owners.append((t, who))
+            if self.a.trigger_config and who in ('student', 'teacher') and t is not None:
+                self.prefetch(ep, msg, t)
         rec.update(content_sha=sha(content), usage=resp.get('usage'), finish_reason=resp['choices'][0].get('finish_reason'),
                    served_model=resp.get('model'), response=resp)
         self.log(rec)

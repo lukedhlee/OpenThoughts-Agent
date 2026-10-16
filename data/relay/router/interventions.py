@@ -1496,5 +1496,15 @@ class _Stub:
 
 @builtin
 class LlmJudge(_Stub):
-    """An LLM reads the recent turns and scores "stuck / about to fail" (stage 4)."""
+    """An LLM reads the recent turns and scores "stuck / about to fail" (stage 4): judge.LlmJudge, once judge.register()
+    has run (the router registers it while it loads a --trigger-config)."""
     name, phases, stage = 'llm_judge', frozenset(PHASES), 4
+
+
+class EndpointError(RuntimeError):
+    """A named model endpoint the router calls for a trigger (Event.extra['call_endpoint']) gave no answer: status (an
+    HTTP status, or None when unreachable or timed out) and text. timeout: the call's timeout_s ran out."""
+
+    def __init__(self, name, status, text, timeout=False):
+        super().__init__(f"endpoint {name!r}: {'timed out' if timeout else f'HTTP {status}'}: {text[:300]}")
+        self.name, self.status, self.text, self.timeout = name, status, text, timeout
