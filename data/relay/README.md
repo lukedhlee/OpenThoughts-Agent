@@ -18,7 +18,7 @@ it is a job.
 
 | | what | how |
 |---|---|---|
-| 1 | Horizon onboarding: login, tmux, `hf`, `tunnel.sh`, storage rules | `docs/horizon/ONBOARDING.md`. It ends with this repo cloned at `~/snowball/ota` (tag `relay-v1`). The scripts expect that path. |
+| 1 | Horizon onboarding: login, tmux, `hf`, `tunnel.sh`, storage rules | `docs/horizon/ONBOARDING.md`. It ends with this repo cloned at `~/snowball/ota` (tag `relay-v1.1`). The scripts expect that path. |
 | 2 | The snowball venv (`~/snowball/envs/snowball`, vLLM for GB200) | the commands below; about 5 min on the login node, then about 35 min in one job (Luke's 09-29 times) |
 | 3 | The relay additions: python-socks for the driver's bridge, `envs/relay-extra` (torchvision for the teacher), `envs/msa-2.4.6` (mini-swe-agent), and the teacher, EAGLE-3 draft and Stage-3 models in `$SCRATCH/hf_hub` (about 150 GB) | `bash ~/snowball/ota/data/relay/horizon/build_relay_env.sh` on the login node, after step 2 |
 | 4 | The 09-21 base, used as the student and as the SFT base | the `hf download` below. Step 3 does not fetch it. |

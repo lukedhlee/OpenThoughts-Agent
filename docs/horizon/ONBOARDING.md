@@ -232,11 +232,11 @@ stays `PENDING`, run `squeue -j $J -o %R` to see why. The cluster is often busy.
 
 ## 8. Get Luke's code (for the relay recipes)
 
-**(Claude)** Clone Luke's public fork at the tag `relay-v1`. The working branch moves fast, so always use the tag.
+**(Claude)** Clone Luke's public fork at the tag `relay-v1.1` (or the newest `relay-v*` tag Luke announces). The working branch moves fast, so always use a tag.
 The scripts expect the checkout at `~/snowball/ota` and build their environments under `~/snowball/envs`:
 
 ```bash
-git clone --filter=blob:none -b relay-v1 https://github.com/lukedhlee/OpenThoughts-Agent.git ~/snowball/ota
+git clone --filter=blob:none -b relay-v1.1 https://github.com/lukedhlee/OpenThoughts-Agent.git ~/snowball/ota
 ```
 
 The scripts find your directories through `$SCRATCH` and `$HOME`, so nothing in them needs editing. Then follow
