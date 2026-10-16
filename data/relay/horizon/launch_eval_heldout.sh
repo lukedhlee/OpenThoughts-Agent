@@ -16,7 +16,7 @@ set -uo pipefail
 SERVE_JOB=${1:?serve job id}; NAME=${2:?run name}; MODE=${3:-full}
 HERE=$(cd "$(dirname "$0")" && pwd); OTA=$(cd $HERE/../../.. && pwd)
 [ -f $HERE/serve_env.sh ] && source $HERE/serve_env.sh
-S=${SCRATCH_DIR:-$SCRATCH}
+S=${SCRATCH_DIR:-${SCRATCH:?set SCRATCH (TACC sets it at login)}}
 export E=${E:-${RELAY_EXP_DIR:-$S/experiments/relay/pilot}}; LOGS=$E/logs; mkdir -p $LOGS $E/runs
 [ -e $E/runs/$NAME ] && { echo "$E/runs/$NAME exists; pick a new run name"; exit 1; }
 # relay-only knobs: leave them to run_pilot.sh's defaults (off)

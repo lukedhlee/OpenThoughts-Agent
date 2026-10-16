@@ -16,7 +16,7 @@ set -euo pipefail
 JOB=${1:?serve job id}; NAME=${2:?run name}; MODE=${3:-full}
 HERE=$(cd "$(dirname "$0")" && pwd); OTA=$(cd $HERE/../../.. && pwd); JP=$OTA/data/tb2/jupiter
 source $OTA/data/relay/horizon/serve_env.sh   # RELAY_EXP_DIR: where serve_relay.sbatch writes its endpoint files
-S=${SCRATCH_DIR:-$SCRATCH}
+S=${SCRATCH_DIR:-${SCRATCH:?set SCRATCH (TACC sets it at login)}}
 E=${TB2_EXP_DIR:-$S/experiments/tb2}; JOBS=${JOBS:-$S/experiments/tb2_jobs}; mkdir -p $E/runs $E/logs $JOBS
 PY=${PY:-$HOME/snowball/envs/snowball/bin/python}
 KEYF=${KEYF:-$HOME/.config/otagent/daytona_eval.env}
