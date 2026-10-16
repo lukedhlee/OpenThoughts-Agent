@@ -181,3 +181,29 @@ def test_stage_copies_the_config_and_its_triggers(tmp_path):
     (src / 'typo.yaml').write_text('triggers: [{use: lop}]\n')
     with pytest.raises(iv.ConfigError, match='no built-in'):
         rtg.stage_config(str(src / 'typo.yaml'), str(tmp_path / 'run4'))
+
+
+def test_stage_refuses_a_trigger_outside_the_config_s_directory_or_a_write_outside_the_copy(tmp_path):
+    """Checked before anything is written: `..` out of the config's directory, a symlinked directory that leads out of
+    it, and a path that stays in it but would be copied outside <run>/trigger_config (`..` through a symlink)."""
+    cfg, out = tmp_path / 'cfg', tmp_path / 'elsewhere'
+    (cfg / 'plugins').mkdir(parents=True)
+    (cfg / 'deep' / 'er').mkdir(parents=True)
+    out.mkdir()
+    for d in (cfg / 'plugins', cfg, out):
+        (d / 'mine.py').write_text(PLUGIN)
+    (cfg / 'linked').symlink_to(out, target_is_directory=True)
+    (cfg / 'link').symlink_to(cfg / 'deep' / 'er', target_is_directory=True)   # two levels down
+    run = tmp_path / 'run'
+    for name, use, msg in (('up', '../elsewhere/mine.py', "outside the config's directory"),
+                           ('sym', 'linked/mine.py', "outside the config's directory"),
+                           ('dest', 'link/../../mine.py', 'would be copied to')):
+        (cfg / f'{name}.yaml').write_text(f'triggers: [{{use: "{use}:EveryOther"}}, {{use: loop}}]\n')
+        with pytest.raises(iv.ConfigError, match=msg) as e:
+            rtg.stage_config(str(cfg / f'{name}.yaml'), str(run / 'trigger_config'))
+        assert f'use: {use}:EveryOther' in str(e.value), name           # names the entry
+        assert not run.exists(), name                                     # nothing written
+    (cfg / 'ok.yaml').write_text('triggers: [{use: "plugins/../plugins/mine.py:EveryOther"}]\n')   # `..` that stays in
+    copy = rtg.stage_config(str(cfg / 'ok.yaml'), str(run / 'trigger_config'))
+    assert (run / 'trigger_config' / 'plugins' / 'mine.py').read_text() == PLUGIN and copy.endswith('ok.yaml')
+    assert sorted(p.name for p in run.iterdir()) == ['trigger_config']
