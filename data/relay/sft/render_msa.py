@@ -221,7 +221,7 @@ def one_run(run):
         try:
             msgs = json.load(open(up))['messages']
             traj_text = open(up).read()
-            row = render(msgs, recs[c['sid']], tok, tpl, BOS, strip_after_takeover=strip)
+            row = render(msgs, recs[c['sid']], tok, tpl, BOS, cap=CAP, strip_after_takeover=strip)
         except (OSError, ValueError, KeyError) as e:
             stats['render_error: ' + str(e)[:60]] += 1
             continue
@@ -250,15 +250,18 @@ def one_run(run):
 
 
 def main():
-    global TOKDIR, BOS, ARM
+    global TOKDIR, BOS, ARM, CAP
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--runs', nargs='+', required=True)
     ap.add_argument('--tokenizer-dir', required=True)
     ap.add_argument('--out-dir', required=True)
     ap.add_argument('--arm', default=ARM)
     ap.add_argument('--procs', type=int, default=4)
+    ap.add_argument('--cap', type=int, default=rcap.CAP_TOKENS,
+                    help="reasoning cap in tokens for every teacher turn but the last (default reasoning_cap's 1,000); a "
+                         "huge value keeps each turn's reasoning whole, so it is trained when within THINK_LIMIT")
     a = ap.parse_args()
-    TOKDIR, ARM = a.tokenizer_dir, a.arm
+    TOKDIR, ARM, CAP = a.tokenizer_dir, a.arm, a.cap
     bos = json.load(open(os.path.join(TOKDIR, 'tokenizer_config.json'))).get('bos_token', '<|begin_of_text|>')
     BOS = bos.get('content') if isinstance(bos, dict) else bos
     os.makedirs(a.out_dir, exist_ok=True)
@@ -290,6 +293,7 @@ def main():
 
 
 TOKDIR = BOS = None
+CAP = rcap.CAP_TOKENS  # --cap; one_run passes it to render()
 
 if __name__ == '__main__':
     main()
