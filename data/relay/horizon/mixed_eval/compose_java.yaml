@@ -1,0 +1,6 @@
+services:
+  main:
+    build:
+      network: host
+    cpus: 4.0
+    mem_limit: 8g
