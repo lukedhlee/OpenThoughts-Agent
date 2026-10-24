@@ -98,7 +98,8 @@ if [ ! -f "$R/serve.job" ]; then
     rc=$?
     set -e
     if [ "$rc" = 75 ]; then sleep 30; continue; fi
-    [ "$rc" = 0 ] && [[ "$job" =~ ^[0-9]+$ ]]
+    [ "$rc" = 0 ] || { echo "Serving submission failed: $job" >&2; exit "$rc"; }
+    [[ "$job" =~ ^[0-9]+$ ]] || { echo "Invalid serving job ID: $job" >&2; exit 1; }
     break
   done
   echo "$job" > "$R/serve.job"
