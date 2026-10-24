@@ -53,7 +53,7 @@ AGENT=${AGENT:-terminus2}           # terminus2 | msa
 if [ "$AGENT" = msa ]; then
   HARBOR_SRC=${HARBOR_SRC:-$C/harbor-mini-swe-relay/src}
   HARBOR_SHA=${HARBOR_SHA:?HARBOR_SHA = the lukedhlee/mini-swe-relay commit at HARBOR_SRC}   # marin-community/harbor
-  MSA_DIR=${MSA_DIR:-$C/envs/msa-2.4.6}; JOB_TEMPLATE=relay_msa.yaml
+  MSA_DIR=${MSA_DIR:-$C/envs/msa-2.4.6}; JOB_TEMPLATE=${MSA_JOB_TEMPLATE:-relay_msa.yaml}
 else
   HARBOR_SRC=${HARBOR_SRC:-$C/harbor-terminus2-relay/src}
   HARBOR_SHA=${HARBOR_SHA:-89098635}          # marin-community/harbor lukedhlee/terminus2-relay
@@ -236,7 +236,7 @@ done
 log "routers ready: $(for arm in $ARMS; do printf '%s:%s ' $arm ${PORT[$arm]}; done)"
 
 # ---- 4. harbor ------------------------------------------------------------------------------------------------------
-export PYTHONPATH=$HARBOR_SRC${MSA_DIR:+:$MSA_DIR}
+export PYTHONPATH=$HARBOR_SRC${MSA_DIR:+:$MSA_DIR}${RELAY_EXTRA_PYTHONPATH:+:$RELAY_EXTRA_PYTHONPATH}
 for arm in $ARMS; do
   CFG=$R/${NAME}_$arm.yaml
   sed "s#__JOB_NAME__#${NAME}_$arm#; s#__JOBS_DIR__#$JOBS_ROOT#; s#__API_BASE__#http://127.0.0.1:${PORT[$arm]}/v1#; s#__CONC__#$CONC#; s#__MAX_INPUT__#$MAX_INPUT#; s#__MAX_OUTPUT__#$MAX_OUTPUT#; s#__AGENT_MULT__#$AGENT_MULT#; s#interleaved_thinking: true#interleaved_thinking: $MSA_INTERLEAVED#" $HERE/$JOB_TEMPLATE > $CFG
