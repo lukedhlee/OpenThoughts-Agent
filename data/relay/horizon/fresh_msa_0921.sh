@@ -64,6 +64,12 @@ if [ ! -f "$R/manifest.json" ]; then
   done
   grep -q FRESH_MSA_SELECTION_OK "$R/logs/prepare.$job.log"
 fi
+# A completed allocation can precede cross-node NFS metadata visibility.
+for _ in $(seq 1 60); do
+  [ -s "$R/manifest.json" ] && [ -s "$R/tasks.txt" ] && break
+  sleep 2
+done
+test -s "$R/manifest.json" && test -s "$R/tasks.txt"
 "$PY" "$OTA/data/relay/horizon/validate_fresh_msa.py" --root "$R" --harbor "$HB" --ota "$OTA"
 export KEYF=$HOME/.config/otagent/daytona_eval.env
 "$PY" "$OTA/data/calibforge/daytona/snapshot_census.py" --key-file "$KEYF" --tree "$TREE" > "$R/snapshot_census.txt"
