@@ -40,9 +40,11 @@ def main():
     assert first == second and first <= set(pool)
     unused = sorted(set(pool) - first)
     assert len(unused) == 1270
-    selected = random.Random(20261023).sample(unused, 64)
     metadata = json.loads((args.tree / "router_tasks.json").read_text())
     by_id = {row["task_id"]: row for row in metadata}
+    eligible = [task for task in unused if 0 < by_id[task]["agent_timeout_sec"] <= 1800]
+    assert len(eligible) >= 64
+    selected = random.Random(20261023).sample(eligible, 64)
     for task in selected:
         assert (args.tree / task / "task.toml").is_file()
         assert 0 < by_id[task]["agent_timeout_sec"] <= 1800
@@ -50,6 +52,7 @@ def main():
     (args.root / "tasks.txt").write_bytes(payload)
     manifest = dict(
         pool_tasks=2613, previously_matched_tasks=1343, unused_candidates=1270,
+        pilot_budget_eligible_candidates=len(eligible), pilot_max_agent_budget_sec=1800,
         selected_tasks=64, selected_task_ids=selected, seed=20261023,
         heldout_overlap=0, previous_matched_overlap=0, attempts_per_arm=1,
         arms=["control", "relay_repair"], scheduled_slots=128,
