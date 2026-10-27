@@ -403,7 +403,7 @@ def export(args):
         logf = ROOT / "exports" / "logs" / f"export_{run}_s{args.step}_injob{args.in_job}.out"
         log("EXPORT_IN_JOB", run, args.step, args.in_job, nodes[-1], logf)
         with logf.open("w") as f:
-            subprocess.run(["srun", f"--jobid={args.in_job}", "--overlap", "-N1", "-n1", "-w", nodes[-1], "--export=ALL",
+            subprocess.run(["srun", f"--jobid={args.in_job}", "--overlap", "-p", "debug", "-A", "CCR24067", "-t", "01:00:00", "-N1", "-n1", "-w", nodes[-1], "--export=ALL",
                             "bash", HZ / "rl/export_hf.sbatch"], env=env, stdout=f, stderr=subprocess.STDOUT, check=True)
         assert (dst / "model.safetensors.index.json").exists(), dst
         log("EXPORT_DONE", dst)
