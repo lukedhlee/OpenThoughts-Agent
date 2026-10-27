@@ -3,7 +3,7 @@
 
     mixed_rl.py band --arm v7|base    independent readout of that arm's probe, its learnable band, 50:50 source tree
                                       (refuses to overwrite a frozen band or to read a probe still in the queue)
-    mixed_rl.py prepare --arm v7|base render one arm with the shared settings and verify the generated config
+    mixed_rl.py prepare --arm v7|base|vk|rk [--seats N]  render one arm (vk/rk = CF+Kimi, on band_v7) with the shared settings and verify the generated config
     mixed_rl.py launch --arm v7|base  preflight + submit one arm through the booking guard (--suffix r1: retry dir)
     mixed_rl.py heldout --name N --model DIR --ports A,B [--launch]   held-out K=8 probe (start model or RL export)
     mixed_rl.py heldout-report N [N ...]                              per-task held-out outcomes and pass@1
@@ -39,10 +39,14 @@ PROBES = {"base": "probe_mix_base_1026", "v7": "probe_mix_v7_1026"}
 ARMS = {  # launch order: the SFT arm first
     "v7": ("rl_mix_v7_1026", S / "experiments/cf2-epochs57-20261022/training/fdv/export-step959-hf-bf16", "18234,18235"),
     "base": ("rl_mix_base_1026", S / "models/grug-datakit-sft-20260921", "18236,18237"),
+    # Luke 2026-10-26: CF + Kimi SFT checkpoints, no probes of their own, trained on the V7 arm's frozen band
+    "vk": ("rl_mix_vkimi_1026", S / "experiments/vanilla-kimi-fp32-capacity2-20261021/training/vanilla_kimi/export-step630-hf-bf16", "18238,18239"),
+    "rk": ("rl_mix_rkimi_1026", S / "experiments/relay-kimi-fp32-capacity2-20261021/training/relay_kimi/export-step723-hf-bf16", "18240,18241"),
 }
+BAND_OF = {"v7": "v7", "base": "base", "vk": "v7", "rk": "v7"}
 BAND = (1, 6)  # Luke 2026-10-26: learnable = 1-6 solved of 8 (7/8 tasks excluded as near-solved)
 COPIES = 16  # build_band_tree.sh default: one dataloader epoch outlasts 30 steps x 64 groups
-ARM_FLAGS = ["--recipe", "arm", "--policy-nodes", "4", "--engines", "8", "--batch", "64", "--seats", "448",
+ARM_FLAGS = ["--recipe", "arm", "--policy-nodes", "4", "--engines", "8", "--batch", "64",
              "--coords", "16", "--steps", "30", "--wall", "08:00:00", "--ckpt-interval", "6", "--hf-save-interval", "6"]
 # The generated config must carry these (the recipe as the brief states it); anything else drifting is a refusal.
 EXPECT = {
@@ -55,7 +59,7 @@ EXPECT = {
     "generator.sampling_params.top_k": "-1", "generator.engine_init_kwargs.max_model_len": "65536",
     "trainer.policy.grug_query_bias_update_mode": "frozen", "trainer.max_steps": "30", "trainer.train_batch_size": "64",
     "trainer.ckpt_interval": "6", "trainer.hf_save_interval": "6", "trainer.eval_before_train": "false",
-    "terminal_bench_config.harbor.n_concurrent_trials": "448", "terminal_bench_config.harbor.override_storage_mb": "10240",
+    "terminal_bench_config.harbor.override_storage_mb": "10240",
     "trainer.seed": "42",
 }
 
@@ -208,21 +212,22 @@ def arm_name(args):
 
 def prepare(args):
     """Render one arm. A retry gets its own run dir (--suffix r1) so partial attempts are never pooled."""
-    frozen = ROOT / f"band_{args.arm}/FROZEN"
-    assert frozen.exists(), f"freeze band_{args.arm} first"
-    tree = ROOT / f"band_{args.arm}/tree"
+    band_dir = ROOT / f"band_{BAND_OF[args.arm]}"
+    frozen = band_dir / "FROZEN"
+    assert frozen.exists(), f"freeze {band_dir.name} first"
+    tree = band_dir / "tree"
     _, model, ports = ARMS[args.arm]
     name = arm_name(args)
-    models = {k: model_metadata(m) for k, (_, m, _) in ARMS.items()}
-    assert models["base"]["weight_keys"] == models["v7"]["weight_keys"], "tensor names differ"
+    models = {k: model_metadata(m) for k, (_, m, _) in ARMS.items() if k in ("base", args.arm)}
+    assert models["base"]["weight_keys"] == models[args.arm]["weight_keys"], "tensor names differ"
     for key in ["model_type", "architectures", "hidden_size", "intermediate_size", "num_hidden_layers",
                 "num_attention_heads", "num_key_value_heads", "vocab_size"]:
-        assert models["base"]["config"].get(key) == models["v7"]["config"].get(key), key
-    assert models["base"]["tokenizer_sha256"] == models["v7"]["tokenizer_sha256"], "tokenizer differs"
+        assert models["base"]["config"].get(key) == models[args.arm]["config"].get(key), key
+    assert models["base"]["tokenizer_sha256"] == models[args.arm]["tokenizer_sha256"], "tokenizer differs"
     arm = ROOT / name
     if not (arm / "jobs.txt").exists():  # never re-render a submitted arm
         subprocess.run([sys.executable, HZ / "rl/make_arm.py", "--name", name, "--model", model, "--tree", tree,
-                        "--val-tree", MIXED / "heldout_tree", *ARM_FLAGS, "--draft", DRAFT, "--out", ROOT,
+                        "--val-tree", MIXED / "heldout_tree", *ARM_FLAGS, "--seats", str(args.seats), "--draft", DRAFT, "--out", ROOT,
                         "--project", "snowball-strategy-mixed-rl-20261026",
                         "--set", "terminal_bench_config.harbor.override_storage_mb=10240"], check=True)
     cfg_path = arm / "configs" / f"{name}_rl_config.json"
@@ -230,25 +235,28 @@ def prepare(args):
                    env=dict(os.environ, OMP_NUM_THREADS="1"))
     subprocess.run(["bash", "-n", arm / "sbatch" / f"{name}_rl.sbatch"], check=True)
     h = hydra(json.loads(cfg_path.read_text()))
-    bad = {key: (h.get(key), want) for key, want in EXPECT.items() if h.get(key) != want}
+    want_all = dict(EXPECT, **{"terminal_bench_config.harbor.n_concurrent_trials": str(args.seats)})
+    bad = {key: (h.get(key), want) for key, want in want_all.items() if h.get(key) != want}
     assert not bad, f"{name}: recipe drift {bad}"
     assert h["trainer.epochs"] != "0" and h["trainer.eval_before_train"] == "false", "probe setting in a training config"
     assert str(DRAFT) in h["generator.engine_init_kwargs.speculative_config"] and "num_speculative_tokens:3" in \
         h["generator.engine_init_kwargs.speculative_config"]
     assert h["trainer.policy.model.path"] == str(model) and json.loads(h["data.train_data"]) == [str(tree.resolve())]
-    other = [ROOT / n / "configs" / f"{n}_rl_config.json" for k, (n, _, _) in ARMS.items() if k != args.arm]
-    diff = None
-    if other and other[0].exists():  # the arms may differ only in names, paths and their own band tree
-        o = hydra(json.loads(other[0].read_text()))
-        diff = sorted(k for k in set(h) | set(o) if h.get(k) != o.get(k))
+    diff = {}
+    for k, (n, _, _) in ARMS.items():  # arms may differ only in names, paths, their band tree and seats (throughput)
+        o_path = ROOT / n / "configs" / f"{n}_rl_config.json"
+        if k == args.arm or not o_path.exists():
+            continue
+        o = hydra(json.loads(o_path.read_text()))
+        diff[k] = sorted(x for x in set(h) | set(o) if h.get(x) != o.get(x))
         allowed = {"trainer.run_name", "generator.engine_init_kwargs.served_model_name", "terminal_bench_config.trials_dir",
                    "trainer.ckpt_path", "trainer.export_path", "trainer.policy.model.path", "trainer.ref.model.path",
-                   "data.train_data"}
-        assert set(diff) <= allowed, f"arms differ beyond names/paths/band: {set(diff) - allowed}"
+                   "data.train_data", "terminal_bench_config.harbor.n_concurrent_trials"}
+        assert set(diff[k]) <= allowed, f"{args.arm} vs {k} differ beyond names/paths/band/seats: {set(diff[k]) - allowed}"
     manifest = dict(
         arm=args.arm, name=name, model=str(model), tunnel_ports=ports, band=str(tree.parent / "summary.json"),
         band_frozen=frozen.read_text().strip(), tokenizer_sha256=models[args.arm]["tokenizer_sha256"],
-        make_arm_flags=ARM_FLAGS, draft=str(DRAFT), diff_vs_other_arm=diff, recipe_checked=EXPECT,
+        make_arm_flags=ARM_FLAGS, seats=args.seats, band_from=BAND_OF[args.arm], draft=str(DRAFT), diff_vs_other_arm=diff, recipe_checked=EXPECT,
         shas=dict(ota_scripts=git_sha(OTA), runtime=git_sha(RUNTIME), marinskyrl=git_sha(Path.home() / "snowball/marinskyrl-marin"),
                   harbor_overlay=git_sha(Path.home() / "snowball/harbor-rl"), source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()),
         heldout_protocol="separate K=8 probe on mixed/heldout_tree for the start model and for steps 12 and 30",
@@ -264,7 +272,7 @@ def launch(args):
     assert (arm / "manifest.json").exists(), "prepare first"
     if (arm / "jobs.txt").exists():
         raise SystemExit(f"{name} already submitted: {(arm / 'jobs.txt').read_text().split()} (a retry uses --suffix r1)")
-    if args.arm == "base":
+    if args.arm != "v7":
         assert (ROOT / ARMS["v7"][0] / "jobs.txt").exists(), "the SFT arm launches first"
     env = guarded_env(ROOT, ports)
     (ROOT / "logs").mkdir(exist_ok=True)
@@ -344,6 +352,7 @@ def main():
         x = sub.add_parser(cmd)
         x.add_argument("--arm", choices=list(ARMS), required=True)
         x.add_argument("--suffix", default="", help="r1 for the one allowed same-size retry (record why in STATUS)")
+        x.add_argument("--seats", type=int, default=448, help="concurrent sandboxes (throughput only)")
     h = sub.add_parser("heldout")
     h.add_argument("--name", required=True)
     h.add_argument("--model", required=True)
