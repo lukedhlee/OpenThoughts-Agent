@@ -394,6 +394,20 @@ def export(args):
     (ROOT / "exports" / "logs").mkdir(parents=True, exist_ok=True)
     env = guarded_env(ROOT, "")
     env.update(RUN=run, STEP=str(args.step), BASE=str(model), SRC=str(keep), DST=str(dst))
+    if args.in_job:
+        # Final step only: the arm's own allocation idles ~40 min after its last checkpoint (the stopper waits for an
+        # in-run HF export that never comes, see export() docstring), so consolidate on one of its nodes instead of
+        # queueing a new job. DST is outside the run's exports/ dir, so the stopper's export wait is not short-cut.
+        nodes = subprocess.check_output(["scontrol", "show", "hostnames",
+            subprocess.check_output(["squeue", "-h", "-j", args.in_job, "-o", "%N"], text=True).strip()], text=True).split()
+        logf = ROOT / "exports" / "logs" / f"export_{run}_s{args.step}_injob{args.in_job}.out"
+        log("EXPORT_IN_JOB", run, args.step, args.in_job, nodes[-1], logf)
+        with logf.open("w") as f:
+            subprocess.run(["srun", f"--jobid={args.in_job}", "--overlap", "-N1", "-n1", "-w", nodes[-1], "--export=ALL",
+                            "bash", HZ / "rl/export_hf.sbatch"], env=env, stdout=f, stderr=subprocess.STDOUT, check=True)
+        assert (dst / "model.safetensors.index.json").exists(), dst
+        log("EXPORT_DONE", dst)
+        return
     out = subprocess.run(["sbatch", "--export=ALL", "-J", f"export_{run}_s{args.step}", "-t", args.wall,
                           "-o", str(ROOT / "exports" / "logs" / "%x_%j.out"), HZ / "rl/export_hf.sbatch"],
                          env=env, capture_output=True, text=True, check=True)
@@ -424,6 +438,7 @@ def main():
     e.add_argument("--step", type=int, required=True)
     e.add_argument("--suffix", default="")
     e.add_argument("--wall", default="02:00:00")
+    e.add_argument("--in-job", default="", help="run the consolidation inside this running job of ours (srun --overlap)")
     r = sub.add_parser("heldout-report")
     r.add_argument("names", nargs="+")
     a = ap.parse_args()
