@@ -42,7 +42,7 @@ ARMS = {  # launch order: the SFT arm first
 }
 BAND = (1, 6)  # Luke 2026-10-26: learnable = 1-6 solved of 8 (7/8 tasks excluded as near-solved)
 COPIES = 16  # build_band_tree.sh default: one dataloader epoch outlasts 30 steps x 64 groups
-ARM_FLAGS = ["--recipe", "arm", "--policy-nodes", "4", "--engines", "8", "--batch", "64", "--seats", "256",
+ARM_FLAGS = ["--recipe", "arm", "--policy-nodes", "4", "--engines", "8", "--batch", "64", "--seats", "448",
              "--coords", "16", "--steps", "30", "--wall", "08:00:00", "--ckpt-interval", "6", "--hf-save-interval", "6"]
 # The generated config must carry these (the recipe as the brief states it); anything else drifting is a refusal.
 EXPECT = {
@@ -55,7 +55,7 @@ EXPECT = {
     "generator.sampling_params.top_k": "-1", "generator.engine_init_kwargs.max_model_len": "65536",
     "trainer.policy.grug_query_bias_update_mode": "frozen", "trainer.max_steps": "30", "trainer.train_batch_size": "64",
     "trainer.ckpt_interval": "6", "trainer.hf_save_interval": "6", "trainer.eval_before_train": "false",
-    "terminal_bench_config.harbor.n_concurrent_trials": "256", "terminal_bench_config.harbor.override_storage_mb": "10240",
+    "terminal_bench_config.harbor.n_concurrent_trials": "448", "terminal_bench_config.harbor.override_storage_mb": "10240",
     "trainer.seed": "42",
 }
 
