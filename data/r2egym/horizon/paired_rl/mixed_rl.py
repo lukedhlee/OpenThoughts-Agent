@@ -44,6 +44,9 @@ ARMS = {  # launch order: v7, then vk and rk, then base
     "rk": ("rl_mix_rkimi_1026", S / "experiments/relay-kimi-fp32-capacity2-20261021/training/relay_kimi/export-step723-hf-bf16", "18240,18241"),
 }
 BAND_OF = {"v7": "v7", "base": "base", "vk": "v7", "rk": "v7"}
+# Luke 2026-10-26: the three CF arms run concurrently at equal seats; base runs alone after its probe at 448.
+SEATS = {"v7": 320, "vk": 320, "rk": 320, "base": 448}
+MAX_ORG = 1500  # Luke 2026-10-26: the org takes 1,500 started sandboxes for this plan (launch_arm.sh default 1,200)
 BAND = (1, 6)  # Luke 2026-10-26: learnable = 1-6 solved of 8 (7/8 tasks excluded as near-solved)
 COPIES = 16  # build_band_tree.sh default: one dataloader epoch outlasts 30 steps x 64 groups
 ARM_FLAGS = ["--recipe", "arm", "--policy-nodes", "4", "--engines", "8", "--batch", "64",
@@ -212,6 +215,7 @@ def arm_name(args):
 
 def prepare(args):
     """Render one arm. A retry gets its own run dir (--suffix r1) so partial attempts are never pooled."""
+    args.seats = args.seats or SEATS[args.arm]
     band_dir = ROOT / f"band_{BAND_OF[args.arm]}"
     frozen = band_dir / "FROZEN"
     assert frozen.exists(), f"freeze {band_dir.name} first"
@@ -272,8 +276,8 @@ def launch(args):
     assert (arm / "manifest.json").exists(), "prepare first"
     if (arm / "jobs.txt").exists():
         raise SystemExit(f"{name} already submitted: {(arm / 'jobs.txt').read_text().split()} (a retry uses --suffix r1)")
-    # Luke 2026-10-26 launch order: V7 first, then the CF+Kimi arms, base last
-    before = {"v7": [], "vk": ["v7"], "rk": ["v7"], "base": ["v7", "vk", "rk"]}[args.arm]
+    # Luke 2026-10-26 launch order: V7 first; the CF+Kimi arms once V7's startup is healthy; base after its probe
+    before = {"v7": [], "vk": ["v7"], "rk": ["v7"], "base": ["v7"]}[args.arm]
     for k in before:
         assert (ROOT / ARMS[k][0] / "jobs.txt").exists(), f"{ARMS[k][0]} launches before {args.arm}"
     env = guarded_env(ROOT, ports)
@@ -287,7 +291,7 @@ def guarded_env(root, ports):
     (root / "bin").mkdir(parents=True, exist_ok=True)
     if not (root / "bin/sbatch").exists():
         (root / "bin/sbatch").symlink_to(GUARD)
-    env = dict(os.environ, FP32_REPLAY_ROOT=str(root), OMP_NUM_THREADS="1", TUNNEL_PORTS=ports)
+    env = dict(os.environ, FP32_REPLAY_ROOT=str(root), OMP_NUM_THREADS="1", TUNNEL_PORTS=ports, MAX_ORG=str(MAX_ORG))
     env["PATH"] = str(root / "bin") + ":" + env["PATH"]
     env.pop("DCFT_PRIVATE", None)
     return env
@@ -354,7 +358,7 @@ def main():
         x = sub.add_parser(cmd)
         x.add_argument("--arm", choices=list(ARMS), required=True)
         x.add_argument("--suffix", default="", help="r1 for the one allowed same-size retry (record why in STATUS)")
-        x.add_argument("--seats", type=int, default=448, help="concurrent sandboxes (throughput only)")
+        x.add_argument("--seats", type=int, default=0, help="concurrent sandboxes (throughput only); default SEATS[arm]")
     h = sub.add_parser("heldout")
     h.add_argument("--name", required=True)
     h.add_argument("--model", required=True)
