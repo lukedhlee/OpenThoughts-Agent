@@ -9,7 +9,7 @@
     mixed_rl.py heldout-report N [N ...]                              per-task held-out outcomes and pass@1
 
 Band rule (Luke 2026-10-26): no common band, SFT RL and base RL are independent. Each arm trains on the tasks its own
-start model solved 1-7 of 8 times, among tasks it scored 8 of 8 (first 8 raw outcomes in completion order, invalids kept
+start model solved 1-6 of 8 times, among tasks it scored 8 of 8 (first 8 raw outcomes in completion order, invalids kept
 as invalid, never as zero), minus eval-overlap exclusions. Held-out tasks are never probed or trained on. Both arms use the
 same recipe, layout and 50:50 R2E/TMax entry mix.
 """
@@ -40,6 +40,7 @@ ARMS = {  # launch order: the SFT arm first
     "v7": ("rl_mix_v7_1026", S / "experiments/cf2-epochs57-20261022/training/fdv/export-step959-hf-bf16", "18234,18235"),
     "base": ("rl_mix_base_1026", S / "models/grug-datakit-sft-20260921", "18236,18237"),
 }
+BAND = (1, 6)  # Luke 2026-10-26: learnable = 1-6 solved of 8 (7/8 tasks excluded as near-solved)
 COPIES = 16  # build_band_tree.sh default: one dataloader epoch outlasts 30 steps x 64 groups
 ARM_FLAGS = ["--recipe", "arm", "--policy-nodes", "4", "--engines", "8", "--batch", "64", "--seats", "256",
              "--coords", "16", "--steps", "30", "--wall", "08:00:00", "--ckpt-interval", "6", "--hf-save-interval", "6"]
@@ -123,16 +124,17 @@ def band(args):
         assert not subprocess.check_output(["squeue", "-h", "-j", job], text=True).strip(), f"{probe} ({job}) is still in the queue"
     rows = outcomes(MIXED / probe, train, screen)
     complete = [t for t in train if rows[t]["scored"] == 8]
-    learnable = sorted(t for t in complete if 0 < rows[t]["solved"] < 8)
+    learnable = sorted(t for t in complete if BAND[0] <= rows[t]["solved"] <= BAND[1])
     chosen = [t for t in learnable if t not in exclude]
     by = lambda ts: dict(collections.Counter(source[t] for t in ts))
     summary = dict(
         arm=args.arm, probe=probe,
-        rule="this model's own tasks with 1-7 solved of 8, among tasks it scored 8 of 8 (first 8 raw outcomes in "
+        rule=f"this model's own tasks with {BAND[0]}-{BAND[1]} solved of 8, among tasks it scored 8 of 8 (first 8 raw outcomes in "
              "completion order, invalids stay invalid), minus the eval-overlap exclusions; held-out never probed",
         tasks=by(train), fully_scored=by(complete), learnable=by(learnable), excluded_overlap=sorted(set(learnable) & exclude),
         band=by(chosen), all0=by([t for t in complete if rows[t]["solved"] == 0]),
         all8=by([t for t in complete if rows[t]["solved"] == 8]),
+        seven_of_8=by([t for t in complete if rows[t]["solved"] == 7]),
         per_source={s: dict(fully_scored=sum(source[t] == s for t in complete),
                             pass1=sum(rows[t]["solved"] for t in complete if source[t] == s) /
                             max(1, 8 * sum(source[t] == s for t in complete)),
