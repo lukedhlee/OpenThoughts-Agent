@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """One-shot owner for paired R2E+TMax pre-RL probes. Never launches training."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import csv
 import hashlib
 import importlib.util
@@ -49,6 +50,7 @@ def main():
     args = ap.parse_args()
     ROOT.mkdir(exist_ok=True)
     (ROOT / "logs").mkdir(exist_ok=True)
+    status("PREPARING_MIXED_PROBES")
     # The earlier read-only artifact and Hydra checks passed for both exact models.
     prior = json.loads((ROOT.parent / "legacy/manifest.json").read_text())
     assert {m["path"] for m in prior["models"].values()} == set(map(str, ARMS.values()))
@@ -87,22 +89,28 @@ def main():
     held = {x: S/"rl_pool/heldout_tree"/x for x in r_hold}
     held.update({x: TMAX/"tree_relay"/x for x in t_hold})
     assert not set(train) & set(held)
+    task_rows = []
+    def link_and_read(item):
+        task, source, tree, split = item
+        assert (source/"tests/test.sh").is_file(), source
+        dest = tree/task
+        if not dest.is_symlink():
+            dest.symlink_to(source, target_is_directory=True)
+        cfg = tomllib.loads((source/"task.toml").read_text())
+        return [task, cfg.get("task", {}).get("name", task), "tmax" if task.startswith("task_") else "r2egym", split, str(source)]
     for label, mapping in [("train", train), ("heldout", held)]:
         tree = ROOT / (label + "_tree")
         tree.mkdir(exist_ok=True)
-        for task, source in sorted(mapping.items()):
-            assert (source/"tests/test.sh").is_file(), source
-            dest = tree / task
-            if not dest.is_symlink():
-                dest.symlink_to(source.resolve(), target_is_directory=True)
+        # NFS metadata is high-latency. Bound concurrent independent file operations,
+        # rather than serializing thousands of readlink/stat calls on the login node.
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            task_rows.extend(pool.map(link_and_read, [(task,source,tree,label) for task,source in sorted(mapping.items())]))
         assert {x.name for x in tree.iterdir()} == set(mapping)
         (ROOT / (label + ".txt")).write_text("\n".join(sorted(mapping)) + "\n")
+        print(label, "tree ready", len(mapping), flush=True)
     with (ROOT / "task_map.tsv").open("w") as f:
         w = csv.writer(f, delimiter="\t"); w.writerow(["task", "task_label", "source", "split", "path"])
-        for split, mapping in [("train", train), ("heldout", held)]:
-            for task, path in sorted(mapping.items()):
-                cfg = tomllib.loads((path/"task.toml").read_text())
-                w.writerow([task, cfg.get("task", {}).get("name", task), "tmax" if task.startswith("task_") else "r2egym", split, str(path.resolve())])
+        w.writerows(task_rows)
     draft = S/"hf_hub/models--laion--snowball-64k-eagle3-draft-r2egym/snapshots/4bdb47c08e5b5190bea3c7a93c3e14470230e469"
     for name, model in ARMS.items():
         arm = ROOT / name
