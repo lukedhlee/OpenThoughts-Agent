@@ -248,7 +248,7 @@ def prepare(args):
         band_frozen=frozen.read_text().strip(), tokenizer_sha256=models[args.arm]["tokenizer_sha256"],
         make_arm_flags=ARM_FLAGS, draft=str(DRAFT), diff_vs_other_arm=diff, recipe_checked=EXPECT,
         shas=dict(ota_scripts=git_sha(OTA), runtime=git_sha(RUNTIME), marinskyrl=git_sha(Path.home() / "snowball/marinskyrl-marin"),
-                  harbor_overlay=git_sha(Path.home() / "snowball/harbor-rl"), source=git_sha(Path(__file__).resolve().parent)),
+                  harbor_overlay=git_sha(Path.home() / "snowball/harbor-rl"), source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()),
         heldout_protocol="separate K=8 probe on mixed/heldout_tree for the start model and for steps 12 and 30",
         budget="12 nodes x 8 h = 96 requested node-h per arm; one same-size SFT retry only for a diagnosed infra failure")
     (arm / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
