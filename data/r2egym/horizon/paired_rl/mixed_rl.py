@@ -6,6 +6,7 @@
     mixed_rl.py prepare --arm v7|base|vk|rk [--seats N]  render one arm (vk/rk = CF+Kimi, on band_v7) with the shared settings and verify the generated config
     mixed_rl.py launch --arm v7|base  preflight + submit one arm through the booking guard (--suffix r1: retry dir)
     mixed_rl.py heldout --name N --model DIR --ports A,B [--launch]   held-out K=8 probe (start model or RL export)
+    mixed_rl.py export --arm X --step N                               keep step N's model shards (hardlinks) + submit HF consolidation
     mixed_rl.py heldout-report N [N ...]                              per-task held-out outcomes and pass@1
 
 Band rule (Luke 2026-10-26): no common band, SFT RL and base RL are independent. Each arm trains on the tasks its own
@@ -346,6 +347,41 @@ def heldout_report(args):
     print(json.dumps(out, indent=1))
 
 
+def export(args):
+    """Keep one RL checkpoint's model shards (hardlinks, so max_ckpts_to_keep=2 rotation cannot delete them; optimizer
+    state is not kept) and submit the offline FSDP2 -> HF consolidation (one CPU node) through the booking guard.
+    In-run HF exports need hf_hub_repo_id, which these arms leave unset on purpose (no uploads)."""
+    run, model, _ = ARMS[args.arm]
+    run = run + (f"_{args.suffix}" if args.suffix else "")
+    ckpts = ROOT / run / run / "checkpoints"
+    src = ckpts / f"global_step_{args.step}" / "policy"
+    keep = ROOT / run / "keep" / f"global_step_{args.step}" / "policy"
+    if not keep.exists():
+        assert int((ckpts / "latest_ckpt_global_step.txt").read_text()) >= args.step, "checkpoint not written yet"
+        tmp = keep.with_name("policy.partial")
+        subprocess.run(["rm", "-rf", tmp], check=True)
+        tmp.mkdir(parents=True)
+        for f in src.iterdir():
+            if f.name.startswith("optim_"):
+                continue
+            subprocess.run(["cp", "-al", f, tmp / f.name], check=True)
+        n = len([f for f in tmp.iterdir() if f.name.startswith("model_world_size_")])
+        assert n == 16, f"expected 16 model shards, found {n}"
+        tmp.rename(keep)
+        log("KEPT", keep)
+    dst = ROOT / "exports" / f"{run}_step{args.step}" / "model"
+    if (dst / "model.safetensors.index.json").exists():
+        log("EXPORT_EXISTS", dst)
+        return
+    (ROOT / "exports" / "logs").mkdir(parents=True, exist_ok=True)
+    env = guarded_env(ROOT, "")
+    env.update(RUN=run, STEP=str(args.step), BASE=str(model), SRC=str(keep), DST=str(dst))
+    out = subprocess.run(["sbatch", "--export=ALL", "-J", f"export_{run}_s{args.step}", "-t", args.wall,
+                          "-o", str(ROOT / "exports" / "logs" / "%x_%j.out"), HZ / "rl/export_hf.sbatch"],
+                         env=env, capture_output=True, text=True, check=True)
+    log("EXPORT_SUBMITTED", run, args.step, out.stdout.strip())
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -365,10 +401,15 @@ def main():
     h.add_argument("--wall", default="03:00:00")
     h.add_argument("--ports", required=True)
     h.add_argument("--launch", action="store_true")
+    e = sub.add_parser("export")
+    e.add_argument("--arm", choices=list(ARMS), required=True)
+    e.add_argument("--step", type=int, required=True)
+    e.add_argument("--suffix", default="")
+    e.add_argument("--wall", default="02:00:00")
     r = sub.add_parser("heldout-report")
     r.add_argument("names", nargs="+")
     a = ap.parse_args()
-    {"band": band, "prepare": prepare, "launch": launch, "heldout": heldout, "heldout-report": heldout_report}[a.cmd](a)
+    {"band": band, "prepare": prepare, "launch": launch, "heldout": heldout, "export": export, "heldout-report": heldout_report}[a.cmd](a)
 
 
 if __name__ == "__main__":
