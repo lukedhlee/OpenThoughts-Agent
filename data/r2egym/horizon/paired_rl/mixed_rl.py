@@ -15,6 +15,7 @@ as invalid, never as zero), minus eval-overlap exclusions. Held-out tasks are ne
 same recipe and layout. Sources mix in their natural task proportion (uniform over band tasks).
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import collections
 import csv
 import hashlib
@@ -112,6 +113,23 @@ def outcomes(run, tasks, screen):
     return rows
 
 
+def build_tree(tasks, src, dst, copies):
+    """build_band_tree.sh semantics (<task>, <task>__r1..__r{copies-1}, each a symlink to the resolved source task dir),
+    with the NFS metadata calls run 32 at a time: the serial script took ~14 min for 4,500 links under load."""
+    assert not dst.exists(), dst
+    tmp = dst.with_name(dst.name + ".tmp")
+    tmp.mkdir(parents=True)
+    def one(t):
+        tgt = os.path.realpath(src / t)
+        assert os.path.isfile(os.path.join(tgt, "task.toml")), f"no task {t} under {src}"
+        for k in range(copies):
+            os.symlink(tgt, tmp / (t if k == 0 else f"{t}__r{k}"))
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        list(pool.map(one, tasks))
+    tmp.rename(dst)
+    log(f"{dst}: {len(tasks)} tasks x {copies} = {len(os.listdir(dst))} entries")
+
+
 def band(args):
     """One arm's own learnable band (Luke 10-26: no common band, the arms are independent)."""
     out = Path(args.out) if args.dry_run else ROOT / f"band_{args.arm}"
@@ -178,8 +196,7 @@ def band(args):
     parts.mkdir(exist_ok=True)
     for s, ts in viable.items():
         (out / f"band_{s}.txt").write_text("\n".join(ts) + "\n")
-        subprocess.run(["bash", HZ / "rl/build_band_tree.sh", out / f"band_{s}.txt", MIXED / "train_tree", parts / s,
-                        str(copies[s])], check=True)
+        build_tree(ts, MIXED / "train_tree", parts / s, copies[s])
     tree.mkdir()
     for s in viable:
         for e in (parts / s).iterdir():
