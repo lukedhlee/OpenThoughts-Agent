@@ -11,7 +11,7 @@ set -euo pipefail
 unset LD_PRELOAD
 export CC=gcc CXX=g++ OMP_NUM_THREADS=1
 ROOT=${PAIR_ROOT:?Set PAIR_ROOT to the isolated experiment directory}
-SOURCE=$ROOT/code/MarinSkyRL
+SOURCE=$ROOT/code/upstream
 EXPECTED=82396a73a
 test "$(git -C "$SOURCE" rev-parse --short=9 HEAD)" = "$EXPECTED"
 mkdir -p "$ROOT/logs" "$ROOT/cache/uv" "$ROOT/gateway"
