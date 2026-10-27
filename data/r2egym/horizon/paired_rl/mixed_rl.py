@@ -36,7 +36,7 @@ PYTHON = Path.home() / "snowball/envs/snowball/bin/python"
 GUARD = S / "experiments/kimi-only-fp32-capacity2-20261025/bin/sbatch"
 DRAFT = S / "hf_hub/models--laion--snowball-64k-eagle3-draft-r2egym/snapshots/4bdb47c08e5b5190bea3c7a93c3e14470230e469"
 PROBES = {"base": "probe_mix_base_1026", "v7": "probe_mix_v7_1026"}
-ARMS = {  # launch order: the SFT arm first
+ARMS = {  # launch order: v7, then vk and rk, then base
     "v7": ("rl_mix_v7_1026", S / "experiments/cf2-epochs57-20261022/training/fdv/export-step959-hf-bf16", "18234,18235"),
     "base": ("rl_mix_base_1026", S / "models/grug-datakit-sft-20260921", "18236,18237"),
     # Luke 2026-10-26: CF + Kimi SFT checkpoints, no probes of their own, trained on the V7 arm's frozen band
@@ -272,8 +272,10 @@ def launch(args):
     assert (arm / "manifest.json").exists(), "prepare first"
     if (arm / "jobs.txt").exists():
         raise SystemExit(f"{name} already submitted: {(arm / 'jobs.txt').read_text().split()} (a retry uses --suffix r1)")
-    if args.arm != "v7":
-        assert (ROOT / ARMS["v7"][0] / "jobs.txt").exists(), "the SFT arm launches first"
+    # Luke 2026-10-26 launch order: V7 first, then the CF+Kimi arms, base last
+    before = {"v7": [], "vk": ["v7"], "rk": ["v7"], "base": ["v7", "vk", "rk"]}[args.arm]
+    for k in before:
+        assert (ROOT / ARMS[k][0] / "jobs.txt").exists(), f"{ARMS[k][0]} launches before {args.arm}"
     env = guarded_env(ROOT, ports)
     (ROOT / "logs").mkdir(exist_ok=True)
     with (ROOT / "logs" / f"{name}-launch-{time.strftime('%Y%m%dT%H%M%S')}.log").open("w") as f:
