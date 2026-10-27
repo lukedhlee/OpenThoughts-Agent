@@ -39,7 +39,9 @@ export UV_PYTHON_DOWNLOADS=never
 export UV_LINK_MODE=copy
 PYTHON=$HOME/snowball/envs/snowball/bin/python
 cd "$SOURCE"
-"$HOME/snowball/bin/uv" sync --frozen --extra vllm --extra megatron --no-default-groups --no-install-project --no-build --python "$PYTHON"
+"$HOME/snowball/bin/uv" sync --frozen --extra vllm --extra megatron --no-default-groups --no-install-project \
+    --no-build-package torch --no-build-package vllm --no-build-package flash-attn \
+    --no-build-package transformer-engine-torch --python "$PYTHON"
 export PYTHONPATH=$SOURCE/skyrl-train:$SOURCE/skyrl-gym:$SOURCE
 "$ROOT/venv/bin/python" - <<'PY'
 import importlib.metadata
