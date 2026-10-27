@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Freeze each arm's own learnable band from its mixed pre-RL probe, render the SFT and base GRPO arms, launch them.
 
-    mixed_rl.py band --arm v7|base    independent readout of that arm's probe, its learnable band, 50:50 source tree
+    mixed_rl.py band --arm v7|base    independent readout of that arm's probe, its learnable band, natural-mix tree
                                       (refuses to overwrite a frozen band or to read a probe still in the queue)
     mixed_rl.py prepare --arm v7|base|vk|rk [--seats N]  render one arm (vk/rk = CF+Kimi, on band_v7) with the shared settings and verify the generated config
     mixed_rl.py launch --arm v7|base  preflight + submit one arm through the booking guard (--suffix r1: retry dir)
@@ -11,7 +11,7 @@
 Band rule (Luke 2026-10-26): no common band, SFT RL and base RL are independent. Each arm trains on the tasks its own
 start model solved 1-6 of 8 times, among tasks it scored 8 of 8 (first 8 raw outcomes in completion order, invalids kept
 as invalid, never as zero), minus eval-overlap exclusions. Held-out tasks are never probed or trained on. Both arms use the
-same recipe, layout and 50:50 R2E/TMax entry mix.
+same recipe and layout. Sources mix in their natural task proportion (uniform over band tasks).
 """
 import argparse
 import collections
@@ -158,11 +158,10 @@ def band(args):
         for t in train:
             r = rows[t]
             w.writerow([t, source[t], r["raw"], r["scored"], r["solved"], r["invalid"], r["extra"], json.dumps(r["exceptions"])])
-    # 50:50 entries by source: copies per source scale so each source has the same number of tree entries.
+    # Natural mix (Luke 2026-10-27): every band task gets the same copy count, so each source's share is its task share.
     per = {s: [t for t in chosen if source[t] == s] for s in ("r2egym", "tmax")}
     viable = {s: ts for s, ts in per.items() if ts}
-    nmax = max(len(ts) for ts in viable.values())
-    copies = {s: max(COPIES, round(COPIES * nmax / len(ts))) for s, ts in viable.items()}
+    copies = {s: COPIES for s in viable}
     entries = {s: len(viable[s]) * copies[s] for s in viable}
     summary.update(copies=copies, entries=entries,
                    entry_share={s: entries[s] / sum(entries.values()) for s in entries},
