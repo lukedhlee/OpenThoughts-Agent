@@ -70,7 +70,7 @@ def main():
             rc = gate.run(argparse.Namespace(tree=str(TMAX/"tree_gate"), tasks=str(pilot_file),
                 jobs=str(ROOT/"gate"), conc=20, name="tmax_nop", harbor=gate.HARBOR, key_file=None))
             print("pilot run exit", rc, flush=True)
-        gate.report(argparse.Namespace(jobs=str(pilot_dir)))
+        gate.report_dir(pilot_dir)
     pilot = json.loads((pilot_dir / "gate_summary.json").read_text())
     assert pilot["trials"] == 20 and pilot["pass"] >= 18, pilot.get("classes")
     failed = {x["task"].split("/")[-1] for x in pilot.get("failed", []) if x.get("task")}
