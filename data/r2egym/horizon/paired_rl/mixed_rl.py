@@ -147,7 +147,8 @@ def band(args):
     probe = PROBES[args.arm]
     if not args.dry_run:
         job = (MIXED / probe / "jobs.txt").read_text().split()[-1]
-        assert not subprocess.check_output(["squeue", "-h", "-j", job], text=True).strip(), f"{probe} ({job}) is still in the queue"
+        assert job not in subprocess.check_output(["squeue", "-h", "-u", os.environ["USER"], "-o", "%i"], text=True).split(), \
+        f"{probe} ({job}) is still in the queue"  # squeue -j errors once a finished job is purged
     rows = outcomes(MIXED / probe, train, screen)
     complete = [t for t in train if rows[t]["scored"] == 8]
     learnable = sorted(t for t in complete if BAND[0] <= rows[t]["solved"] <= BAND[1])
