@@ -15,6 +15,7 @@
 #
 #   MODELS="hzA=<export dir> hzB=<export dir>" [REPS="1 2 3"] [SETS="tb21 swe_s0 swe_s1 tblite_s0 tblite_s1"] \
 #     [MAXJOBS=34] [GROUPED=1] bash eval_sft.sh        (login node, inside tmux; it only submits and polls)
+#   ONLY_TASKS=<json {set: [task, ...]}> reruns just those tasks of each set (e.g. trials lost to infrastructure).
 # GROUPED=1 serves all SETS of one (model, rep) from one multi-node job (one server and one run per node): 1 job slot per
 # 5 runs. Two queues (e.g. one per model) may run side by side; each counts every job of the user against MAXJOBS.
 #
@@ -59,7 +60,7 @@ render() {  # $1 run, $2 set, $3 model URL -> $EV/runs/$1.yaml (run_tb2.sh's ren
   local cfg=$EV/runs/$1.yaml
   set_env "$2" || return 1
   sed "s#__JOB_NAME__#$1#; s#__API_BASE__#$3#; s#^jobs_dir: .*#jobs_dir: $JOBS#" "$OTA/data/tb2/jupiter/$POLICY_FILE" > "$cfg"
-  EXCLUDE_TASKS=$EXCLUDE_TASKS SHARD=$SHARD MODE=full OMP_NUM_THREADS=1 "$PY" - "$cfg" "$TASKS" <<'PY' >> "$ST/$1/render.log" 2>&1 || return 1
+  SET=$2 EXCLUDE_TASKS=$EXCLUDE_TASKS SHARD=$SHARD MODE=full OMP_NUM_THREADS=1 "$PY" - "$cfg" "$TASKS" <<'PY' >> "$ST/$1/render.log" 2>&1 || return 1
 import os, re, sys, yaml
 p, tasks = sys.argv[1:3]; c = yaml.safe_load(open(p))
 def agent_timeout(t):
@@ -72,6 +73,12 @@ if skip:
 shard = os.environ.get("SHARD")
 if shard:
     i, n = map(int, shard.split("/")); names = names[i::n]
+only = os.environ.get("ONLY_TASKS")  # rerun of named tasks: JSON {set: [task, ...]}; same order, same concurrency
+if only:
+    import json
+    keep = set(json.load(open(only)).get(os.environ["SET"], [])); names = [t for t in names if t in keep]
+    print(f"only: {len(names)} of {len(keep)} listed tasks")
+    assert names, "ONLY_TASKS lists no task of this set"
 c["n_attempts"] = 1
 c.pop("datasets", None); c["tasks"] = [{"path": f"{tasks}/{t}"} for t in names]
 yaml.safe_dump(c, open(p, "w"), sort_keys=False)
