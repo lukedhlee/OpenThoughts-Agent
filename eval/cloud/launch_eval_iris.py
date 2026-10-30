@@ -519,7 +519,7 @@ class EvalIrisLauncher(IrisLauncher):
         # getattr). Byte-for-byte the datagen pattern
         # (data/cloud/launch_tracegen_iris.py:246-249). Only forwarded when set to
         # a non-default; a bare launch keeps the byte-identical legacy command.
-        if getattr(args, "ingress_mode", "pinggy") and args.ingress_mode != "pinggy":
+        if getattr(args, "ingress_mode", None) and args.ingress_mode != "pinggy":
             cmd.extend(["--ingress_mode", args.ingress_mode])
         if getattr(args, "ingress_host", None):
             cmd.extend(["--ingress_host", args.ingress_host])
