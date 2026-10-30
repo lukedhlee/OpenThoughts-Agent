@@ -65,12 +65,14 @@ case $ROLE in
       # QWEN_GEN='<json>': sampler defaults for a checkpoint without generation_config.json (Qwen3.5-9B ships none, so
       # vLLM would fall back to top_p 1 / top_k -1); unset = the checkpoint's own generation_config, as before
       QGEN=(); [ -n "${QWEN_GEN:-}" ] && QGEN=(--override-generation-config "$QWEN_GEN")
+      # QWEN_PARSER / QWEN_EXTRA_ARGS: another HF model through this path (Nemotron-3.5-Lightning, 2026-10-29: parser
+      # nemotron_v3 and its mamba-cache flags); unset = qwen3 and no extra args, as before
       [ -f "$MODEL/config.json" ] || { echo "no model at $MODEL"; exit 1; }
       $PY -c "import torchvision, vllm.model_executor.models.qwen3_5" || { echo "qwen3_5 import failed"; exit 1; }
       serve $PY -m vllm.entrypoints.openai.api_server --model "$MODEL" --served-model-name snowball --port 8000 \
         --tensor-parallel-size 1 --data-parallel-size 4 --max-model-len ${QWEN_MAXLEN:-66560} --gpu-memory-utilization 0.90 \
         --max-num-seqs 96 --enable-prefix-caching --enable-chunked-prefill --no-enable-log-requests \
-        "${QSPEC[@]}" "${QGEN[@]}" --reasoning-parser qwen3
+        "${QSPEC[@]}" "${QGEN[@]}" --reasoning-parser ${QWEN_PARSER:-qwen3} ${QWEN_EXTRA_ARGS:-}
       exit $?
     fi
     MODEL=${STUDENT_MODEL:-/e/data1/mmlaion/lee27/models/grug-datakit-sft-20260921}
