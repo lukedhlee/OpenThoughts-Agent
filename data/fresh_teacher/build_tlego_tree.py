@@ -158,6 +158,14 @@ def main() -> int:
         shutil.copytree(tdir / "tests", dst / "tests")
         shutil.copytree(tdir / "solution", dst / "solution")
         shutil.copy2(tdir / "instruction.md", dst / "instruction.md")
+        # harbor runs setup.sh from [environment] workdir, which must exist before the replay, so the task keeps "/" (as
+        # TMax does) and the Dockerfile's WORKDIR comes back through the grader, the solution and the agent's shell.
+        for f in (dst / "tests" / "test.sh", dst / "solution" / "solve.sh"):
+            mode = f.stat().st_mode
+            f.write_text(f"cd {shlex.quote(wd)}\n" + f.read_text())
+            f.chmod(mode)
+        rc = f'[ "$PWD" = / ] && cd {shlex.quote(wd)}'
+        steps = [*steps, f"step {shlex.quote(f'echo {shlex.quote(rc)} >> /root/.bashrc')}"]
         ctx = dst / "setup_files" / "context"
         shutil.copytree(envdir, ctx)
         (ctx / "Dockerfile").rename(ctx / "Dockerfile.orig")
@@ -175,7 +183,8 @@ def main() -> int:
         cfg.setdefault("agent", {})["timeout_sec"] = a.agent_timeout
         cfg.setdefault("verifier", {})["timeout_sec"] = a.verifier_timeout
         env = cfg.setdefault("environment", {})
-        env["workdir"] = wd
+        env["workdir"] = "/"
+        md["tlego_workdir"] = wd
         env["env"] = added
         (dst / "task.toml").write_text(tmax.cf.dump_toml(cfg))
         cover.append((t, "covered"))
