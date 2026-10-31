@@ -27,7 +27,7 @@ REPS=${REPS:-1 2 3}; SETS=${SETS:-tb21 swe_s0 swe_s1 tblite_s0 tblite_s1}
 MAXJOBS=${MAXJOBS:-34}
 HERE=$(cd "$(dirname "$0")" && pwd); OTA=$(cd "$HERE/../../../.." && pwd)
 S=${SCRATCH_DIR:-/scratch/11584/$USER}; T=$S/tasks
-EV=$S/experiments/sft_eval; ST=$EV/state
+EV=${EV:-$S/experiments/sft_eval}; ST=$EV/state
 export RELAY_EXP_DIR=$EV/serve RELAY_PILOT_DIR=$OTA/data/relay/pilot JOBS=$EV/tb2_jobs
 export HARBOR_SRC=${HARBOR_SRC:-$HOME/snowball/harbor-p0924/src} HARBOR_SHA=${HARBOR_SHA:-761fb516}
 POLICY_FILE=${POLICY_FILE:-tb2_marin_policy_0924_65k16k.yaml}
@@ -51,6 +51,7 @@ set_env() {  # the task tree, count, exclusions and shard of one set, as Jupiter
     swe_s1)    TASKS=$T/swebench_verified_random100 NTASKS=100 SHARD=1/2;;
     tblite_s0) TASKS=$T/openthoughts_tblite_2_0 NTASKS=100 SHARD=0/2;;
     tblite_s1) TASKS=$T/openthoughts_tblite_2_0 NTASKS=100 SHARD=1/2;;
+    ftlego)    TASKS=${FT_TREE:?} NTASKS=${FT_N:?};;   # fresh teacher pilot (data/fresh_teacher)
     *) return 1;;
   esac
   [ "$(find "$TASKS" -mindepth 2 -maxdepth 2 -name task.toml | wc -l)" = "$NTASKS" ] || { say "task tree $TASKS does not have $NTASKS tasks"; return 1; }
