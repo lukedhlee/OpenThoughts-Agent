@@ -52,6 +52,7 @@ set_env() {  # the task tree, count, exclusions and shard of one set, as Jupiter
     tblite_s0) TASKS=$T/openthoughts_tblite_2_0 NTASKS=100 SHARD=0/2;;
     tblite_s1) TASKS=$T/openthoughts_tblite_2_0 NTASKS=100 SHARD=1/2;;
     ftlego)    TASKS=${FT_TREE:?} NTASKS=${FT_N:?};;   # fresh teacher pilot (data/fresh_teacher)
+    ftlego_s*) TASKS=${FT_TREE:?} NTASKS=${FT_N:?} SHARD=${1#ftlego_s}/${FT_SHARDS:?};;
     *) return 1;;
   esac
   [ "$(find "$TASKS" -mindepth 2 -maxdepth 2 -name task.toml | wc -l)" = "$NTASKS" ] || { say "task tree $TASKS does not have $NTASKS tasks"; return 1; }
