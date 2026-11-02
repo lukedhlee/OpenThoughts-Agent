@@ -36,7 +36,16 @@ _t = importlib.util.spec_from_file_location("tmax_build_tree", TMAX / "build_tre
 tmax = importlib.util.module_from_spec(_t)
 _t.loader.exec_module(tmax)
 
-SNAPSHOT = "harbor__05b5bff9013d__snapshot"
+BASES = {
+    "jammy": dict(FROM="ubuntu:22.04", recipe=tmax.tmax_base.dockerfile(), env=tmax.tmax_base.BASE_ENV, image=tmax.tmax_base.IMAGE,
+                  snapshot="harbor__05b5bff9013d__snapshot"),
+}
+PIN = HERE / "python313_pin.json"
+if PIN.exists():
+    _p = json.loads(PIN.read_text())
+    _image = f"python@{_p['digest']}"
+    BASES["python313"] = dict(FROM="python:3.13-slim-bookworm", image=_image, env=dict(x.split("=", 1) for x in _p["env"]), snapshot=None,
+                              recipe=f"# Shared Terminal-Lego Daytona base python:3.13-slim-bookworm (data/fresh_teacher). Task steps replay at start.\nFROM {_image}\n")
 TEMPLATE = (TMAX / "setup_template.sh").read_text().replace(
     '( cd / && exec env -i', '( cd "$WD" && exec env -i'
 ).replace("NSTEP=0; NKILL=0\n", 'NSTEP=0; NKILL=0\nWD=/\nworkdir() { mkdir -p "$1" && chown 0:0 "$1" && WD=$1; }\n')
@@ -70,12 +79,12 @@ def parse_env(rest: str) -> list[tuple[str, str]] | None:
     return [(k, v) for k, v in pairs] if pairs and all(len(p) == 2 for p in pairs) else None
 
 
-def translate(dockerfile: str, envdir: Path):
+def translate(dockerfile: str, envdir: Path, base: dict):
     """Dockerfile -> (setup steps, added env, final workdir, ignored instructions) or (None, reason)."""
     lines = logical_lines(dockerfile)
-    if not lines or lines[0].split() != ["FROM", "ubuntu:22.04"]:
-        return None, f"FROM is {lines[0] if lines else 'missing'!r}, not ubuntu:22.04"
-    env = dict(tmax.tmax_base.BASE_ENV)
+    if not lines or lines[0].split() != ["FROM", base["FROM"]]:
+        return None, f"FROM is {lines[0] if lines else 'missing'!r}, not {base['FROM']}"
+    env = dict(base["env"])
     added, out, ignored = {}, [], []
     wd = "/"
     for ln in lines[1:]:
@@ -134,19 +143,21 @@ def main() -> int:
     ap.add_argument("--src", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--only", required=True)
+    ap.add_argument("--base", choices=sorted(BASES), default="jammy")
     ap.add_argument("--agent-timeout", type=float, default=1800.0)
     ap.add_argument("--verifier-timeout", type=float, default=600.0)
     a = ap.parse_args()
     src, out = Path(a.src), Path(a.out)
     if out.exists():
         raise SystemExit(f"{out} exists; build into a new directory")
-    recipe = tmax.tmax_base.dockerfile()
-    base_env = [f"{k}={v}" for k, v in {"HOME": "/root", **tmax.tmax_base.BASE_ENV}.items()]
+    base = BASES[a.base]
+    recipe = base["recipe"]
+    base_env = [f"{k}={v}" for k, v in {"HOME": "/root", **base["env"]}.items()]
     out.mkdir(parents=True)
     cover, built = [], []
     for t in [x for x in Path(a.only).read_text().split() if x]:
         tdir, envdir = src / t, src / t / "environment"
-        res, reason = translate((envdir / "Dockerfile").read_text(), envdir)
+        res, reason = translate((envdir / "Dockerfile").read_text(), envdir, base)
         if res is None:
             cover.append((t, reason))
             continue
@@ -192,9 +203,10 @@ def main() -> int:
 
     from harbor.utils.container_cache import environment_dir_hash_truncated as h12
     names = {f"harbor__{h12(out / t / 'environment', truncate=12)}__snapshot" for t in built}
-    if names - {SNAPSHOT}:
-        raise SystemExit(f"environment hashes {names}: must be exactly {SNAPSHOT}")
-    (out / "pool.json").write_text(json.dumps({"jammy": dict(name=SNAPSHOT, base_image=tmax.tmax_base.IMAGE, task_count=len(built),
+    if len(names) != 1 or (base["snapshot"] and names != {base["snapshot"]}):
+        raise SystemExit(f"environment hashes {names}: every task must share one snapshot")
+    (out / f"Dockerfile.{a.base}").write_text(recipe)
+    (out / "pool.json").write_text(json.dumps({a.base: dict(name=names.pop(), base_image=base["image"], task_count=len(built),
                                                               gate=True, agent_timeout_sec=a.agent_timeout,
                                                               verifier_timeout_sec=a.verifier_timeout)}, indent=1) + "\n")
     (out / "TASKS.txt").write_text("\n".join(built) + "\n")

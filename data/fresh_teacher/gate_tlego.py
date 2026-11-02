@@ -32,7 +32,7 @@ RETRY = ["DaytonaRateLimitError", "EnvironmentStartTimeoutError", "DaytonaSandbo
 
 def run(a) -> int:
     tree, jobs = Path(a.tree).resolve(), Path(a.jobs).resolve()
-    snapshot = json.loads((tree / "pool.json").read_text())["jammy"]["name"]
+    snapshot = next(iter(json.loads((tree / "pool.json").read_text()).values()))["name"]
     key = tmax_gate.load_secret("DAYTONA_API_KEY", a.key_file)
     state = tmax_gate.snapshot_active(snapshot, key)
     if state != "active":
