@@ -28,7 +28,7 @@ cf = importlib.util.module_from_spec(_cf)
 _cf.loader.exec_module(cf)
 
 PREAMBLE = re.compile(r"\A## Environment Setup \(complete these steps first\)\n+```bash\n(.*?)\n```\n+---\n+", re.S)
-TEST_RUN = re.compile(r"(^|[;&|]\\s*|\\s)(pytest|tox|nox|python3? -m (pytest|unittest))(\\s|$)")
+TEST_RUN = re.compile(r"(^|&&|;|\|\|)\s*(pytest|tox|nox|python3? -m (pytest|unittest))(\s|$)")
 SETUP = """#!/bin/bash
 # Harness-run setup: the task's own install steps, then a git scrub, then /setup_files is removed.
 set -uo pipefail
